@@ -62,10 +62,14 @@ bool isMacro(int codeUnit) {
   return null != getMacro(codeUnit);
 }
 
+int cu0(String s) {
+  return s.codeUnitAt(0);
+}
+
 Future<dynamic> dispatchMacro(ReaderInput r) async {
   final s = await r.read();
   if (s == null) throw FormatException("EOF while reading dispatch sequence.");
-  final cu = s.codeUnitAt(0);
+  final cu = cu0(s);
   if (cu < dispatchMacros.length) {
     final macroreader = dispatchMacros[cu];
     if (macroreader != null) {
@@ -215,14 +219,14 @@ Future<List> readDelimited(ReaderInput r, int delim) async {
 }
 
 void initMacros() {
-  macros["(".codeUnitAt(0)]=(ReaderInput r) async => await readDelimited(r, ")".codeUnitAt(0));
-  macros["'".codeUnitAt(0)]=(ReaderInput r) async => ["QUOTE", await read(r)];
-  macros[")".codeUnitAt(0)]=unexpectedMacroReader("closing parenthesis");
-  macros["]".codeUnitAt(0)]=unexpectedMacroReader("closing square bracket");
-  macros["}".codeUnitAt(0)]=unexpectedMacroReader("closing curly brace");
-  macros["#".codeUnitAt(0)]=dispatchMacro;
-  dispatchMacros["_".codeUnitAt(0)]=(ReaderInput r) async {await read(r); return r; };
-  dispatchMacros["{".codeUnitAt(0)]=(ReaderInput r) async => Set.from(await readDelimited(r, "}".codeUnitAt(0)));
+  macros[cu0("(")]=(ReaderInput r) async => await readDelimited(r, cu0(")"));
+  macros[cu0("'")]=(ReaderInput r) async => ["QUOTE", await read(r)];
+  macros[cu0(")")]=unexpectedMacroReader("closing parenthesis");
+  macros[cu0("]")]=unexpectedMacroReader("closing square bracket");
+  macros[cu0("}")]=unexpectedMacroReader("closing curly brace");
+  macros[cu0("#")]=dispatchMacro;
+  dispatchMacros[cu0("_")]=(ReaderInput r) async {await read(r); return r; };
+  dispatchMacros[cu0("{")]=(ReaderInput r) async => Set.from(await readDelimited(r, cu0("}")));
 }
 
 Future main() async {
