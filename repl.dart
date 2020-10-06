@@ -219,14 +219,32 @@ Future<List> readDelimited(ReaderInput r, int delim) async {
 }
 
 void initMacros() {
+  // list
   macros[cu0("(")]=(ReaderInput r) async => await readDelimited(r, cu0(")"));
+  // quote
   macros[cu0("'")]=(ReaderInput r) async => ["QUOTE", await read(r)];
+  // malformed
   macros[cu0(")")]=unexpectedMacroReader("closing parenthesis");
   macros[cu0("]")]=unexpectedMacroReader("closing square bracket");
   macros[cu0("}")]=unexpectedMacroReader("closing curly brace");
+  // dispatch
   macros[cu0("#")]=dispatchMacro;
+  // discard
   dispatchMacros[cu0("_")]=(ReaderInput r) async {await read(r); return r; };
+  // set
   dispatchMacros[cu0("{")]=(ReaderInput r) async => Set.from(await readDelimited(r, cu0("}")));
+  // comment
+  macros[cu0(";")]=dispatchMacros[cu0("!")]=(ReaderInput r) async {
+    while(true) {
+      final s = await r.read();
+      if (s == null) return r;
+      final i = RegExp(r"[^\r\n]*").matchAsPrefix(s).end;
+      if (i < s.length) {
+        r.unread(s.substring(i));
+        return r;
+      }
+    }
+  };
 }
 
 Future main() async {
