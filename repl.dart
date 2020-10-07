@@ -218,6 +218,10 @@ Future<List> readDelimited(ReaderInput r, int delim) async {
     }
 }
 
+final COMMENT_CONTENT_REGEXP=RegExp(r"[^\r\n]*");
+final STRING_CONTENT_REGEXP=RegExp("(?:[^\"\\\\]|\\\\.)*");
+final STRING_ESC_REGEXP=RegExp(r"\\(?:u([0-9a-fA-F]{0,4})|([0-7]{1,3})|(.))");
+
 void initMacros() {
   // list
   macros[cu0("(")]=(ReaderInput r) async => await readDelimited(r, cu0(")"));
@@ -238,13 +242,48 @@ void initMacros() {
     while(true) {
       final s = await r.read();
       if (s == null) return r;
-      final i = RegExp(r"[^\r\n]*").matchAsPrefix(s).end;
+      final i = COMMENT_CONTENT_REGEXP.matchAsPrefix(s).end;
       if (i < s.length) {
         r.unread(s.substring(i));
         return r;
       }
     }
   };
+  // string
+  macros[cu0("\"")]=(ReaderInput r) async {
+    final sb = StringBuffer();
+    // 2-pass construction
+    while(true) {
+      final s = await r.read();
+      if (s == null) throw FormatException("Unexpected EOF while reading a string.");
+      final i = STRING_CONTENT_REGEXP.matchAsPrefix(s).end;
+      sb.write(s.substring(0, i));
+      if (i < s.length) {
+        r.unread(s.substring(i));
+        break;
+      }
+    }
+    return sb.toString().replaceAllMapped(STRING_ESC_REGEXP, (Match m) {
+      if (m.group(1) != null) {
+        if (m.group(1).length < 4) throw FormatException("Unsupported escape for character: \\u${m.group(1)}; \\u MUST be followed by 4 hexadecimal digits");
+        return String.fromCharCode(int.parse(m.group(1), radix: 16));
+      }
+      if (m.group(2) != null) return String.fromCharCode(int.parse(m.group(2), radix: 8));
+      switch(m.group(3)) {
+        case '"': case '\\': return m.group(3);
+        case 'b': return "\b";
+        case 'n': return "\n";
+        case 'r': return "\r";
+        case 't': return "\t";
+        case 'f': return "\f";
+      }
+      throw FormatException("Unsupported escape character: \\${m.group(3)}");
+    });
+  };
+}
+
+clj_print(dynamic x) {
+  print(x.toString());
 }
 
 Future main() async {
@@ -254,7 +293,7 @@ Future main() async {
   try {
     while(true) {
       stdout.write("=> ");
-      print((await read(rdr)).toString());
+      await clj_print(await read(rdr));
     }
   } finally {
     rdr.close();
