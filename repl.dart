@@ -221,6 +221,7 @@ Future<List> readDelimited(ReaderInput r, int delim) async {
 final COMMENT_CONTENT_REGEXP=RegExp(r"[^\r\n]*");
 final STRING_CONTENT_REGEXP=RegExp("(?:[^\"\\\\]|\\\\.)*");
 final STRING_ESC_REGEXP=RegExp(r"\\(?:u([0-9a-fA-F]{0,4})|([0-7]{1,3})|(.))");
+final REGEXP_ESC_REGEXP=RegExp(r"\\.");
 
 void initMacros() {
   // list
@@ -259,7 +260,7 @@ void initMacros() {
       final i = STRING_CONTENT_REGEXP.matchAsPrefix(s).end;
       sb.write(s.substring(0, i));
       if (i < s.length) {
-        r.unread(s.substring(i));
+        r.unread(s.substring(i+1));
         break;
       }
     }
@@ -279,6 +280,22 @@ void initMacros() {
       }
       throw FormatException("Unsupported escape character: \\${m.group(3)}");
     });
+  };
+  // regexp
+  dispatchMacros[cu0("\"")]=(ReaderInput r) async {
+    final sb = StringBuffer();
+    // 2-pass construction
+    while(true) {
+      final s = await r.read();
+      if (s == null) throw FormatException("Unexpected EOF while reading a string.");
+      final i = STRING_CONTENT_REGEXP.matchAsPrefix(s).end;
+      sb.write(s.substring(0, i));
+      if (i < s.length) {
+        r.unread(s.substring(i+1));
+        break;
+      }
+    }
+    return RegExp(sb.toString().replaceAllMapped(REGEXP_ESC_REGEXP, (Match m) => m.group(0)));
   };
 }
 
