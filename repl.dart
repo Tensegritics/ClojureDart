@@ -149,6 +149,7 @@ Future<String> readToken(r) async {
 }
 
 final INT_REGEXP = RegExp(r"([-+]?)(?:(0)|([1-9][0-9]*)|0[xX]([0-9A-Fa-f]+)|0([0-7]+)|([1-9][0-9]?)[rR]([0-9A-Za-z]+)|0[0-9]+)(N)?$");
+final DOUBLE_REGEXP = RegExp(r"([-+]?[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?)(M)?$");
 
 // differs from Clojure: :3a and a/:x are not valid
 final SYMBOL_REGEXP = RegExp(r"([:]{1,2})?(?:([^0-9/:].*)/)?(/|[^0-9/:][^/]*)$");
@@ -191,6 +192,12 @@ dynamic interpretToken(String token) {
     if (m.group(5) != null) return parse(m.group(5), 8);
     if (m.group(7) != null) return parse(m.group(7), int.parse(m.group(6)));
     throw FormatException("Invalid number.");
+  }
+
+  m = DOUBLE_REGEXP.matchAsPrefix(token);
+  if (m != null) {
+    if (m.group(4) != null) throw FormatException("BigDecimal not supported yet.");
+    return double.parse(token);
   }
 
   m = SYMBOL_REGEXP.matchAsPrefix(token);
