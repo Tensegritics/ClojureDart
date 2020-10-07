@@ -228,7 +228,6 @@ Future<List> readDelimited(ReaderInput r, int delim) async {
 final COMMENT_CONTENT_REGEXP=RegExp(r"[^\r\n]*");
 final STRING_CONTENT_REGEXP=RegExp("(?:[^\"\\\\]|\\\\.)*");
 final STRING_ESC_REGEXP=RegExp(r"\\(?:u([0-9a-fA-F]{0,4})|([0-7]{1,3})|(.))");
-final REGEXP_ESC_REGEXP=RegExp(r"\\.");
 
 void initMacros() {
   // list
@@ -257,10 +256,8 @@ void initMacros() {
       }
     }
   };
-  // string
-  macros[cu0("\"")]=(ReaderInput r) async {
+  Future<String> readStringContent(ReaderInput r) async {
     final sb = StringBuffer();
-    // 2-pass construction
     while(true) {
       final s = await r.read();
       if (s == null) throw FormatException("Unexpected EOF while reading a string.");
@@ -268,10 +265,13 @@ void initMacros() {
       sb.write(s.substring(0, i));
       if (i < s.length) {
         r.unread(s.substring(i+1));
-        break;
+        return sb.toString();
       }
     }
-    return sb.toString().replaceAllMapped(STRING_ESC_REGEXP, (Match m) {
+  }
+  // string
+  macros[cu0("\"")]=(ReaderInput r) async {
+    return (await readStringContent(r)).replaceAllMapped(STRING_ESC_REGEXP, (Match m) {
       if (m.group(1) != null) {
         if (m.group(1).length < 4) throw FormatException("Unsupported escape for character: \\u${m.group(1)}; \\u MUST be followed by 4 hexadecimal digits");
         return String.fromCharCode(int.parse(m.group(1), radix: 16));
@@ -289,21 +289,7 @@ void initMacros() {
     });
   };
   // regexp
-  dispatchMacros[cu0("\"")]=(ReaderInput r) async {
-    final sb = StringBuffer();
-    // 2-pass construction
-    while(true) {
-      final s = await r.read();
-      if (s == null) throw FormatException("Unexpected EOF while reading a string.");
-      final i = STRING_CONTENT_REGEXP.matchAsPrefix(s).end;
-      sb.write(s.substring(0, i));
-      if (i < s.length) {
-        r.unread(s.substring(i+1));
-        break;
-      }
-    }
-    return RegExp(sb.toString().replaceAllMapped(REGEXP_ESC_REGEXP, (Match m) => m.group(0)));
-  };
+  dispatchMacros[cu0("\"")]=(ReaderInput r) async =>  RegExp(await readStringContent(r));
 }
 
 clj_print(dynamic x) {
