@@ -1,6 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 import 'dart:convert';
+import 'dart:isolate';
+import 'dart:developer' as dev;
+import 'package:vm_service/vm_service_io.dart' as vms;
+import 'package:vm_service/utils.dart' as vmutils;
 
 class ReaderInput {
   Stream<String> _in;
@@ -296,6 +300,22 @@ clj_print(dynamic x) {
   print(x.toString());
 }
 
+var reloads = 0;
+
+Future<bool> reload() async {
+  // Build Websocket URI
+  final serverUri = (await dev.Service.getInfo()).serverUri;
+  final wsUri = vmutils.convertToWebSocketUrl(serviceProtocolUrl: serverUri).toString();
+  // Get VM Service
+  final service = await vms.vmServiceConnectUri(wsUri);
+
+  final vm = await service.getVM();
+  // Reload first isolate
+  final res = await service.reloadSources(dev.Service.getIsolateID(Isolate.current));
+  print("reload ${++reloads}");
+  return res.success;
+}
+
 Future main() async {
   initMacros();
   final rdr = ReaderInput(stdin.transform(utf8.decoder)); //.transform(const LineSplitter()));
@@ -303,9 +323,143 @@ Future main() async {
   try {
     while(true) {
       stdout.write("=> ");
-      await clj_print(await read(rdr));
+      final expr = await read(rdr);
+      await reload();
+      await clj_print(expr);
+      emit(expr, stdout);
+      stdout.write("\n");
     }
   } finally {
     rdr.close();
   }
 }
+
+const DOT = Symbol(null, ".");
+const NEW = Symbol(null, "new");
+
+dynamic macroexpand1(dynamic expr) {
+  if ((expr is List) && (expr.length > 0)) {
+    final first = expr[0];
+    if (first is Symbol) {
+      final name = first.name;
+      if (first.name.endsWith(".")) {
+        return List()..add(NEW)..add(Symbol(null, first.name.substring(0,first.name.length-1)))..addAll(expr.getRange(1, expr.length));
+      }
+      if (first.name.startsWith(".")) {
+        return List()..add(DOT)..add(expr[1])..add(Symbol(null, first.name.substring(1)))..addAll(expr.getRange(2, expr.length));
+      }
+    }
+    return expr;
+  }
+  return expr;
+}
+
+dynamic macroexpand(dynamic expr) {
+  var prev;
+  do {
+    prev = expr;
+    expr = macroexpand1(expr);
+  } while (prev != expr);
+  return expr;
+}
+
+void emitArgs(Iterable args, StringSink out, [comma = false]) {
+  // var comma = false;
+  var key = true;
+  var named = false;
+  args.forEach((arg) {
+    if (named) {
+      if (key && comma) out.write(",");
+      if (key) out..write(arg.name)..write(":");
+      else emit(arg, out);
+      comma=true;
+      key=!key;
+      return;
+    }
+    if ((arg is Symbol) && (arg.name == "&")) {
+      named = key = true;
+      return;
+    }
+    if (comma) out.write(",");
+    emit(arg, out);
+    comma=true;
+  });
+}
+
+void emitNew(List expr,  StringSink out) {
+  out..write("(")..write(expr[1].name)..write("(");
+  emitArgs(expr.getRange(2, expr.length), out);
+  out.write("))");
+}
+
+void emitStr(String s, StringSink out) {
+  out..write('"')
+    ..write(s.replaceAllMapped(RegExp("([\x00-\x1f])|[\$\"]"), (m) {
+      if (m.group(1) != null) return "\\x${m.group(1).codeUnitAt(0).toRadixString(16).padLeft(2,'0')}";
+      return "\\${m.group(0)}";
+    }))
+    ..write('"');
+}
+
+void emit(dynamic expr,  StringSink out) {
+  expr=macroexpand(expr);
+  if (expr is List) {
+    if (expr.first == NEW) {
+      emitNew(expr, out);
+      return;
+    }
+    out.write("(");
+    emit(expr.first, out);
+    out.write("(");
+    emitArgs(expr.getRange(1, expr.length), out);
+    out.write("))");
+    return;
+  }
+  if (expr is String) {
+    emitStr(expr, out);
+    return;
+  }
+  out.write(expr.toString());
+}
+
+/*
+class MyApp extends StatelessWidget {
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Welcome to Flutter',
+      home: Scaffold(
+        appBar: AppBar(
+          title: Text('Welcome to Flutter'),
+        ),
+        body: Center(
+          child: Text('Hello World'),
+        ),
+      ),
+    );
+  }
+}
+
+void main() => runApp(MyApp());
+
+(defn main []
+  (Flutter/main ; 1 gestion des imports
+    (reify StatelessWidget ; 2 quel constructeur parent ?
+      (build [_ ^BuildContext context]
+        (MaterialApp. & ; 3 named arguments
+          :title "Welcome to Flutter"
+          :home (Scaffold. &
+            :appBar (AppBar. & :title (Text. "Welcome to Flutter"))
+            :body (Center. & :child (Text. "Hello World"))))))))
+
+(defn main []
+  (Flutter/main ; 1 gestion des imports
+    (reify StatelessWidget ; 2 quel constructeur parent ?
+      (build [_ ^BuildContext context]
+        (MaterialApp... ; 3 named arguments
+          :title "Welcome to Flutter"
+          :home (Scaffold...
+            :appBar (AppBar... :title (Text. "Welcome to Flutter"))
+            :body (Center... :child (Text. "Hello World"))))))))
+
+*/
