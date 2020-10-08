@@ -342,10 +342,10 @@ dynamic macroexpand1(dynamic expr) {
     final first = expr[0];
     if (first is Symbol) {
       final name = first.name;
-      if (first.name.endsWith(".")) {
+      if (first.name.endsWith(".") && first.name != ".") {
         return List()..add(NEW)..add(Symbol(null, first.name.substring(0,first.name.length-1)))..addAll(expr.getRange(1, expr.length));
       }
-      if (first.name.startsWith(".")) {
+      if (first.name.startsWith(".") && first.name != ".") {
         return List()..add(DOT)..add(expr[1])..add(Symbol(null, first.name.substring(1)))..addAll(expr.getRange(2, expr.length));
       }
     }
@@ -392,6 +392,14 @@ void emitNew(List expr,  StringSink out) {
   out.write("))");
 }
 
+void emitDot(List expr,  StringSink out) {
+  out.write("(");
+  emit(expr[1], out);
+  out..write(".")..write(expr[2].name)..write("(");
+  emitArgs(expr.getRange(3, expr.length), out);
+  out.write("))");
+}
+
 void emitStr(String s, StringSink out) {
   out..write('"')
     ..write(s.replaceAllMapped(RegExp("([\x00-\x1f])|[\$\"]"), (m) {
@@ -406,6 +414,10 @@ void emit(dynamic expr,  StringSink out) {
   if (expr is List) {
     if (expr.first == NEW) {
       emitNew(expr, out);
+      return;
+    }
+    if (expr.first == DOT) {
+      emitDot(expr, out);
       return;
     }
     out.write("(");
