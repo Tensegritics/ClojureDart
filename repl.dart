@@ -158,12 +158,24 @@ final DOUBLE_REGEXP = RegExp(r"([-+]?[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?)(M)?$")
 // differs from Clojure: :3a and a/:x are not valid
 final SYMBOL_REGEXP = RegExp(r"([:]{1,2})?(?:([^0-9/:].*)/)?(/|[^0-9/:][^/]*)$");
 
+int hash_combine(int seed, int hash) {
+  seed ^= hash + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+  return seed;
+}
+
 class Symbol {
   final String namespace;
   final String name;
   const Symbol._internal(this.namespace, this.name);
   const factory Symbol(String namespace, String name) = Symbol._internal;
   String toString() { return namespace != null ? "$namespace/$name" : "$name"; }
+  bool operator == (other) => other is Symbol && namespace == other.namespace && name == other.name;
+  int get hashCode {
+    var h = 775073750;
+    hash_combine(h, namespace.hashCode);
+    hash_combine(h, name.hashCode);
+    return h;
+  }
 }
 
 class Keyword {
@@ -172,6 +184,13 @@ class Keyword {
   const Keyword._internal(this.namespace, this.name);
   const factory Keyword(String namespace, String name) = Keyword._internal;
   String toString() { return namespace != null ? ":$namespace/$name" : ":$name"; }
+  bool operator == (other) => other is Keyword && namespace == other.namespace && name == other.name;
+  int get hashCode {
+    var h = 2030774975;
+    hash_combine(h, namespace.hashCode);
+    hash_combine(h, name.hashCode);
+    return h;
+  }
 }
 
 dynamic interpretToken(String token) {
