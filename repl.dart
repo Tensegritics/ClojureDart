@@ -212,7 +212,7 @@ dynamic interpretToken(String token) {
       return Keyword(namespace, name);
     return Symbol(namespace, name);
   }
-  return "TOK" + token;
+  throw FormatException("Can't interpret token: $token");
 }
 
 final unexpectedMacroReader = (String msg) =>
@@ -296,8 +296,36 @@ void initMacros() {
   dispatchMacros[cu0("\"")]=(ReaderInput r) async =>  RegExp(await readStringContent(r));
 }
 
-clj_print(dynamic x) {
-  print(x.toString());
+print_separated(Iterable x, StringSink out, [delim=" "]) {
+  if (x.isNotEmpty) {
+    clj_print(x.first, out);
+    x.skip(1).forEach((x) {
+        out.write(delim);
+        clj_print(x, out);
+    });
+  }
+}
+
+void clj_print(dynamic x, StringSink out) {
+  if (x is List) {
+    out.write("(");
+    print_separated(x, out);
+    out.write(")");
+    return;
+  }
+
+  if (x is Set) {
+    out.write("#{");
+    print_separated(x, out);
+    out.write("}");
+    return;
+  }
+
+  if (x == null) return out.write("nil");
+
+  if (x is BigInt) return (out..write(x.toString())).write("N");
+
+  out.write(x.toString());
 }
 
 var reloads = 0;
@@ -324,8 +352,9 @@ Future main() async {
     while(true) {
       stdout.write("=> ");
       final expr = await read(rdr);
-      await reload();
-      await clj_print(expr);
+      //await reload();
+      await clj_print(expr, stdout);
+      stdout.write("\n");
       emit(expr, stdout);
       stdout.write("\n");
     }
