@@ -380,7 +380,10 @@ Future eval(x) async {
   } finally {
     await out.close();
   }
-  await reload();
+  if (!await reload()) {
+    await File("evalexpr.dart").writeAsString("Future exec() => null;\n");
+    await reload(); // TODO throw or msg on false
+  }
   return evalexpr.exec();
 }
 
