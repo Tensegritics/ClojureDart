@@ -6,6 +6,8 @@ import 'dart:developer' as dev;
 import 'package:vm_service/vm_service_io.dart' as vms;
 import 'package:vm_service/utils.dart' as vmutils;
 
+import 'evalexpr.dart' as evalexpr;
+
 class ReaderInput {
   Stream<String> _in;
   String _buf;
@@ -360,21 +362,28 @@ void clj_print(dynamic x, StringSink out) {
   out.write(x.toString());
 }
 
-var reloads = 0;
-
 Future<bool> reload() async {
-  // Build Websocket URI
   final serverUri = (await dev.Service.getInfo()).serverUri;
   final wsUri = vmutils.convertToWebSocketUrl(serviceProtocolUrl: serverUri).toString();
-  // Get VM Service
   final service = await vms.vmServiceConnectUri(wsUri);
-
   final vm = await service.getVM();
-  // Reload first isolate
   final res = await service.reloadSources(dev.Service.getIsolateID(Isolate.current));
-  print("reload ${++reloads}");
   return res.success;
 }
+
+Future eval(x) async {
+  final out = File("evalexpr.dart").openWrite();
+  try {
+    out.write("import 'dart:io';\nFuture exec() async {\n  return ");
+    emit(x, out);
+    out.write(";\n}\n");
+  } finally {
+    await out.close();
+  }
+  await reload();
+  return evalexpr.exec();
+}
+
 
 Future main() async {
   initMacros();
@@ -384,10 +393,8 @@ Future main() async {
     while(true) {
       stdout.write("=> ");
       final expr = await read(rdr);
-      //await reload();
-      await clj_print(expr, stdout);
-      stdout.write("\n");
-      emit(expr, stdout);
+      final ret = await eval(expr);
+      clj_print(ret, stdout);
       stdout.write("\n");
     }
   } finally {
