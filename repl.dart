@@ -158,7 +158,7 @@ final DOUBLE_REGEXP = RegExp(r"([-+]?[0-9]+(\.[0-9]*)?([eE][-+]?[0-9]+)?)(M)?$")
 // differs from Clojure: :3a and a/:x are not valid
 final SYMBOL_REGEXP = RegExp(r"([:]{1,2})?(?:([^0-9/:].*)/)?(/|[^0-9/:][^/]*)$");
 
-int hash_combine(int seed, int hash) {
+int hashCombine(int seed, int hash) {
   seed ^= hash + 0x9e3779b9 + (seed << 6) + (seed >> 2);
   return seed;
 }
@@ -172,8 +172,8 @@ class Symbol {
   bool operator == (other) => other is Symbol && namespace == other.namespace && name == other.name;
   int get hashCode {
     var h = 775073750;
-    hash_combine(h, namespace.hashCode);
-    hash_combine(h, name.hashCode);
+    hashCombine(h, namespace.hashCode);
+    hashCombine(h, name.hashCode);
     return h;
   }
 }
@@ -187,8 +187,8 @@ class Keyword {
   bool operator == (other) => other is Keyword && namespace == other.namespace && name == other.name;
   int get hashCode {
     var h = 2030774975;
-    hash_combine(h, namespace.hashCode);
-    hash_combine(h, name.hashCode);
+    hashCombine(h, namespace.hashCode);
+    hashCombine(h, name.hashCode);
     return h;
   }
 }
@@ -315,7 +315,7 @@ void initMacros() {
   dispatchMacros[cu0("\"")]=(ReaderInput r) async =>  RegExp(await readStringContent(r));
 }
 
-print_separated(Iterable x, StringSink out, [delim=" "]) {
+printSeparated(Iterable x, StringSink out, [delim=" "]) {
   if (x.isNotEmpty) {
     clj_print(x.first, out);
     x.skip(1).forEach((x) {
@@ -325,25 +325,38 @@ print_separated(Iterable x, StringSink out, [delim=" "]) {
   }
 }
 
+void printString(String s, StringSink out) {
+  out..write('"')
+    ..write(s.replaceAllMapped(RegExp("([\x00-\x1f])|[\"]"), (m) {
+      if (m.group(1) == null) return r'\"';
+      switch(m.group(1)) {
+        case '\b': return "\\b";
+        case '\n': return "\\n";
+        case '\r': return "\\r";
+        case '\t': return "\\t";
+        case '\f': return "\\f";
+      }
+      return "\\u${m.group(1).codeUnitAt(0).toRadixString(16).padLeft(4,'0')}";
+    }))
+    ..write('"');
+}
+
 void clj_print(dynamic x, StringSink out) {
   if (x is List) {
     out.write("(");
-    print_separated(x, out);
+    printSeparated(x, out);
     out.write(")");
     return;
   }
-
   if (x is Set) {
     out.write("#{");
-    print_separated(x, out);
+    printSeparated(x, out);
     out.write("}");
     return;
   }
-
   if (x == null) return out.write("nil");
-
   if (x is BigInt) return (out..write(x.toString())).write("N");
-
+  if (x is String) return printString(x, out);
   out.write(x.toString());
 }
 
@@ -451,8 +464,16 @@ void emitDot(List expr,  StringSink out) {
 void emitStr(String s, StringSink out) {
   out..write('"')
     ..write(s.replaceAllMapped(RegExp("([\x00-\x1f])|[\$\"]"), (m) {
-      if (m.group(1) != null) return "\\x${m.group(1).codeUnitAt(0).toRadixString(16).padLeft(2,'0')}";
-      return "\\${m.group(0)}";
+      if (m.group(1) == null) return "\\${m.group(0)}";
+      switch(m.group(1)) {
+        case '\b': return "\\b";
+        case '\n': return "\\n";
+        case '\r': return "\\r";
+        case '\t': return "\\t";
+        case '\f': return "\\f";
+        case '\v': return "\\v";
+      }
+      return "\\x${m.group(1).codeUnitAt(0).toRadixString(16).padLeft(2,'0')}";
     }))
     ..write('"');
 }
