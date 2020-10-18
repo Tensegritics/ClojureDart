@@ -366,7 +366,6 @@ Future<bool> reload() async {
   final serverUri = (await dev.Service.getInfo()).serverUri;
   final wsUri = vmutils.convertToWebSocketUrl(serviceProtocolUrl: serverUri).toString();
   final service = await vms.vmServiceConnectUri(wsUri);
-  final vm = await service.getVM();
   final res = await service.reloadSources(dev.Service.getIsolateID(Isolate.current));
   return res.success;
 }
@@ -413,11 +412,11 @@ dynamic macroexpand1(dynamic expr) {
     final first = expr[0];
     if (first is Symbol) {
       final name = first.name;
-      if (first.name.endsWith(".") && first.name != ".") {
-        return List()..add(NEW)..add(Symbol(null, first.name.substring(0,first.name.length-1)))..addAll(expr.getRange(1, expr.length));
+      if (name.endsWith(".") && name != ".") {
+        return List()..add(NEW)..add(Symbol(null, name.substring(0,name.length-1)))..addAll(expr.getRange(1, expr.length));
       }
-      if (first.name.startsWith(".") && first.name != ".") {
-        return List()..add(DOT)..add(expr[1])..add(Symbol(null, first.name.substring(1)))..addAll(expr.getRange(2, expr.length));
+      if (name.startsWith(".") && name != ".") {
+        return List()..add(DOT)..add(expr[1])..add(Symbol(null, name.substring(1)))..addAll(expr.getRange(2, expr.length));
       }
     }
     return expr;
