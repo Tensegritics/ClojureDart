@@ -1,59 +1,5 @@
-import 'dart:async';
-import 'dart:io';
-import 'dart:convert';
-import 'dart:isolate';
-import 'dart:developer' as dev;
-import 'package:vm_service/vm_service_io.dart' as vms;
-import 'package:vm_service/utils.dart' as vmutils;
-
-import '../lib/reader.dart';
-import '../lib/cljd.dart';
-import '../lib/evalexpr.dart' as evalexpr;
-
-printSeparated(Iterable x, StringSink out, [delim=" "]) {
-  if (x.isNotEmpty) {
-    clj_print(x.first, out);
-    x.skip(1).forEach((x) {
-        out.write(delim);
-        clj_print(x, out);
-    });
-  }
-}
-
-void printString(String s, StringSink out) {
-  out..write('"')
-    ..write(s.replaceAllMapped(RegExp("([\x00-\x1f])|[\"]"), (m) {
-      if (m.group(1) == null) return r'\"';
-      switch(m.group(1)) {
-        case '\b': return "\\b";
-        case '\n': return "\\n";
-        case '\r': return "\\r";
-        case '\t': return "\\t";
-        case '\f': return "\\f";
-      }
-      return "\\u${m.group(1).codeUnitAt(0).toRadixString(16).padLeft(4,'0')}";
-    }))
-    ..write('"');
-}
-
-void clj_print(dynamic x, StringSink out) {
-  if (x is List) {
-    out.write("(");
-    printSeparated(x, out);
-    out.write(")");
-    return;
-  }
-  if (x is Set) {
-    out.write("#{");
-    printSeparated(x, out);
-    out.write("}");
-    return;
-  }
-  if (x == null) return out.write("nil");
-  if (x is BigInt) return (out..write(x.toString())).write("N");
-  if (x is String) return printString(x, out);
-  out.write(x.toString());
-}
+import 'cljd.dart';
+import 'evalexpr.dart' as evalexpr;
 
 Future<bool> reload() async {
   final serverUri = (await dev.Service.getInfo()).serverUri;
@@ -77,23 +23,6 @@ Future eval(x) async {
     await reload(); // TODO throw or msg on false
   }
   return evalexpr.exec();
-}
-
-
-Future main() async {
-  final rdr = Reader(stdin.transform(utf8.decoder)); //.transform(const LineSplitter()));
-  print("Clojure Dart v0.0.ε");
-  try {
-    while(true) {
-      stdout.write("=> ");
-      final expr = await rdr.read();
-      final ret = await eval(expr);
-      clj_print(ret, stdout);
-      stdout.write("\n");
-    }
-  } finally {
-    rdr.close();
-  }
 }
 
 const DOT = Symbol(null, ".");
@@ -203,45 +132,3 @@ void emit(dynamic expr,  StringSink out) {
   }
   out.write(expr.toString());
 }
-
-/*
-class MyApp extends StatelessWidget {
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Welcome to Flutter',
-      home: Scaffold(
-        appBar: AppBar(
-          title: Text('Welcome to Flutter'),
-        ),
-        body: Center(
-          child: Text('Hello World'),
-        ),
-      ),
-    );
-  }
-}
-
-void main() => runApp(MyApp());
-
-(defn main []
-  (Flutter/main ; 1 gestion des imports
-    (reify StatelessWidget ; 2 quel constructeur parent ?
-      (build [_ ^BuildContext context]
-        (MaterialApp. & ; 3 named arguments
-          :title "Welcome to Flutter"
-          :home (Scaffold. &
-            :appBar (AppBar. & :title (Text. "Welcome to Flutter"))
-            :body (Center. & :child (Text. "Hello World"))))))))
-
-(defn main []
-  (Flutter/main ; 1 gestion des imports
-    (reify StatelessWidget ; 2 quel constructeur parent ?
-      (build [_ ^BuildContext context]
-        (MaterialApp... ; 3 named arguments
-          :title "Welcome to Flutter"
-          :home (Scaffold...
-            :appBar (AppBar... :title (Text. "Welcome to Flutter"))
-            :body (Center... :child (Text. "Hello World"))))))))
-
-*/
