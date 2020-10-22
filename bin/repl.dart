@@ -7,6 +7,7 @@ import 'package:vm_service/vm_service_io.dart' as vms;
 import 'package:vm_service/utils.dart' as vmutils;
 
 import '../lib/reader.dart';
+import '../lib/cljd.dart';
 import '../lib/evalexpr.dart' as evalexpr;
 
 printSeparated(Iterable x, StringSink out, [delim=" "]) {
