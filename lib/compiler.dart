@@ -132,7 +132,7 @@ bind(m, k) {
 
 void emitFn(List expr, m, StringSink out) {
   List paramsAlias = [];
-  dynamic params = expr[1].elements;
+  dynamic params = expr[1];
   dynamic m1 = params.fold(m, (acc, elem) {
       dynamic newEnv = bind(acc, elem);
       paramsAlias.add(lookup(newEnv, elem));
@@ -159,7 +159,7 @@ void emitBinding(List pair, m, StringSink out) {
 
 void emitLet(List expr, m, StringSink out) {
   out.write("(() {");
-  dynamic bindings = expr[1].elements;
+  dynamic bindings = expr[1];
   final bindings1 = [];
   for (var i = 0; i < bindings.length; i += 2) {
     bindings1.add(bindings.sublist(i, i+2 > bindings.length ? bindings.length : i + 2));

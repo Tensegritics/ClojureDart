@@ -1,4 +1,4 @@
-import 'dart:collection';
+import 'package:collection/collection.dart';
 
 int hashCombine(int seed, int hash) {
   seed ^= hash + 0x9e3779b9 + (seed << 6) + (seed >> 2);
@@ -35,7 +35,6 @@ class Keyword {
   }
 }
 
-class Vector {
-  final Iterable elements;
-  Vector(this.elements);
+class Vector<E> extends DelegatingList<E> {
+  Vector(List<E> v) : super(v);
 }

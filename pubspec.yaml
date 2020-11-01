@@ -3,3 +3,4 @@ name: repl
 dependencies:
   watcher:
   vm_service:
+  collection: ^1.14.13
