@@ -59,6 +59,8 @@ class Reader {
   void _initMacros() {
     // list
     _macros[cu0("(")]=(Reader r) async => await readDelimited(r, cu0(")"));
+    // vector
+    _macros[cu0("[")]=(Reader r) async => Vector(await readDelimited(r, cu0("]")));
     // quote
     _macros[cu0("'")]=(Reader r) async => ["QUOTE", await r.read()];
     // malformed

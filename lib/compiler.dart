@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:isolate';
 import 'dart:developer' as dev;
+import 'dart:collection';
 import 'package:vm_service/vm_service_io.dart' as vms;
 import 'package:vm_service/utils.dart' as vmutils;
 
@@ -19,7 +20,7 @@ Future eval(x) async {
   final out = File("lib/evalexpr.dart").openWrite();
   try {
     out.write("import 'dart:io';\nFuture exec() async {\n  return ");
-    emit(x, out);
+    emit(x, {}, out);
     out.write(";\n}\n");
   } finally {
     await out.close();
@@ -33,6 +34,9 @@ Future eval(x) async {
 
 const DOT = Symbol(null, ".");
 const NEW = Symbol(null, "new");
+const FN = Symbol(null, "fn");
+const LET = Symbol(null, "let");
+const DO = Symbol(null, "do");
 
 dynamic macroexpand1(dynamic expr) {
   if ((expr is List) && (expr.length > 0)) {
@@ -44,6 +48,9 @@ dynamic macroexpand1(dynamic expr) {
       }
       if (name.startsWith(".") && name != ".") {
         return List()..add(DOT)..add(expr[1])..add(Symbol(null, name.substring(1)))..addAll(expr.getRange(2, expr.length));
+      }
+      if (first == DO) {
+        return List()..add(LET)..add(Vector([]))..addAll(expr.getRange(1, expr.length));
       }
     }
     return expr;
@@ -60,7 +67,7 @@ dynamic macroexpand(dynamic expr) {
   return expr;
 }
 
-void emitArgs(Iterable args, StringSink out, [comma = false]) {
+void emitArgs(Iterable args, m, StringSink out, [comma = false]) {
   // var comma = false;
   var key = true;
   var named = false;
@@ -68,7 +75,7 @@ void emitArgs(Iterable args, StringSink out, [comma = false]) {
     if (named) {
       if (key && comma) out.write(",");
       if (key) out..write(arg.name)..write(":");
-      else emit(arg, out);
+      else emit(arg, m, out);
       comma=true;
       key=!key;
       return;
@@ -78,23 +85,99 @@ void emitArgs(Iterable args, StringSink out, [comma = false]) {
       return;
     }
     if (comma) out.write(",");
-    emit(arg, out);
+    emit(arg, m, out);
     comma=true;
   });
 }
 
-void emitNew(List expr,  StringSink out) {
+void emitParams(Iterable params, StringSink out) {
+  out.write("(");
+  var comma = false;
+  params.forEach((param) {
+      if (comma) out.write(",");
+      out.write(param.name);
+      comma=true;
+  });
+  out.write(")");
+}
+
+void emitNew(List expr, m, StringSink out) {
   out..write("(")..write(expr[1].name)..write("(");
-  emitArgs(expr.getRange(2, expr.length), out);
+  emitArgs(expr.getRange(2, expr.length), m, out);
   out.write("))");
 }
 
-void emitDot(List expr,  StringSink out) {
+void emitDot(List expr, m, StringSink out) {
   out.write("(");
-  emit(expr[1], out);
+  emit(expr[1], m, out);
   out..write(".")..write(expr[2].name)..write("(");
-  emitArgs(expr.getRange(3, expr.length), out);
+  emitArgs(expr.getRange(3, expr.length), m, out);
   out.write("))");
+}
+
+assoc(m, k, v) {
+  final m1 = Map.of(m as Map);
+  m1[k]=v;
+  return m1;
+}
+Symbol lookup(m, k, [v]) {
+  return m.containsKey(k) ? m[k] : v;
+}
+Symbol munge(Symbol v) {
+  return v;
+}
+bind(m, k) {
+  return assoc(m, k, (m.containsKey(k) ? Symbol(null, (m[k].toString() + "_")) : munge(k)));
+}
+
+void emitFn(List expr, m, StringSink out) {
+  List paramsAlias = [];
+  dynamic params = expr[1].elements;
+  dynamic m1 = params.fold(m, (acc, elem) {
+      dynamic newEnv = bind(acc, elem);
+      paramsAlias.add(lookup(newEnv, elem));
+      return newEnv;
+  });
+  out.write("(");
+  emitParams(paramsAlias, out);
+  out.write("{");
+  for (var i = 2; i < expr.length; i++) {
+    if (i == (expr.length - 1)) out.write("return ");
+    emit(expr[i], m1, out);
+    out.write(";");
+  }
+  out.write("})");
+}
+
+void emitBinding(List pair, m, StringSink out) {
+  out.write("final ");
+  emitSymbol(pair[0], bind(m, pair[0]), out);
+  out.write(" = ");
+  emit(pair[1], m, out);
+  out.write(";");
+}
+
+void emitLet(List expr, m, StringSink out) {
+  out.write("(() {");
+  dynamic bindings = expr[1].elements;
+  final bindings1 = [];
+  for (var i = 0; i < bindings.length; i += 2) {
+    bindings1.add(bindings.sublist(i, i+2 > bindings.length ? bindings.length : i + 2));
+  }
+  dynamic m1 = bindings1.fold(m, (acc, elem) {
+      emitBinding(elem, acc, out);
+      return bind(acc, elem.first);
+  });
+  for (var i = 2; i < expr.length; i++) {
+    if (i == (expr.length - 1)) out.write("return ");
+    emit(expr[i], m1, out);
+    out.write(";");
+  }
+  out.write("})()");
+}
+
+void emitSymbol(Symbol sym, m, StringSink out) {
+  out.write(lookup(m, sym, sym));
 }
 
 void emitStr(String s, StringSink out) {
@@ -114,22 +197,34 @@ void emitStr(String s, StringSink out) {
     ..write('"');
 }
 
-void emit(dynamic expr,  StringSink out) {
+void emit(dynamic expr, m, StringSink out) {
   expr=macroexpand(expr);
   if (expr is List) {
     if (expr.first == NEW) {
-      emitNew(expr, out);
+      emitNew(expr, m, out);
       return;
     }
     if (expr.first == DOT) {
-      emitDot(expr, out);
+      emitDot(expr, m, out);
+      return;
+    }
+    if (expr.first == FN) {
+      emitFn(expr, m, out);
+      return;
+    }
+    if (expr.first == LET) {
+      emitLet(expr, m, out);
       return;
     }
     out.write("(");
-    emit(expr.first, out);
+    emit(expr.first, m, out);
     out.write("(");
-    emitArgs(expr.getRange(1, expr.length), out);
+    emitArgs(expr.getRange(1, expr.length), m, out);
     out.write("))");
+    return;
+  }
+  if (expr is Symbol) {
+    emitSymbol(expr, m, out);
     return;
   }
   if (expr is String) {
