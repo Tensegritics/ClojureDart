@@ -130,9 +130,14 @@ bind(m, k) {
   return assoc(m, k, (m.containsKey(k) ? Symbol(null, (m[k].toString() + "_")) : munge(k)));
 }
 
+// ((n) {
+//   fact (n) { if (n > 0) return n*fact(n-1); return 1; };
+//   return fact(n);
+// })
 void emitFn(List expr, m, StringSink out) {
+  bool namedFn = expr[1] is Symbol;
   List paramsAlias = [];
-  dynamic params = expr[1];
+  dynamic params = namedFn ? expr[2] : expr[1];
   dynamic m1 = params.fold(m, (acc, elem) {
       dynamic newEnv = bind(acc, elem);
       paramsAlias.add(lookup(newEnv, elem));
@@ -141,9 +146,20 @@ void emitFn(List expr, m, StringSink out) {
   out.write("(");
   emitParams(paramsAlias, out);
   out.write("{");
-  for (var i = 2; i < expr.length; i++) {
+  if (namedFn) {
+    emitSymbol(expr[1], m1, out);
+    emitParams(paramsAlias, out);
+    out.write("{");
+  }
+  for (var i = namedFn ? 3 : 2; i < expr.length; i++) {
     if (i == (expr.length - 1)) out.write("return ");
     emit(expr[i], m1, out);
+    out.write(";");
+  }
+  if (namedFn) {
+    out.write("}; return ");
+    emitSymbol(expr[1], m1, out);
+    emitParams(paramsAlias, out);
     out.write(";");
   }
   out.write("})");
