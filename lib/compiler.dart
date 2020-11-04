@@ -37,6 +37,7 @@ const NEW = Symbol(null, "new");
 const FN = Symbol(null, "fn");
 const LET = Symbol(null, "let");
 const DO = Symbol(null, "do");
+const IF = Symbol(null, "if");
 
 dynamic macroexpand1(dynamic expr) {
   if ((expr is List) && (expr.length > 0)) {
@@ -108,11 +109,16 @@ void emitNew(List expr, m, StringSink out) {
 }
 
 void emitDot(List expr, m, StringSink out) {
+  final match = RegExp(r"^-(.*)").matchAsPrefix(expr[2].name);
   out.write("(");
   emit(expr[1], m, out);
-  out..write(".")..write(expr[2].name)..write("(");
-  emitArgs(expr.getRange(3, expr.length), m, out);
-  out.write("))");
+  out..write(".")..write((match == null) ? expr[2].name : match.group(1));
+  if (match == null) {
+    out.write("(");
+    emitArgs(expr.getRange(3, expr.length), m, out);
+    out.write(")");
+  }
+  out.write(")");
 }
 
 assoc(m, k, v) {
@@ -163,6 +169,16 @@ void emitFn(List expr, m, StringSink out) {
     out.write(";");
   }
   out.write("})");
+}
+
+void emitIf(List expr, m, StringSink out) {
+  out.write("(");
+  emit(expr[1], m, out);
+  out.write(" ? ");
+  emit(expr[2], m, out);
+  out.write(" : ");
+  emit((expr.length == 4) ? expr[3] : null, m, out);
+  out.write(")");
 }
 
 void emitBinding(List pair, m, StringSink out) {
@@ -230,6 +246,10 @@ void emit(dynamic expr, m, StringSink out) {
     }
     if (expr.first == LET) {
       emitLet(expr, m, out);
+      return;
+    }
+    if (expr.first == IF) {
+      emitIf(expr, m, out);
       return;
     }
     out.write("(");
