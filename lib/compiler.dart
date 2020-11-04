@@ -8,6 +8,8 @@ import 'package:vm_service/utils.dart' as vmutils;
 import 'cljd.dart';
 import 'evalexpr.dart' as evalexpr;
 
+enum EmitLocus { RETURN, EXPR }
+
 Future<bool> reload() async {
   final serverUri = (await dev.Service.getInfo()).serverUri;
   final wsUri = vmutils.convertToWebSocketUrl(serviceProtocolUrl: serverUri).toString();
@@ -19,9 +21,9 @@ Future<bool> reload() async {
 Future eval(x) async {
   final out = File("lib/evalexpr.dart").openWrite();
   try {
-    out.write("import 'dart:io';\nFuture exec() async {\n  return ");
-    emit(x, {}, out);
-    out.write(";\n}\n");
+    out.write("import 'dart:io';\nFuture exec() async {\n");
+    emit(x, {}, out, EmitLocus.RETURN);
+    out.write("\n}\n");
   } finally {
     await out.close();
   }
@@ -76,7 +78,7 @@ void emitArgs(Iterable args, m, StringSink out, [comma = false]) {
     if (named) {
       if (key && comma) out.write(",");
       if (key) out..write(arg.name)..write(":");
-      else emit(arg, m, out);
+      else emit(arg, m, out, EmitLocus.EXPR);
       comma=true;
       key=!key;
       return;
@@ -86,7 +88,7 @@ void emitArgs(Iterable args, m, StringSink out, [comma = false]) {
       return;
     }
     if (comma) out.write(",");
-    emit(arg, m, out);
+    emit(arg, m, out, EmitLocus.EXPR);
     comma=true;
   });
 }
@@ -102,16 +104,19 @@ void emitParams(Iterable params, StringSink out) {
   out.write(")");
 }
 
-void emitNew(List expr, m, StringSink out) {
+void emitNew(List expr, m, StringSink out, EmitLocus locus) {
+  if (locus == EmitLocus.RETURN) out.write("return ");
   out..write("(")..write(expr[1].name)..write("(");
   emitArgs(expr.getRange(2, expr.length), m, out);
   out.write("))");
+  if (locus == EmitLocus.RETURN) out.write(";");
 }
 
-void emitDot(List expr, m, StringSink out) {
+void emitDot(List expr, m, StringSink out, EmitLocus locus) {
+  if (locus == EmitLocus.RETURN) out.write("return ");
   final match = RegExp(r"^-(.*)").matchAsPrefix(expr[2].name);
   out.write("(");
-  emit(expr[1], m, out);
+  emit(expr[1], m, out, EmitLocus.EXPR);
   out..write(".")..write((match == null) ? expr[2].name : match.group(1));
   if (match == null) {
     out.write("(");
@@ -119,6 +124,7 @@ void emitDot(List expr, m, StringSink out) {
     out.write(")");
   }
   out.write(")");
+  if (locus == EmitLocus.RETURN) out.write(";");
 }
 
 assoc(m, k, v) {
@@ -140,7 +146,8 @@ bind(m, k) {
 //   fact (n) { if (n > 0) return n*fact(n-1); return 1; };
 //   return fact(n);
 // })
-void emitFn(List expr, m, StringSink out) {
+void emitFn(List expr, m, StringSink out, EmitLocus locus) {
+  if (locus == EmitLocus.RETURN) out.write("return ");
   bool namedFn = expr[1] is Symbol;
   List paramsAlias = [];
   dynamic params = namedFn ? expr[2] : expr[1];
@@ -158,9 +165,8 @@ void emitFn(List expr, m, StringSink out) {
     out.write("{");
   }
   for (var i = namedFn ? 3 : 2; i < expr.length; i++) {
-    if (i == (expr.length - 1)) out.write("return ");
-    emit(expr[i], m1, out);
-    out.write(";");
+    // FIXME
+    emit(expr[i], m1, out, i == (expr.length - 1) ? EmitLocus.RETURN : EmitLocus.EXPR);
   }
   if (namedFn) {
     out.write("}; return ");
@@ -169,15 +175,25 @@ void emitFn(List expr, m, StringSink out) {
     out.write(";");
   }
   out.write("})");
+  if (locus == EmitLocus.RETURN) out.write(";");
 }
 
-void emitIf(List expr, m, StringSink out) {
+void emitIf(List expr, m, StringSink out, EmitLocus locus) {
+  if (locus == EmitLocus.RETURN) {
+    out.write("if (");
+    emit(expr[1], m, out, EmitLocus.EXPR);
+    out.write("){");
+    emit(expr[2], m, out, EmitLocus.RETURN);
+    out.write("}");
+    emit((expr.length == 4) ? expr[3] : null, m, out, EmitLocus.RETURN);
+    return;
+  }
   out.write("(");
-  emit(expr[1], m, out);
+  emit(expr[1], m, out, EmitLocus.EXPR);
   out.write(" ? ");
-  emit(expr[2], m, out);
+  emit(expr[2], m, out, EmitLocus.EXPR);
   out.write(" : ");
-  emit((expr.length == 4) ? expr[3] : null, m, out);
+  emit((expr.length == 4) ? expr[3] : null, m, out, EmitLocus.EXPR);
   out.write(")");
 }
 
@@ -185,12 +201,12 @@ void emitBinding(List pair, m, StringSink out) {
   out.write("final ");
   emitSymbol(pair[0], bind(m, pair[0]), out);
   out.write(" = ");
-  emit(pair[1], m, out);
+  emit(pair[1], m, out, EmitLocus.EXPR);
   out.write(";");
 }
 
-void emitLet(List expr, m, StringSink out) {
-  out.write("(() {");
+void emitLet(List expr, m, StringSink out, EmitLocus locus) {
+  if (locus != EmitLocus.RETURN) out.write("(() {");
   dynamic bindings = expr[1];
   final bindings1 = [];
   for (var i = 0; i < bindings.length; i += 2) {
@@ -200,12 +216,12 @@ void emitLet(List expr, m, StringSink out) {
       emitBinding(elem, acc, out);
       return bind(acc, elem.first);
   });
-  for (var i = 2; i < expr.length; i++) {
-    if (i == (expr.length - 1)) out.write("return ");
-    emit(expr[i], m1, out);
-    out.write(";");
+  for (var i = 2; i < expr.length-1; i++) {
+    emit(expr[i], m1, out, EmitLocus.EXPR);
+    out.write(";\n");
   }
-  out.write("})()");
+  emit(expr.last, m1, out, EmitLocus.RETURN);
+  if (locus != EmitLocus.RETURN) out.write("})()");
 }
 
 void emitSymbol(Symbol sym, m, StringSink out) {
@@ -229,43 +245,49 @@ void emitStr(String s, StringSink out) {
     ..write('"');
 }
 
-void emit(dynamic expr, m, StringSink out) {
-  expr=macroexpand(expr);
-  if (expr is List) {
-    if (expr.first == NEW) {
-      emitNew(expr, m, out);
-      return;
-    }
-    if (expr.first == DOT) {
-      emitDot(expr, m, out);
-      return;
-    }
-    if (expr.first == FN) {
-      emitFn(expr, m, out);
-      return;
-    }
-    if (expr.first == LET) {
-      emitLet(expr, m, out);
-      return;
-    }
-    if (expr.first == IF) {
-      emitIf(expr, m, out);
-      return;
-    }
+void emitFnCall(List expr, m, StringSink out, EmitLocus locus) {
+    if (locus == EmitLocus.RETURN) out.write("return ");
     out.write("(");
-    emit(expr.first, m, out);
+    emit(expr.first, m, out, EmitLocus.EXPR);
     out.write("(");
     emitArgs(expr.getRange(1, expr.length), m, out);
     out.write("))");
+    if (locus == EmitLocus.RETURN) out.write(";");
+}
+
+void emit(dynamic expr, m, StringSink out, EmitLocus locus ) {
+  expr=macroexpand(expr);
+  if (expr is List) {
+    if (expr.first == NEW) {
+      emitNew(expr, m, out, locus);
+      return;
+    }
+    if (expr.first == DOT) {
+      emitDot(expr, m, out, locus);
+      return;
+    }
+    if (expr.first == FN) {
+      emitFn(expr, m, out, locus);
+      return;
+    }
+    if (expr.first == LET) {
+      emitLet(expr, m, out, locus);
+      return;
+    }
+    if (expr.first == IF) {
+      emitIf(expr, m, out, locus);
+      return;
+    }
+    emitFnCall(expr, m, out, locus);
     return;
   }
+  if (locus == EmitLocus.RETURN) out.write("return ");
   if (expr is Symbol) {
     emitSymbol(expr, m, out);
-    return;
-  }
-  if (expr is String) {
+  } else if (expr is String) {
     emitStr(expr, out);
-    return;
+  } else {
+    out.write(expr.toString());
   }
-  out.write(expr.toString());
+  if (locus == EmitLocus.RETURN) out.write(";");
 }
