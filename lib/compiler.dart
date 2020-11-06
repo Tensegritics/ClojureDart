@@ -68,7 +68,7 @@ dynamic macroexpand(dynamic expr) {
   return expr;
 }
 
-void emitArgs(Iterable args, m, StringSink out, [comma = false]) {
+void emitArgs(Iterable args, env, StringSink out, [comma = false]) {
   // var comma = false;
   var key = true;
   var named = false;
@@ -76,7 +76,7 @@ void emitArgs(Iterable args, m, StringSink out, [comma = false]) {
     if (named) {
       if (key && comma) out.write(",");
       if (key) out..write(arg.name)..write(":");
-      else emit(arg, m, out, null);
+      else emit(arg, env, out, null);
       comma=true;
       key=!key;
       return;
@@ -86,7 +86,7 @@ void emitArgs(Iterable args, m, StringSink out, [comma = false]) {
       return;
     }
     if (comma) out.write(",");
-    emit(arg, m, out, null);
+    emit(arg, env, out, null);
     comma=true;
   });
 }
@@ -102,23 +102,23 @@ void emitParams(Iterable params, StringSink out) {
   out.write(")");
 }
 
-void emitNew(List expr, m, StringSink out, String locus) {
+void emitNew(List expr, env, StringSink out, String locus) {
   if (locus != null) out.write(locus);
   out..write("(")..write(expr[1].name)..write("(");
-  emitArgs(expr.getRange(2, expr.length), m, out);
+  emitArgs(expr.getRange(2, expr.length), env, out);
   out.write("))");
   if (locus != null) out.write(";\n");
 }
 
-void emitDot(List expr, m, StringSink out, String locus) {
+void emitDot(List expr, env, StringSink out, String locus) {
   if (locus != null) out.write(locus);
   final match = RegExp(r"^-(.*)").matchAsPrefix(expr[2].name);
   out.write("(");
-  emit(expr[1], m, out, null);
+  emit(expr[1], env, out, null);
   out..write(".")..write((match == null) ? expr[2].name : match.group(1));
   if (match == null) {
     out.write("(");
-    emitArgs(expr.getRange(3, expr.length), m, out);
+    emitArgs(expr.getRange(3, expr.length), env, out);
     out.write(")");
   }
   out.write(")");
@@ -130,45 +130,43 @@ assoc(m, k, v) {
   m1[k]=v;
   return m1;
 }
-Symbol lookup(m, k, [v]) {
+lookup(m, k, [v]) {
   return m.containsKey(k) ? m[k] : v;
 }
-Symbol munge(Symbol v) {
-  return v;
-}
-bind(m, k) {
-  return assoc(m, k, (m.containsKey(k) ? Symbol(null, (m[k].toString() + "_")) : munge(k)));
+String munge(Symbol v, [Map env]) {
+  if (env == null || env.containsKey(v)) return v.name; // TODO escape
+  return "${v.name}__${_counter++}";
 }
 
 // ((n) {
 //   fact (n) { if (n > 0) return n*fact(n-1); return 1; };
 //   return fact(n);
 // })
-void emitFn(List expr, m, StringSink out, String locus) {
+void emitFn(List expr, env, StringSink out, String locus) {
   if (locus != null) out.write(locus);
   bool namedFn = expr[1] is Symbol;
   List paramsAlias = [];
   dynamic params = namedFn ? expr[2] : expr[1];
-  dynamic m1 = params.fold(m, (acc, elem) {
-      dynamic newEnv = bind(acc, elem);
-      paramsAlias.add(lookup(newEnv, elem));
-      return newEnv;
+  env = params.fold(env, (env, elem) {
+      String varname = munge(elem, env);
+      paramsAlias.add(varname);
+      return assoc(env, elem, varname);
   });
   out.write("(");
   emitParams(paramsAlias, out);
   out.write("{");
   if (namedFn) {
-    emitSymbol(expr[1], m1, out);
+    emitSymbol(expr[1], env, out);
     emitParams(paramsAlias, out);
     out.write("{");
   }
   for (var i = namedFn ? 3 : 2; i < expr.length; i++) {
     // FIXME
-    emit(expr[i], m1, out, i == (expr.length - 1) ? "return " : null);
+    emit(expr[i], env, out, i == (expr.length - 1) ? "return " : null);
   }
   if (namedFn) {
     out.write("}; return ");
-    emitSymbol(expr[1], m1, out);
+    emitSymbol(expr[1], env, out);
     emitParams(paramsAlias, out);
     out.write(";\n");
   }
@@ -176,53 +174,44 @@ void emitFn(List expr, m, StringSink out, String locus) {
   if (locus != null) out.write(";\n");
 }
 
-void emitIf(List expr, m, StringSink out, String locus) {
-  if (locus != null) {
-    out.write("if (");
-    emit(expr[1], m, out, null);
-    out.write("){\n");
-    emit(expr[2], m, out, locus);
-    out.write("}else{\n");
-    emit((expr.length == 4) ? expr[3] : null, m, out, locus);
-    out.write("}\n");
-    return;
-  }
-  out.write("(");
-  emit(expr[1], m, out, null);
-  out.write(" ? ");
-  emit(expr[2], m, out, null);
-  out.write(" : ");
-  emit((expr.length == 4) ? expr[3] : null, m, out, null);
-  out.write(")");
+void emitIf(List expr, env, StringSink out, String locus) {
+  final test = "_test_${_counter++}";
+  out.write("var $test;\n");
+  emit(expr[1], env, out, "$test=");
+  out.write("if ($test) {\n");
+  emit(expr[2], env, out, locus);
+  out.write("}else{\n");
+  emit((expr.length == 4) ? expr[3] : null, env, out, locus);
+  out.write("}\n");
+  return;
 }
 
-Map emitBinding(List pair, m, StringSink out) { // not great to return Map
-  out.write("var ");
+Map emitBinding(List pair, env, StringSink out) { // not great to return Map
   final sym = pair[0];
-  m = bind(m, sym);
-  emitSymbol(sym, m, out);
-  out.write(";\n");
-  emit(pair[1], m, out, lookup(m, sym, sym).toString() + "=");
-  return m;
+  final varname = munge(sym, env);
+  env = assoc(env, sym, varname);
+  out.write("var $varname;\n");
+  emit(pair[1], env, out, "$varname=");
+  return env;
 }
 
-void emitLet(List expr, m, StringSink out, String locus) {
+void emitLet(List expr, env, StringSink out, String locus) {
   dynamic bindings = expr[1];
   final bindings1 = [];
   for (var i = 0; i < bindings.length; i += 2) {
     bindings1.add(bindings.sublist(i, i+2 > bindings.length ? bindings.length : i + 2));
   }
-  dynamic m1 = bindings1.fold(m, (acc, elem) {
+  env = bindings1.fold(env, (acc, elem) {
       return emitBinding(elem, acc, out);
   });
   for (var i = 2; i < expr.length-1; i++) {
-    emit(expr[i], m1, out, ""); // pure effect
+    emit(expr[i], env, out, ""); // pure effect
   }
-  emit(expr.last, m1, out, locus ?? "return ");
+  emit(expr.last, env, out, locus ?? "return ");
 }
 
-void emitSymbol(Symbol sym, m, StringSink out) {
-  out.write(lookup(m, sym, sym));
+void emitSymbol(Symbol sym, env, StringSink out) {
+  out.write(lookup(env, sym));
 }
 
 void emitStr(String s, StringSink out) {
@@ -244,13 +233,13 @@ void emitStr(String s, StringSink out) {
 
 var _counter=0;
 
-void emitFnCall(List expr, m, StringSink out, String locus) {
+void emitFnCall(List expr, env, StringSink out, String locus) {
   var args=List();
   for(var i = 0; i < expr.length; i++) {
     final arg = "_arg${_counter++}";
     args.add(arg);
     out.write("var $arg;\n");
-    emit(expr[i], m, out, "${arg}=");
+    emit(expr[i], env, out, "${arg}=");
   }
   out.write(locus);
   out.write(args[0]);
@@ -259,35 +248,35 @@ void emitFnCall(List expr, m, StringSink out, String locus) {
   out.write(");\n");
 }
 
-void emit(dynamic expr, m, StringSink out, String locus) {
+void emit(dynamic expr, env, StringSink out, String locus) {
   expr=macroexpand(expr);
   if (expr is List) {
     if (expr.first == NEW) {
-      emitNew(expr, m, out, locus);
+      emitNew(expr, env, out, locus);
       return;
     }
     if (expr.first == DOT) {
-      emitDot(expr, m, out, locus);
+      emitDot(expr, env, out, locus);
       return;
     }
     if (expr.first == FN) {
-      emitFn(expr, m, out, locus);
+      emitFn(expr, env, out, locus);
       return;
     }
     if (expr.first == LET) {
-      emitLet(expr, m, out, locus);
+      emitLet(expr, env, out, locus);
       return;
     }
     if (expr.first == IF) {
-      emitIf(expr, m, out, locus);
+      emitIf(expr, env, out, locus);
       return;
     }
-    emitFnCall(expr, m, out, locus);
+    emitFnCall(expr, env, out, locus);
     return;
   }
   if (locus != null) out.write(locus);
   if (expr is Symbol) {
-    emitSymbol(expr, m, out);
+    emitSymbol(expr, env, out);
   } else if (expr is String) {
     emitStr(expr, out);
   } else {
