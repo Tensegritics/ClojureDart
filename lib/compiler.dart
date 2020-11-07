@@ -25,10 +25,10 @@ Future eval(x) async {
   } finally {
     await out.close();
   }
-  if (!await reload()) {
-//    await File("lib/evalexpr.dart").writeAsString("Future exec() => null;\n");
-//    await reload(); // TODO throw or msg on false
-  }
+ if (!await reload()) {
+   await File("lib/evalexpr.dart").writeAsString("Future exec() => null;\n");
+   await reload(); // TODO throw or msg on false
+ }
   return evalexpr.exec();
 }
 
@@ -96,7 +96,7 @@ void emitParams(Iterable params, StringSink out) {
   var comma = false;
   params.forEach((param) {
       if (comma) out.write(",");
-      out.write(param.name);
+      out.write(param);
       comma=true;
   });
   out.write(")");
@@ -111,11 +111,13 @@ void emitNew(List expr, env, StringSink out, String locus) {
 }
 
 void emitDot(List expr, env, StringSink out, String locus) {
-  if (locus != null) out.write(locus);
   final match = RegExp(r"^-(.*)").matchAsPrefix(expr[2].name);
-  out.write("(");
-  emit(expr[1], env, out, null);
-  out..write(".")..write((match == null) ? expr[2].name : match.group(1));
+  final varname = "_test_${_counter++}";
+  out.write("var $varname;\n");
+  emit(expr[1], env, out, "$varname=");
+  out.write(locus);
+  // FIXME : hack for handling special symbol like stdio
+  out..write("($varname.")..write((match == null) ? expr[2].name : match.group(1));
   if (match == null) {
     out.write("(");
     emitArgs(expr.getRange(3, expr.length), env, out);
@@ -133,37 +135,34 @@ assoc(m, k, v) {
 lookup(m, k, [v]) {
   return m.containsKey(k) ? m[k] : v;
 }
-String munge(Symbol v, [Map env]) {
-  if (env == null || env.containsKey(v)) return v.name; // TODO escape
+String munge(Symbol v) {
   return "${v.name}__${_counter++}";
 }
 
-// ((n) {
-//   fact (n) { if (n > 0) return n*fact(n-1); return 1; };
-//   return fact(n);
-// })
 void emitFn(List expr, env, StringSink out, String locus) {
   if (locus != null) out.write(locus);
   bool namedFn = expr[1] is Symbol;
   List paramsAlias = [];
   dynamic params = namedFn ? expr[2] : expr[1];
   env = params.fold(env, (env, elem) {
-      String varname = munge(elem, env);
+      String varname = munge(elem);
       paramsAlias.add(varname);
       return assoc(env, elem, varname);
   });
   out.write("(");
   emitParams(paramsAlias, out);
-  out.write("{");
+  out.write("{\n");
   if (namedFn) {
+    env = assoc(env, expr[1], munge(expr[1]));
     emitSymbol(expr[1], env, out);
     emitParams(paramsAlias, out);
-    out.write("{");
+    out.write("{\n");
   }
-  for (var i = namedFn ? 3 : 2; i < expr.length; i++) {
-    // FIXME
-    emit(expr[i], env, out, i == (expr.length - 1) ? "return " : null);
+  for (var i = namedFn ? 3 : 2; i < expr.length-1; i++) {
+    emit(expr[i], env, out, "");
   }
+  emit(expr.last, env, out, "return ");
+
   if (namedFn) {
     out.write("}; return ");
     emitSymbol(expr[1], env, out);
@@ -188,11 +187,10 @@ void emitIf(List expr, env, StringSink out, String locus) {
 
 Map emitBinding(List pair, env, StringSink out) { // not great to return Map
   final sym = pair[0];
-  final varname = munge(sym, env);
-  env = assoc(env, sym, varname);
+  final varname = munge(sym);
   out.write("var $varname;\n");
   emit(pair[1], env, out, "$varname=");
-  return env;
+  return assoc(env, sym, varname);
 }
 
 void emitLet(List expr, env, StringSink out, String locus) {
