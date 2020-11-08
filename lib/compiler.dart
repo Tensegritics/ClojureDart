@@ -236,7 +236,7 @@ void emitLoop(List expr, env, StringSink out, String locus) {
     emit(expr[i], env, out, ""); // pure effect
   }
   emit(expr.last, env, out, locus ?? "return ");
-  out.write("} while(true);\n");
+  out.write("break;\n} while(true);\n");
 }
 
 void emitRecur(List expr, env, StringSink out, String locus) {
