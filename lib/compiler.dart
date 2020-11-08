@@ -25,10 +25,10 @@ Future eval(x) async {
   } finally {
     await out.close();
   }
- if (!await reload()) {
-   await File("lib/evalexpr.dart").writeAsString("Future exec() => null;\n");
-   await reload(); // TODO throw or msg on false
- }
+  if (!await reload()) {
+    await File("lib/evalexpr.dart").writeAsString("Future exec() => null;\n");
+    await reload(); // TODO throw or msg on false
+  }
   return evalexpr.exec();
 }
 
