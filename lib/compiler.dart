@@ -76,7 +76,7 @@ void emitArgs(Iterable args, env, StringSink out, [comma = false]) {
     if (named) {
       if (key && comma) out.write(",");
       if (key) out..write(arg.name)..write(":");
-      else emit(arg, env, out, null);
+      else out.write(arg);
       comma=true;
       key=!key;
       return;
@@ -86,7 +86,7 @@ void emitArgs(Iterable args, env, StringSink out, [comma = false]) {
       return;
     }
     if (comma) out.write(",");
-    emit(arg, env, out, null);
+    out.write(arg);
     comma=true;
   });
 }
@@ -102,12 +102,27 @@ void emitParams(Iterable params, StringSink out) {
   out.write(")");
 }
 
+List emitArgsDeclaration(Iterable expr, env, StringSink out) { // FIXME returning a LIST is not cool dude
+  var decls = List();
+  var args = expr.toList();
+  for (var i = 0; i < args.length; i++) {
+    if (((args[i] is Symbol) && (args[i].name == "&")) || (args[i] is Keyword)) {
+      decls.add(args[i]);
+      continue;
+    }
+    final arg = "_arg${_counter++}";
+    decls.add(arg);
+    out.write("var $arg;\n");
+    emit(args[i], env, out, "${arg}=");
+  }
+  return decls;
+}
+
 void emitNew(List expr, env, StringSink out, String locus) {
-  if (locus != null) out.write(locus);
-  out..write("(")..write(expr[1].name)..write("(");
-  emitArgs(expr.getRange(2, expr.length), env, out);
-  out.write("))");
-  if (locus != null) out.write(";\n");
+  var args = emitArgsDeclaration(expr.getRange(2, expr.length), env, out);
+  out..write("$locus(")..write(expr[1].name)..write("(");
+  emitArgs(args, env, out);
+  out.write("));\n");
 }
 
 void emitDot(List expr, env, StringSink out, String locus) {
@@ -115,16 +130,16 @@ void emitDot(List expr, env, StringSink out, String locus) {
   final varname = "_test_${_counter++}";
   out.write("var $varname;\n");
   emit(expr[1], env, out, "$varname=");
-  out.write(locus);
+  var args;
+  if (match == null) args = emitArgsDeclaration(expr.getRange(3, expr.length), env, out);
   // FIXME : hack for handling special symbol like stdio
-  out..write("($varname.")..write((match == null) ? expr[2].name : match.group(1));
+  out..write("$locus($varname.")..write((match == null) ? expr[2].name : match.group(1));
   if (match == null) {
     out.write("(");
-    emitArgs(expr.getRange(3, expr.length), env, out);
+    emitArgs(args, env, out);
     out.write(")");
   }
-  out.write(")");
-  if (locus != null) out.write(";\n");
+  out.write(");\n");
 }
 
 assoc(m, k, v) {
@@ -140,7 +155,6 @@ String munge(Symbol v) {
 }
 
 void emitFn(List expr, env, StringSink out, String locus) {
-  if (locus != null) out.write(locus);
   bool namedFn = expr[1] is Symbol;
   List paramsAlias = [];
   dynamic params = namedFn ? expr[2] : expr[1];
@@ -149,7 +163,7 @@ void emitFn(List expr, env, StringSink out, String locus) {
       paramsAlias.add(varname);
       return assoc(env, elem, varname);
   });
-  out.write("(");
+  out.write("$locus(");
   emitParams(paramsAlias, out);
   out.write("{\n");
   if (namedFn) {
@@ -162,15 +176,13 @@ void emitFn(List expr, env, StringSink out, String locus) {
     emit(expr[i], env, out, "");
   }
   emit(expr.last, env, out, "return ");
-
   if (namedFn) {
     out.write("}; return ");
     emitSymbol(expr[1], env, out);
     emitParams(paramsAlias, out);
     out.write(";\n");
   }
-  out.write("})");
-  if (locus != null) out.write(";\n");
+  out.write("});\n");
 }
 
 void emitIf(List expr, env, StringSink out, String locus) {
@@ -272,7 +284,7 @@ void emit(dynamic expr, env, StringSink out, String locus) {
     emitFnCall(expr, env, out, locus);
     return;
   }
-  if (locus != null) out.write(locus);
+  out.write(locus);
   if (expr is Symbol) {
     emitSymbol(expr, env, out);
   } else if (expr is String) {
@@ -280,5 +292,5 @@ void emit(dynamic expr, env, StringSink out, String locus) {
   } else {
     out.write(expr.toString());
   }
-  if (locus != null) out.write(";\n");
+  out.write(";\n");
 }
