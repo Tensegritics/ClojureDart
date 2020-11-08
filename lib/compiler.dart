@@ -38,6 +38,8 @@ const FN = Symbol(null, "fn");
 const LET = Symbol(null, "let");
 const DO = Symbol(null, "do");
 const IF = Symbol(null, "if");
+const LOOP = Symbol(null, "loop");
+const RECUR = Symbol(null, "recur");
 
 dynamic macroexpand1(dynamic expr) {
   if ((expr is List) && (expr.length > 0)) {
@@ -220,6 +222,34 @@ void emitLet(List expr, env, StringSink out, String locus) {
   emit(expr.last, env, out, locus ?? "return ");
 }
 
+void emitLoop(List expr, env, StringSink out, String locus) {
+  dynamic bindings = expr[1];
+  final bindings1 = [];
+  for (var i = 0; i < bindings.length; i += 2) {
+    bindings1.add(bindings.sublist(i, i+2 > bindings.length ? bindings.length : i + 2));
+  }
+  env = bindings1.fold(env, (acc, elem) {
+      return emitBinding(elem, acc, out);
+  });
+  out.write("do {\n");
+  for (var i = 2; i < expr.length-1; i++) {
+    emit(expr[i], env, out, ""); // pure effect
+  }
+  emit(expr.last, env, out, locus ?? "return ");
+  out.write("} while(true);\n");
+}
+
+void emitRecur(List expr, env, StringSink out, String locus) {
+  var args=List();
+  for(var i = 1; i < expr.length; i++) {
+    final arg = "_arg${_counter++}";
+    args.add(arg);
+    out.write("var $arg;\n");
+    emit(expr[i], env, out, "${arg}=");
+  }
+  out.write("continue;\n");
+}
+
 void emitSymbol(Symbol sym, env, StringSink out) {
   out.write(lookup(env, sym));
 }
@@ -279,6 +309,14 @@ void emit(dynamic expr, env, StringSink out, String locus) {
     }
     if (expr.first == IF) {
       emitIf(expr, env, out, locus);
+      return;
+    }
+    if (expr.first == LOOP) {
+      emitLoop(expr, env, out, locus);
+      return;
+    }
+    if (expr.first == RECUR) {
+      emitRecur(expr, env, out, locus);
       return;
     }
     emitFnCall(expr, env, out, locus);
