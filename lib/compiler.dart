@@ -219,7 +219,7 @@ void emitLet(List expr, env, StringSink out, String locus) {
   for (var i = 2; i < expr.length-1; i++) {
     emit(expr[i], env, out, ""); // pure effect
   }
-  emit(expr.last, env, out, locus ?? "return ");
+  emit(expr.last, env, out, locus);
 }
 
 void emitLoop(List expr, env, StringSink out, String locus) {
@@ -235,7 +235,7 @@ void emitLoop(List expr, env, StringSink out, String locus) {
   for (var i = 2; i < expr.length-1; i++) {
     emit(expr[i], env, out, ""); // pure effect
   }
-  emit(expr.last, env, out, locus ?? "return ");
+  emit(expr.last, env, out, locus);
   out.write("break;\n} while(true);\n");
 }
 
