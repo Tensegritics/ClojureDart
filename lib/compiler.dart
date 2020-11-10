@@ -19,23 +19,59 @@ Future<bool> reload() async {
 Future eval(x) async {
   final out = File("lib/evalexpr.dart").openWrite();
   try {
-    out.write("import 'dart:io';\nFuture exec() async {\n");
+    out.write("import 'dart:io';\n\n");
+    out.write("Future exec() async {\n_redef();\n");
     emit(x, {}, out, "return ");
-    out.write("}\n");
+    out.write("}\n\n");
+    ns.emit(out);
   } finally {
     await out.close();
   }
   if (!await reload()) {
-    await File("lib/evalexpr.dart").writeAsString("Future exec() => null;\n");
-    await reload(); // TODO throw or msg on false
+//    await File("lib/evalexpr.dart").writeAsString("Future exec() => null;\n");
+//    await reload(); // TODO throw or msg on false
   }
   return evalexpr.exec();
 }
+
+/// Half namespace, half lib
+class NamespaceLib {
+  final _flds = Map<Symbol, String>();
+  final _fns = Map<Symbol, String>();
+  final _dirty = Set();
+  void def(Symbol name, String init) {
+    _fns.remove(name);
+    if (_flds.containsKey(name)) _dirty.add(name);
+    _flds[name] = init;
+  }
+  void defn(Symbol name, String decl) {
+    _flds.remove(name);
+    _dirty.remove(name);
+    _fns[name] = decl;
+  }
+  void emit(StringSink out) {
+    for(var decl in _fns.values) {
+      out..write(decl)..write("\n");
+    }
+    for(var init in _flds.values) {
+      out..write("var ")..write(init)..write("\n");
+    }
+    out.write("_redef() {\n");
+    for(var sym in _dirty) {
+      out..write(_flds[sym])..write("\n");
+    }
+    out.write("}\n\n");
+    _dirty.clear();
+  }
+}
+
+var ns = NamespaceLib();
 
 const DOT = Symbol(null, ".");
 const NEW = Symbol(null, "new");
 const FN = Symbol(null, "fn");
 const LET = Symbol(null, "let");
+const DEF = Symbol(null, "def");
 const DO = Symbol(null, "do");
 const IF = Symbol(null, "if");
 const LOOP = Symbol(null, "loop");
@@ -139,10 +175,7 @@ void emitFn(List expr, env, StringSink out, String locus) {
     emitParams(paramsAlias, out);
     out.write("{\n");
   }
-  for (var i = namedFn ? 3 : 2; i < expr.length-1; i++) {
-    emit(expr[i], env, out, "");
-  }
-  emit(expr.last, env, out, "return ");
+  emitBody(namedFn ? 3 : 2, expr, env, out, "return ");
   if (namedFn) {
     out.write("}; return ");
     emitSymbol(expr[1], env, out);
@@ -150,6 +183,22 @@ void emitFn(List expr, env, StringSink out, String locus) {
     out.write(";\n");
   }
   out.write("});\n");
+}
+
+void emitTopFn(Symbol name, List expr, env, StringSink out) {
+  assert(expr[1] is! Symbol);
+  List paramsAlias = [];
+  dynamic params = expr[1];
+  env = params.fold(env, (env, elem) {
+      String varname = munge(elem, env);
+      paramsAlias.add(varname);
+      return assoc(env, elem, varname);
+  });
+  emitSymbol(name, env, out);
+  emitParams(paramsAlias, out);
+  out.write("{\n");
+  emitBody(2, expr, env, out, "return ");
+  out.write("}\n");
 }
 
 void emitIf(List expr, env, StringSink out, String locus) {
@@ -172,6 +221,13 @@ Map emitBinding(List pair, env, StringSink out) { // not great to return Map
   return assoc(env, sym, varname);
 }
 
+void emitBody(int from, List exprs, env, StringSink out, String locus) {
+  for (var i = from; i < exprs.length-1; i++) {
+    emit(exprs[i], env, out, ""); // pure effect
+  }
+  emit(exprs.last, env, out, locus);
+}
+
 void emitLet(List expr, env, StringSink out, String locus) {
   dynamic bindings = expr[1];
   final bindings1 = [];
@@ -181,10 +237,7 @@ void emitLet(List expr, env, StringSink out, String locus) {
   env = bindings1.fold(env, (acc, elem) {
       return emitBinding(elem, acc, out);
   });
-  for (var i = 2; i < expr.length-1; i++) {
-    emit(expr[i], env, out, ""); // pure effect
-  }
-  emit(expr.last, env, out, locus);
+  emitBody(2, expr, env, out, locus);
 }
 
 void emitLoop(List expr, env, StringSink out, String locus) {
@@ -197,10 +250,7 @@ void emitLoop(List expr, env, StringSink out, String locus) {
       return emitBinding(elem, acc, out);
   });
   out.write("do {\n");
-  for (var i = 2; i < expr.length-1; i++) {
-    emit(expr[i], env, out, ""); // pure effect
-  }
-  emit(expr.last, env, out, locus);
+  emitBody(2, expr, env, out, locus);
   out.write("break;\n} while(true);\n");
 }
 
@@ -309,6 +359,29 @@ void emitExpr(dynamic expr, env, StringSink out) {
   }
 }
 
+void emitDef(dynamic expr, env, StringSink out, String locus) {
+  final sym = expr[1];
+  final value = macroexpand(expr[2]);
+  final sb = StringBuffer();
+  if (value is List && value[0] == FN && value[1] is! Symbol) {
+    emitTopFn(sym, value, env, sb);
+    ns.defn(sym, sb.toString());
+  } else {
+    emitSymbol(sym, env, sb);
+    sb.write("=");
+    if (isAtomic(value)) {
+      emitExpr(value, env, sb);
+    } else {
+      sb.write("(){\n");
+      emit(value, env, sb, "return ");
+      sb.write("}()");
+    }
+    sb.write(";\n");
+    ns.def(sym, sb.toString());
+  }
+  emit(expr[1], env, out, locus);
+}
+
 void emit(dynamic expr, env, StringSink out, String locus) {
   expr=macroexpand(expr);
   if (expr is List) {
@@ -326,6 +399,10 @@ void emit(dynamic expr, env, StringSink out, String locus) {
     }
     if (expr.first == LET) {
       emitLet(expr, env, out, locus);
+      return;
+    }
+    if (expr.first == DEF) {
+      emitDef(expr, env, out, locus);
       return;
     }
     if (expr.first == IF) {
