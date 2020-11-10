@@ -117,8 +117,8 @@ lookup(m, k, [v]) {
 }
 
 var _munge=0;
-String munge(Symbol v) {
-  return "${v.name}__${++_munge}";
+String munge(Symbol v, env) {
+  return lookup(env, v) == null ? v.name : "${v.name}__${++_munge}";
 }
 
 void emitFn(List expr, env, StringSink out, String locus) {
@@ -126,7 +126,7 @@ void emitFn(List expr, env, StringSink out, String locus) {
   List paramsAlias = [];
   dynamic params = namedFn ? expr[2] : expr[1];
   env = params.fold(env, (env, elem) {
-      String varname = munge(elem);
+      String varname = munge(elem, env);
       paramsAlias.add(varname);
       return assoc(env, elem, varname);
   });
@@ -134,7 +134,7 @@ void emitFn(List expr, env, StringSink out, String locus) {
   emitParams(paramsAlias, out);
   out.write("{\n");
   if (namedFn) {
-    env = assoc(env, expr[1], munge(expr[1]));
+    env = assoc(env, expr[1], munge(expr[1], env));
     emitSymbol(expr[1], env, out);
     emitParams(paramsAlias, out);
     out.write("{\n");
@@ -166,7 +166,7 @@ void emitIf(List expr, env, StringSink out, String locus) {
 
 Map emitBinding(List pair, env, StringSink out) { // not great to return Map
   final sym = pair[0];
-  final varname = munge(sym);
+  final varname = munge(sym, env);
   out.write("var $varname;\n");
   emit(pair[1], env, out, "$varname=");
   return assoc(env, sym, varname);
