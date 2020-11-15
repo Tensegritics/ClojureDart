@@ -165,64 +165,65 @@ bool hasMultipleArity(List params) {
 bool isVariadic(List params) {
   return params.contains(AMPERSAND);
 }
-
 void emitMultipleArityFn(List expr, env, StringSink out, String locus) {
-  /// 1/ take the smallest params from the list
-  /// 2/ emitParams
-  /// 3/ for each var, emitbody
-  List paramsAlias = [];
-  var smallestArity = 0;
-  var multipleArityBody = expr.skip(1);
-  if (multipleArityBody.length == 1) return emitVariadicFn(expr.take(1).toList()..addAll(multipleArityBody), env, out, locus);
-  multipleArityBody.forEach((elem) {
-      if (elem[0].length < smallestArity) smallestArity = elem[0].length;
-  });
+  var multipleArityBody = expr.skip(1).toList();
+  if (multipleArityBody.length == 1) {
+    var expr1 = expr.take(1).toList()..addAll(multipleArityBody.first);
+    if (isVariadic(multipleArityBody.first.first)) {
+      return emitVariadicFn(expr1, env, out, locus);
+    } else {
+      return emitFn(expr1, env, out, locus);
+    }
+  }
+  multipleArityBody.sort((a, b) => a.first.length.compareTo(b.first.length));
+  var smallestArity = multipleArityBody.first.first.length;
+  var biggestArity = multipleArityBody.last.first.length;
+  var isAlsoVariadic = isVariadic(multipleArityBody.last.first);
   out.write("$locus(");
   out.write("(");
-
   var comma=false;
-  List variadicsAlias = [];
-  for (var i = 0; i < 8 ; i++) {
+  List paramsAlias = [];
+  for (var i = 0; i < (isAlsoVariadic ? 8 :  biggestArity) ; i++) {
     final temp = "p_$i";
-    variadicsAlias.add(temp);
+    paramsAlias.add(temp);
     if (comma) out.write(",");
-    if (i == smallestArity + 1) out.write("[");
+    if (i == smallestArity) out.write("[");
     out.write("$temp");
-    if (i >=  smallestArity + 1) out.write("=MISSING_ARG");
+    if (i >=  smallestArity) out.write("=MISSING_ARG");
     comma=true;
   }
   out.write("]) {\n");
-
-  multipleArityBody.forEach((elem) {
-      var params = elem[0];
-      out.write("if (${variadicsAlias[params.length]} == MISSING_ARG) {\n");
-      List paramsAliasSingleArity = [];
-      var isVariadic = false;
-      env = params.fold(env, (env, e) {
-          if (e == AMPERSAND) {
-            isVariadic = true;
-            return env;
-          }
-          String varname = munge(e, env);
-          paramsAliasSingleArity.add(varname);
-          return assoc(env, e, varname);
-      });
-      for (var i = 0; i < paramsAliasSingleArity.length - 1; i++) {
-        out.write("var ${paramsAliasSingleArity[i]}=${variadicsAlias[i]};");
-      }
-      if (isVariadic) {
-        out.write("var ${paramsAliasSingleArity.last}=${variadicsAlias.skip(paramsAliasSingleArity.length - 1).toList().toString()}.takeWhile((e) => e != MISSING_ARG).toList();\n");
-      } else {
-        out.write("var ${paramsAliasSingleArity.last}=${variadicsAlias.last};");
-      }
-      emitBody(1, elem, env, out, "return ");
-      out.write("}\n");
+  for (var i = 0; i < multipleArityBody.length - 1; i++) {
+    var params = multipleArityBody[i][0];
+    out.write("if (${paramsAlias[params.length]} == MISSING_ARG) {\n");
+    List paramsAliasSingleArity = [];
+    var env1 = params.fold(env, (env, e) {
+        var varname = munge(e, env);
+        paramsAliasSingleArity.add(varname);
+        return assoc(env, e, varname);
+    });
+    for (var j = 0; j < paramsAliasSingleArity.length; j++) {
+      out.write("var ${paramsAliasSingleArity[j]}=${paramsAlias[j]};");
+    }
+    emitBody(1, multipleArityBody[i].skip(1).toList(), env1, out, "return ");
+    out.write("})\n");
+  }
+  var params = multipleArityBody.last.first;
+  List paramsAliasSingleArity = [];
+  var env1 = params.fold(env, (env, e) {
+      if (e == AMPERSAND)  return env;
+      var varname = munge(e, env);
+      paramsAliasSingleArity.add(varname);
+      return assoc(env, e, varname);
   });
-
-  out.write("});\n");
+  for (var i = 0; i < (isAlsoVariadic ? (paramsAliasSingleArity.length -1 ) : (paramsAliasSingleArity.length)); i++) {
+    out.write("var ${paramsAliasSingleArity[i]}=${paramsAlias[i]};\n");
+  }
+  if (isAlsoVariadic) out.write("var ${paramsAliasSingleArity.last}=${paramsAlias.skip(paramsAliasSingleArity.length - 1).toList().toString()}.takeWhile((e) => e != MISSING_ARG).toList();\n");
+  emitBody(1, multipleArityBody.last.skip(1).toList(), env1, out, "return ");
+  out.write(")\n");
 }
 
-/// (fn [a b & c]
 void emitVariadicFn(List expr, env, StringSink out, String locus) {
   List paramsAlias = [];
   dynamic params = expr[1];
