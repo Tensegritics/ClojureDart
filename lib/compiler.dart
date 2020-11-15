@@ -167,7 +167,59 @@ bool isVariadic(List params) {
 }
 
 void emitMultipleArityFn(List expr, env, StringSink out, String locus) {
-  print("WRONG");
+  /// 1/ take the smallest params from the list
+  /// 2/ emitParams
+  /// 3/ for each var, emitbody
+  List paramsAlias = [];
+  var smallestArity = 0;
+  var multipleArityBody = expr.skip(1);
+  if (multipleArityBody.length == 1) return emitVariadicFn(expr.take(1).toList()..addAll(multipleArityBody), env, out, locus);
+  multipleArityBody.forEach((elem) {
+      if (elem[0].length < smallestArity) smallestArity = elem[0].length;
+  });
+  out.write("$locus(");
+  out.write("(");
+
+  var comma=false;
+  List variadicsAlias = [];
+  for (var i = 0; i < 8 ; i++) {
+    final temp = "p_$i";
+    variadicsAlias.add(temp);
+    if (comma) out.write(",");
+    if (i == smallestArity + 1) out.write("[");
+    out.write("$temp");
+    if (i >=  smallestArity + 1) out.write("=MISSING_ARG");
+    comma=true;
+  }
+  out.write("]) {\n");
+
+  multipleArityBody.forEach((elem) {
+      var params = elem[0];
+      out.write("if (${variadicsAlias[params.length]} == MISSING_ARG) {\n");
+      List paramsAliasSingleArity = [];
+      var isVariadic = false;
+      env = params.fold(env, (env, e) {
+          if (e == AMPERSAND) {
+            isVariadic = true;
+            return env;
+          }
+          String varname = munge(e, env);
+          paramsAliasSingleArity.add(varname);
+          return assoc(env, e, varname);
+      });
+      for (var i = 0; i < paramsAliasSingleArity.length - 1; i++) {
+        out.write("var ${paramsAliasSingleArity[i]}=${variadicsAlias[i]};");
+      }
+      if (isVariadic) {
+        out.write("var ${paramsAliasSingleArity.last}=${variadicsAlias.skip(paramsAliasSingleArity.length - 1).toList().toString()}.takeWhile((e) => e != MISSING_ARG).toList();\n");
+      } else {
+        out.write("var ${paramsAliasSingleArity.last}=${variadicsAlias.last};");
+      }
+      emitBody(1, elem, env, out, "return ");
+      out.write("}\n");
+  });
+
+  out.write("});\n");
 }
 
 /// (fn [a b & c]
@@ -199,7 +251,7 @@ void emitVariadicFn(List expr, env, StringSink out, String locus) {
     comma=true;
   }
   out.write("]) {\n");
-  out.write("final ${paramsAlias.last}=${variadicsAlias.toString()}.takeWhile((e) => e != MISSING_ARG).toList();\n");
+  out.write("var ${paramsAlias.last}=${variadicsAlias.toString()}.takeWhile((e) => e != MISSING_ARG).toList();\n");
   emitBody(2, expr, env, out, "return ");
   out.write("});\n");
 }
