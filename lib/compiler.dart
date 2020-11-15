@@ -19,7 +19,8 @@ Future<bool> reload() async {
 Future eval(x) async {
   final out = File("lib/evalexpr.dart").openWrite();
   try {
-    out.write("import 'dart:io';\n\n");
+    out.write("import 'dart:io';\n");
+    out.write("import 'cljd.dart';\n\n");
     out.write("Future exec() async {\n_redef();\n");
     emit(x, {}, out, "return ");
     out.write("}\n\n");
@@ -157,10 +158,58 @@ String munge(Symbol v, env) {
   return lookup(env, v) == null ? v.name : "${v.name}__${++_munge}";
 }
 
+bool hasMultipleArity(List params) {
+  return params is! Vector;
+}
+
+bool isVariadic(List params) {
+  return params.contains(AMPERSAND);
+}
+
+void emitMultipleArityFn(List expr, env, StringSink out, String locus) {
+  print("WRONG");
+}
+
+/// (fn [a b & c]
+void emitVariadicFn(List expr, env, StringSink out, String locus) {
+  List paramsAlias = [];
+  dynamic params = expr[1];
+  env = params.fold(env, (env, elem) {
+      if (elem == AMPERSAND) return env;
+      String varname = munge(elem, env);
+      paramsAlias.add(varname);
+      return assoc(env, elem, varname);
+  });
+  out.write("$locus(");
+  out.write("(");
+  var comma = false;
+  paramsAlias.take(paramsAlias.length - 1).forEach((param) {
+      if (comma) out.write(",");
+      out.write(param);
+      comma=true;
+  });
+  comma=false;
+  List variadicsAlias = [];
+  out.write(", [");
+  for (var i = paramsAlias.length - 1; i < 8 ; i++) {
+    final temp = "p_$i";
+    variadicsAlias.add(temp);
+    if (comma) out.write(",");
+    out.write("$temp=MISSING_ARG");
+    comma=true;
+  }
+  out.write("]) {\n");
+  out.write("final ${paramsAlias.last}=${variadicsAlias.toString()}.takeWhile((e) => e != MISSING_ARG).toList();\n");
+  emitBody(2, expr, env, out, "return ");
+  out.write("});\n");
+}
+
 void emitFn(List expr, env, StringSink out, String locus) {
   bool namedFn = expr[1] is Symbol;
-  List paramsAlias = [];
   dynamic params = namedFn ? expr[2] : expr[1];
+  if (hasMultipleArity(params)) return emitMultipleArityFn(expr, env, out, locus);
+  if (isVariadic(params)) return emitVariadicFn(expr, env, out, locus);
+  List paramsAlias = [];
   env = params.fold(env, (env, elem) {
       String varname = munge(elem, env);
       paramsAlias.add(varname);

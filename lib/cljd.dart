@@ -38,3 +38,6 @@ class Keyword {
 class Vector<E> extends DelegatingList<E> {
   Vector(List<E> v) : super(v);
 }
+
+enum _Argument { missing }
+const MISSING_ARG = _Argument.missing;
