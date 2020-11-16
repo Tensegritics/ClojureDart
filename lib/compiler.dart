@@ -158,93 +158,71 @@ String munge(Symbol v, env) {
   return lookup(env, v) == null ? v.name : "${v.name}__${++_munge}";
 }
 
-bool hasMultipleArity(List params) {
-  return params is! Vector;
-}
-
 bool isVariadic(List params) {
   return params.contains(AMPERSAND);
 }
-void emitMultipleArityFn(List expr, env, StringSink out, String locus) {
-  var multipleArityBody = expr.skip(1).toList();
-  multipleArityBody.sort((a, b) => a.first.length.compareTo(b.first.length));
-  var isAlsoVariadic = isVariadic(multipleArityBody.last.first);
-  if (multipleArityBody.length == 1 && !isAlsoVariadic) return emitFn(expr.take(1).toList()..addAll(multipleArityBody.first), env, out, locus);
-  var smallestArity = multipleArityBody.length == 1 ? multipleArityBody.first.first.length - 2 : multipleArityBody.first.first.length;
-  var biggestArity = multipleArityBody.last.first.length;
-  out.write("$locus(");
+
+void emitBodies(List bodies, env, StringSink out) {
+  bodies.sort((a, b) => a.first.length.compareTo(b.first.length));
+  var isAlsoVariadic = isVariadic(bodies.last.first);
+  var smallestArity = bodies.length == 1 && isAlsoVariadic ? bodies.first.first.length - 2 : bodies.first.first.length;
+  var biggestArity = bodies.last.first.length;
   out.write("(");
-  var comma=false;
   List paramsAlias = [];
   for (var i = 0; i < (isAlsoVariadic ? 8 :  biggestArity) ; i++) {
     final temp = "p_$i";
     paramsAlias.add(temp);
-    if (comma) out.write(",");
+    if (i > 0) out.write(",");
     if (i == smallestArity) out.write("[");
     out.write("$temp");
     if (i >=  smallestArity) out.write("=MISSING_ARG");
-    comma=true;
   }
-  out.write("]) {\n");
-  for (var i = 0; i < multipleArityBody.length - 1; i++) {
-    var params = multipleArityBody[i][0];
+  if (bodies.length > 1 || isAlsoVariadic) out.write(']');
+  out.write(") {\n");
+  for (var i = 0; i < bodies.length - 1; i++) {
+    var params = bodies[i][0];
     out.write("if (${paramsAlias[params.length]} == MISSING_ARG) {\n");
-    List paramsAliasSingleArity = [];
-    var env1 = params.fold(env, (env, e) {
-        var varname = munge(e, env);
-        paramsAliasSingleArity.add(varname);
-        return assoc(env, e, varname);
-    });
-    for (var j = 0; j < paramsAliasSingleArity.length; j++) {
-      out.write("var ${paramsAliasSingleArity[j]}=${paramsAlias[j]};\n");
+    var bodyenv = env;
+    for(var i = 0; i < params.length; i++) {
+      var varname = munge(params[i], bodyenv);
+      out.write("var ${varname}=${paramsAlias[i]};\n");
+      bodyenv = assoc(bodyenv, params[i], varname);
     }
-    emitBody(1, multipleArityBody[i].skip(1).toList(), env1, out, "return ");
+    emitBody(1, bodies[i].skip(1).toList(), bodyenv, out, "return ");
     out.write("}\n");
   }
-  var params = multipleArityBody.last.first;
-  List paramsAliasSingleArity = [];
-  var env1 = params.fold(env, (env, e) {
-      if (e == AMPERSAND)  return env;
-      var varname = munge(e, env);
-      paramsAliasSingleArity.add(varname);
-      return assoc(env, e, varname);
-  });
-  for (var i = 0; i < (isAlsoVariadic ? (paramsAliasSingleArity.length -1 ) : (paramsAliasSingleArity.length)); i++) {
-    out.write("var ${paramsAliasSingleArity[i]}=${paramsAlias[i]};\n");
+  var params = bodies.last.first;
+  var bodyenv = env;
+  for (var i = 0; i < params.length; i++) {
+    if (params[i] == AMPERSAND) {
+      var varname = munge(params[i+1], bodyenv);
+      out.write("var $varname=[${paramsAlias.skip(i).toList().join(', ')}].takeWhile((e) => e != MISSING_ARG).toList();\n");
+      bodyenv = assoc(bodyenv, params[i+1], varname);
+      break;
+    }
+    var varname = munge(params[i], bodyenv);
+    out.write("var $varname=${paramsAlias[i]};\n");
+    bodyenv = assoc(bodyenv, params[i], varname);
   }
-  if (isAlsoVariadic) out.write("var ${paramsAliasSingleArity.last}=${paramsAlias.skip(paramsAliasSingleArity.length - 1).toList().toString()}.takeWhile((e) => e != MISSING_ARG).toList();\n");
-  emitBody(1, multipleArityBody.last.skip(1).toList(), env1, out, "return ");
-  out.write("});\n");
+  emitBody(1, bodies.last.skip(1).toList(), bodyenv, out, "return ");
+  out.write("}");
 }
 
 void emitFn(List expr, env, StringSink out, String locus) {
   bool namedFn = expr[1] is Symbol;
-  dynamic params = namedFn ? expr[2] : expr[1];
-  if (hasMultipleArity(params)) return emitMultipleArityFn(expr, env, out, locus);
-  if (isVariadic(params)) return emitMultipleArityFn([]..add(expr[0])..add(expr.skip(1).toList()), env, out, locus);
-  List paramsAlias = [];
-  env = params.fold(env, (env, elem) {
-      String varname = munge(elem, env);
-      paramsAlias.add(varname);
-      return assoc(env, elem, varname);
-  });
-  out.write("$locus(");
-  emitParams(paramsAlias, out);
-  out.write("{\n");
+  final offset = namedFn ? 2 : 1;
+  var bodies = expr[offset] is Vector ? [expr.skip(offset).toList()] : expr.skip(offset).toList();
   if (namedFn) {
-    env = assoc(env, expr[1], munge(expr[1], env));
-    emitSymbol(expr[1], env, out);
-    emitParams(paramsAlias, out);
-    out.write("{\n");
-  }
-  emitBody(namedFn ? 3 : 2, expr, env, out, "return ");
-  if (namedFn) {
-    out.write("}; return ");
-    emitSymbol(expr[1], env, out);
-    emitParams(paramsAlias, out);
+    final fnname = munge(expr[1], env);
+    env = assoc(env, expr[1], fnname);
+    out.write(fnname);
+    emitBodies(bodies, env, out);
+    out.write("\n$locus$fnname;\n");
+  } else {
+    out.write(locus);
+    emitBodies(bodies, env, out);
     out.write(";\n");
   }
-  out.write("});\n");
 }
 
 void emitTopFn(Symbol name, List expr, env, StringSink out) {
@@ -257,10 +235,8 @@ void emitTopFn(Symbol name, List expr, env, StringSink out) {
       return assoc(env, elem, varname);
   });
   emitSymbol(name, env, out);
-  emitParams(paramsAlias, out);
-  out.write("{\n");
-  emitBody(2, expr, env, out, "return ");
-  out.write("}\n");
+  emitBodies(expr[1] is Vector ? [expr.skip(1).toList()] : expr.skip(1).toList(), env, out);
+  out.write("\n");
 }
 
 void emitIf(List expr, env, StringSink out, String locus) {
@@ -365,7 +341,7 @@ void emitFnCall(List expr, env, StringSink out, String locus) {
     emitExpr(expr[0], env, sb);
   } else {
     var f = tmp();
-    out.write("var $f;");
+    out.write("var $f;\n");
     emit(expr[0], env, out, "$f=");
     sb.write(f);
   }
