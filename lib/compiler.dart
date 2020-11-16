@@ -208,10 +208,15 @@ void emitBodies(List bodies, env, StringSink out) {
   out.write("}");
 }
 
-void emitFn(List expr, env, StringSink out, String locus) {
+List extractBodies(List expr) {
   bool namedFn = expr[1] is Symbol;
   final offset = namedFn ? 2 : 1;
-  var bodies = expr[offset] is Vector ? [expr.skip(offset).toList()] : expr.skip(offset).toList();
+  return expr[offset] is Vector ? [expr.skip(offset).toList()] : expr.skip(offset).toList();
+}
+
+void emitFn(List expr, env, StringSink out, String locus) {
+  bool namedFn = expr[1] is Symbol;
+  var bodies = extractBodies(expr);
   if (namedFn) {
     final fnname = munge(expr[1], env);
     env = assoc(env, expr[1], fnname);
@@ -226,16 +231,13 @@ void emitFn(List expr, env, StringSink out, String locus) {
 }
 
 void emitTopFn(Symbol name, List expr, env, StringSink out) {
-  assert(expr[1] is! Symbol);
-  List paramsAlias = [];
-  dynamic params = expr[1];
-  env = params.fold(env, (env, elem) {
-      String varname = munge(elem, env);
-      paramsAlias.add(varname);
-      return assoc(env, elem, varname);
-  });
+  bool namedFn = expr[1] is Symbol;
+  // @TODO : on n'est pas clair sur la nature du name (dixit @cgrand)
+  if (namedFn) {
+    env = assoc(env, expr[1], name.toString());
+  }
   emitSymbol(name, env, out);
-  emitBodies(expr[1] is Vector ? [expr.skip(1).toList()] : expr.skip(1).toList(), env, out);
+  emitBodies(extractBodies(expr), env, out);
   out.write("\n");
 }
 
@@ -401,7 +403,7 @@ void emitDef(dynamic expr, env, StringSink out, String locus) {
   final sym = expr[1];
   final value = macroexpand(expr[2]);
   final sb = StringBuffer();
-  if (value is List && value[0] == FN && value[1] is! Symbol) {
+  if (value is List && value[0] == FN) {
     emitTopFn(sym, value, env, sb);
     ns.defn(sym, sb.toString());
   } else {
