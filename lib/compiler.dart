@@ -167,18 +167,11 @@ bool isVariadic(List params) {
 }
 void emitMultipleArityFn(List expr, env, StringSink out, String locus) {
   var multipleArityBody = expr.skip(1).toList();
-  if (multipleArityBody.length == 1) {
-    var expr1 = expr.take(1).toList()..addAll(multipleArityBody.first);
-    if (isVariadic(multipleArityBody.first.first)) {
-      return emitVariadicFn(expr1, env, out, locus);
-    } else {
-      return emitFn(expr1, env, out, locus);
-    }
-  }
   multipleArityBody.sort((a, b) => a.first.length.compareTo(b.first.length));
+  var isAlsoVariadic = isVariadic(multipleArityBody.last.first);
+  if (multipleArityBody.length == 1 && !isAlsoVariadic) return emitFn(expr.take(1).toList()..addAll(multipleArityBody.first), env, out, locus);
   var smallestArity = multipleArityBody.first.first.length;
   var biggestArity = multipleArityBody.last.first.length;
-  var isAlsoVariadic = isVariadic(multipleArityBody.last.first);
   out.write("$locus(");
   out.write("(");
   var comma=false;
@@ -203,10 +196,10 @@ void emitMultipleArityFn(List expr, env, StringSink out, String locus) {
         return assoc(env, e, varname);
     });
     for (var j = 0; j < paramsAliasSingleArity.length; j++) {
-      out.write("var ${paramsAliasSingleArity[j]}=${paramsAlias[j]};");
+      out.write("var ${paramsAliasSingleArity[j]}=${paramsAlias[j]};\n");
     }
     emitBody(1, multipleArityBody[i].skip(1).toList(), env1, out, "return ");
-    out.write("})\n");
+    out.write("}\n");
   }
   var params = multipleArityBody.last.first;
   List paramsAliasSingleArity = [];
@@ -221,39 +214,6 @@ void emitMultipleArityFn(List expr, env, StringSink out, String locus) {
   }
   if (isAlsoVariadic) out.write("var ${paramsAliasSingleArity.last}=${paramsAlias.skip(paramsAliasSingleArity.length - 1).toList().toString()}.takeWhile((e) => e != MISSING_ARG).toList();\n");
   emitBody(1, multipleArityBody.last.skip(1).toList(), env1, out, "return ");
-  out.write(")\n");
-}
-
-void emitVariadicFn(List expr, env, StringSink out, String locus) {
-  List paramsAlias = [];
-  dynamic params = expr[1];
-  env = params.fold(env, (env, elem) {
-      if (elem == AMPERSAND) return env;
-      String varname = munge(elem, env);
-      paramsAlias.add(varname);
-      return assoc(env, elem, varname);
-  });
-  out.write("$locus(");
-  out.write("(");
-  var comma = false;
-  paramsAlias.take(paramsAlias.length - 1).forEach((param) {
-      if (comma) out.write(",");
-      out.write(param);
-      comma=true;
-  });
-  comma=false;
-  List variadicsAlias = [];
-  out.write(", [");
-  for (var i = paramsAlias.length - 1; i < 8 ; i++) {
-    final temp = "p_$i";
-    variadicsAlias.add(temp);
-    if (comma) out.write(",");
-    out.write("$temp=MISSING_ARG");
-    comma=true;
-  }
-  out.write("]) {\n");
-  out.write("var ${paramsAlias.last}=${variadicsAlias.toString()}.takeWhile((e) => e != MISSING_ARG).toList();\n");
-  emitBody(2, expr, env, out, "return ");
   out.write("});\n");
 }
 
@@ -261,7 +221,7 @@ void emitFn(List expr, env, StringSink out, String locus) {
   bool namedFn = expr[1] is Symbol;
   dynamic params = namedFn ? expr[2] : expr[1];
   if (hasMultipleArity(params)) return emitMultipleArityFn(expr, env, out, locus);
-  if (isVariadic(params)) return emitVariadicFn(expr, env, out, locus);
+  if (isVariadic(params)) return emitMultipleArityFn([]..add(expr[0])..add(expr.skip(1).toList()), env, out, locus);
   List paramsAlias = [];
   env = params.fold(env, (env, elem) {
       String varname = munge(elem, env);
