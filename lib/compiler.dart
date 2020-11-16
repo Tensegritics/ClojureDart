@@ -188,7 +188,7 @@ void emitBodies(List bodies, env, StringSink out) {
       out.write("var ${varname}=${paramsAlias[i]};\n");
       bodyenv = assoc(bodyenv, params[i], varname);
     }
-    emitBody(1, bodies[i].skip(1).toList(), bodyenv, out, "return ");
+    emitBody(1, bodies[i], bodyenv, out, "return ");
     out.write("}\n");
   }
   var params = bodies.last.first;
@@ -204,7 +204,7 @@ void emitBodies(List bodies, env, StringSink out) {
     out.write("var $varname=${paramsAlias[i]};\n");
     bodyenv = assoc(bodyenv, params[i], varname);
   }
-  emitBody(1, bodies.last.skip(1).toList(), bodyenv, out, "return ");
+  emitBody(1, bodies.last, bodyenv, out, "return ");
   out.write("}");
 }
 
