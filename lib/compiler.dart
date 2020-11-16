@@ -170,7 +170,7 @@ void emitMultipleArityFn(List expr, env, StringSink out, String locus) {
   multipleArityBody.sort((a, b) => a.first.length.compareTo(b.first.length));
   var isAlsoVariadic = isVariadic(multipleArityBody.last.first);
   if (multipleArityBody.length == 1 && !isAlsoVariadic) return emitFn(expr.take(1).toList()..addAll(multipleArityBody.first), env, out, locus);
-  var smallestArity = multipleArityBody.first.first.length;
+  var smallestArity = multipleArityBody.length == 1 ? multipleArityBody.first.first.length - 2 : multipleArityBody.first.first.length;
   var biggestArity = multipleArityBody.last.first.length;
   out.write("$locus(");
   out.write("(");
