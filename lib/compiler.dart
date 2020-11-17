@@ -188,7 +188,7 @@ void emitBodies(List bodies, env, StringSink out) {
       out.write("var ${varname}=${paramsAlias[i]};\n");
       bodyenv = assoc(bodyenv, params[i], varname);
     }
-    emitBody(1, bodies[i], bodyenv, out, "return ");
+    emitBody(bodies[i].skip(1).toList(), bodyenv, out, "return ");
     out.write("}\n");
   }
   var params = bodies.last.first;
@@ -204,7 +204,7 @@ void emitBodies(List bodies, env, StringSink out) {
     out.write("var $varname=${paramsAlias[i]};\n");
     bodyenv = assoc(bodyenv, params[i], varname);
   }
-  emitBody(1, bodies.last, bodyenv, out, "return ");
+  emitBody(bodies.last.skip(1).toList(), bodyenv, out, "return ");
   out.write("}");
 }
 
@@ -261,15 +261,15 @@ Map emitBinding(List pair, env, StringSink out) { // not great to return Map
   return assoc(env, sym, varname);
 }
 
-void emitBody(int from, List exprs, env, StringSink out, String locus) {
-  for (var i = from; i < exprs.length-1; i++) {
+void emitBody(List exprs, env, StringSink out, String locus) {
+  for (var i = 0; i < exprs.length-1; i++) {
     emit(exprs[i], env, out, ""); // pure effect
   }
   emit(exprs.last, env, out, locus);
 }
 
 void emitLet(List expr, env, StringSink out, String locus) {
-  dynamic bindings = expr[1];
+  final bindings = expr[1];
   final bindings1 = [];
   for (var i = 0; i < bindings.length; i += 2) {
     bindings1.add(bindings.sublist(i, i+2 > bindings.length ? bindings.length : i + 2));
@@ -277,20 +277,24 @@ void emitLet(List expr, env, StringSink out, String locus) {
   env = bindings1.fold(env, (acc, elem) {
       return emitBinding(elem, acc, out);
   });
-  emitBody(2, expr, env, out, locus);
+  emitBody(expr.skip(2).toList(), env, out, locus);
 }
 
+const LOOP_BINDINGS = Keyword("cljd.compiler", "loop-bindings");
+
 void emitLoop(List expr, env, StringSink out, String locus) {
-  dynamic bindings = expr[1];
-  final bindings1 = [];
+  final bindings = expr[1];
+  var loopBindings = [];
   for (var i = 0; i < bindings.length; i += 2) {
-    bindings1.add(bindings.sublist(i, i+2 > bindings.length ? bindings.length : i + 2));
+    final sym = bindings[i];
+    final varname = munge(sym, env);
+    loopBindings.add(varname);
+    out.write("var $varname;\n");
+    emit(bindings[i + 1], env, out, "$varname=");
+    env = assoc(env, sym, varname);
   }
-  env = bindings1.fold(env, (acc, elem) {
-      return emitBinding(elem, acc, out);
-  });
   out.write("do {\n");
-  emitBody(2, expr, env, out, locus);
+  emitBody(expr.skip(2).toList(), assoc(env, LOOP_BINDINGS, loopBindings), out, locus);
   out.write("break;\n} while(true);\n");
 }
 
@@ -301,6 +305,11 @@ void emitRecur(List expr, env, StringSink out, String locus) {
     args.add(arg);
     out.write("var $arg;\n");
     emit(expr[i], env, out, "${arg}=");
+  }
+  var loopBindings = lookup(env, LOOP_BINDINGS);
+  assert(args.length == loopBindings.length);
+  for (var i = 0; i < args.length; i++) {
+    out.write("${loopBindings[i]}=${args[i]};\n");
   }
   out.write("continue;\n");
 }
