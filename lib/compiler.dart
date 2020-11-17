@@ -126,22 +126,27 @@ void emitNew(List expr, env, StringSink out, String locus) {
   emitArgs(expr.getRange(2, expr.length), env, out, sb.toString());
 }
 
-emitTmp(expr, env, StringSink out) {
-  final x = tmp();
-  out.write("var $x;\n");
-  emit(expr, env, out, "$x=");
-  return x;
+liftExpr(expr, env, StringSink out, {Symbol name, nameEnv, force=false}) {
+  final atom = isAtomic(expr);
+  if (force || name != null || !atom) {
+    final x = name != null ? DartExpr.munge(name, nameEnv ?? env) : DartExpr.tmp();
+    if (atom) {
+      out.write("var $x=");
+      emitExpr(expr, env, out);
+      out.write(";\n");
+    } else {
+      out.write("var $x;\n");
+      emit(expr, env, out, "$x=");
+    }
+    return x;
+  }
+  return expr;
 }
 
 void emitDot(List expr, env, StringSink out, String locus) {
   final match = RegExp(r"^(-)?(.*)").matchAsPrefix(expr[2].name);
   final sb = StringBuffer(locus);
-  if (isAtomic(expr[1])) {
-    emitExpr(expr[1], env, sb);
-  } else {
-    var f = emitTmp(expr[1], env, out);
-    sb.write(f);
-  }
+  emitExpr(liftExpr(expr[1], env, out), env, sb);
   sb.write(".${match.group(2)}");
   if (match.group(1) == null) {
     emitArgs(expr.getRange(3, expr.length), env, out, sb.toString());
@@ -159,11 +164,6 @@ lookup(m, k, [v]) {
   return m.containsKey(k) ? m[k] : v;
 }
 
-var _munge=0;
-String munge(Symbol v, env) {
-  return lookup(env, v) == null ? v.name : "${v.name}__${++_munge}";
-}
-
 bool isVariadic(List params) {
   return params.contains(AMPERSAND);
 }
@@ -176,7 +176,7 @@ void emitBodies(List bodies, env, StringSink out) {
   out.write("(");
   List paramsAlias = [];
   for (var i = 0; i < (isAlsoVariadic ? 8 :  biggestArity) ; i++) {
-    final temp = "p_$i";
+    final temp = DartExpr.tmp();
     paramsAlias.add(temp);
     if (i > 0) out.write(",");
     if (i == smallestArity) out.write("[");
@@ -190,8 +190,7 @@ void emitBodies(List bodies, env, StringSink out) {
     out.write("if (${paramsAlias[params.length]} == MISSING_ARG) {\n");
     var bodyenv = env;
     for(var i = 0; i < params.length; i++) {
-      var varname = munge(params[i], bodyenv);
-      out.write("var ${varname}=${paramsAlias[i]};\n");
+      final varname = liftExpr(paramsAlias[i], env, out, name: params[i], nameEnv: bodyenv);
       bodyenv = assoc(bodyenv, params[i], varname);
     }
     emitBody(bodies[i].skip(1).toList(), bodyenv, out, "return ");
@@ -201,12 +200,11 @@ void emitBodies(List bodies, env, StringSink out) {
   var bodyenv = env;
   for (var i = 0; i < params.length; i++) {
     if (params[i] == AMPERSAND) {
-      var varname = munge(params[i+1], bodyenv);
-      out.write("var $varname=[${paramsAlias.skip(i).toList().join(', ')}].takeWhile((e) => e != MISSING_ARG).toList();\n");
+      final varname = liftExpr(DartExpr("[${paramsAlias.skip(i).toList().join(', ')}].takeWhile((e) => e != MISSING_ARG).toList()"), env, out, name: params[i+1], nameEnv: bodyenv);
       bodyenv = assoc(bodyenv, params[i+1], varname);
       break;
     }
-    var varname = munge(params[i], bodyenv);
+    final varname = DartExpr.munge(params[i], bodyenv);
     out.write("var $varname=${paramsAlias[i]};\n");
     bodyenv = assoc(bodyenv, params[i], varname);
   }
@@ -224,7 +222,7 @@ void emitFn(List expr, env, StringSink out, String locus) {
   bool namedFn = expr[1] is Symbol;
   var bodies = extractBodies(expr);
   if (namedFn) {
-    final fnname = munge(expr[1], env);
+    final fnname = DartExpr.munge(expr[1], env);
     env = assoc(env, expr[1], fnname);
     out.write(fnname);
     emitBodies(bodies, env, out);
@@ -248,7 +246,7 @@ void emitTopFn(Symbol name, List expr, env, StringSink out) {
 }
 
 void emitIf(List expr, env, StringSink out, String locus) {
-  final test = emitTmp(expr[1], env, out);
+  final test = liftExpr(expr[1], env, out);
   out.write("if ($test) {\n");
   emit(expr[2], env, out, locus);
   out.write("}else{\n");
@@ -268,9 +266,7 @@ void emitLet(List expr, env, StringSink out, String locus) {
   final bindings = expr[1];
   for (var i = 0; i < bindings.length; i += 2) {
     final sym = bindings[i];
-    final varname = munge(sym, env);
-    out.write("var $varname;\n");
-    emit(bindings[i+1], env, out, "$varname=");
+    final varname = liftExpr(bindings[i+1], env, out, name: sym);
     env = assoc(env, sym, varname);
   }
   emitBody(expr.skip(2).toList(), env, out, locus);
@@ -283,10 +279,8 @@ void emitLoop(List expr, env, StringSink out, String locus) {
   var loopBindings = [];
   for (var i = 0; i < bindings.length; i += 2) {
     final sym = bindings[i];
-    final varname = munge(sym, env);
+    final varname = liftExpr(bindings[i+1], env, out, name: sym);
     loopBindings.add(varname);
-    out.write("var $varname;\n");
-    emit(bindings[i + 1], env, out, "$varname=");
     env = assoc(env, sym, varname);
   }
   out.write("do {\n");
@@ -297,7 +291,7 @@ void emitLoop(List expr, env, StringSink out, String locus) {
 void emitRecur(List expr, env, StringSink out, String locus) {
   var args=List();
   for(var i = 1; i < expr.length; i++) {
-    args.add(emitTmp(expr[i], env, out));
+    args.add(liftExpr(expr[i], env, out));
   }
   var loopBindings = lookup(env, LOOP_BINDINGS);
   assert(args.length == loopBindings.length);
@@ -330,45 +324,41 @@ void emitStr(String s, StringSink out) {
     ..write('"');
 }
 
-class tmp {
+class DartExpr {
   static var _counter=0;
-  String _name;
-  tmp() { _name="_${++_counter}"; }
-  toString() => _name;
+  String _expr;
+  DartExpr(this._expr);
+  DartExpr.tmp() { _expr="_${++_counter}"; }
+  DartExpr.munge(Symbol v, env) {
+    _expr = lookup(env, v) == null ? v.name : "${v.name}__${++_counter}";
+  }
+  toString() => _expr;
 }
 
 bool isAtomic(x) {
-  return x == null || x is Symbol || x is Keyword || x is String || x is bool || x is num;
+  return x == null || x is Symbol || x is Keyword || x is String || x is bool || x is num || x is DartExpr;
 }
 
 void emitFnCall(List expr, env, StringSink out, String locus) {
   final sb = StringBuffer(locus);
-  if (isAtomic(expr[0])) {
-    emitExpr(expr[0], env, sb);
-  } else {
-    var f = emitTmp(expr[0], env, out);
-    sb.write(f);
-  }
+  emitExpr(liftExpr(expr[0], env, out), env, sb);
   emitArgs(expr.getRange(1, expr.length), env, out, sb.toString());
 }
 
 void emitArgs(Iterable expr, env, StringSink out, String locus) {
   var named = false;
   var keypos = true;
-  final args = List.of(expr.map((x) {
+  final args = expr.map((x) {
     keypos = !keypos;
     if (x == AMPERSAND) {
       named = true;
       keypos = false;
       return x;
     }
-    if (named && keypos || isAtomic(x))
+    if (named && keypos)
       return x;
-    final arg = tmp();
-    out.write("var $arg;\n");
-    emit(x, env, out, "${arg}=");
-    return arg;
-  }));
+    return liftExpr(x, env, out);
+  }).toList();
   out.write("$locus(");
   var comma=false;
   named = false;
