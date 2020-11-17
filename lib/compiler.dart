@@ -64,6 +64,7 @@ class NamespaceLib {
     out.write("}\n\n");
     _dirty.clear();
   }
+
 }
 
 var ns = NamespaceLib();
@@ -125,15 +126,20 @@ void emitNew(List expr, env, StringSink out, String locus) {
   emitArgs(expr.getRange(2, expr.length), env, out, sb.toString());
 }
 
+emitTmp(expr, env, StringSink out) {
+  final x = tmp();
+  out.write("var $x;\n");
+  emit(expr, env, out, "$x=");
+  return x;
+}
+
 void emitDot(List expr, env, StringSink out, String locus) {
   final match = RegExp(r"^(-)?(.*)").matchAsPrefix(expr[2].name);
   final sb = StringBuffer(locus);
   if (isAtomic(expr[1])) {
     emitExpr(expr[1], env, sb);
   } else {
-    var f = tmp();
-    out.write("var $f;\n");
-    emit(expr[1], env, out, "$f=");
+    var f = emitTmp(expr[1], env, out);
     sb.write(f);
   }
   sb.write(".${match.group(2)}");
@@ -242,23 +248,13 @@ void emitTopFn(Symbol name, List expr, env, StringSink out) {
 }
 
 void emitIf(List expr, env, StringSink out, String locus) {
-  final test = tmp();
-  out.write("var $test;\n");
-  emit(expr[1], env, out, "$test=");
+  final test = emitTmp(expr[1], env, out);
   out.write("if ($test) {\n");
   emit(expr[2], env, out, locus);
   out.write("}else{\n");
   emit((expr.length == 4) ? expr[3] : null, env, out, locus);
   out.write("}\n");
   return;
-}
-
-Map emitBinding(List pair, env, StringSink out) { // not great to return Map
-  final sym = pair[0];
-  final varname = munge(sym, env);
-  out.write("var $varname;\n");
-  emit(pair[1], env, out, "$varname=");
-  return assoc(env, sym, varname);
 }
 
 void emitBody(List exprs, env, StringSink out, String locus) {
@@ -270,13 +266,13 @@ void emitBody(List exprs, env, StringSink out, String locus) {
 
 void emitLet(List expr, env, StringSink out, String locus) {
   final bindings = expr[1];
-  final bindings1 = [];
   for (var i = 0; i < bindings.length; i += 2) {
-    bindings1.add(bindings.sublist(i, i+2 > bindings.length ? bindings.length : i + 2));
+    final sym = bindings[i];
+    final varname = munge(sym, env);
+    out.write("var $varname;\n");
+    emit(bindings[i+1], env, out, "$varname=");
+    env = assoc(env, sym, varname);
   }
-  env = bindings1.fold(env, (acc, elem) {
-      return emitBinding(elem, acc, out);
-  });
   emitBody(expr.skip(2).toList(), env, out, locus);
 }
 
@@ -301,13 +297,12 @@ void emitLoop(List expr, env, StringSink out, String locus) {
 void emitRecur(List expr, env, StringSink out, String locus) {
   var args=List();
   for(var i = 1; i < expr.length; i++) {
-    final arg = tmp();
-    args.add(arg);
-    out.write("var $arg;\n");
-    emit(expr[i], env, out, "${arg}=");
+    args.add(emitTmp(expr[i], env, out));
   }
   var loopBindings = lookup(env, LOOP_BINDINGS);
   assert(args.length == loopBindings.length);
+  // DON'T MERGE the for above with the one below:
+  // evaluation of all exprs MUST occur before reassignment
   for (var i = 0; i < args.length; i++) {
     out.write("${loopBindings[i]}=${args[i]};\n");
   }
@@ -351,9 +346,7 @@ void emitFnCall(List expr, env, StringSink out, String locus) {
   if (isAtomic(expr[0])) {
     emitExpr(expr[0], env, sb);
   } else {
-    var f = tmp();
-    out.write("var $f;\n");
-    emit(expr[0], env, out, "$f=");
+    var f = emitTmp(expr[0], env, out);
     sb.write(f);
   }
   emitArgs(expr.getRange(1, expr.length), env, out, sb.toString());
