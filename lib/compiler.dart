@@ -126,21 +126,20 @@ void emitNew(List expr, env, StringSink out, String locus) {
   emitArgs(expr.getRange(2, expr.length), env, out, sb.toString());
 }
 
+/// Takes a Clojure expression and returns an atomic expression usable
+/// as a Dart expression, possibly emitting supporting statements in the process.
 liftExpr(expr, env, StringSink out, {Symbol name, nameEnv, force=false}) {
   final atom = isAtomic(expr);
-  if (force || name != null || !atom) {
-    final x = name != null ? DartExpr.munge(name, nameEnv ?? env) : DartExpr.tmp();
-    if (atom) {
-      out.write("var $x=");
-      emitExpr(expr, env, out);
-      out.write(";\n");
-    } else {
-      out.write("var $x;\n");
-      emit(expr, env, out, "$x=");
-    }
-    return x;
+  if (atom && name == null && !force)
+    return expr;
+  final varname = name != null ? DartExpr.munge(name, nameEnv ?? env) : DartExpr.tmp();
+  if (atom) {
+    emit(expr, env, out, "var $varname=");
+  } else {
+    out.write("var $varname;\n");
+    emit(expr, env, out, "$varname=");
   }
-  return expr;
+  return varname;
 }
 
 void emitDot(List expr, env, StringSink out, String locus) {
