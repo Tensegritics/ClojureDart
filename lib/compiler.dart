@@ -298,7 +298,7 @@ void emitRecur(List expr, env, StringSink out, String locus) {
   // DON'T MERGE the for above with the one below:
   // evaluation of all exprs MUST occur before reassignment
   for (var i = 0; i < args.length; i++) {
-    out.write("${loopBindings[i]}=${args[i]};\n");
+    emit(args[i], env, out, "${loopBindings[i]}=");
   }
   out.write("continue;\n");
 }
