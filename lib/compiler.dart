@@ -17,14 +17,30 @@ Future<bool> reload() async {
 }
 
 Future eval(x) async {
+  // because of side effects on namespaces, x must be emitted before its parent namespace
+  final evalsb = StringBuffer();
+  emit(x, {}, evalsb, "return ");
+
+  // TODO reemit all dirty nses
+  {
+    final out = File("lib/" + ns.libname).openWrite();
+    try {
+      ns.emit(out);
+      out.write("Future cljd__eval() async {\n");
+      out.write(evalsb);
+      out.write("}\n\n");
+    } finally {
+      await out.close();
+    }
+  }
+
   final out = File("lib/evalexpr.dart").openWrite();
   try {
-    out.write("import 'dart:io';\n");
-    out.write("import 'cljd.dart';\n\n");
-    out.write("Future exec() async {\n_redef();\n");
-    emit(x, {}, out, "return ");
-    out.write("}\n\n");
-    ns.emit(out);
+    out.write('''import "${ns.libname}" as ns;
+Future exec() async {
+  ns.cljd__redefs();
+  return ns.cljd__eval();
+}''');
   } finally {
     await out.close();
   }
@@ -35,14 +51,35 @@ Future eval(x) async {
   return evalexpr.exec();
 }
 
+// (require 'foo.bar)
+// -> is foo.bar loaded? -> ok
+// -> is there a foo/bar.dart file newer than $CLJSRC/foo/bar.clj ? -> add import to current lib
+// -> starts evaluating $CLJSRC/foo/bar.clj form by form, produce foo/bar.dart file and then add import to current lib
+
+// (import 'dart:io.Stdout)
+// -> import 'dart.io' show Stdout;
+
 /// Half namespace, half lib
 class NamespaceLib {
+  final String _name;
+  String get libname => _name.replaceAllMapped(RegExp("[.-]"), (m) => m[0] == "." ? "/" : "_") + ".dart";
+  /// user-visible aliases, alias -> NamespaceLib
+  final _aliases = Map<String, NamespaceLib>();
+  /// package to dart alias
+  final _mappings = Map<Symbol, dynamic>();
+  // final _imports = Map(<String, String>)();
+
+  NamespaceLib(this._name);
+
   final _flds = Map<Symbol, String>();
   final _fns = Map<Symbol, String>();
   final _dirty = Set();
   void def(Symbol name, String init) {
     _fns.remove(name);
-    if (_flds.containsKey(name)) _dirty.add(name);
+    if (_flds.containsKey(name)) {
+      _dirty.add(name);
+ //     _dirtyNamespaces.add(this);
+    }
     _flds[name] = init;
   }
   void defn(Symbol name, String decl) {
@@ -51,23 +88,31 @@ class NamespaceLib {
     _fns[name] = decl;
   }
   void emit(StringSink out) {
+    // TODO remove these two lines:
+    out.write("import 'dart:io';\n");
+    out.write("import 'cljd.dart';\n\n");
+
+    _aliases.forEach((alias, ns) {
+      out.write("import ${ns.libname} as $alias;\n");
+    });
     for(var decl in _fns.values) {
       out..write(decl)..write("\n");
     }
     for(var init in _flds.values) {
       out..write("var ")..write(init)..write("\n");
     }
-    out.write("_redef() {\n");
-    for(var sym in _dirty) {
-      out..write(_flds[sym])..write("\n");
+    if (true || _dirty.isNotEmpty) { // TODO reenable
+      out.write("cljd__redefs() {\n");
+      for(var sym in _dirty) {
+        out..write(_flds[sym])..write("\n");
+      }
+      out.write("}\n\n");
+      _dirty.clear();
     }
-    out.write("}\n\n");
-    _dirty.clear();
   }
-
 }
 
-var ns = NamespaceLib();
+var ns = NamespaceLib("user");
 
 const DOT = Symbol(null, ".");
 const NEW = Symbol(null, "new");
