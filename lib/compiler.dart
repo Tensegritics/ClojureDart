@@ -231,28 +231,39 @@ void emitBodies(List bodies, env, StringSink out) {
   out.write(") {\n");
   for (var i = 0; i < bodies.length - 1; i++) {
     var params = bodies[i][0];
-    out.write("if (${paramsAlias[params.length]} == MISSING_ARG) {\n");
     var bodyenv = env;
+    var loopBindings = [];
+    out.write("if (${paramsAlias[params.length]} == MISSING_ARG) {\n");
     for(var i = 0; i < params.length; i++) {
       final varname = liftExpr(paramsAlias[i], env, out, name: params[i], nameEnv: bodyenv);
+      loopBindings.add(varname);
       bodyenv = assoc(bodyenv, params[i], varname);
     }
+    bodyenv = assoc(bodyenv, LOOP_BINDINGS, loopBindings);
+    out.write("do {\n");
     emitBody(bodies[i].skip(1).toList(), bodyenv, out, "return ");
+    out.write("break;\n} while(true);\n");
     out.write("}\n");
   }
   var params = bodies.last.first;
   var bodyenv = env;
+  var loopBindings = [];
   for (var i = 0; i < params.length; i++) {
     if (params[i] == AMPERSAND) {
       final varname = liftExpr(DartExpr("[${paramsAlias.skip(i).toList().join(', ')}].takeWhile((e) => e != MISSING_ARG).toList()"), env, out, name: params[i+1], nameEnv: bodyenv);
+      loopBindings.add(varname);
       bodyenv = assoc(bodyenv, params[i+1], varname);
       break;
     }
     final varname = DartExpr.munge(params[i], bodyenv);
+    loopBindings.add(varname);
     out.write("var $varname=${paramsAlias[i]};\n");
     bodyenv = assoc(bodyenv, params[i], varname);
   }
+  bodyenv = assoc(bodyenv, LOOP_BINDINGS, loopBindings);
+  out.write("do {\n");
   emitBody(bodies.last.skip(1).toList(), bodyenv, out, "return ");
+  out.write("break;\n} while(true);\n");
   out.write("}");
 }
 
@@ -335,10 +346,9 @@ void emitLoop(List expr, env, StringSink out, String locus) {
 void emitRecur(List expr, env, StringSink out, String locus) {
   var args=List();
   for(var i = 1; i < expr.length; i++) {
-    args.add(liftExpr(expr[i], env, out));
+    args.add(liftExpr(expr[i], env, out, force: true));
   }
   var loopBindings = lookup(env, LOOP_BINDINGS);
-  assert(args.length == loopBindings.length);
   // DON'T MERGE the for above with the one below:
   // evaluation of all exprs MUST occur before reassignment
   for (var i = 0; i < args.length; i++) {
