@@ -36,12 +36,18 @@ Future eval(x) async {
 
   final out = File("lib/evalexpr.dart").openWrite();
   try {
-    out.write('''import "${ns.libname}" as ns;
-Future exec() async {
-  ns.cljd__redefs();
-  return ns.cljd__eval();
-}''');
+    out.write("import '${ns.libname}' as ns;\n");
+    for(var i = 0; i < NamespaceLib.dirtyDefs.length; i++) {
+      out.write("import '${NamespaceLib.dirtyDefs[i][0].libname}' as ns_$i;\n");
+    }
+
+    out.write("\nFuture exec() async {\n");
+    for(var i = 0; i < NamespaceLib.dirtyDefs.length; i++) {
+      out.write("ns_$i.cljd__redefs__$i();\n");
+    }
+    out.write("return ns.cljd__eval();\n}\n");
   } finally {
+    NamespaceLib.dirtyDefs.clear();
     await out.close();
   }
   if (!await reload()) {
@@ -61,35 +67,47 @@ Future exec() async {
 
 /// Half namespace, half lib
 class NamespaceLib {
+  static final _allNses = Map<Symbol, NamespaceLib>();
+  static final dirtyDefs = [];
   final String _name;
   String get libname => _name.replaceAllMapped(RegExp("[.-]"), (m) => m[0] == "." ? "/" : "_") + ".dart";
   /// user-visible aliases, alias -> NamespaceLib
   final _aliases = Map<String, NamespaceLib>();
   /// package to dart alias
-  final _mappings = Map<Symbol, dynamic>();
+  final _mappings = Map<Symbol, dynamic>.from({
+      Symbol(null, "to-ns"): "toNs"
+  });
   // final _imports = Map(<String, String>)();
 
-  NamespaceLib(this._name);
+  factory NamespaceLib(name) {
+    final sym=Symbol(null, name);
+    final ns = _allNses[sym] ?? NamespaceLib._new(name);
+    _allNses[sym]=ns;
+    return ns;
+  }
+
+  NamespaceLib._new(this._name) {
+    _allNses[Symbol(null, _name)]=this;
+  }
 
   final _flds = Map<Symbol, String>();
   final _fns = Map<Symbol, String>();
-  final _dirty = Set();
   void def(Symbol name, String init) {
     _fns.remove(name);
     if (_flds.containsKey(name)) {
-      _dirty.add(name);
- //     _dirtyNamespaces.add(this);
+      dirtyDefs.add([this, name]);
     }
     _flds[name] = init;
   }
   void defn(Symbol name, String decl) {
     _flds.remove(name);
-    _dirty.remove(name);
+    dirtyDefs.removeWhere((pair) => pair[0] == this && pair[1] == name);
     _fns[name] = decl;
   }
   void emit(StringSink out) {
     // TODO remove these two lines:
     out.write("import 'dart:io';\n");
+    out.write("import 'compiler.dart';\n");
     out.write("import 'cljd.dart';\n\n");
 
     _aliases.forEach((alias, ns) {
@@ -101,18 +119,27 @@ class NamespaceLib {
     for(var init in _flds.values) {
       out..write("var ")..write(init)..write("\n");
     }
-    if (true || _dirty.isNotEmpty) { // TODO reenable
-      out.write("cljd__redefs() {\n");
-      for(var sym in _dirty) {
-        out..write(_flds[sym])..write("\n");
-      }
+    for(var i = 0; i < dirtyDefs.length; i++) {
+      if (dirtyDefs[i][0] != this) continue;
+      out.write("cljd__redefs__$i() {\n");
+      out.write(_flds[dirtyDefs[i][1]]);
       out.write("}\n\n");
-      _dirty.clear();
     }
+  }
+  resolve(Symbol x) {
+    if (x.namespace == null) return _mappings[x];
+    if (_aliases[x.namespace] != null) {
+      return "${x.namespace}.${x.name}";
+    }
+    return null;
   }
 }
 
 var ns = NamespaceLib("user");
+toNs(String s) {
+  ns = NamespaceLib(s);
+  return ns;
+}
 
 const DOT = Symbol(null, ".");
 const NEW = Symbol(null, "new");
@@ -358,7 +385,7 @@ void emitRecur(List expr, env, StringSink out, String locus) {
 }
 
 void emitSymbol(Symbol sym, env, StringSink out) {
-  out.write(lookup(env, sym) ?? sym.name);
+  out.write(lookup(env, sym) ?? ns.resolve(sym) ?? sym.name);
 }
 
 void emitStr(String s, StringSink out) {
