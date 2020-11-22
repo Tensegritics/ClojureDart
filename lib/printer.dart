@@ -1,3 +1,5 @@
+import 'cljd.dart';
+
 printSeparated(Iterable x, StringSink out, [delim=" "]) {
   if (x.isNotEmpty) {
     clj_print(x.first, out);
@@ -25,13 +27,17 @@ void printString(String s, StringSink out) {
 }
 
 void clj_print(dynamic x, StringSink out) {
-  if (x is List) {
+  if (x is PersistentVector) {
+    out.write("[");
+    printSeparated(x, out);
+    out.write("]");
+    return;
+  } else if (x is List) {
     out.write("(");
     printSeparated(x, out);
     out.write(")");
     return;
-  }
-  if (x is Set) {
+  } else if (x is Set) {
     out.write("#{");
     printSeparated(x, out);
     out.write("}");

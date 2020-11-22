@@ -60,9 +60,9 @@ class Reader {
     // list
     _macros[cu0("(")]=(Reader r) async => await readDelimited(r, cu0(")"));
     // vector
-    _macros[cu0("[")]=(Reader r) async => Vector(await readDelimited(r, cu0("]")));
+    _macros[cu0("[")]=(Reader r) async => PersistentVector(await readDelimited(r, cu0("]")));
     // quote
-    _macros[cu0("'")]=(Reader r) async => ["QUOTE", await r.read()];
+    _macros[cu0("'")]=(Reader r) async => [Symbol(null, "quote"), await r.read()];
     // malformed
     _macros[cu0(")")]=unexpectedMacroReader("closing parenthesis");
     _macros[cu0("]")]=unexpectedMacroReader("closing square bracket");

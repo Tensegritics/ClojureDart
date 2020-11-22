@@ -124,6 +124,7 @@ const IF = Symbol(null, "if");
 const LOOP = Symbol(null, "loop");
 const RECUR = Symbol(null, "recur");
 const AMPERSAND = Symbol(null, "&");
+const QUOTE = Symbol(null, "quote");
 
 dynamic macroexpand1(dynamic expr) {
   if ((expr is List) && (expr.length > 0)) {
@@ -137,7 +138,7 @@ dynamic macroexpand1(dynamic expr) {
         return List()..add(DOT)..add(expr[1])..add(Symbol(null, name.substring(1)))..addAll(expr.getRange(2, expr.length));
       }
       if (first == DO) {
-        return List()..add(LET)..add(Vector([]))..addAll(expr.getRange(1, expr.length));
+        return List()..add(LET)..add(PersistentVector.empty())..addAll(expr.getRange(1, expr.length));
       }
     }
     return expr;
@@ -173,16 +174,16 @@ void emitNew(List expr, env, StringSink out, String locus) {
 
 /// Takes a Clojure expression and returns an atomic expression usable
 /// as a Dart expression, possibly emitting supporting statements in the process.
-liftExpr(expr, env, StringSink out, {Symbol name, nameEnv, force=false}) {
+liftExpr(expr, env, StringSink out, {Symbol name, nameEnv, force=false, isQuoted=false}) {
   final atom = isAtomic(expr);
   if (atom && name == null && !force)
     return expr;
   final varname = name != null ? DartExpr.munge(name, nameEnv ?? env) : DartExpr.tmp();
   if (atom) {
-    emit(expr, env, out, "var $varname=");
+    emit(expr, env, out, "var $varname=", isQuoted: isQuoted);
   } else {
     out.write("var $varname;\n");
-    emit(expr, env, out, "$varname=");
+    emit(expr, env, out, "$varname=", isQuoted: isQuoted);
   }
   return varname;
 }
@@ -270,7 +271,7 @@ void emitBodies(List bodies, env, StringSink out) {
 List extractBodies(List expr) {
   bool namedFn = expr[1] is Symbol;
   final offset = namedFn ? 2 : 1;
-  return expr[offset] is Vector ? [expr.skip(offset).toList()] : expr.skip(offset).toList();
+  return expr[offset] is PersistentVector ? [expr.skip(offset).toList()] : expr.skip(offset).toList();
 }
 
 void emitFn(List expr, env, StringSink out, String locus) {
@@ -357,7 +358,11 @@ void emitRecur(List expr, env, StringSink out, String locus) {
   out.write("continue;\n");
 }
 
-void emitSymbol(Symbol sym, env, StringSink out) {
+void emitSymbol(Symbol sym, env, StringSink out, {bool isQuoted=false}) {
+  if (isQuoted) {
+    out.write("Symbol(null, \"${sym.name}\")");
+    return;
+  }
   out.write(lookup(env, sym) ?? sym.name);
 }
 
@@ -435,9 +440,9 @@ void emitArgs(Iterable expr, env, StringSink out, String locus) {
   out.write(");\n");
 }
 
-void emitExpr(dynamic expr, env, StringSink out) {
+void emitExpr(dynamic expr, env, StringSink out, {bool isQuoted=false}) {
   if (expr is Symbol) {
-    emitSymbol(expr, env, out);
+    emitSymbol(expr, env, out, isQuoted: isQuoted);
   } else if (expr is String) {
     emitStr(expr, out);
   } else {
@@ -468,9 +473,28 @@ void emitDef(dynamic expr, env, StringSink out, String locus) {
   emit(expr[1], env, out, locus);
 }
 
-void emit(dynamic expr, env, StringSink out, String locus) {
+void emitCollection(dynamic expr, env, StringSink out, String locus, {bool isQuoted=false}) {
+  final sb = StringBuffer("${locus}");
+  if (expr is PersistentVector) {
+    sb.write("PersistentVector.empty()");
+  } else if (expr is List) {
+    sb.write("List()");
+  } else if (expr is Set) {
+    sb.write("Set()");
+  }
+  expr.forEach((e) {
+      sb.write("..add(");
+      emitExpr(liftExpr(e, env, out, isQuoted: isQuoted), env, sb, isQuoted: isQuoted);
+      sb.write(")");
+  });
+  out.write(sb.toString());
+  out.write(";\n");
+}
+
+void emit(dynamic expr, env, StringSink out, String locus, {bool isQuoted=false}) {
   expr=macroexpand(expr);
-  if (expr is List) {
+  // PersistentVector are List as of Sat Nov 21 16:02:34 2020 so we need to double check when emitting PersistentVector
+  if (!isQuoted && expr is List && expr is! PersistentVector) {
     if (expr.first == NEW) {
       emitNew(expr, env, out, locus);
       return;
@@ -503,10 +527,18 @@ void emit(dynamic expr, env, StringSink out, String locus) {
       emitRecur(expr, env, out, locus);
       return;
     }
+    if (expr.first == QUOTE) {
+      emit(expr[1], env, out, locus, isQuoted: true);
+      return;
+    }
     emitFnCall(expr, env, out, locus);
     return;
   }
+  if (expr is Iterable) {
+    emitCollection(expr, env, out, locus, isQuoted: isQuoted);
+    return;
+  }
   out.write(locus);
-  emitExpr(expr, env, out);
+  emitExpr(expr, env, out, isQuoted: isQuoted);
   out.write(";\n");
 }
