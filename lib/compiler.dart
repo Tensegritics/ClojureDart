@@ -175,6 +175,7 @@ void emitNew(List expr, env, StringSink out, String locus) {
 /// Takes a Clojure expression and returns an atomic expression usable
 /// as a Dart expression, possibly emitting supporting statements in the process.
 liftExpr(expr, env, StringSink out, {Symbol name, nameEnv, force=false, isQuoted=false}) {
+  if (isQuoted) return expr;
   final atom = isAtomic(expr);
   if (atom && name == null && !force)
     return expr;
@@ -441,7 +442,9 @@ void emitArgs(Iterable expr, env, StringSink out, String locus) {
 }
 
 void emitExpr(dynamic expr, env, StringSink out, {bool isQuoted=false}) {
-  if (expr is Symbol) {
+  if (expr is Iterable) {
+    emitCollection(expr, env, out, "", isQuoted: isQuoted);
+  } else if (expr is Symbol) {
     emitSymbol(expr, env, out, isQuoted: isQuoted);
   } else if (expr is String) {
     emitStr(expr, out);
@@ -488,7 +491,6 @@ void emitCollection(dynamic expr, env, StringSink out, String locus, {bool isQuo
       sb.write(")");
   });
   out.write(sb.toString());
-  out.write(";\n");
 }
 
 void emit(dynamic expr, env, StringSink out, String locus, {bool isQuoted=false}) {
@@ -536,6 +538,7 @@ void emit(dynamic expr, env, StringSink out, String locus, {bool isQuoted=false}
   }
   if (expr is Iterable) {
     emitCollection(expr, env, out, locus, isQuoted: isQuoted);
+    out.write(";\n");
     return;
   }
   out.write(locus);
