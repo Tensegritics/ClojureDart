@@ -34,11 +34,12 @@
       (let [name (name f)]
         ;; TODO add proper expansion here, before defaults
         (cond
+          (= name ".") form
           (.endsWith name ".")
           (list* 'new
                  (symbol (namespace f) (subs name 0 (dec (count name))))
                  args)
-          (and (not= name ".") (.startsWith name "."))
+          (.startsWith name ".")
           (list* '. (first args) (symbol (subs name 1)) (next args))
           :else form))
       form)
@@ -61,8 +62,7 @@
   (out! \")
   (out! (replace-all s #"([\x00-\x1f])|[$\"]"
                      (fn [match]
-                       (let [control-char #?(:clj (match 1) :cljd (.group match 1))
-                             match #?(:clj (match 0) (.group match 0))]
+                       (let [[match control-char] (-> match #?@(:cljd [re-groups]))]
                          (if control-char
                            (case control-char
                              "\b" "\\b"
@@ -147,8 +147,16 @@
     (emit-expr class env sb!)
     (emit-args args env out! (sb!))))
 
-(defn emit-dot [expr env out! locus]
-  )
+(defn emit-dot [[_ obj fld & args] env out! locus]
+  (let [[_ prop name] (re-matches #"(-)?(.*)" (name fld))
+        sb! (string-writer locus)]
+    (emit-expr (lift-expr obj env out!) env sb!)
+    (sb! (str "." name))
+    (if prop
+      (do
+        (sb! ";\n")
+        (out! (sb!)))
+      (emit-args args env out! (sb!)))))
 
 (defn emit [expr env out! locus]
   (let [expr (macroexpand-all env expr)]
@@ -169,6 +177,7 @@
     (emit \x {} out! "return ")
     (emit '(Foo. 1 & :bleh 32) {} out! "return ")
     (emit '(Foo. 1 & :bleh (Bar.)) {} out! "return ")
+    (emit '(.-fld a) {} out! "return ")
+    (emit '(.meth a b c) {} out! "return ")
     (println (out!)))
-
   )
