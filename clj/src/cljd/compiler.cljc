@@ -227,6 +227,24 @@
     (out! (str "Symbol(null, " (name body) ")"))
     :else (emit-expr body env out!)))
 
+(defn emit-collection [body env out! locus]
+  (let [sb! (string-writer locus)]
+    (if (map? body)
+      (do (sb! "{")
+          (doseq [[k v] body]
+            (if (not (coll? k)) (emit-expr k env sb!) (sb! (lift-expr k env out!)))
+            (sb! ": ")
+            (if (not (coll? v)) (emit-expr v env sb!) (sb! (lift-expr v env out!)))
+            (sb! ", "))
+          (sb! "}"))
+      (do (sb! (if (set? body) "Set" "Vector"))
+          (sb! ".from([")
+          (doseq [e body]
+            (if (not (coll? e)) (emit-expr e env sb!) (sb! (lift-expr e env out!)))
+            (sb! ", "))
+          (sb! "])")))
+    (out! (sb!))))
+
 (defn emit [expr env out! locus]
   (let [expr (macroexpand-all env expr)]
     (if (seq? expr)
@@ -238,10 +256,12 @@
         loop (emit-loop expr env out! locus)
         recur (emit-recur expr env out! locus)
         quote (do (emit-quoted (second expr) env out! locus) (out! ";\n")))
-      (do
-        (out! locus)
-        (emit-expr expr env out!)
-        (out! ";\n")))))
+      (do (if (coll? expr)
+            (emit-collection expr env out! locus)
+            (do
+              (out! locus)
+              (emit-expr expr env out!)))
+          (out! ";\n")))))
 
 (comment
 
@@ -263,5 +283,15 @@
     (emit '(loop [a 4 b 5] (if a a (recur (.-isOdd a) (.-isEven a)))) {} out! "return ")
     (emit '(quote (fn [a] a)) {} out! "return ")
     (emit '(quote {a b c 3}) {} out! "return ")
+    (emit '{1 2 3 4} {} out! "return ")
+    (emit '{"a" {:a :b} 3 4} {} out! "return ")
+    (out! "\n")
+    (out! "\n")
+    (emit '[1 2 3 {1 2}] {} out! "return ")
+    (emit '[1 2 (let [a 3] a)] {} out! "return ")
+    (emit '#{1 2 (let [a 3] a)} {} out! "return ")
+    (emit '[1 2 '(let [a])] {} out! "return ")
     (println (out!)))
+
+
   )
