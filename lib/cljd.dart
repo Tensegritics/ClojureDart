@@ -1,4 +1,4 @@
-import 'package:collection/collection.dart';
+import 'dart:collection';
 
 int hashCombine(int seed, int hash) {
   seed ^= hash + 0x9e3779b9 + (seed << 6) + (seed >> 2);
@@ -35,10 +35,17 @@ class Keyword {
   }
 }
 
-class PersistentVector<E> extends DelegatingList<E> {
-  PersistentVector.empty() : this(List());
-  PersistentVector.from(List<E> v): this(v);
-  PersistentVector(List<E> v): super(v);
+class PersistentVector<E> with ListMixin<E> implements List<E> {
+  List<E> _v;
+  E operator [](int i) => _v[i];
+  operator []=(int i, E _) => throw new UnsupportedError("Cannot add to an unmodifiable list");
+
+  int get length => _v.length;
+  set length(int _) => throw new UnsupportedError("Cannot add to an unmodifiable list");
+
+  PersistentVector(this._v);
+  PersistentVector.from(this._v);
+  PersistentVector.empty() : this([]);
 }
 
 
