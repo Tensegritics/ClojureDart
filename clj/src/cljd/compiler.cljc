@@ -103,6 +103,8 @@
 (defn munge [sym env]
   (DartExpr. (if (env sym) (str (name sym) "__" (swap! mungees inc)) (name sym))))
 
+(declare emit)
+
 (defn lift-expr [expr env out! & {:keys [name name-env force]}]
   (let [value (not (coll? expr))]
     (if (and value (nil? name) (not force))
@@ -158,12 +160,84 @@
         (out! (sb!)))
       (emit-args args env out! (sb!)))))
 
+(defn emit-body [body env out! locus]
+  (loop [body body]
+    (when-some [[x & xs] body]
+      (if xs
+        (do (emit x env out! "") (recur xs))
+        (emit x env out! locus)))))
+
+(defn emit-let [[_ bindings & body] env out! locus]
+  (let [env (loop [env env bindings (partition 2 bindings)]
+              (if-some [[sym val] (first bindings)]
+                (recur (assoc env sym (lift-expr val env out! :name sym)) (next bindings))
+                env))]
+    (emit-body body env out! locus)))
+
+(defn emit-if [[_ test then else] env out! locus]
+  (out! (str "if (" (lift-expr test env out!) ") {\n"))
+  (emit then env out! locus)
+  (out! "}else{\n")
+  (emit else env out! locus)
+  (out! "}\n"))
+
+(defn emit-loop [[_ bindings & body] env out! locus]
+  (let [env (loop [env env bindings (partition 2 bindings)]
+              (if-some [[sym val] (first bindings)]
+                (let [varname (lift-expr val env out! :name sym)]
+                  (recur (-> env
+                             (assoc sym varname)
+                             (update ::loop-bindings (fnil conj []) varname))
+                         (next bindings)))
+                env))]
+    (out! "do {\n")
+    (emit-body body env out! locus)
+    (out! "break;\n} while(true);\n")))
+
+(defn emit-recur [[_ & expr] env out! locus]
+  (let [sb! (string-writer)
+        loop-bindings (::loop-bindings env)]
+    (loop [idx 0
+           expr expr]
+      (when-some [[x & xs] expr]
+        (emit (lift-expr x env out! :force true) env sb! (str (nth loop-bindings idx) "="))
+        (recur (inc idx) xs)))
+    (out! (sb!))
+    (out! "continue;\n")))
+
+(defn emit-quoted [body env out! locus]
+  (out! locus)
+  (cond
+    (map? body)
+    (do (out! "{")
+        (doseq [[k v] body]
+          (emit-quoted k env out! "")
+          (out! ": ")
+          (emit-quoted v env out! "")
+          (out! ", "))
+        (out! "}"))
+    (coll? body)
+    (do (out! (cond (list? body) "List" (set? body) "Set" :else "Vector"))
+        (out! ".from([")
+        (doseq [e body]
+          (emit-quoted e env out! "")
+          (out! ", "))
+        (out! "])"))
+    (symbol? body)
+    (out! (str "Symbol(null, " (name body) ")"))
+    :else (emit-expr body env out!)))
+
 (defn emit [expr env out! locus]
   (let [expr (macroexpand-all env expr)]
     (if (seq? expr)
       (case (first expr)
         new (emit-new expr env out! locus)
-        . (emit-dot expr env out! locus))
+        . (emit-dot expr env out! locus)
+        let (emit-let expr env out! locus)
+        if (emit-if expr env out! locus)
+        loop (emit-loop expr env out! locus)
+        recur (emit-recur expr env out! locus)
+        quote (emit-quoted (second expr) env out! locus))
       (do
         (out! locus)
         (emit-expr expr env out!)
@@ -179,5 +253,14 @@
     (emit '(Foo. 1 & :bleh (Bar.)) {} out! "return ")
     (emit '(.-fld a) {} out! "return ")
     (emit '(.meth a b c) {} out! "return ")
+    (emit '(let [a 2 b 3] a  a a a a a b) {} out! "return ")
+    (emit '(if true "a" "b") {} out! "return ")
+    (emit '(if true "a") {} out! "return ")
+    (emit '(if (let [a true] a) "a") {} out! "return ")
+    (emit '(loop [a 4] (if a a 5)) {} out! "return ")
+    (emit '(loop [a 4] (if a a (recur 5))) {} out! "return ")
+    (emit '(loop [a 4 b 5] (if a a (recur (.-isOdd a) (.-isEven a)))) {} out! "return ")
+    (emit '(quote (fn [a] a)) {} out! "return ")
+    (emit '(quote {a b c 3}) {} out! "return ")
     (println (out!)))
   )

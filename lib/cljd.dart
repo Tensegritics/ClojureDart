@@ -37,6 +37,7 @@ class Keyword {
 
 class PersistentVector<E> extends DelegatingList<E> {
   PersistentVector.empty() : this(List());
+  PersistentVector.from(List<E> v): this(v);
   PersistentVector(List<E> v): super(v);
 }
 
