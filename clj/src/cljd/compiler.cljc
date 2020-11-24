@@ -237,13 +237,14 @@
         if (emit-if expr env out! locus)
         loop (emit-loop expr env out! locus)
         recur (emit-recur expr env out! locus)
-        quote (emit-quoted (second expr) env out! locus))
+        quote (do (emit-quoted (second expr) env out! locus) (out! ";\n")))
       (do
         (out! locus)
         (emit-expr expr env out!)
         (out! ";\n")))))
 
 (comment
+
   (let [out! (string-writer)]
     (emit "hello" {} out! "return ")
     (emit 'sym {} out! "return ")
