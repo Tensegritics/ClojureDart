@@ -195,13 +195,9 @@
     (out! "break;\n} while(true);\n")))
 
 (defn emit-recur [[_ & expr] env out! locus]
-  (let [sb! (string-writer)
-        loop-bindings (::loop-bindings env)]
-    (loop [idx 0
-           expr expr]
-      (when-some [[x & xs] expr]
-        (emit (lift-expr x env out! :force true) env sb! (str (nth loop-bindings idx) "="))
-        (recur (inc idx) xs)))
+  (let [sb! (string-writer)]
+    (doseq [[expr binding] (map vector expr (::loop-bindings env))]
+      (emit (lift-expr expr env out! :force true) env sb! (str binding "=")))
     (out! (sb!))
     (out! "continue;\n")))
 
@@ -237,13 +233,66 @@
             (if (not (coll? v)) (emit-expr v env sb!) (sb! (lift-expr v env out!)))
             (sb! ", "))
           (sb! "}"))
-      (do (sb! (if (set? body) "Set" "Vector"))
+      (do (sb! (if (set? body) "Set" "PersistentVector"))
           (sb! ".from([")
           (doseq [e body]
             (if (not (coll? e)) (emit-expr e env sb!) (sb! (lift-expr e env out!)))
             (sb! ", "))
           (sb! "])")))
     (out! (sb!))))
+
+(defn emit-body [expr env out! locus]
+  (doseq [body (butlast expr)]
+    (emit body env out! ""))
+  (emit (last expr) env out! locus))
+
+(defn emit-bodies [bodies env out!]
+  (let [bodies (sort #(compare (count (first %1)) (count (first %2))) bodies)
+        is-variadic (some #{'&} (first (last bodies)))
+        smallest-arity (if (and (= 1 (count bodies)) is-variadic) (- (count (ffirst bodies)) 2) (count (ffirst bodies)))
+        biggest-arity (count (first (last bodies)))]
+    (out! "(")
+    (let [params-alias (into [] (map #(let [tmpparam (tmpvar)]
+                                        (when (< 0 %) (out! ","))
+                                        (when (= % smallest-arity) (out! "["))
+                                        (out! tmpparam)
+                                        (when (>= % smallest-arity) (out! "=MISSING_ARG"))
+                                        tmpparam))
+                             (range (if is-variadic 8 biggest-arity)))]
+      (when (or (< 1 (count bodies)) is-variadic) (out! "]"))
+      (out! ") {\n")
+      (let [e (fn [[params & body] env out!]
+                (let [[params [_ vararg-param]] (split-with (complement #{'&}) params)
+                      bodyenv (reduce (fn [bodyenv [param alias]]
+                                        (let [varname (lift-expr alias env out! :name param :name-env bodyenv)]
+                                          (-> bodyenv
+                                              (assoc param varname)
+                                              (update ::loop-bindings (fnil conj []) varname))))
+                                      env
+                                      (map vector params params-alias))
+                      bodyenv (if vararg-param
+                                (let [varname (lift-expr (DartExpr. (str "[" (clojure.string/join "," (subvec params-alias (count params))) "].takeWhile((e) => e != MISSING_ARG).toList()")) env out! :name vararg-param :name-env bodyenv)]
+                                  (-> bodyenv
+                                      (assoc vararg-param varname)
+                                      (update ::loop-bindings (fnil conj []) varname)))
+                                bodyenv)]
+                  (out! "do {\n")
+                  (emit-body body bodyenv out! "return ")
+                  (out! "break;\n} while(true);\n}\n")))]
+        (doseq [body (butlast bodies)]
+          (out! (str "if (" (nth params-alias (count (first body))) " == MISSING_ARG) {\n"))
+          (e body env out!))
+        (e (last bodies) env out!)))))
+
+(defn emit-fn [[_ & sigs] env out! locus]
+  #_(if-let [named (symbol? (first sigs))]
+    (let [[name param & body] sigs
+          fnname (munge name env)]
+      (out! fnname)
+      (-> (assoc env name fnname))))
+  (out! locus)
+  (emit-bodies sigs env out!)
+  (out! ";\n"))
 
 (defn emit [expr env out! locus]
   (let [expr (macroexpand-all env expr)]
@@ -255,7 +304,8 @@
         if (emit-if expr env out! locus)
         loop (emit-loop expr env out! locus)
         recur (emit-recur expr env out! locus)
-        quote (do (emit-quoted (second expr) env out! locus) (out! ";\n")))
+        quote (do (emit-quoted (second expr) env out! locus) (out! ";\n"))
+        fn (emit-fn expr env out! locus))
       (do (if (coll? expr)
             (emit-collection expr env out! locus)
             (do
@@ -285,12 +335,24 @@
     (emit '(quote {a b c 3}) {} out! "return ")
     (emit '{1 2 3 4} {} out! "return ")
     (emit '{"a" {:a :b} 3 4} {} out! "return ")
-    (out! "\n")
-    (out! "\n")
+
     (emit '[1 2 3 {1 2}] {} out! "return ")
     (emit '[1 2 (let [a 3] a)] {} out! "return ")
     (emit '#{1 2 (let [a 3] a)} {} out! "return ")
     (emit '[1 2 '(let [a])] {} out! "return ")
+    (emit '(fn ([a] 1 a a)) {} out! "return ")
+    (emit '(fn ([a] 1 a) ([a b] b a) ([a b c] c)) {} out! "return ")
+    (emit '(fn ([a a a a a a] 1 a)) {} out! "return ")
+
+    (emit '(fn ([a & b] 1 a)) {} out! "return ")
+
+    (emit '(fn ([arg] (.-isOdd arg)) ([a & b] 1 a)) {} out! "return ")
+
+    (emit '(fn ([] 1) ([a & b] 1 a)) {} out! "return ")
+    (out! "\n")
+    (out! "\n")
+    (emit '(fn ([a] (recur a)) ([a & b] 1 a)) {} out! "return ")
+    (emit '(loop [a 4] (if a a (recur 5))) {} out! "return ")
     (println (out!)))
 
 
