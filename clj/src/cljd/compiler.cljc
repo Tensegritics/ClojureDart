@@ -29,20 +29,18 @@
        (.write ^StringSink out (str x)))))
 
 (defn macroexpand-1 [env form]
-  (if-some [[f & args] (when (seq? form) (seq form))]
-    (if (symbol? f)
-      (let [name (name f)]
-        ;; TODO add proper expansion here, before defaults
-        (cond
-          (= name ".") form
-          (.endsWith name ".")
-          (list* 'new
-                 (symbol (namespace f) (subs name 0 (dec (count name))))
-                 args)
-          (.startsWith name ".")
-          (list* '. (first args) (symbol (subs name 1)) (next args))
-          :else form))
-      form)
+  (if-some [[f & args] (when (and (seq? form) (symbol? (first form))) (seq form))]
+    (let [name (name f)]
+      ;; TODO add proper expansion here, before defaults
+      (cond
+        (= name ".") form
+        (.endsWith name ".")
+        (list* 'new
+          (symbol (namespace f) (subs name 0 (dec (count name))))
+          args)
+        (.startsWith name ".")
+        (list* '. (first args) (symbol (subs name 1)) (next args))
+        :else form))
     form))
 
 (defn macroexpand-all [env form]
@@ -315,45 +313,43 @@
 
 (comment
 
-  (let [out! (string-writer)]
-    (emit "hello" {} out! "return ")
-    (emit 'sym {} out! "return ")
-    (emit 42 {} out! "return ")
-    (emit \x {} out! "return ")
-    (emit '(Foo. 1 & :bleh 32) {} out! "return ")
-    (emit '(Foo. 1 & :bleh (Bar.)) {} out! "return ")
-    (emit '(.-fld a) {} out! "return ")
-    (emit '(.meth a b c) {} out! "return ")
-    (emit '(let [a 2 b 3] a  a a a a a b) {} out! "return ")
-    (emit '(if true "a" "b") {} out! "return ")
-    (emit '(if true "a") {} out! "return ")
-    (emit '(if (let [a true] a) "a") {} out! "return ")
-    (emit '(loop [a 4] (if a a 5)) {} out! "return ")
-    (emit '(loop [a 4] (if a a (recur 5))) {} out! "return ")
-    (emit '(loop [a 4 b 5] (if a a (recur (.-isOdd a) (.-isEven a)))) {} out! "return ")
-    (emit '(quote (fn [a] a)) {} out! "return ")
-    (emit '(quote {a b c 3}) {} out! "return ")
-    (emit '{1 2 3 4} {} out! "return ")
-    (emit '{"a" {:a :b} 3 4} {} out! "return ")
-
-    (emit '[1 2 3 {1 2}] {} out! "return ")
-    (emit '[1 2 (let [a 3] a)] {} out! "return ")
-    (emit '#{1 2 (let [a 3] a)} {} out! "return ")
-    (emit '[1 2 '(let [a])] {} out! "return ")
-    (emit '(fn ([a] 1 a a)) {} out! "return ")
-    (emit '(fn ([a] 1 a) ([a b] b a) ([a b c] c)) {} out! "return ")
-    (emit '(fn ([a a a a a a] 1 a)) {} out! "return ")
-
-    (emit '(fn ([a & b] 1 a)) {} out! "return ")
-
-    (emit '(fn ([arg] (.-isOdd arg)) ([a & b] 1 a)) {} out! "return ")
-
-    (emit '(fn ([] 1) ([a & b] 1 a)) {} out! "return ")
-    (out! "\n")
-    (out! "\n")
-    (emit '(fn ([a] (recur a)) ([a & b] 1 a)) {} out! "return ")
-    (emit '(loop [a 4] (if a a (recur 5))) {} out! "return ")
-    (println (out!)))
+  (doseq [form
+          '("hello"
+            sym
+            42
+            \x
+            (Foo. 1 & :bleh 32)
+            (Foo. 1 & :bleh (Bar.))
+            (.-fld a)
+            (.meth a b c)
+            (let [a 2 b 3] a a a a a a b)
+            (if true "a" "b")
+            (if true "a")
+            (if (let [a true] a) "a")
+            (loop [a 4] (if a a 5))
+            (loop [a 4] (if a a (recur 5)))
+            (loop [a 4 b 5] (if a a (recur (.-isOdd a) (.-isEven a))))
+            '(fn [a] a)
+            '{a b, c 3}
+            {1 2, 3 4}
+            {"a" {:a :b}, 3 4}
+            [1 2 3 {1 2}]
+            [1 2 (let [a 3] a)]
+            #{1 (let [a 3] a) 2}
+            [1 2 '(let [a])]
+            (fn ([a] 1 a a))
+            (fn ([a] 1 a) ([a b] b a) ([a b c] c))
+            (fn ([a a a a a a] 1 a))
+            (fn ([a & b] 1 a))
+            (fn ([arg] (.-isOdd arg)) ([a & b] 1 a))
+            (fn ([] 1) ([a & b] 1 a))
+            (fn ([a] (recur a)) ([a & b] 1 a))
+            (loop [a 4] (if a a (recur 5))))
+          :let [out! (string-writer)]]
+    (print "#=> ") (prn form)
+    (emit form {} out! "return ")
+    (println (out!))
+    (newline))
 
 
   )
