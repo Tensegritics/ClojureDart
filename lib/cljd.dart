@@ -35,7 +35,7 @@ class Keyword {
   }
 }
 
-class PersistentVector<E> with ListMixin<E> implements List<E> {
+class PersistentVector<E> extends ListMixin<E> {
   List<E> _v;
   E operator [](int i) => _v[i];
   operator []=(int i, E _) => throw new UnsupportedError("Cannot add to an unmodifiable list");
