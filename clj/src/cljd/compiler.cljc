@@ -285,14 +285,18 @@
         (e (last bodies) env out!)))))
 
 (defn emit-fn [[_ & sigs] env out! locus]
-  #_(if-let [named (symbol? (first sigs))]
-    (let [[name param & body] sigs
-          fnname (munge name env)]
-      (out! fnname)
-      (-> (assoc env name fnname))))
-  (out! locus)
-  (emit-bodies sigs env out!)
-  (out! ";\n"))
+  (let [named (symbol? (first sigs))
+        fnname (when named (first sigs))
+        body (else->> (let [body (if named (next sigs) sigs)])
+                      (if (vector? (first body)) (list body) body))]
+    (if named
+      (let [munged (munge fnname env)]
+        (out! munged)
+        (emit-bodies body (assoc env fnname munged) out!)
+        (out! (str locus munged)))
+      (do (out! locus)
+          (emit-bodies body env out!)))
+    (out! ";\n")))
 
 (defn emit [expr env out! locus]
   (let [expr (macroexpand-all env expr)]
@@ -349,10 +353,14 @@
     (emit '(fn ([arg] (.-isOdd arg)) ([a & b] 1 a)) {} out! "return ")
 
     (emit '(fn ([] 1) ([a & b] 1 a)) {} out! "return ")
-    (out! "\n")
-    (out! "\n")
+
     (emit '(fn ([a] (recur a)) ([a & b] 1 a)) {} out! "return ")
     (emit '(loop [a 4] (if a a (recur 5))) {} out! "return ")
+    (out! "\n")
+    (out! "\n")
+    (emit '(fn nom ([a] (recur a)) ([a & b] 1 a)) {} out! "return ")
+    (emit '(fn nom2 [a b] 42 42) {} out! "return ")
+    (emit '(fn nom2 ([a b] 42 42) ([] 43)) {} out! "return ")
     (println (out!)))
 
 
