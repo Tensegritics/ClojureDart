@@ -28,17 +28,25 @@
      (fn [x]
        (.write ^StringSink out (str x)))))
 
-(def nses (atom {}))
+(def nses (atom {:current-ns 'user}))
 
 (defn do-def [nses sym m]
   (assoc-in nses [(:current-ns nses) sym] m))
 
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
-    (let [name (name f)]
+    (let [name (name f)
+          #?@(:clj [clj-var (ns-resolve (find-ns (:current-ns @nses)) f)])]
       ;; TODO add proper expansion here, before defaults
       (cond
-        (= name ".") form
+        (env f) form
+        (= '. f) form
+        #?@(:clj
+            [(-> clj-var meta :macro)
+             ; force &env to nil when cross-compiling, should be ok
+             (apply @clj-var form nil (next form))]
+            :cljd
+            [TODO TODO])
         (.endsWith name ".")
         (list* 'new
           (symbol (namespace f) (subs name 0 (dec (count name))))
@@ -93,6 +101,7 @@
     (symbol? expr) (emit-symbol expr env out!)
     (string? expr) (emit-string expr out!)
     #?@(:clj [(char? expr) (emit-string (str expr) out!)])
+    (nil? expr) (out! "null")
     :else (out! expr)))
 
 (def mungees (atom 0))
@@ -178,11 +187,16 @@
     (emit-body body env out! locus)))
 
 (defn emit-if [[_ test then else] env out! locus]
-  (out! (str "if (" (lift-expr test env out!) ") {\n"))
-  (emit then env out! locus)
-  (out! "}else{\n")
-  (emit else env out! locus)
-  (out! "}\n"))
+  (let [test (lift-expr test env out! :force true)]
+    (out! "if (")
+    (emit-expr test env out!)
+    (out! "!= null && false != ")
+    (emit-expr test env out!)
+    (out! ") {\n")
+    (emit then env out! locus)
+    (out! "}else{\n")
+    (emit else env out! locus)
+    (out! "}\n")))
 
 (defn emit-loop [[_ bindings & body] env out! locus]
   (let [env (loop [env env bindings (partition 2 bindings)]
@@ -342,12 +356,12 @@
       (case (first expr)
         new (emit-new expr env out! locus)
         . (emit-dot expr env out! locus)
-        let (emit-let expr env out! locus)
+        let* (emit-let expr env out! locus)
         if (emit-if expr env out! locus)
-        loop (emit-loop expr env out! locus)
+        loop* (emit-loop expr env out! locus)
         recur (emit-recur expr env out! locus)
         quote (do (out! locus) (emit-quoted (second expr) env out!) (out! ";\n"))
-        fn (emit-fn expr env out! locus)
+        fn* (emit-fn expr env out! locus)
         def (emit-def expr env out! locus)
         (emit-fn-call expr env out! locus))
       (coll? expr) (emit-collection expr env out! locus)
@@ -389,7 +403,10 @@
             (fn unnom [a] (unnom a))
             ((fn [a] a) 42)
             (def x 42)
-            (def foo (fn foo [x] x)))
+            (def foo (fn foo [x] x))
+            (defn bar [z] z)
+            (or a b c)
+            (cond test-1 expr-1 test-2 expr-2 ":else" fallback))
           :let [out! (string-writer)]]
     (print "#=> ") (prn form)
     (emit form {} out! "return ")
