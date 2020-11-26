@@ -204,22 +204,21 @@
     (out! (sb!))
     (out! "continue;\n")))
 
-(defn emit-quoted [body env out! locus]
-  (out! locus)
+(defn emit-quoted [body env out!]
   (cond
     (map? body)
     (do (out! "{")
         (doseq [[k v] body]
-          (emit-quoted k env out! "")
+          (emit-quoted k env out!)
           (out! ": ")
-          (emit-quoted v env out! "")
+          (emit-quoted v env out!)
           (out! ", "))
         (out! "}"))
     (coll? body)
     (do (out! (cond (list? body) "List" (set? body) "Set" :else "Vector"))
         (out! ".from([")
         (doseq [e body]
-          (emit-quoted e env out! "")
+          (emit-quoted e env out!)
           (out! ", "))
         (out! "])"))
     (symbol? body)
@@ -242,7 +241,8 @@
             (if (not (coll? e)) (emit-expr e env sb!) (sb! (lift-expr e env out!)))
             (sb! ", "))
           (sb! "])")))
-    (out! (sb!))))
+    (out! (sb!))
+    (out! ";\n")))
 
 (defn emit-body [expr env out! locus]
   (doseq [body (butlast expr)]
@@ -346,11 +346,11 @@
         if (emit-if expr env out! locus)
         loop (emit-loop expr env out! locus)
         recur (emit-recur expr env out! locus)
-        quote (do (emit-quoted (second expr) env out! locus) (out! ";\n"))
+        quote (do (out! locus) (emit-quoted (second expr) env out!) (out! ";\n"))
         fn (emit-fn expr env out! locus)
         def (emit-def expr env out! locus)
         (emit-fn-call expr env out! locus))
-      (coll? expr) (do (emit-collection expr env out! locus) (out! ";\n"))
+      (coll? expr) (emit-collection expr env out! locus)
       :else (do (out! locus) (emit-expr expr env out!) (out! ";\n")))))
 
 (comment
