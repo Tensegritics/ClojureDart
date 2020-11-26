@@ -284,10 +284,9 @@
 
 (defn emit-fn [[_ & sigs] env out! locus]
   (let [named (symbol? (first sigs))
-        fnname (when named (first sigs))
         body (else->> (let [body (if named (next sigs) sigs)])
                       (if (vector? (first body)) (list body) body))]
-    (if named
+    (if-some [fnname (when named (first sigs))]
       (let [munged (munge fnname env)]
         (out! munged)
         (emit-bodies body (assoc env fnname munged) out!)
@@ -354,7 +353,8 @@
             (fn ([] 1) ([a & b] 1 a))
             (fn ([a] (recur a)) ([a & b] 1 a))
             (loop [a 4] (if a a (recur 5)))
-            (fn unnom [a] (unnom a)))
+            (fn unnom [a] (unnom a))
+            ((fn [a] a) 42))
           :let [out! (string-writer)]]
     (print "#=> ") (prn form)
     (emit form {} out! "return ")
