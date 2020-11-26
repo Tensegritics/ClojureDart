@@ -1,5 +1,5 @@
 (ns cljd.compiler
-  (:refer-clojure :exclude [macroexpand-all macroexpand-1])
+  (:refer-clojure :exclude [macroexpand-all macroexpand-1 munge])
   (:require [clojure.core :as cljhost]))
 
 (defmacro ^:private else->> [& forms]
@@ -27,6 +27,11 @@
      :cljd
      (fn [x]
        (.write ^StringSink out (str x)))))
+
+(def nses (atom {}))
+
+(defn do-def [nses sym m]
+  (assoc-in nses [(:current-ns nses) sym] m))
 
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
@@ -300,9 +305,40 @@
     (emit-expr (lift-expr fnname env out!) env sb!)
     (emit-args args env out! (sb!))))
 
+(defn extract-bodies [fn-expr]
+  (let [bodies (if (symbol? (second fn-expr)) (nnext fn-expr))]
+    (if (vector? (first bodies)) [bodies] bodies)))
+
+(defn emit-top-fn [sym fn-expr env out!]
+  (let [env (cond-> env (symbol? (second fn-expr)) (assoc (second fn-expr) (name sym)))]
+    (emit-symbol sym {} out!)
+    (emit-bodies (extract-bodies fn-expr) env out!)
+    (out! "\n")))
+
+(defn emit-def [[_ sym expr] env out! locus]
+  (let [expr (macroexpand-all env expr)
+        sb! (string-writer)]
+    (if (and (seq? expr) (= 'fn (first expr)))
+      (do
+        (emit-top-fn sym expr env sb!)
+        (swap! nses do-def sym {:type :dartfn, :code (sb!)}))
+      (do
+        (emit-symbol sym {} sb!)
+        (sb! "=")
+        (if (coll? expr)
+          (do
+            (sb! "(){\n")
+            (emit expr env sb! "return ")
+            (sb! "}()"))
+          (emit-expr expr env sb!))
+        (sb! ";\n")
+        (swap! nses do-def sym {:type :field, :code (sb!)})))
+    (emit sym env out! locus)))
+
 (defn emit [expr env out! locus]
   (let [expr (macroexpand-all env expr)]
-    (if (seq? expr)
+    (cond
+      (seq? expr)
       (case (first expr)
         new (emit-new expr env out! locus)
         . (emit-dot expr env out! locus)
@@ -312,13 +348,10 @@
         recur (emit-recur expr env out! locus)
         quote (do (emit-quoted (second expr) env out! locus) (out! ";\n"))
         fn (emit-fn expr env out! locus)
+        def (emit-def expr env out! locus)
         (emit-fn-call expr env out! locus))
-      (do (if (coll? expr)
-            (emit-collection expr env out! locus)
-            (do
-              (out! locus)
-              (emit-expr expr env out!)))
-          (out! ";\n")))))
+      (coll? expr) (do (emit-collection expr env out! locus) (out! ";\n"))
+      :else (do (out! locus) (emit-expr expr env out!) (out! ";\n")))))
 
 (comment
   (doseq [form
@@ -354,11 +387,15 @@
             (fn ([a] (recur a)) ([a & b] 1 a))
             (loop [a 4] (if a a (recur 5)))
             (fn unnom [a] (unnom a))
-            ((fn [a] a) 42))
+            ((fn [a] a) 42)
+            (def x 42)
+            (def foo (fn foo [x] x)))
           :let [out! (string-writer)]]
     (print "#=> ") (prn form)
     (emit form {} out! "return ")
     (println (out!))
     (newline))
+
+    @nses
 
   )
