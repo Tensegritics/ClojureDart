@@ -29,7 +29,7 @@
        (.write ^StringSink out (str x)))))
 
 (defn macroexpand-1 [env form]
-  (if-some [[f & args] (when (and (seq? form) (symbol? (first form))) (seq form))]
+  (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
     (let [name (name f)]
       ;; TODO add proper expansion here, before defaults
       (cond
