@@ -1,5 +1,5 @@
 (ns cljd.compiler
-  (:refer-clojure :exclude [macroexpand-all macroexpand-1 munge])
+  (:refer-clojure :exclude [macroexpand-all macroexpand-1 munge load-file])
   (:require [clojure.core :as cljhost]))
 
 (defmacro ^:private else->> [& forms]
@@ -7,11 +7,11 @@
 
 (defn string-writer
   ([]
-   #?(:clj (let[sb (StringBuilder.)]
+   #?(:clj (let [sb (StringBuilder.)]
              (fn
                ([] (.toString sb))
                ([x] (.append sb (str x)))))
-      :cljd (let[sb (StringBuffer.)]
+      :cljd (let [sb (StringBuffer.)]
              (fn
                ([] (.toString sb))
                ([x] (.write sb (str x)))))))
@@ -41,6 +41,7 @@
       (cond
         (env f) form
         (= '. f) form
+        (= 'ns f) form
         #?@(:clj
             [(-> clj-var meta :macro)
              ; force &env to nil when cross-compiling, should be ok
@@ -332,7 +333,7 @@
 (defn emit-def [[_ sym expr] env out! locus]
   (let [expr (macroexpand-all env expr)
         sb! (string-writer)]
-    (if (and (seq? expr) (= 'fn (first expr)))
+    (if (and (seq? expr) (= 'fn* (first expr)))
       (do
         (emit-top-fn sym expr env sb!)
         (swap! nses do-def sym {:type :dartfn, :code (sb!)}))
@@ -354,6 +355,8 @@
     (cond
       (seq? expr)
       (case (first expr)
+        ns (swap! nses assoc :current-ns (doto (second expr)
+                                                  #?@(:clj [create-ns]))) ; hacky
         new (emit-new expr env out! locus)
         . (emit-dot expr env out! locus)
         let* (emit-let expr env out! locus)
@@ -367,52 +370,79 @@
       (coll? expr) (emit-collection expr env out! locus)
       :else (do (out! locus) (emit-expr expr env out!) (out! ";\n")))))
 
+(defn dump-ns [ns-map out!]
+  ;; TODO imports
+  (doseq [[sym {:keys [type code]}] ns-map]
+    (case type
+      :class 'TODO
+      :field (do (out! "var ") (out! code))
+      :dartfn (out! code))))
+
+(defn load-file [in]
+  #?(:clj
+     (let [in (clojure.lang.LineNumberingPushbackReader. in)]
+       (loop []
+         (let [form (read {:eof in} in)]
+           (when-not (identical? form in)
+             (emit form {} (constantly nil))
+             (recur)))))))
+
+(defn compile-file [in ns-to-out]
+  (load-file in)
+  (let [{:keys [current-ns] :as nses} @nses
+        out! (ns-to-out current-ns)]
+    (dump-ns (nses current-ns) out!)
+    (out!)))
+
 (comment
   (doseq [form
-          '("hello"
-            sym
-            42
-            \x
-            (Foo. 1 & :bleh 32)
-            (Foo. 1 & :bleh (Bar.))
-            (.-fld a)
-            (.meth a b c)
-            (let [a 2 b 3] a a a a a a b)
-            (if true "a" "b")
-            (if true "a")
-            (if (let [a true] a) "a")
-            (loop [a 4] (if a a 5))
-            (loop [a 4] (if a a (recur 5)))
-            (loop [a 4 b 5] (if a a (recur (.-isOdd a) (.-isEven a))))
-            '(fn [a] a)
-            '{a b, c 3}
-            {1 2, 3 4}
-            {"a" {:a :b}, 3 4}
-            [1 2 3 {1 2}]
-            [1 2 (let [a 3] a)]
-            #{1 (let [a 3] a) 2}
-            [1 2 '(let [a])]
-            (fn ([a] 1 a a))
-            (fn ([a] 1 a) ([a b] b a) ([a b c] c))
-            (fn ([a a a a a a] 1 a))
-            (fn ([a & b] 1 a))
-            (fn ([arg] (.-isOdd arg)) ([a & b] 1 a))
-            (fn ([] 1) ([a & b] 1 a))
-            (fn ([a] (recur a)) ([a & b] 1 a))
-            (loop [a 4] (if a a (recur 5)))
-            (fn unnom [a] (unnom a))
-            ((fn [a] a) 42)
-            (def x 42)
-            (def foo (fn foo [x] x))
-            (defn bar [z] z)
-            (or a b c)
-            (cond test-1 expr-1 test-2 expr-2 ":else" fallback))
+          (concat
+            '("hello"
+             sym
+             42
+             \x
+             (Foo. 1 & :bleh 32)
+             (Foo. 1 & :bleh (Bar.))
+             (.-fld a)
+             (.meth a b c)
+             (let [a 2 b 3] a a a a a a b)
+             (if true "a" "b")
+             (if true "a")
+             (if (let [a true] a) "a")
+             (loop [a 4] (if a a 5))
+             (loop [a 4] (if a a (recur 5)))
+             (loop [a 4 b 5] (if a a (recur (.-isOdd a) (.-isEven a))))
+             '(fn [a] a)
+             '{a b, c 3}
+             {1 2, 3 4}
+             {"a" {:a :b}, 3 4}
+             [1 2 3 {1 2}]
+             [1 2 (let [a 3] a)]
+             #{1 (let [a 3] a) 2}
+             [1 2 '(let [a])]
+             (fn ([a] 1 a a))
+             (fn ([a] 1 a) ([a b] b a) ([a b c] c))
+             (fn ([a a a a a a] 1 a))
+             (fn ([a & b] 1 a))
+             (fn ([arg] (.-isOdd arg)) ([a & b] 1 a))
+             (fn ([] 1) ([a & b] 1 a))
+             (fn ([a] (recur a)) ([a & b] 1 a))
+             (loop [a 4] (if a a (recur 5)))
+             (fn unnom [a] (unnom a))
+             ((fn [a] a) 42))
+
+            ['(ns cljd.bordeaux) ; nrepl or cider grrrrr
+             '(def x 33)
+             '(ns cljd.user)
+             '(def x 42)
+             '(def foo (fn foo [x] x))
+             '(defn bar [z] z)
+             '(or a b c)
+             '(cond test-1 expr-1 test-2 expr-2 ":else" fallback)])
           :let [out! (string-writer)]]
     (print "#=> ") (prn form)
     (emit form {} out! "return ")
     (println (out!))
     (newline))
 
-    @nses
-
-  )
+ )
