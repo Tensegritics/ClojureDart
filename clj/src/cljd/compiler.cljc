@@ -350,13 +350,60 @@
         (swap! nses do-def sym {:type :field, :code (sb!)})))
     (emit sym env out! locus)))
 
+;; The goal is to create the ns map that will go into nses
+;; this map will contain keys :mappings :imports :aliases
+;; :mappings a map from simple symbols to qualified dart literals
+;; :imports a vector of pairs of dart lib strings and dart alias (will serve to produce `import "lib" as alias`)
+;; :aliases a map of ns aliases (as strings) to lib aliases (as string)
+
+(comment
+  (:require [x.y.z :refer [foo-bar]])
+  =>
+  {:imports [["x/y/z.dart" "z1"]]
+   :mappings {'foo-bar "z1.foo_bar"}}
+
+  (:require [x.y.z :as z])
+  =>
+  {:imports [["x/y/z.dart" "z1"]]
+   :aliases {"z" "z1"}}
+
+
+  (:require ["package:mobx/mobx.dart" :as mobx])
+  =>
+  {:imports [["package:mobx/mobx.dart" "mobx1"]]
+   :aliases {"mobx" "mobx1"}}
+
+  )
+
+;; once it's done symbol resolution (in emit-symbol) must take them into account
+;; I doubt it's enough -- we'll have to see how it interacts with macroexpansion for example.
+
+(defn do-ns [[_ ns-sym & ns-clauses]]
+  (let [ns-clauses (drop #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
+        #_(transduce
+          (comp
+            (mapcat (fn [[directive & args]] (map #(vector directive %) args)))
+            (map
+              (fn [[directive arg]]
+                (case directive
+                 :require
+                 (let [[arg & {:keys [refer as]}] (if (vector? args) args [args])]
+                   )
+                 :import (/ 0)
+                 :refer-clojure (/ 0)
+                 :use (/ 0)
+                 ))))
+          (partial merge-with concat)
+          {} ns-clauses)])
+  (swap! nses assoc :current-ns (doto (second expr)
+                                  #?@(:clj [create-ns]))) ; hacky)
+
 (defn emit [expr env out! locus]
   (let [expr (macroexpand-all env expr)]
     (cond
       (seq? expr)
       (case (first expr)
-        ns (swap! nses assoc :current-ns (doto (second expr)
-                                                  #?@(:clj [create-ns]))) ; hacky
+        ns (do-ns expr)
         new (emit-new expr env out! locus)
         . (emit-dot expr env out! locus)
         let* (emit-let expr env out! locus)
@@ -371,7 +418,13 @@
       :else (do (out! locus) (emit-expr expr env out!) (out! ";\n")))))
 
 (defn dump-ns [ns-map out!]
-  ;; TODO imports
+  (doseq [[lib alias] (:imports ns-map)]
+    (out! "import ")
+    (emit-string lib out!)
+    (out! " as ")
+    (out! alias)
+    (out! ";\n"))
+
   (doseq [[sym {:keys [type code]}] ns-map]
     (case type
       :class 'TODO
