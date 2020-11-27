@@ -384,8 +384,22 @@
        (loop []
          (let [form (read {:eof in} in)]
            (when-not (identical? form in)
-             (emit form {} (constantly nil))
+             (emit form {} (constantly nil) "")
              (recur)))))))
+
+(defn make-ns-to-out [^String target-dir]
+  #?(:clj (let [out-dir (java.io.File. target-dir)]
+            (.mkdirs out-dir)
+            (fn [ns-sym]
+              (let [ns-path (str (.replace (name ns-sym) "." "/") ".dart")
+                    ns-file (doto (java.io.File. out-dir ns-path) (-> .getParentFile .mkdirs))
+                    writer (java.io.FileWriter. ns-file java.nio.charset.StandardCharsets/UTF_8)]
+                (fn
+                  ([]
+                   (.close writer))
+                  ([x]
+                   (.write writer (str x)))))))
+     :cljd 'TODO))
 
 (defn compile-file [in ns-to-out]
   (load-file in)
@@ -395,9 +409,15 @@
     (out!)))
 
 (comment
+
+  (require '[clojure.java.io :as io])
+  (compile-file (io/reader "test.cljd") (make-ns-to-out "targetdir/ohoh"))
+
+  (set! *warn-on-reflection* true)
+
   (doseq [form
           (concat
-            '("hello"
+           '("hello"
              sym
              42
              \x
