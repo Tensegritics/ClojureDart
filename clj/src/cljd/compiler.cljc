@@ -28,7 +28,8 @@
      (fn [x]
        (.write ^StringSink out (str x)))))
 
-(def nses (atom {:current-ns 'user}))
+(def nses (atom {:current-ns 'user
+                 'user {}}))
 
 (defn do-def [nses sym m]
   (assoc-in nses [(:current-ns nses) sym] m))
@@ -36,6 +37,7 @@
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
     (let [name (name f)
+          ;; TODO symbol resolution and macro lookup in cljd
           #?@(:clj [clj-var (ns-resolve (find-ns (:current-ns @nses)) f)])]
       ;; TODO add proper expansion here, before defaults
       (cond
@@ -62,7 +64,14 @@
     (cond->> ex (not (identical? ex form)) (recur env))))
 
 (defn emit-symbol [sym env out!]
-  (out! (or (env sym) #_(TODO resolve ns sym) #_"TODO next form should throw" (name sym))))
+  (out! (or (env sym)
+            (let [nses @nses
+                  {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+              (else->> (if (current-ns sym) (name sym))
+                       (or (get mappings sym))
+                       (if-some [alias (get aliases (namespace sym))] (str alias "." (name sym)))
+                       #_"TODO next form should throw"
+                       (str "XXX" (name sym)))))))
 
 (defn replace-all [^String s regexp f]
   #?(:cljd
@@ -136,7 +145,7 @@
           (if-some [[x & xs] xs]
             (cond
               (= '& x)
-              (recur true true xs args)
+              (recur true true xs (conj args x))
               (and named keypos)
               (recur named false xs (conj args x))
               :else
@@ -321,12 +330,13 @@
     (emit-args args env out! (sb!))))
 
 (defn extract-bodies [fn-expr]
-  (let [bodies (if (symbol? (second fn-expr)) (nnext fn-expr))]
+  (let [bodies (if (symbol? (second fn-expr)) (nnext fn-expr) (next fn-expr))]
     (if (vector? (first bodies)) [bodies] bodies)))
 
 (defn emit-top-fn [sym fn-expr env out!]
   (let [env (cond-> env (symbol? (second fn-expr)) (assoc (second fn-expr) (name sym)))]
-    (emit-symbol sym {} out!)
+    ;; @TODO :munged
+    (out! (name sym))
     (emit-bodies (extract-bodies fn-expr) env out!)
     (out! "\n")))
 
@@ -338,7 +348,8 @@
         (emit-top-fn sym expr env sb!)
         (swap! nses do-def sym {:type :dartfn, :code (sb!)}))
       (do
-        (emit-symbol sym {} sb!)
+        ;; @TODO : munged
+        (sb! (name sym))
         (sb! "=")
         (if (coll? expr)
           (do
@@ -367,6 +378,8 @@
   {:imports [["x/y/z.dart" "z1"]]
    :aliases {"z" "z1"}}
 
+  (:require foo.bar
+            [clojure.string])
 
   (:require ["package:mobx/mobx.dart" :as mobx])
   =>
@@ -379,24 +392,32 @@
 ;; I doubt it's enough -- we'll have to see how it interacts with macroexpansion for example.
 
 (defn do-ns [[_ ns-sym & ns-clauses]]
-  (let [ns-clauses (drop #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
-        #_(transduce
-          (comp
-            (mapcat (fn [[directive & args]] (map #(vector directive %) args)))
-            (map
-              (fn [[directive arg]]
-                (case directive
-                 :require
-                 (let [[arg & {:keys [refer as]}] (if (vector? args) args [args])]
-                   )
-                 :import (/ 0)
-                 :refer-clojure (/ 0)
-                 :use (/ 0)
-                 ))))
-          (partial merge-with concat)
-          {} ns-clauses)])
-  (swap! nses assoc :current-ns (doto (second expr)
-                                  #?@(:clj [create-ns]))) ; hacky)
+  (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
+        mappings
+        (transduce
+         (comp
+          (mapcat (fn [[directive & args]] (map #(vector directive %) args)))
+          (map
+           (fn [[directive arg]]
+             (case directive
+               :require
+               (let [arg (if (vector? arg) arg [arg])
+                     alias (name (gensym "lib"))
+                     clauses (into {} (partition-all 2) (next arg))]
+                 (cond-> (assoc {} :imports [[(name (first arg)) alias]])
+                   (:as clauses) (assoc-in [:aliases (name (:as clauses))] alias)
+                   (:refer clauses) (assoc :mappings (into {} (map #(vector % (str alias "." (name %)))) (:refer clauses)))))
+               :import (/ 0)
+               :refer-clojure (/ 0)
+               :use (/ 0)))))
+         (partial merge-with into)
+         {} ns-clauses)]
+    (swap! nses assoc ns-sym mappings :current-ns ns-sym))
+  #_(swap! nses assoc :current-ns (doto (second expr)
+                                    #?@(:clj [create-ns]))) ;hacky
+  )
+
+
 
 (defn emit [expr env out! locus]
   (let [expr (macroexpand-all env expr)]
@@ -425,7 +446,9 @@
     (out! alias)
     (out! ";\n"))
 
-  (doseq [[sym {:keys [type code]}] ns-map]
+  (doseq [[sym v] ns-map
+          :when (symbol? sym)
+          :let [{:keys [type code]} v]]
     (case type
       :class 'TODO
       :field (do (out! "var ") (out! code))
@@ -468,6 +491,11 @@
 
   (set! *warn-on-reflection* true)
 
+  (binding [*ns* *ns*]
+    (ns cljd.bordeaux)
+    (ns cljd.ste)
+    (ns cljd.user))
+
   (doseq [form
           (concat
            '("hello"
@@ -504,18 +532,57 @@
              (fn unnom [a] (unnom a))
              ((fn [a] a) 42))
 
-            ['(ns cljd.bordeaux) ; nrepl or cider grrrrr
-             '(def x 33)
-             '(ns cljd.user)
-             '(def x 42)
-             '(def foo (fn foo [x] x))
-             '(defn bar [z] z)
-             '(or a b c)
-             '(cond test-1 expr-1 test-2 expr-2 ":else" fallback)])
+           ['(ns cljd.bordeaux) ; nrepl or cider grrrrr
+            '(def x 33)
+            '(def reviews (fn* ([x] "The Best city Everrrr !")))
+            '(ns cljd.ste)
+            '(def surname "looser")
+            '(ns cljd.user
+               (:require [cljd.bordeaux :refer [reviews] :as awesome]
+                         [cljd.ste :as ste]
+                         ["package:flutter/material.dart"]
+                         clojure.string))
+            '(def x 42)
+            '(def ste ste/surname)
+            '(reviews awesome/x)
+            '(def foo (fn foo [x] x))
+            '(defn bar [z] z)
+            '(or a b c)
+            '(cond test-1 expr-1 test-2 expr-2 ":else" fallback)])
           :let [out! (string-writer)]]
     (print "#=> ") (prn form)
     (emit form {} out! "return ")
     (println (out!))
     (newline))
+
+  @nses
+
+  ;; Hello World ! flutter
+  (doseq [form
+          (concat
+           ['(ns cljd.bordeaux
+               (:require ["package:flutter/material.dart" :as material])) ; nrepl or cider grrrrr
+
+            '(defn build
+               [context]
+               (material/MaterialApp.
+                & :title "Welcome to Flutter"
+                :home (material/Scaffold.
+                       & :appBar (material/AppBar. & :title (material/Text. "Welcome to Flutter"))
+                       :body (material/Center. & :child (material/Text. "Hello World")))))
+
+            ])
+          :let [out! (string-writer)]]
+    (print "#=> ") (prn form)
+    (emit form {} out! "return ")
+    (println (out!))
+    (newline))
+
+
+
+  (let [sb! (string-writer)]
+    (dump-ns (get @nses 'cljd.bordeaux) sb!)
+    (print (str (sb!))))
+
 
  )
