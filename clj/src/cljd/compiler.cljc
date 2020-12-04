@@ -1,6 +1,7 @@
 (ns cljd.compiler
   (:refer-clojure :exclude [macroexpand-all macroexpand-1 munge load-file])
-  (:require [clojure.core :as cljhost]))
+  (:require [clojure.core :as cljhost]
+            [clojure.string :as str]))
 
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
@@ -44,6 +45,7 @@
         (env f) form
         (= '. f) form
         (= 'ns f) form
+        (= 'reify f) form
         #?@(:clj
             [(-> clj-var meta :macro)
              ; force &env to nil when cross-compiling, should be ok
@@ -77,7 +79,7 @@
   #?(:cljd
      (.replaceAllMapped s regexp f)
      :clj
-     (clojure.string/replace s regexp f)))
+     (str/replace s regexp f)))
 
 (defn emit-string [s out!]
   (out! \")
@@ -298,7 +300,7 @@
                                       env
                                       (map vector params params-alias))
                       bodyenv (if vararg-param
-                                (let [varname (lift-expr (DartExpr. (str "[" (clojure.string/join "," (subvec params-alias (count params))) "].takeWhile((e) => e != MISSING_ARG).toList()")) env out! :name vararg-param :name-env bodyenv)]
+                                (let [varname (lift-expr (DartExpr. (str "[" (str/join "," (subvec params-alias (count params))) "].takeWhile((e) => e != MISSING_ARG).toList()")) env out! :name vararg-param :name-env bodyenv)]
                                   (-> bodyenv
                                       (assoc vararg-param varname)
                                       (update ::loop-bindings (fnil conj []) varname)))
@@ -360,6 +362,65 @@
         (sb! ";\n")
         (swap! nses do-def sym {:type :field, :code (sb!)})))
     (emit sym env out! locus)))
+
+(defn- roll-leading-opts [body]
+  (loop [[k v & more :as body] (seq body) opts {}]
+    (if (and body (keyword? k))
+        (recur more (assoc opts k v))
+        [opts body])))
+
+(defn emit-reify [[_ & opts+specs] env out! locus]
+  (let [[{:keys [extends] :or {extends 'Object}} body] (roll-leading-opts opts+specs)
+        [ctor-op base & ctor-args :as ctor] (macroexpand-all env (cond->> extends (symbol? extends) (list 'new)))
+        ctor-meth (when (= '. ctor-op) (first ctor-args))
+        ctor-args (cond-> ctor-args (= '. ctor-op) next)
+        [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'&}) ctor-args)
+        positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
+        named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
+        super-ctor (concat
+                    (case ctor-op
+                      . ['. (DartExpr. "super") ctor-meth]
+                      new ['new (DartExpr. "super")])
+                    positional-ctor-args '[&] (interleave (take-nth 2 named-ctor-args) named-ctor-params))
+        class-name (tmpvar) ; TODO change this to a more telling name
+        reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))
+        classes (filter symbol? body) ; crude
+        methods (remove symbol? body) ; crude
+        mixins(filter (comp :mixin meta) classes)
+        ifaces (remove (comp :mixin meta) classes)
+        need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
+        sb! (string-writer)
+        closed-overs nil]
+    (sb! "class ")
+    (sb! class-name)
+    (when base
+      (sb! " extends ")
+      (sb! (name base))) ; TODO munge
+    (when (seq ifaces)
+      (sb! " implements ")
+      (sb! (str/join ", " (map name ifaces))))
+    (when (seq mixins)
+      (sb! " with ")
+      (sb! (str/join ", " (map name mixins))))
+    (sb! " {\n")
+    (doseq [f closed-overs]
+      (sb! "var ")
+      (sb! (name f))
+      (sb! ";\n"))
+    ;; constructor
+    (sb! class-name)
+    (sb! "(")
+    (sb! (str/join ", " (concat positional-ctor-params named-ctor-params (map #(str "this." (name %)) closed-overs))))
+    (sb! "){\n")
+    (when super-ctor (emit super-ctor {} sb! ""))
+    (sb! "}\n")
+    ;; methods
+    ;; noSuchMethod
+    (when need-nsm
+      (sb! "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
+    (sb! "}\n\n")
+    (swap! nses do-def class-name {:type :class, :code (sb!)})
+    (emit reify-ctor {} out! locus)))
 
 ;; The goal is to create the ns map that will go into nses
 ;; this map will contain keys :mappings :imports :aliases
@@ -434,6 +495,7 @@
         quote (do (out! locus) (emit-quoted (second expr) env out!) (out! ";\n"))
         fn* (emit-fn expr env out! locus)
         def (emit-def expr env out! locus)
+        reify (emit-reify expr env out! locus)
         (emit-fn-call expr env out! locus))
       (coll? expr) (emit-collection expr env out! locus)
       :else (do (out! locus) (emit-expr expr env out!) (out! ";\n")))))
@@ -450,7 +512,7 @@
           :when (symbol? sym)
           :let [{:keys [type code]} v]]
     (case type
-      :class 'TODO
+      :class (out! code)
       :field (do (out! "var ") (out! code))
       :dartfn (out! code))))
 
