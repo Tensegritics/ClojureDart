@@ -326,10 +326,37 @@
           (emit-bodies body env out!)))
     (out! ";\n")))
 
-(defn emit-method [[sym & body] env out! locus]
-  (let [env (assoc env sym sym)]
-    (emit-symbol sym env out!)
-    (emit-bodies body env out!)))
+#_(meth [this a b [:d e 42]]
+        (recur a' b' & :e e'))
+
+(defn emit-method [[mname [this-arg & other-args] & body] env out!]
+  ;; args destructuring will be added by a macro
+  (let [[fixed-args named-args] (split-with symbol? other-args)
+        ;; named-args need to have been fully expanded to triples [keyword symbol default] by the macro
+        dartargs (into [] (map (fn [arg] [arg (tmpvar)])) fixed-args) ; it's a vector and not map cause a binding may appear several times
+        env (-> env
+                (assoc this-arg (DartExpr. "this"))
+                (into dartargs)
+                (into
+                 (map (fn [[k sym]] [sym (DartExpr. (name k))]))
+                 named-args)
+                (assoc ::loop-bindings
+                       (into [] (map second) dartargs)))]
+    (out! mname)
+    (out! "(")
+    (doseq [[_ arg] dartargs] (out! arg) (out! ", "))
+    (when (seq named-args)
+      (out! "{")
+      (doseq [[k sym default] named-args]
+        (out! (name k))
+        (out! "=")
+        (emit-expr default {} out!)
+        (out! ", "))
+      (out! "}"))
+    (out! "){\ndo {\n")
+    (emit-body body env out! "return ")
+    (out! "break;\n} while(true);\n}\n\n")))
+
 
 (defn emit-fn-call [[fnname & args] env out! locus]
   (let [sb! (string-writer locus)]
@@ -423,10 +450,7 @@
     (sb! "}\n")
     (when (seq methods)
       (doseq [m methods]
-        (let [[sym [this-param & other-params] & body] m
-              method (list sym (vec other-params) '(let [~this-param ~(DartExpr. "this")] ~@body))
-              env {}]
-          (emit-method method env sb! ""))))
+        (emit-method method env sb! "")))
     ;; methods
     ;; noSuchMethod
     (when need-nsm
