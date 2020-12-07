@@ -326,6 +326,11 @@
           (emit-bodies body env out!)))
     (out! ";\n")))
 
+(defn emit-method [[sym & body] env out! locus]
+  (let [env (assoc env sym sym)]
+    (emit-symbol sym env out!)
+    (emit-bodies body env out!)))
+
 (defn emit-fn-call [[fnname & args] env out! locus]
   (let [sb! (string-writer locus)]
     (emit-expr (lift-expr fnname env out!) env sb!)
@@ -382,10 +387,10 @@
                       . ['. (DartExpr. "super") ctor-meth]
                       new ['new (DartExpr. "super")])
                     positional-ctor-args '[&] (interleave (take-nth 2 named-ctor-args) named-ctor-params))
-        class-name (tmpvar) ; TODO change this to a more telling name
+        class-name (tmpvar)  ; TODO change this to a more telling name
         reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))
-        classes (filter symbol? body) ; crude
-        methods (remove symbol? body) ; crude
+        classes (filter symbol? body)   ; crude
+        methods (remove symbol? body)         ; crude
         mixins(filter (comp :mixin meta) classes)
         ifaces (remove (comp :mixin meta) classes)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
@@ -395,7 +400,9 @@
     (sb! class-name)
     (when base
       (sb! " extends ")
-      (sb! (name base))) ; TODO munge
+      ;; @NOTE for @cgrand, does not take into account aliasing
+      #_(sb! (name base))
+      (emit-symbol base env sb!))                ; TODO munge
     (when (seq ifaces)
       (sb! " implements ")
       (sb! (str/join ", " (map name ifaces))))
@@ -414,6 +421,12 @@
     (sb! "){\n")
     (when super-ctor (emit super-ctor {} sb! ""))
     (sb! "}\n")
+    (when (seq methods)
+      (doseq [m methods]
+        (let [[sym [this-param & other-params] & body] m
+              method (list sym (vec other-params) '(let [~this-param ~(DartExpr. "this")] ~@body))
+              env {}]
+          (emit-method method env sb! ""))))
     ;; methods
     ;; noSuchMethod
     (when need-nsm
@@ -509,7 +522,7 @@
     (out! ";\n"))
 
   (doseq [[sym v] ns-map
-          :when (symbol? sym)
+          :when (or (symbol? sym) (instance? DartExpr sym))
           :let [{:keys [type code]} v]]
     (case type
       :class (out! code)
@@ -594,7 +607,7 @@
              (fn unnom [a] (unnom a))
              ((fn [a] a) 42))
 
-           ['(ns cljd.bordeaux) ; nrepl or cider grrrrr
+           ['(ns cljd.bordeaux)         ; nrepl or cider grrrrr
             '(def x 33)
             '(def reviews (fn* ([x] "The Best city Everrrr !")))
             '(ns cljd.ste)
@@ -617,6 +630,28 @@
     (println (out!))
     (newline))
 
+  (doseq [form
+          (concat
+           '(
+             (reify :extends StatelessWidget (build [_ ctx] "prout")
+               IReduce
+               (-reduce [coll f]
+                 (iter-reduce coll f))
+               (-reduce [coll f start]
+                 (iter-reduce coll f start))
+
+               IFn
+               (-invoke [coll k]
+                 (-lookup coll k))
+               (-invoke [coll k not-found]
+                 (-lookup coll k not-found)))
+             ))
+          :let [out! (string-writer)]]
+    (print "#=> ") (prn form)
+    (emit form {} out! "return ")
+    (println (out!))
+    (newline))
+
   @nses
 
   ;; Hello World ! flutter
@@ -625,18 +660,46 @@
            ['(ns cljd.bordeaux
                (:require ["package:flutter/material.dart" :as material])) ; nrepl or cider grrrrr
 
-            '(defn build
-               [context]
-               (material/MaterialApp.
-                & :title "Welcome to Flutter"
-                :home (material/Scaffold.
-                       & :appBar (material/AppBar. & :title (material/Text. "Welcome to Flutter"))
-                       :body (material/Center. & :child (material/Text. "Hello World")))))
+            '(defn main []
+               (material/runApp
+                (reify :extends material/StatelessWidget
+                  (build [_ ctx]
+                    (material/MaterialApp.
+                     & :title "Welcome to Flutter"
+                     :home (material/Scaffold.
+                            & :appBar (material/AppBar.
+                                       & :title (material/Text. "Welcome to Flutter"))
+                            :body (material/Center.
+                                   & :child (material/Text. "Hello World!"))))))))
 
             ])
           :let [out! (string-writer)]]
     (print "#=> ") (prn form)
-    (emit form {} out! "return ")
+    (emit form {} out! "")
+    (println (out!))
+    (newline))
+
+  (doseq [form
+          (concat
+           ['(ns cljd.bordeaux
+               (:require ["package:flutter/material.dart" :as material])) ; nrepl or cider grrrrr
+
+            '(defn main []
+               (material/runApp
+                (reify :extends (material/StatelessWidget. 1 2 3)
+                  (build [_ ctx]
+                    (material/MaterialApp.
+                     & :title "Welcome to Flutter"
+                     :home (material/Scaffold.
+                            & :appBar (material/AppBar.
+                                       & :title (material/Text. "Welcome to Flutter"))
+                            :body (material/Center.
+                                   & :child (material/Text. "Hello World!"))))))))
+
+            ])
+          :let [out! (string-writer)]]
+    (print "#=> ") (prn form)
+    (emit form {} out! "")
     (println (out!))
     (newline))
 
@@ -647,4 +710,51 @@
     (print (str (sb!))))
 
 
- )
+  )
+
+
+(comment
+
+
+
+
+  (let [[_ & opts+specs] '(reify :extends (material/StatelessWidget.)
+                            IReduce
+                            (-reduce [coll f] "ooo")
+                            (-caca [_] "caca"))
+        env {}
+        out! ""
+        locus " "]
+    (let [[{:keys [extends] :or {extends 'Object}} body] (roll-leading-opts opts+specs)
+          [ctor-op base & ctor-args :as ctor] (macroexpand-all env (cond->> extends (symbol? extends) (list 'new)))
+          ctor-meth (when (= '. ctor-op) (first ctor-args))
+          ctor-args (cond-> ctor-args (= '. ctor-op) next)
+          [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'&}) ctor-args)
+          positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
+          named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
+          super-ctor (concat
+                      (case ctor-op
+                        . ['. (DartExpr. "super") ctor-meth]
+                        new ['new (DartExpr. "super")])
+                      positional-ctor-args '[&] (interleave (take-nth 2 named-ctor-args) named-ctor-params))
+          class-name (tmpvar) ; TODO change this to a more telling name
+          reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))
+          classes (filter symbol? body) ; crude
+          methods (remove symbol? body) ; crude
+          mixins(filter (comp :mixin meta) classes)
+          ifaces (remove (comp :mixin meta) classes)
+          need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
+          sb! (string-writer)
+          closed-overs nil]
+
+      (when (seq methods)
+        (doseq [m methods]
+          (let [[sym [this-param & other-params] & body] m
+                method (list sym (vec other-params) `(let [~this-param ~(DartExpr. "this")] ~@body))
+                env {}]
+            (emit-method method ))))
+      ))
+
+
+
+  )
