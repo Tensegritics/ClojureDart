@@ -448,10 +448,8 @@
     (sb! "){\n")
     (when super-ctor (emit super-ctor {} sb! ""))
     (sb! "}\n")
-    (when (seq methods)
-      (doseq [m methods]
-        (emit-method method env sb! "")))
     ;; methods
+    (when (seq methods) (doseq [m methods] (emit-method m env sb!)))
     ;; noSuchMethod
     (when need-nsm
       (sb! "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
@@ -657,17 +655,22 @@
   (doseq [form
           (concat
            '(
-             (reify :extends StatelessWidget (build [_ ctx] "prout")
+             (reify :extends (StatelessWidget.origin 1 2) (build [_ ctx] "prout")
                IReduce
                (-reduce [coll f]
                  (iter-reduce coll f))
-               (-reduce [coll f start]
+               #_(-reduce [coll f start]
                  (iter-reduce coll f start))
 
                IFn
                (-invoke [coll k]
+                 (if (.-isOdd (.-length coll))
+                   (recur (+ 1 k))
+                   k)
                  (-lookup coll k))
-               (-invoke [coll k not-found]
+               (-opts-meth [coll k & [:a a 42] [:b b 43]]
+                 (+ a b))
+               #_(-invoke [coll k not-found]
                  (-lookup coll k not-found)))
              ))
           :let [out! (string-writer)]]
@@ -678,31 +681,11 @@
 
   @nses
 
+  (let [sb! (string-writer)]
+    (dump-ns (get @nses 'user) sb!)
+    (print (str (sb!))))
+
   ;; Hello World ! flutter
-  (doseq [form
-          (concat
-           ['(ns cljd.bordeaux
-               (:require ["package:flutter/material.dart" :as material])) ; nrepl or cider grrrrr
-
-            '(defn main []
-               (material/runApp
-                (reify :extends material/StatelessWidget
-                  (build [_ ctx]
-                    (material/MaterialApp.
-                     & :title "Welcome to Flutter"
-                     :home (material/Scaffold.
-                            & :appBar (material/AppBar.
-                                       & :title (material/Text. "Welcome to Flutter"))
-                            :body (material/Center.
-                                   & :child (material/Text. "Hello World!"))))))))
-
-            ])
-          :let [out! (string-writer)]]
-    (print "#=> ") (prn form)
-    (emit form {} out! "")
-    (println (out!))
-    (newline))
-
   (doseq [form
           (concat
            ['(ns cljd.bordeaux
@@ -727,8 +710,6 @@
     (println (out!))
     (newline))
 
-
-
   (let [sb! (string-writer)]
     (dump-ns (get @nses 'cljd.bordeaux) sb!)
     (print (str (sb!))))
@@ -740,15 +721,22 @@
 (comment
 
 
-
-
-  (let [[_ & opts+specs] '(reify :extends (material/StatelessWidget.)
-                            IReduce
-                            (-reduce [coll f] "ooo")
-                            (-caca [_] "caca"))
+  (let [[_ & opts+specs] #_'(reify :extends (material/StatelessWidget. 1 2 3)
+                              (build [_ ctx]
+                                (material/MaterialApp.
+                                 & :title "Welcome to Flutter"
+                                 :home (material/Scaffold.
+                                        & :appBar (material/AppBar.
+                                                   & :title (material/Text. "Welcome to Flutter"))
+                                        :body (material/Center.
+                                               & :child (material/Text. "Hello World!"))))))
+        '(reify :extends Parent
+           Caca
+           (method1 [_ a b c] a)
+           (method2 [_ a b c] a))
         env {}
         out! ""
-        locus " "]
+        locus ""]
     (let [[{:keys [extends] :or {extends 'Object}} body] (roll-leading-opts opts+specs)
           [ctor-op base & ctor-args :as ctor] (macroexpand-all env (cond->> extends (symbol? extends) (list 'new)))
           ctor-meth (when (= '. ctor-op) (first ctor-args))
@@ -771,14 +759,31 @@
           sb! (string-writer)
           closed-overs nil]
 
-      (when (seq methods)
-        (doseq [m methods]
-          (let [[sym [this-param & other-params] & body] m
-                method (list sym (vec other-params) `(let [~this-param ~(DartExpr. "this")] ~@body))
-                env {}]
-            (emit-method method ))))
+      (sb! (str/join ", " (concat positional-ctor-params named-ctor-params (map #(str "this." (name %)) closed-overs))))
+
+      (when super-ctor (emit super-ctor {} sb! ""))
       ))
 
 
+  (defn- roll-leading-opts [body]
+    (loop [[k v & more :as body] (seq body) opts {}]
+      (if (and body (keyword? k))
+        (recur more (assoc opts k v))
+        [opts body])))
+
+  (let [[_ & opts+specs] #_'(reify :extends (material/StatelessWidget. 1 2 3)
+                              (build [_ ctx]
+                                (material/MaterialApp.
+                                 & :title "Welcome to Flutter"
+                                 :home (material/Scaffold.
+                                        & :appBar (material/AppBar.
+                                                   & :title (material/Text. "Welcome to Flutter"))
+                                        :body (material/Center.
+                                               & :child (material/Text. "Hello World!"))))))
+        '(reify :extends Parent
+           Caca
+           (method1 [_ a b c] a)
+           (method2 [_ a b c] a))]
+    (seq opts+specs))
 
   )
