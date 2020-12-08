@@ -35,6 +35,34 @@
 (defn do-def [nses sym m]
   (assoc-in nses [(:current-ns nses) sym] m))
 
+(defn- roll-leading-opts [body]
+  (loop [[k v & more :as body] (seq body) opts {}]
+    (if (and body (keyword? k))
+        (recur more (assoc opts k v))
+        [opts body])))
+
+(defn expand-reify [&  opts+specs]
+  (let [[opts specs] (roll-leading-opts opts+specs)]
+    (list* 'reify* opts
+           (map
+            (fn [spec]
+              (if (seq? spec)
+                (let [[mname arglist & body] spec
+                      [positional-args [_ & named-args]] (split-with (complement '#{&}) arglist)
+                      triples
+                      (loop [triples [] xs named-args]
+                        (if-some [[sym & [k :as xs]] xs]
+                          (if (symbol? sym)
+                            (let [[k [v :as xs]] (if (keyword? k) [k (next xs)] [(keyword sym) xs])
+                                  [v xs] (if (symbol? v) [nil xs] [v (next xs)])]
+                              (recur (conj triples [k sym v]) xs))
+                            (throw (ex-info "Unexpected form, expecting a symbol" {:form sym})))
+                          triples))]
+                  ; TODO: mname resolution against protocol ifaces
+                  (list* mname (into (vec positional-args) triples) body))
+                spec))
+            specs))))
+
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
     (let [name (name f)
@@ -43,9 +71,10 @@
       ;; TODO add proper expansion here, before defaults
       (cond
         (env f) form
+        #?@(:clj ; macro overrides
+            [(= 'ns f) form
+             (= 'reify f) (apply expand-reify args)])
         (= '. f) form
-        (= 'ns f) form
-        (= 'reify f) form
         #?@(:clj
             [(-> clj-var meta :macro)
              ; force &env to nil when cross-compiling, should be ok
@@ -326,9 +355,6 @@
           (emit-bodies body env out!)))
     (out! ";\n")))
 
-#_(meth [this a b [:d e 42]]
-        (recur a' b' & :e e'))
-
 (defn emit-method [[mname [this-arg & other-args] & body] env out!]
   ;; args destructuring will be added by a macro
   (let [[fixed-args named-args] (split-with symbol? other-args)
@@ -356,7 +382,6 @@
     (out! "){\ndo {\n")
     (emit-body body env out! "return ")
     (out! "break;\n} while(true);\n}\n\n")))
-
 
 (defn emit-fn-call [[fnname & args] env out! locus]
   (let [sb! (string-writer locus)]
@@ -395,14 +420,8 @@
         (swap! nses do-def sym {:type :field, :code (sb!)})))
     (emit sym env out! locus)))
 
-(defn- roll-leading-opts [body]
-  (loop [[k v & more :as body] (seq body) opts {}]
-    (if (and body (keyword? k))
-        (recur more (assoc opts k v))
-        [opts body])))
-
-(defn emit-reify [[_ & opts+specs] env out! locus]
-  (let [[{:keys [extends] :or {extends 'Object}} body] (roll-leading-opts opts+specs)
+(defn emit-reify [[_ opts & specs] env out! locus]
+  (let [{:keys [extends] :or {extends 'Object}} opts
         [ctor-op base & ctor-args :as ctor] (macroexpand-all env (cond->> extends (symbol? extends) (list 'new)))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
@@ -413,49 +432,55 @@
                     (case ctor-op
                       . ['. (DartExpr. "super") ctor-meth]
                       new ['new (DartExpr. "super")])
-                    positional-ctor-args '[&] (interleave (take-nth 2 named-ctor-args) named-ctor-params))
+                    positional-ctor-params '[&] (interleave (take-nth 2 named-ctor-args) named-ctor-params))
         class-name (tmpvar)  ; TODO change this to a more telling name
-        reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))
-        classes (filter symbol? body)   ; crude
-        methods (remove symbol? body)         ; crude
+        classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
+        methods (remove symbol? specs)         ; crude
         mixins(filter (comp :mixin meta) classes)
         ifaces (remove (comp :mixin meta) classes)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
-        sb! (string-writer)
-        closed-overs nil]
+        sb! (string-writer)]
     (sb! "class ")
     (sb! class-name)
     (when base
       (sb! " extends ")
       ;; @NOTE for @cgrand, does not take into account aliasing
       #_(sb! (name base))
-      (emit-symbol base env sb!))                ; TODO munge
+      (emit-symbol base {} sb!))                ; TODO munge
     (when (seq ifaces)
       (sb! " implements ")
-      (sb! (str/join ", " (map name ifaces))))
+      (sb! (str/join ", " (map name ifaces)))) ; TODO aliasing
     (when (seq mixins)
       (sb! " with ")
-      (sb! (str/join ", " (map name mixins))))
+      (sb! (str/join ", " (map name mixins)))) ; TODO aliasing
     (sb! " {\n")
-    (doseq [f closed-overs]
-      (sb! "var ")
-      (sb! (name f))
-      (sb! ";\n"))
-    ;; constructor
-    (sb! class-name)
-    (sb! "(")
-    (sb! (str/join ", " (concat positional-ctor-params named-ctor-params (map #(str "this." (name %)) closed-overs))))
-    (sb! "){\n")
-    (when super-ctor (emit super-ctor {} sb! ""))
-    (sb! "}\n")
-    ;; methods
-    (when (seq methods) (doseq [m methods] (emit-method m env sb!)))
-    ;; noSuchMethod
-    (when need-nsm
-      (sb! "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
-    (sb! "}\n\n")
-    (swap! nses do-def class-name {:type :class, :code (sb!)})
-    (emit reify-ctor {} out! locus)))
+    (let [env {} #_(closed-overs-recording-env env)
+          ;; methods
+          _ (when (seq methods)
+              (doseq [m methods]
+                (emit-method m env sb!)))
+          closed-overs nil #_(get-closed-overs env)
+          reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))]
+      ;; closed overs
+      (doseq [field (vals closed-overs)]
+        (sb! "final ") ; revisit when support for :once
+        (sb! field)
+        (sb! ";\n"))
+      ;; constructor
+      (sb! class-name)
+      (sb! "(")
+      (sb! (str/join ", " (concat positional-ctor-params named-ctor-params
+                                  (map #(str "this." (name %)) (vals closed-overs)))))
+      (sb! ")")
+      (if super-ctor
+        (emit super-ctor {} sb! ": ")
+        (sb! ";\n"))
+      ;; noSuchMethod
+      (when need-nsm
+        (sb! "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
+      (sb! "}\n\n")
+      (swap! nses do-def class-name {:type :class, :code (sb!)})
+      (emit reify-ctor {} out! locus))))
 
 ;; The goal is to create the ns map that will go into nses
 ;; this map will contain keys :mappings :imports :aliases
@@ -530,7 +555,7 @@
         quote (do (out! locus) (emit-quoted (second expr) env out!) (out! ";\n"))
         fn* (emit-fn expr env out! locus)
         def (emit-def expr env out! locus)
-        reify (emit-reify expr env out! locus)
+        reify* (emit-reify expr env out! locus)
         (emit-fn-call expr env out! locus))
       (coll? expr) (emit-collection expr env out! locus)
       :else (do (out! locus) (emit-expr expr env out!) (out! ";\n")))))
@@ -693,7 +718,8 @@
 
             '(defn main []
                (material/runApp
-                (reify :extends (material/StatelessWidget. 1 2 3)
+                (reify :extends material/StatelessWidget
+                  material/StatelessWidget
                   (build [_ ctx]
                     (material/MaterialApp.
                      & :title "Welcome to Flutter"
@@ -714,76 +740,5 @@
     (dump-ns (get @nses 'cljd.bordeaux) sb!)
     (print (str (sb!))))
 
-
-  )
-
-
-(comment
-
-
-  (let [[_ & opts+specs] #_'(reify :extends (material/StatelessWidget. 1 2 3)
-                              (build [_ ctx]
-                                (material/MaterialApp.
-                                 & :title "Welcome to Flutter"
-                                 :home (material/Scaffold.
-                                        & :appBar (material/AppBar.
-                                                   & :title (material/Text. "Welcome to Flutter"))
-                                        :body (material/Center.
-                                               & :child (material/Text. "Hello World!"))))))
-        '(reify :extends Parent
-           Caca
-           (method1 [_ a b c] a)
-           (method2 [_ a b c] a))
-        env {}
-        out! ""
-        locus ""]
-    (let [[{:keys [extends] :or {extends 'Object}} body] (roll-leading-opts opts+specs)
-          [ctor-op base & ctor-args :as ctor] (macroexpand-all env (cond->> extends (symbol? extends) (list 'new)))
-          ctor-meth (when (= '. ctor-op) (first ctor-args))
-          ctor-args (cond-> ctor-args (= '. ctor-op) next)
-          [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'&}) ctor-args)
-          positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
-          named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
-          super-ctor (concat
-                      (case ctor-op
-                        . ['. (DartExpr. "super") ctor-meth]
-                        new ['new (DartExpr. "super")])
-                      positional-ctor-args '[&] (interleave (take-nth 2 named-ctor-args) named-ctor-params))
-          class-name (tmpvar) ; TODO change this to a more telling name
-          reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))
-          classes (filter symbol? body) ; crude
-          methods (remove symbol? body) ; crude
-          mixins(filter (comp :mixin meta) classes)
-          ifaces (remove (comp :mixin meta) classes)
-          need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
-          sb! (string-writer)
-          closed-overs nil]
-
-      (sb! (str/join ", " (concat positional-ctor-params named-ctor-params (map #(str "this." (name %)) closed-overs))))
-
-      (when super-ctor (emit super-ctor {} sb! ""))
-      ))
-
-
-  (defn- roll-leading-opts [body]
-    (loop [[k v & more :as body] (seq body) opts {}]
-      (if (and body (keyword? k))
-        (recur more (assoc opts k v))
-        [opts body])))
-
-  (let [[_ & opts+specs] #_'(reify :extends (material/StatelessWidget. 1 2 3)
-                              (build [_ ctx]
-                                (material/MaterialApp.
-                                 & :title "Welcome to Flutter"
-                                 :home (material/Scaffold.
-                                        & :appBar (material/AppBar.
-                                                   & :title (material/Text. "Welcome to Flutter"))
-                                        :body (material/Center.
-                                               & :child (material/Text. "Hello World!"))))))
-        '(reify :extends Parent
-           Caca
-           (method1 [_ a b c] a)
-           (method2 [_ a b c] a))]
-    (seq opts+specs))
 
   )
