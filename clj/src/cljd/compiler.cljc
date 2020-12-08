@@ -213,13 +213,6 @@
         (out! (sb!)))
       (emit-args args env out! (sb!)))))
 
-(defn emit-body [body env out! locus]
-  (loop [body body]
-    (when-some [[x & xs] body]
-      (if xs
-        (do (emit x env out! "") (recur xs))
-        (emit x env out! locus)))))
-
 (defn emit-let [[_ bindings & body] env out! locus]
   (let [env (loop [env env bindings (partition 2 bindings)]
               (if-some [[sym val] (first bindings)]
