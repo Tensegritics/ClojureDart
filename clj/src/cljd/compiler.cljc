@@ -29,6 +29,41 @@
      (fn [x]
        (.write ^StringSink out (str x)))))
 
+(declare ^:dynamic *emitter*)
+
+(defn open-prior!
+  "Inserts a block of code before the current one and write"
+  [& xs]
+  (let [sb! (string-writer)]
+    (run! sb! xs)
+    (swap! (:blocks *emitter*) conj sb!)))
+
+(defn close-prior! [& xs]
+  (let [{:keys [blocks out!]} *emitter*
+        sb! (-> blocks deref peek)]
+    (out! (sb!))
+    (run! out! xs)
+    (swap! blocks pop)))
+
+(defn flush! [& xs]
+  (apply close-prior! xs)
+  (open-prior!))
+
+(defn emitter [print]
+  {:out! print
+   :blocks (atom [(string-writer)])})
+
+(defmacro ^:private with-string-emitter [& body]
+  `(let [sb!# (string-writer)]
+     (binding [*emitter* (emitter sb!#)]
+       ~@body
+       (flush!))
+     (sb!#)))
+
+(defn write! [& xs]
+  (let [sb! (-> *emitter* :blocks deref peek)]
+    (run! sb! xs)))
+
 (def nses (atom {:current-ns 'user
                  'user {}}))
 
@@ -94,15 +129,15 @@
   (let [ex (macroexpand-1 env form)]
     (cond->> ex (not (identical? ex form)) (recur env))))
 
-(defn emit-symbol [sym env out!]
-  (out! (or (env sym)
-            (let [nses @nses
-                  {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
-              (else->> (if (current-ns sym) (name sym))
-                       (or (get mappings sym))
-                       (if-some [alias (get aliases (namespace sym))] (str alias "." (name sym)))
-                       #_"TODO next form should throw"
-                       (str "XXX" (name sym)))))))
+(defn symbol-literal [sym env]
+  (or (env sym)
+      (let [nses @nses
+            {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+        (else->> (if (current-ns sym) (name sym))
+                 (or (get mappings sym))
+                 (if-some [alias (get aliases (namespace sym))] (str alias "." (name sym)))
+                 #_"TODO next form should throw"
+                 (str "XXX" (name sym))))))
 
 (defn replace-all [^String s regexp f]
   #?(:cljd
@@ -110,40 +145,42 @@
      :clj
      (str/replace s regexp f)))
 
-(defn emit-string [s out!]
-  (out! \")
-  (out! (replace-all s #"([\x00-\x1f])|[$\"]"
-                     (fn [match]
-                       (let [[match control-char] (-> match #?@(:cljd [re-groups]))]
-                         (if control-char
-                           (case control-char
-                             "\b" "\\b"
-                             "\n" "\\n"
-                             "\r" "\\r"
-                             "\t" "\\t"
-                             "\f" "\\f"
-                             "\13" "\\v"
-                             (str "\\x"
-                                  #?(:clj
-                                     (-> control-char (nth 0) long
-                                         (+ 0x100)
-                                         Long/toHexString
-                                         (subs 1))
-                                     :cld
-                                     (-> control-char
-                                         (.codeUnitAt 0)
-                                         (.toRadixString 16)
-                                         (.padLeft 2 "0")))))
-                           (str "\\" match))))))
-  (out! \"))
+(defn emit-string [s]
+  (write! \")
+  (write! (replace-all s #"([\x00-\x1f])|[$\"]"
+                       (fn [match]
+                         (let [[match control-char] (-> match #?@(:cljd [re-groups]))]
+                           (if control-char
+                             (case control-char
+                               "\b" "\\b"
+                               "\n" "\\n"
+                               "\r" "\\r"
+                               "\t" "\\t"
+                               "\f" "\\f"
+                               "\13" "\\v"
+                               (str "\\x"
+                                    #?(:clj
+                                       (-> control-char (nth 0) long
+                                           (+ 0x100)
+                                           Long/toHexString
+                                           (subs 1))
+                                       :cld
+                                       (-> control-char
+                                           (.codeUnitAt 0)
+                                           (.toRadixString 16)
+                                           (.padLeft 2 "0")))))
+                             (str "\\" match))))))
+  (write! \"))
 
-(defn emit-expr [expr env out!]
+(def NULL (DartExpr. "null"))
+
+(defn emit-literal [expr env]
   (cond
-    (symbol? expr) (emit-symbol expr env out!)
-    (string? expr) (emit-string expr out!)
-    #?@(:clj [(char? expr) (emit-string (str expr) out!)])
-    (nil? expr) (out! "null")
-    :else (out! expr)))
+    (symbol? expr) (symbol-literal expr env)
+    (string? expr) (emit-string expr)
+    #?@(:clj [(char? expr) (emit-string (str expr))])
+    (nil? expr) NULL
+    :else (DartExpr. (str expr))))
 
 (def mungees (atom 0))
 
@@ -158,197 +195,186 @@
 
 (declare emit)
 
-(defn lift-expr [expr env out! & {:keys [name name-env force]}]
+(defn lift-expr [expr env & {:keys [name name-env force]}]
   (let [value (not (coll? expr))]
     (if (and value (nil? name) (not force))
       expr
       (let [varname (if name (munge name (or name-env env)) (tmpvar))]
-        (if value
-          (emit expr env out! (str "var " varname "="))
-          (do
-            (out! (str "var " varname ";\n"))
-            (emit expr env out! (str varname "="))))
+        (open-prior! "var " varname "=" (emit expr env))
+        (close-prior! ";\n")
         varname))))
 
-(defn emit-args [expr env out! locus]
-  (let [args
-        (loop [named false keypos false xs (seq expr) args []]
-          (if-some [[x & xs] xs]
-            (cond
-              (= '& x)
-              (recur true true xs (conj args x))
-              (and named keypos)
-              (recur named false xs (conj args x))
-              :else
-              (recur named true xs (conj args (lift-expr x env out!))))
-            args))]
-    (out! (str locus "("))
-    (loop [comma false named false keypos false xs (seq args)]
-      (when-some [[x & xs] xs]
-        (else->>
-         (if (= '& x) (recur comma true true xs))
-         (do (when comma (out! ", ")))
-         (if (and named keypos)
-           (do
-             (out! (str (name x) ": "))
-             (recur false true false xs)))
-         (do
-           (emit-expr x env out!)
-           (recur true named true xs)))))
-    (out! ");\n")))
+(defn write-args! [args env]
+  (write! "(")
+  (loop [named false keypos false xs (seq args)]
+    (when-some [[x & xs] xs]
+      (cond
+        (= '& x) (recur true true xs)
+        (and named keypos)
+        (do
+          (write! (name x) ": ") ; this name call is legit
+          (recur true false xs))
+        :else
+        (do
+          (write! (emit x env) ", ")
+          (recur named true xs)))))
+  (write! ")"))
 
-(defn emit-new [[_ class & args] env out! locus]
-  (let [sb! (string-writer locus)]
-    (emit-expr class env sb!)
-    (emit-args args env out! (sb!))))
+(defmacro with-ret [& body]
+  `(let [ret# (tmpvar)]
+     (open-prior! ret# "=")
+     ~@body
+     (close-prior! ";\n")
+     ret#))
 
-(defn emit-dot [[_ obj fld & args] env out! locus]
-  (let [[_ prop name] (re-matches #"(-)?(.*)" (name fld))
-        sb! (string-writer locus)]
-    (emit-expr (lift-expr obj env out!) env sb!)
-    (sb! (str "." name))
-    (if prop
-      (do
-        (sb! ";\n")
-        (out! (sb!)))
-      (emit-args args env out! (sb!)))))
+(defn emit-new [[_ class & args] env]
+  (with-ret
+    (emit-literal class env)
+    (write-args! args env)))
 
-(defn emit-let [[_ bindings & body] env out! locus]
+(defn emit-dot [[_ obj fld & args] env]
+  (with-ret
+    (let [[_ prop name] (re-matches #"(-)?(.*)" (name fld))]
+      (write! (emit obj env)"." name)
+      (when-not prop
+        (emit-args args env)))))
+
+(defn emit-body [expr env]
+  (doseq [body (butlast expr)]
+    (open-prior!)
+    (write! emit body env)
+    (close-prior! ";\n"))
+  (emit (last expr) env))
+
+(defn emit-let [[_ bindings & body] env]
   (let [env (loop [env env bindings (partition 2 bindings)]
               (if-some [[sym val] (first bindings)]
-                (recur (assoc env sym (lift-expr val env out! :name sym)) (next bindings))
+                (recur (assoc env sym (lift-expr val env :name sym)) (next bindings))
                 env))]
-    (emit-body body env out! locus)))
+    (emit-body body env)))
 
-(defn emit-if [[_ test then else] env out! locus]
-  (let [test (lift-expr test env out! :force true)]
-    (out! "if (")
-    (emit-expr test env out!)
-    (out! "!= null && false != ")
-    (emit-expr test env out!)
-    (out! ") {\n")
-    (emit then env out! locus)
-    (out! "}else{\n")
-    (emit else env out! locus)
-    (out! "}\n")))
+(defn emit-if [[_ test-expr then else] env]
+  (let [ret (tmpvar)
+        test (tmpvar)]
+    (open-prior! "var " ret ";\nvar " test "=")
+    (flush! (emit test-expr env) ";\nif (" test " != null && " test " != false) {\n")
+    (write! ret "=" (emit then env))
+    (flush! ";\n} else {")
+    (write! ret "=" (emit else env))
+    (close-prior! ";\n}\n")
+    ret))
 
-(defn emit-loop [[_ bindings & body] env out! locus]
+(defn emit-loop [[_ bindings & body] env]
   (let [env (loop [env env bindings (partition 2 bindings)]
               (if-some [[sym val] (first bindings)]
-                (let [varname (lift-expr val env out! :name sym)]
+                (let [varname (lift-expr val env :name sym)]
                   (recur (-> env
                              (assoc sym varname)
                              (update ::loop-bindings (fnil conj []) varname))
                          (next bindings)))
-                env))]
-    (out! "do {\n")
-    (emit-body body env out! locus)
-    (out! "break;\n} while(true);\n")))
+                env))
+        ret (tmpvar)]
+    (open-prior! "var " ret ";\n")
+    (flush "do {\n")
+    (write! ret "=" (emit-body body env) ";")
+    (close-prior! "break;\n} while(true);\n")
+    ret))
 
-(defn emit-recur [[_ & expr] env out! locus]
-  (let [sb! (string-writer)]
-    (doseq [[expr binding] (map vector expr (::loop-bindings env))]
-      (emit (lift-expr expr env out! :force true) env sb! (str binding "=")))
-    (out! (sb!))
-    (out! "continue;\n")))
+(defn emit-recur [[_ & expr] env]
+  (doseq [[expr binding] (map vector expr (::loop-bindings env))]
+    (write! binding "=" (lift-expr expr env :force true) ";"))
+  (flush! "continue;\n")
+  'RECUR)
 
-(defn emit-quoted [body env out!]
+(defn emit-quoted [body env]
   (cond
     (map? body)
-    (do (out! "{")
+    (do (write! "{")
         (doseq [[k v] body]
-          (emit-quoted k env out!)
-          (out! ": ")
-          (emit-quoted v env out!)
-          (out! ", "))
-        (out! "}"))
+          (emit-quoted k env)
+          (write! ": ")
+          (emit-quoted v env)
+          (write! ", "))
+        (write! "}"))
     (coll? body)
-    (do (out! (cond (list? body) "List" (set? body) "Set" :else "Vector"))
-        (out! ".from([")
-        (doseq [e body]
-          (emit-quoted e env out!)
-          (out! ", "))
-        (out! "])"))
+    (do (write! (cond (list? body) "List" (set? body) "Set" :else "Vector"))
+        (write! ".from([")
+        (doseq [expr body]
+          (emit-quoted expr env)
+          (write! ", "))
+        (write! "])"))
     (symbol? body)
-    (out! (str "Symbol(null, " (name body) ")"))
-    :else (emit-expr body env out!)))
+    (write! (str "Symbol(null, " (name body) ")"))
+    :else (emit-literal body env)))
 
-(defn emit-collection [body env out! locus]
-  (let [sb! (string-writer locus)]
-    (if (map? body)
-      (do (sb! "{")
-          (doseq [[k v] body]
-            (if (not (coll? k)) (emit-expr k env sb!) (sb! (lift-expr k env out!)))
-            (sb! ": ")
-            (if (not (coll? v)) (emit-expr v env sb!) (sb! (lift-expr v env out!)))
-            (sb! ", "))
-          (sb! "}"))
-      (do (sb! (if (set? body) "Set" "PersistentVector"))
-          (sb! ".from([")
-          (doseq [e body]
-            (if (not (coll? e)) (emit-expr e env sb!) (sb! (lift-expr e env out!)))
-            (sb! ", "))
-          (sb! "])")))
-    (out! (sb!))
-    (out! ";\n")))
+(defn emit-collection [body env]
+  (if (map? body)
+    (do
+      (write! "{")
+      (doseq [[k v] body]
+        (write! (lift-expr k env) ": " (lift-expr v env) ", "))
+      (write! "}"))
+    (do
+      (write! (if (set? body) "Set" "PersistentVector") ".from([")
+      (doseq [expr body]
+        (write! (lift-expr expr env) ", "))
+      (write! "])")))) ; TODO: ret value?
 
-(defn emit-body [expr env out! locus]
-  (doseq [body (butlast expr)]
-    (emit body env out! ""))
-  (emit (last expr) env out! locus))
-
-(defn emit-bodies [bodies env out!]
+(defn emit-fn-bodies [bodies env]
   (let [bodies (sort #(compare (count (first %1)) (count (first %2))) bodies)
         is-variadic (some #{'&} (first (last bodies)))
         smallest-arity (if (and (= 1 (count bodies)) is-variadic) (- (count (ffirst bodies)) 2) (count (ffirst bodies)))
         biggest-arity (count (first (last bodies)))]
-    (out! "(")
+    (write! "(")
     (let [params-alias (into [] (map #(let [tmpparam (tmpvar)]
-                                        (when (< 0 %) (out! ","))
-                                        (when (= % smallest-arity) (out! "["))
-                                        (out! tmpparam)
-                                        (when (>= % smallest-arity) (out! "=MISSING_ARG"))
+                                        (when (= % smallest-arity) (write! "["))
+                                        (write! tmpparam)
+                                        (when (>= % smallest-arity) (write! "=MISSING_ARG"))
+                                        (write! ", ")
                                         tmpparam))
                              (range (if is-variadic 8 biggest-arity)))]
-      (when (or (< 1 (count bodies)) is-variadic) (out! "]"))
-      (out! ") {\n")
-      (let [e (fn [[params & body] env out!]
-                (let [[params [_ vararg-param]] (split-with (complement #{'&}) params)
-                      bodyenv (reduce (fn [bodyenv [param alias]]
-                                        (let [varname (lift-expr alias env out! :name param :name-env bodyenv)]
-                                          (-> bodyenv
-                                              (assoc param varname)
-                                              (update ::loop-bindings (fnil conj []) varname))))
-                                      env
-                                      (map vector params params-alias))
+      (when (or (< 1 (count bodies)) is-variadic) (write! "]"))
+      (flush! ") {\n")
+      (let [emit-fn-body
+            (fn [[params & body]]
+              (let [[params [_ vararg-param]] (split-with (complement #{'&}) params)
+                    bodyenv (reduce (fn [bodyenv [param alias]]
+                                      (let [varname (lift-expr alias env :name param :name-env bodyenv)]
+                                        (-> bodyenv
+                                            (assoc param varname)
+                                            (update ::loop-bindings (fnil conj []) varname))))
+                                    env
+                                    (map vector params params-alias))
                       bodyenv (if vararg-param
-                                (let [varname (lift-expr (DartExpr. (str "[" (str/join "," (subvec params-alias (count params))) "].takeWhile((e) => e != MISSING_ARG).toList()")) env out! :name vararg-param :name-env bodyenv)]
+                                (let [varname (lift-expr (DartExpr. (str "[" (str/join "," (subvec params-alias (count params))) "].takeWhile((e) => e != MISSING_ARG).toList()")) env :name vararg-param :name-env bodyenv)]
                                   (-> bodyenv
                                       (assoc vararg-param varname)
                                       (update ::loop-bindings (fnil conj []) varname)))
                                 bodyenv)]
-                  (out! "do {\n")
-                  (emit-body body bodyenv out! "return ")
-                  (out! "break;\n} while(true);\n}\n")))]
+                (flush! "do {\n")
+                (write! "return " (emit-body body bodyenv) ";\n} while(true);\n")
+                (flush! "}\n")))]
         (doseq [body (butlast bodies)]
-          (out! (str "if (" (nth params-alias (count (first body))) " == MISSING_ARG) {\n"))
-          (e body env out!))
-        (e (last bodies) env out!)))))
+          (flush! (str "if (" (nth params-alias (count (first body))) " == MISSING_ARG) {\n"))
+          (emit-fn-body body))
+        (emit-fn-body (last bodies))
+        nil)))) ; TODO ret value?
 
-(defn emit-fn [[_ & sigs] env out! locus]
+(defn emit-fn [[_ & sigs] env]
   (let [named (symbol? (first sigs))
         body (else->> (let [body (if named (next sigs) sigs)])
-                      (if (vector? (first body)) (list body) body))]
-    (if-some [fnname (when named (first sigs))]
-      (let [munged (munge fnname env)]
-        (out! munged)
-        (emit-bodies body (assoc env fnname munged) out!)
-        (out! (str locus munged)))
-      (do (out! locus)
-          (emit-bodies body env out!)))
-    (out! ";\n")))
+                      (if (vector? (first body)) (list body) body))
+        fnname (when named (first sigs))
+        munged (if named (munge fnname env) (tmpvar))]
+    (open-prior! munged)
+    (emit-fn-bodies body (cond-> env named (assoc fnname munged)))
+    (close-prior!)
+    munged))
 
-(defn emit-method [[mname [this-arg & other-args] & body] env out!]
+(defn emit-const-expr [expr]
+  (write! "TODO_CONST_EXPR"))
+
+(defn emit-method [[mname [this-arg & other-args] & body] env]
   ;; args destructuring will be added by a macro
   (let [[fixed-args named-args] (split-with symbol? other-args)
         ;; named-args need to have been fully expanded to triples [keyword symbol default] by the macro
@@ -361,57 +387,57 @@
                  named-args)
                 (assoc ::loop-bindings
                        (into [] (map second) dartargs)))]
-    (out! mname)
-    (out! "(")
-    (doseq [[_ arg] dartargs] (out! arg) (out! ", "))
+    (write! mname)
+    (write! "(")
+    (doseq [[_ arg] dartargs] (write! arg) (write! ", "))
     (when (seq named-args)
-      (out! "{")
+      (write! "{")
       (doseq [[k sym default] named-args]
-        (out! (name k))
-        (out! "=")
-        (emit-expr default {} out!)
-        (out! ", "))
-      (out! "}"))
-    (out! "){\ndo {\n")
-    (emit-body body env out! "return ")
-    (out! "break;\n} while(true);\n}\n\n")))
+        (write! (name k))
+        (write! "=")
+        (emit-const-expr default)
+        (write! ", "))
+      (write! "}"))
+    (flush! "){\ndo {\n")
+    (write! "return " (emit-body body env) ";\n")
+    (flush! "} while(true);\n}\n\n")))
 
-(defn emit-fn-call [[fnname & args] env out! locus]
-  (let [sb! (string-writer locus)]
-    (emit-expr (lift-expr fnname env out!) env sb!)
-    (emit-args args env out! (sb!))))
+(defn emit-fn-call [[fnname & args] env]
+  (with-ret
+    (write! (emit (lift-expr fnname env) env))
+    (write-args! args env)))
 
 (defn extract-bodies [fn-expr]
   (let [bodies (if (symbol? (second fn-expr)) (nnext fn-expr) (next fn-expr))]
     (if (vector? (first bodies)) [bodies] bodies)))
 
-(defn emit-top-fn [sym fn-expr env out!]
+(defn emit-top-fn [sym fn-expr env]
   (let [env (cond-> env (symbol? (second fn-expr)) (assoc (second fn-expr) (name sym)))]
     ;; @TODO :munged
-    (out! (name sym))
-    (emit-bodies (extract-bodies fn-expr) env out!)
-    (out! "\n")))
+    (write! (name sym))
+    (emit-fn-bodies (extract-bodies fn-expr) env)
+    (flush! "\n")))
 
-(defn emit-def [[_ sym expr] env out! locus]
-  (let [expr (macroexpand-all env expr)
-        sb! (string-writer)]
+(defn emit-def [[_ sym expr] env]
+  (let [expr (macroexpand-all env expr)]
     (if (and (seq? expr) (= 'fn* (first expr)))
-      (do
-        (emit-top-fn sym expr env sb!)
-        (swap! nses do-def sym {:type :dartfn, :code (sb!)}))
-      (do
-        ;; @TODO : munged
-        (sb! (name sym))
-        (sb! "=")
-        (if (coll? expr)
-          (do
-            (sb! "(){\n")
-            (emit expr env sb! "return ")
-            (sb! "}()"))
-          (emit-expr expr env sb!))
-        (sb! ";\n")
-        (swap! nses do-def sym {:type :field, :code (sb!)})))
-    (emit sym env out! locus)))
+      (swap! nses do-def sym
+             {:type :dartfn
+              :code (with-string-emitter
+                      (emit-top-fn sym expr env))})
+      (swap! nses do-def sym
+             {:type :field,
+              :code
+              (with-string-emitter
+                ;; @TODO : munged
+                (write! (name sym) "=")
+                (if (coll? expr)
+                  (do
+                    (flush! "(){\n")
+                    (write! "return " (emit expr env) ";\n")
+                    (write! "}();\n"))
+                  (write! (emit-literal expr env) ";\n")))}))
+    (emit sym env)))
 
 (defn emit-reify [[_ opts & specs] env out! locus]
   (let [{:keys [extends] :or {extends 'Object}} opts
@@ -439,7 +465,7 @@
       (sb! " extends ")
       ;; @NOTE for @cgrand, does not take into account aliasing
       #_(sb! (name base))
-      (emit-symbol base {} sb!))                ; TODO munge
+      (symbol-literal base {} sb!))                ; TODO munge
     (when (seq ifaces)
       (sb! " implements ")
       (sb! (str/join ", " (map name ifaces)))) ; TODO aliasing
@@ -502,7 +528,7 @@
 
   )
 
-;; once it's done symbol resolution (in emit-symbol) must take them into account
+;; once it's done symbol resolution (in symbol-literal) must take them into account
 ;; I doubt it's enough -- we'll have to see how it interacts with macroexpansion for example.
 
 (defn do-ns [[_ ns-sym & ns-clauses]]
@@ -533,25 +559,25 @@
 
 
 
-(defn emit [expr env out! locus]
+(defn emit [expr env]
   (let [expr (macroexpand-all env expr)]
     (cond
       (seq? expr)
       (case (first expr)
         ns (do-ns expr)
-        new (emit-new expr env out! locus)
-        . (emit-dot expr env out! locus)
-        let* (emit-let expr env out! locus)
-        if (emit-if expr env out! locus)
-        loop* (emit-loop expr env out! locus)
-        recur (emit-recur expr env out! locus)
-        quote (do (out! locus) (emit-quoted (second expr) env out!) (out! ";\n"))
-        fn* (emit-fn expr env out! locus)
-        def (emit-def expr env out! locus)
-        reify* (emit-reify expr env out! locus)
-        (emit-fn-call expr env out! locus))
-      (coll? expr) (emit-collection expr env out! locus)
-      :else (do (out! locus) (emit-expr expr env out!) (out! ";\n")))))
+        new (emit-new expr env)
+        . (emit-dot expr env)
+        let* (emit-let expr env)
+        if (emit-if expr env)
+        loop* (emit-loop expr env)
+        recur (emit-recur expr env)
+        quote (emit-quoted (second expr) env)
+        fn* (emit-fn expr env)
+        def (emit-def expr env)
+        reify* (emit-reify expr env)
+        (emit-fn-call expr env))
+      (coll? expr) (emit-collection expr env)
+      :else (emit-literal expr env))))
 
 (defn dump-ns [ns-map out!]
   (doseq [[lib alias] (:imports ns-map)]
@@ -729,9 +755,14 @@
     (println (out!))
     (newline))
 
-  (let [sb! (string-writer)]
-    (dump-ns (get @nses 'cljd.bordeaux) sb!)
-    (print (str (sb!))))
+  (emit '(let [f (fn maFonction [x] (maFonction x))] f) {} (comp print str) "<>")
+  (emit '(loop [f 1 a (inc f)] (recur a f)) {} (comp print str) "<>")
+
+  (with-string-emitter
+    (write! "locus " (emit '(let [a 1 b a] (+ a b)) {})))
+
+  (with-string-emitter
+    (write! "locus " (emit '(fn* [x] x) {})))
 
 
   )
