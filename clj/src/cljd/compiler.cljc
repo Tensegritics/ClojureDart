@@ -172,6 +172,10 @@
                              (str "\\" match))))))
   (write! \"))
 
+(deftype DartExpr [^String s]
+  Object
+  (toString [_] s))
+
 (def NULL (DartExpr. "null"))
 
 (defn emit-literal [expr env]
@@ -183,10 +187,6 @@
     :else (DartExpr. (str expr))))
 
 (def mungees (atom 0))
-
-(deftype DartExpr [^String s]
-  Object
-  (toString [_] s))
 
 (defn tmpvar [] (DartExpr. (str "_" (swap! mungees inc))))
 
@@ -232,17 +232,19 @@
     (emit-literal class env)
     (write-args! args env)))
 
+(declare emit-args)
+
 (defn emit-dot [[_ obj fld & args] env]
-  (with-ret
-    (let [[_ prop name] (re-matches #"(-)?(.*)" (name fld))]
-      (write! (emit obj env)"." name)
-      (when-not prop
-        (emit-args args env)))))
+    (with-ret
+      (let [[_ prop name] (re-matches #"(-)?(.*)" (name fld))]
+        (write! (emit obj env)"." name)
+        (when-not prop
+          (emit-args args env)))))
 
 (defn emit-body [expr env]
   (doseq [body (butlast expr)]
     (open-prior!)
-    (write! emit body env)
+    (write! (emit body env))
     (close-prior! ";\n"))
   (emit (last expr) env))
 
@@ -759,10 +761,10 @@
   (emit '(loop [f 1 a (inc f)] (recur a f)) {} (comp print str) "<>")
 
   (with-string-emitter
-    (write! "locus " (emit '(let [a 1 b a] (+ a b)) {})))
+    (write! "locus " (emit '(let [a 1 b a] 1 2 3 (+ a b)) {})))
 
   (with-string-emitter
-    (write! "locus " (emit '(fn* [x] x) {})))
+    (write! "locus " (emit '(fn* [x] 1 2 3 4 x x 3 x) {})))
 
 
   )
