@@ -145,32 +145,32 @@
      :clj
      (str/replace s regexp f)))
 
-(defn emit-string [s]
-  (write! \")
-  (write! (replace-all s #"([\x00-\x1f])|[$\"]"
-                       (fn [match]
-                         (let [[match control-char] (-> match #?@(:cljd [re-groups]))]
-                           (if control-char
-                             (case control-char
-                               "\b" "\\b"
-                               "\n" "\\n"
-                               "\r" "\\r"
-                               "\t" "\\t"
-                               "\f" "\\f"
-                               "\13" "\\v"
-                               (str "\\x"
-                                    #?(:clj
-                                       (-> control-char (nth 0) long
-                                           (+ 0x100)
-                                           Long/toHexString
-                                           (subs 1))
-                                       :cld
-                                       (-> control-char
-                                           (.codeUnitAt 0)
-                                           (.toRadixString 16)
-                                           (.padLeft 2 "0")))))
-                             (str "\\" match))))))
-  (write! \"))
+(defn string-literal [s]
+  (str \"
+       (replace-all s #"([\x00-\x1f])|[$\"]"
+                    (fn [match]
+                      (let [[match control-char] (-> match #?@(:cljd [re-groups]))]
+                        (if control-char
+                          (case control-char
+                            "\b" "\\b"
+                            "\n" "\\n"
+                            "\r" "\\r"
+                            "\t" "\\t"
+                            "\f" "\\f"
+                            "\13" "\\v"
+                            (str "\\x"
+                                 #?(:clj
+                                    (-> control-char (nth 0) long
+                                        (+ 0x100)
+                                        Long/toHexString
+                                        (subs 1))
+                                    :cld
+                                    (-> control-char
+                                        (.codeUnitAt 0)
+                                        (.toRadixString 16)
+                                        (.padLeft 2 "0")))))
+                          (str "\\" match)))))
+       \"))
 
 (deftype DartExpr [^String s]
   Object
@@ -181,8 +181,8 @@
 (defn emit-literal [expr env]
   (cond
     (symbol? expr) (symbol-literal expr env)
-    (string? expr) (emit-string expr)
-    #?@(:clj [(char? expr) (emit-string (str expr))])
+    (string? expr) (string-literal expr)
+    #?@(:clj [(char? expr) (string-literal (str expr))])
     (nil? expr) NULL
     :else (DartExpr. (str expr))))
 
@@ -200,7 +200,8 @@
     (if (and value (nil? name) (not force))
       expr
       (let [varname (if name (munge name (or name-env env)) (tmpvar))]
-        (open-prior! "var " varname "=" (emit expr env))
+        (open-prior! "var " varname "=")
+        (write! (emit expr env))
         (close-prior! ";\n")
         varname))))
 
@@ -222,24 +223,22 @@
 
 (defmacro with-ret [& body]
   `(let [ret# (tmpvar)]
-     (open-prior! ret# "=")
+     (open-prior! "var " ret# "=")
      ~@body
      (close-prior! ";\n")
      ret#))
 
 (defn emit-new [[_ class & args] env]
   (with-ret
-    (emit-literal class env)
+    (write! (emit-literal class env))
     (write-args! args env)))
 
-(declare emit-args)
-
 (defn emit-dot [[_ obj fld & args] env]
-    (with-ret
-      (let [[_ prop name] (re-matches #"(-)?(.*)" (name fld))]
-        (write! (emit obj env)"." name)
-        (when-not prop
-          (emit-args args env)))))
+  (with-ret
+    (let [[_ prop name] (re-matches #"(-)?(.*)" (name fld))]
+      (write! (emit obj env) "." name)
+      (when-not prop
+        (write-args! args env)))))
 
 (defn emit-body [expr env]
   (doseq [body (butlast expr)]
@@ -260,8 +259,10 @@
         test (tmpvar)]
     (open-prior! "var " ret ";\nvar " test "=")
     (flush! (emit test-expr env) ";\nif (" test " != null && " test " != false) {\n")
+    ;;(write! ret "=") (write! (emit then env))
     (write! ret "=" (emit then env))
-    (flush! ";\n} else {")
+    (flush! ";\n} else {\n")
+    ;; (write! ret "=") (write! (emit else env))
     (write! ret "=" (emit else env))
     (close-prior! ";\n}\n")
     ret))
@@ -277,50 +278,48 @@
                 env))
         ret (tmpvar)]
     (open-prior! "var " ret ";\n")
-    (flush "do {\n")
+    (flush! "do {\n")
     (write! ret "=" (emit-body body env) ";")
     (close-prior! "break;\n} while(true);\n")
     ret))
 
 (defn emit-recur [[_ & expr] env]
   (doseq [[expr binding] (map vector expr (::loop-bindings env))]
-    (write! binding "=" (lift-expr expr env :force true) ";"))
+    (write! binding "=" (lift-expr expr env :force true) ";\n"))
   (flush! "continue;\n")
   'RECUR)
 
 (defn emit-quoted [body env]
   (cond
     (map? body)
-    (do (write! "{")
-        (doseq [[k v] body]
-          (emit-quoted k env)
-          (write! ": ")
-          (emit-quoted v env)
-          (write! ", "))
-        (write! "}"))
+    (with-ret
+      (write! "{")
+      (doseq [[k v] body]
+        (write! (emit-quoted k env) ": " (emit-quoted v env) ", "))
+      (write! "}"))
     (coll? body)
-    (do (write! (cond (list? body) "List" (set? body) "Set" :else "Vector"))
-        (write! ".from([")
-        (doseq [expr body]
-          (emit-quoted expr env)
-          (write! ", "))
-        (write! "])"))
+    (with-ret (write! (cond (list? body) "List" (set? body) "Set" :else "Vector"))
+      (write! ".from([")
+      (doseq [expr body]
+        (write! (emit-quoted expr env) ", "))
+      (write! "])"))
     (symbol? body)
-    (write! (str "Symbol(null, " (name body) ")"))
+    (str "Symbol(null, " (name body) ")")
     :else (emit-literal body env)))
 
 (defn emit-collection [body env]
-  (if (map? body)
-    (do
-      (write! "{")
-      (doseq [[k v] body]
-        (write! (lift-expr k env) ": " (lift-expr v env) ", "))
-      (write! "}"))
-    (do
-      (write! (if (set? body) "Set" "PersistentVector") ".from([")
-      (doseq [expr body]
-        (write! (lift-expr expr env) ", "))
-      (write! "])")))) ; TODO: ret value?
+  (with-ret
+    (if (map? body)
+      (do
+        (write! "{")
+        (doseq [[k v] body]
+          (write! (lift-expr k env) ": " (lift-expr v env) ", "))
+        (write! "}"))
+      (do
+        (write! (if (set? body) "Set" "PersistentVector") ".from([")
+        (doseq [expr body]
+          (write! (lift-expr expr env) ", "))
+        (write! "])")))))
 
 (defn emit-fn-bodies [bodies env]
   (let [bodies (sort #(compare (count (first %1)) (count (first %2))) bodies)
@@ -358,7 +357,7 @@
                 (flush! "}\n")))]
         (doseq [body (butlast bodies)]
           (flush! (str "if (" (nth params-alias (count (first body))) " == MISSING_ARG) {\n"))
-          (emit-fn-body body))
+          (write! (emit-fn-body body)))
         (emit-fn-body (last bodies))
         nil)))) ; TODO ret value?
 
@@ -369,7 +368,7 @@
         fnname (when named (first sigs))
         munged (if named (munge fnname env) (tmpvar))]
     (open-prior! munged)
-    (emit-fn-bodies body (cond-> env named (assoc fnname munged)))
+    (write! (emit-fn-bodies body (cond-> env named (assoc fnname munged))))
     (close-prior!)
     munged))
 
@@ -402,7 +401,8 @@
       (write! "}"))
     (flush! "){\ndo {\n")
     (write! "return " (emit-body body env) ";\n")
-    (flush! "} while(true);\n}\n\n")))
+    (flush! "} while(true);\n}\n\n"))
+  nil)
 
 (defn emit-fn-call [[fnname & args] env]
   (with-ret
@@ -441,7 +441,7 @@
                   (write! (emit-literal expr env) ";\n")))}))
     (emit sym env)))
 
-(defn emit-reify [[_ opts & specs] env out! locus]
+(defn emit-reify [[_ opts & specs] env]
   (let [{:keys [extends] :or {extends 'Object}} opts
         [ctor-op base & ctor-args :as ctor] (macroexpand-all env (cond->> extends (symbol? extends) (list 'new)))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
@@ -456,52 +456,44 @@
                     positional-ctor-params '[&] (interleave (take-nth 2 named-ctor-args) named-ctor-params))
         class-name (tmpvar)  ; TODO change this to a more telling name
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
-        methods (remove symbol? specs)         ; crude
+        methods (remove symbol? specs)  ; crude
         mixins(filter (comp :mixin meta) classes)
         ifaces (remove (comp :mixin meta) classes)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
-        sb! (string-writer)]
-    (sb! "class ")
-    (sb! class-name)
-    (when base
-      (sb! " extends ")
-      ;; @NOTE for @cgrand, does not take into account aliasing
-      #_(sb! (name base))
-      (symbol-literal base {} sb!))                ; TODO munge
-    (when (seq ifaces)
-      (sb! " implements ")
-      (sb! (str/join ", " (map name ifaces)))) ; TODO aliasing
-    (when (seq mixins)
-      (sb! " with ")
-      (sb! (str/join ", " (map name mixins)))) ; TODO aliasing
-    (sb! " {\n")
-    (let [env {} #_(closed-overs-recording-env env)
-          ;; methods
-          _ (when (seq methods)
-              (doseq [m methods]
-                (emit-method m env sb!)))
-          closed-overs nil #_(get-closed-overs env)
-          reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))]
-      ;; closed overs
-      (doseq [field (vals closed-overs)]
-        (sb! "final ") ; revisit when support for :once
-        (sb! field)
-        (sb! ";\n"))
-      ;; constructor
-      (sb! class-name)
-      (sb! "(")
-      (sb! (str/join ", " (concat positional-ctor-params named-ctor-params
-                                  (map #(str "this." (name %)) (vals closed-overs)))))
-      (sb! ")")
-      (if super-ctor
-        (emit super-ctor {} sb! ": ")
-        (sb! ";\n"))
-      ;; noSuchMethod
-      (when need-nsm
-        (sb! "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
-      (sb! "}\n\n")
-      (swap! nses do-def class-name {:type :class, :code (sb!)})
-      (emit reify-ctor {} out! locus))))
+
+        env {} #_(closed-overs-recording-env env)
+        closed-overs nil #_(get-closed-overs env)
+        reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))]
+    (->>
+     (with-string-emitter
+       (open-prior! "class " class-name)
+       (when base
+         (write! " extends " (symbol-literal base {}))) ; TODO munge
+       (when (seq ifaces)
+         (write! " implements " (str/join ", " (map name ifaces)))) ; TODO aliasing
+       (when (seq mixins)
+         (write! " with " (str/join ", " (map name mixins)))) ; TODO aliasing
+       (flush! " {\n")
+       ;; closed overs
+       (doseq [field (vals closed-overs)]
+                                        ; revisit when support for :once
+         (write! "final " field ";\n"))
+       ;; methods
+       (when (seq methods)
+         (doseq [m methods]
+           (write! (emit-method m env))))
+       ;; constructor
+       (flush! class-name "(" (str/join ", " (concat positional-ctor-params named-ctor-params
+                                                     (map #(str "this." (name %)) (vals closed-overs)))))
+       (when super-ctor
+         (write! ": " (emit-literal super-ctor {}) ";\n"))
+       ;; noSuchMethod
+       (when need-nsm
+         (write! "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
+       (close-prior! "}\n\n"))
+     (assoc {:type :class} :code)
+     (swap! nses do-def class-name))
+    (with-ret (write! (emit reify-ctor {})))))
 
 ;; The goal is to create the ns map that will go into nses
 ;; this map will contain keys :mappings :imports :aliases
@@ -584,7 +576,7 @@
 (defn dump-ns [ns-map out!]
   (doseq [[lib alias] (:imports ns-map)]
     (out! "import ")
-    (emit-string lib out!)
+    (string-literal lib out!)
     (out! " as ")
     (out! alias)
     (out! ";\n"))
@@ -706,7 +698,7 @@
                (-reduce [coll f]
                  (iter-reduce coll f))
                #_(-reduce [coll f start]
-                 (iter-reduce coll f start))
+                   (iter-reduce coll f start))
 
                IFn
                (-invoke [coll k]
@@ -717,7 +709,7 @@
                (-opts-meth [coll k & [:a a 42] [:b b 43]]
                  (+ a b))
                #_(-invoke [coll k not-found]
-                 (-lookup coll k not-found)))
+                   (-lookup coll k not-found)))
              ))
           :let [out! (string-writer)]]
     (print "#=> ") (prn form)
@@ -766,5 +758,118 @@
   (with-string-emitter
     (write! "locus " (emit '(fn* [x] 1 2 3 4 x x 3 x) {})))
 
+  (println (with-string-emitter
+             (write! "locus " (emit '(if (.-isOdd 3) (let [result "true"] result) "false") {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(let [result "true"] result) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '((fn [a a a] a a a) "aa" "bb" "cc") {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(loop [a 1 b 2] (recur b a)) {}))))
+
+
+  (println (with-string-emitter
+             (write! "locus " (emit "co\"sdf\" \n 2 ucou Bapitste " {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '\d {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(StringSink. "dfds") {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(.method Class 1 (let [a 2] a)) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(.-prop (let [a Instance] a)) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(let [a 1 b 2] b a (let [c 1] c)) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(if (let [a true] false) (let [c "true"] c) "false") {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(if true (let [res (if true "a")] res) "false") {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(loop [a 1] (if (.-isOdd a) (recur 2) a)) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(let [a '(loop [a 1] (if (.-isOdd a) (recur 2) a))] a) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(let [a [1 2 3 #{1 2}]] a) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '((fn name [] (let [a "aaa"] a) 1)) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit '(let [] [1 2 3 [4]]) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit-method '(method [this pos & [:name k nil]] k) {}))))
+
+  (println (with-string-emitter
+             (write! "locus " (emit
+                               '(reify :extends (StatelessWidget. 1 2) #_(build [_ ctx] "prout")
+                                  IReduce
+                                  (-reduce [coll f]
+                                    (iter-reduce coll f))
+
+                                  IFn
+                                  (-invoke [coll k]
+                                    (if (.-isOdd (.-length coll))
+                                      (recur (+ 1 k))
+                                      k)
+                                    (-lookup coll k))
+                                  (-opts-meth [coll k]
+                                    (+ a b))) {}))))
+
+  (macroexpand-all {} '(StatelessWidget.origin 1 2))
+
+  (println (with-string-emitter
+             (write! "locus " (emit
+                               '(Class. ) {}))))
+
+
+
+
+
+
+
+  )
+
+
+(comment
+  ;; help understanding
+
+  (let [sb! (string-writer)]
+    (binding [*emitter* (emitter sb!)]
+      (write! "dd" "dfsdsdf" "dsfdsf")
+      (write! "oo")
+      (open-prior! "prout prout")
+      (close-prior! "write this")
+      *emitter*))
+
+  '(let [a 12 b a] b)
+  '(let [a (fn [] "true")] (a))
+
+  (let [sb! (string-writer)]
+    (binding [*emitter* (emitter sb!)]
+      (write! "var a = ")
+      (open-prior! "_1() {return \"true\";}")
+      (close-prior!)
+      (write! "_1;\na();\n")
+      (flush! "AAA")
+      (open-prior! "BBBBB")
+      (open-prior! "CCCC")
+      (close-prior!)
+      (close-prior!)
+      *emitter*
+      (sb!)))
 
   )
