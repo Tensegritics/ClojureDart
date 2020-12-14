@@ -287,7 +287,7 @@
   (doseq [[expr binding] (map vector expr (::loop-bindings env))]
     (write! binding "=" (lift-expr expr env :force true) ";\n"))
   (flush! "continue;\n")
-  'RECUR)
+  NULL)
 
 (defn emit-quoted [body env]
   (cond
@@ -304,7 +304,7 @@
         (write! (emit-quoted expr env) ", "))
       (write! "])"))
     (symbol? body)
-    (str "Symbol(null, " (name body) ")")
+    (str "Symbol(null, " (string-literal (name body)) ")")
     :else (emit-literal body env)))
 
 (defn emit-collection [body env]
@@ -313,15 +313,15 @@
       (do
         (write! "{")
         (doseq [[k v] body]
-          (write! (lift-expr k env) ": " (lift-expr v env) ", "))
+          (write! (emit k env) ": " (emit v env) ", "))
         (write! "}"))
       (do
         (write! (if (set? body) "Set" "PersistentVector") ".from([")
         (doseq [expr body]
-          (write! (lift-expr expr env) ", "))
+          (write! (emit expr env) ", "))
         (write! "])")))))
 
-(defn emit-fn-bodies [bodies env]
+(defn write-fn-bodies [bodies env]
   (let [bodies (sort #(compare (count (first %1)) (count (first %2))) bodies)
         is-variadic (some #{'&} (first (last bodies)))
         smallest-arity (if (and (= 1 (count bodies)) is-variadic) (- (count (ffirst bodies)) 2) (count (ffirst bodies)))
@@ -358,8 +358,7 @@
         (doseq [body (butlast bodies)]
           (flush! (str "if (" (nth params-alias (count (first body))) " == MISSING_ARG) {\n"))
           (write! (emit-fn-body body)))
-        (emit-fn-body (last bodies))
-        nil)))) ; TODO ret value?
+        (emit-fn-body (last bodies))))))
 
 (defn emit-fn [[_ & sigs] env]
   (let [named (symbol? (first sigs))
@@ -368,7 +367,7 @@
         fnname (when named (first sigs))
         munged (if named (munge fnname env) (tmpvar))]
     (open-prior! munged)
-    (write! (emit-fn-bodies body (cond-> env named (assoc fnname munged))))
+    (write-fn-bodies body (cond-> env named (assoc fnname munged)))
     (close-prior!)
     munged))
 
@@ -406,7 +405,7 @@
 
 (defn emit-fn-call [[fnname & args] env]
   (with-ret
-    (write! (emit (lift-expr fnname env) env))
+    (write! (emit fnname env))
     (write-args! args env)))
 
 (defn extract-bodies [fn-expr]
@@ -417,7 +416,7 @@
   (let [env (cond-> env (symbol? (second fn-expr)) (assoc (second fn-expr) (name sym)))]
     ;; @TODO :munged
     (write! (name sym))
-    (emit-fn-bodies (extract-bodies fn-expr) env)
+    (write-fn-bodies (extract-bodies fn-expr) env)
     (flush! "\n")))
 
 (defn emit-def [[_ sym expr] env]
