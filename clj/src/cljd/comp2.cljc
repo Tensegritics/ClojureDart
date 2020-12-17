@@ -66,9 +66,7 @@
 
 (defn emit-dot [[_ obj member & args] env]
   (let [member (name member)
-        [_ prop name] (case member
-                        (- -- "-" "--") [nil nil member]
-                        (re-matches #"(-)?(.+)" member))
+        [_ prop name] (re-matches #"(-)?(.+)" member)
         prop (and prop (nil? args))
         op (if prop 'dart/.- 'dart/.)
         fn-call (emit-fn-call (cons obj args) env)]
@@ -204,9 +202,9 @@
             decl (declaration locus)
             locus (-> locus declared (assoc :loop-bindings (map first bindings)))]
         (print decl)
-        (print "do {\n")
         (doseq [[v e] bindings]
           (write e (var-locus v)))
+        (print "do {\n")
         (write expr locus)
         (print "break;\n} while(true);\n"))
       dart/recur
@@ -371,8 +369,8 @@
       (dart/recur (GLOBAL_inc _12413))
       _12413))
   (write *1 return-locus)
-  ;; do {
   ;; var _12413=1;
+  ;; do {
   ;; var _12416=GLOBAL_test;
   ;; if(_12416!=null && _12416!=false){
   ;; _12413=GLOBAL_inc(_12413, );
@@ -386,9 +384,9 @@
   (emit '(loop* [a 1 b 2] (recur b a)) {})
   (dart/loop [[_12419 1] [_12420 2]] (dart/recur _12420 _12419))
   (write *1 return-locus)
-  ;; do {
   ;; var _12419=1;
   ;; var _12420=2;
+  ;; do {
   ;; var _12423=_12420;
   ;; _12420=_12419;
   ;; _12419=_12423;
@@ -396,4 +394,15 @@
   ;; break;
   ;; } while(true);
 
+  (emit '(loop* [a 1 b 2] (recur (inc a) (dec b))) {})
+  (dart/loop [[_12693 1] [_12694 2]] (dart/recur (GLOBAL_inc _12693) (GLOBAL_dec _12694)))
+  (write *1 return-locus)
+  ;; var _12426=1;
+  ;; var _12427=2;
+  ;; do {
+  ;; _12426=GLOBAL_inc(_12426, );
+  ;; _12427=GLOBAL_dec(_12427, );
+  ;; continue;
+  ;; break;
+  ;; } while(true);
   )
