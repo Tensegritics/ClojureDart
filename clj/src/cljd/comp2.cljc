@@ -4,37 +4,56 @@
 
 (defn tmpvar [] (gensym "_"))
 
+(defn atomic?
+  [x] (not (coll? x)))
+
+(defn dart-expr?
+  "Takes a dartsexp and returns true if it can be emitted as a Dart expression."
+  [x]
+  (or (atomic? x)
+      (when-some [[x] (when (seq? x) x)]
+        (and (symbol? x) (= "dart" (namespace x))))
+      (every? dart-expr? x)))
+
 (defn liftable
-  "returns [bindings expr] where expr is atomic."
+  "takes a dartsexp and returns a [bindings expr] where expr is atomic
+   or nil if there are no bindings to lift."
   [x]
   (case (when (seq? x) (first x))
     dart/let
-    (if (coll? (last x))
+    (if (atomic? (last x))
+      (next x)
       (let [tmp (tmpvar)]
         [(concat (second x) [[tmp (last x)]])
-         tmp])
-      [(second x)
-       (last x)])
+         tmp]))
     dart/if ; no ternary for now
     (let [tmp (tmpvar)]
       [[[tmp x]]
        tmp])
     nil))
 
+(defn lift-arg [must-lift x]
+  (or (liftable x)
+      (cond
+        (atomic? x) [nil x]
+        must-lift
+        (let [tmp (tmpvar)]
+          [[[tmp x]] tmp])
+        :else
+        [nil x])))
+
 (defn emit-fn-call [fn-call env]
-  (let [[bindings fn-call]
-        (reduce (fn [[bindings fn-call] x]
-                  (if-some [[bindings' x] (liftable x)]
-                    [(concat bindings' bindings) (cons x fn-call)]
-                    (cond
-                      (not (coll? x)) [bindings (cons x fn-call)]
-                      (seq bindings)
-                      (let [tmp (tmpvar)]
-                        [(cons [tmp x] bindings)
-                         (cons tmp fn-call)])
-                      :else
-                      [nil (cons x fn-call)])))
-                [nil ()] (map #(emit % env) (reverse fn-call)))]
+  (let [[positionals [_ & nameds]] (split-with (complement #{'&}) fn-call)
+        [bindings fn-call]
+        (as-> [nil ()] acc
+          (reduce (fn [[bindings fn-call] [k x]]
+                  (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
+                    [(concat bindings' bindings) (list* k x' fn-call)]))
+                  acc (reverse (partition 2 nameds)))
+          (reduce (fn [[bindings fn-call] x]
+                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
+                      [(concat bindings' bindings) (cons x' fn-call)]))
+                  acc (reverse positionals)))]
     (cond->> fn-call (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-let [[_ bindings & body] env]
@@ -51,7 +70,7 @@
 
 (defn emit-if [[_ test then else] env]
   (let [test (emit test env)]
-    (if-some [[bindings test] (liftable test)]
+    (if-some [[_ bindings test] (liftable test)]
       (list 'dart/let bindings (list 'dart/if test (emit then env) (emit else env)))
       (list 'dart/if test (emit then env) (emit else env)))))
 
@@ -59,6 +78,7 @@
   (cond
     (symbol? x) (or (env x) (symbol (str "GLOBAL_" x)))
     (or (string? x) (number? x)) x
+    (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
     (seq? x)
     (case (first x)
       let* (emit-let x env)
@@ -119,16 +139,24 @@
         (print "}else{\n")
         (write else locus)
         (print "}\n"))
-      (do
+      (let [f (first x)
+            [positionals nameds] (split-with (complement keyword?) (next x))]
         (print (:pre locus))
-        (write (first x) expr-locus)
+        (write f expr-locus)
         (print "(")
-        (run! #(write % arg-locus) (next x))
+        (run! #(write % arg-locus) positionals)
+        (run! (fn [[k x]]
+                (print (str (name k) ": "))
+                (write x arg-locus)) (partition 2 nameds))
         (print ")")
         (print (:post locus))))
     :else (do (print (:pre locus)) (pr x) (print (:post locus)))))
 
 (comment
+  (emit '(a b c & :d e) {})
+  (GLOBAL_a GLOBAL_b GLOBAL_c :d GLOBAL_e)
+  (write *1 (var-locus 'RET))
+
   (emit '(let* [a 1] (println "BOOH") (a 2)) {})
   (dart/let ([_10174 1]
              [nil (GLOBAL_println "BOOH")])
@@ -161,5 +189,6 @@
   (emit '(if (let* [x 1] x) then else) {})
   (dart/let ([_10434 1]) (dart/if _10434 GLOBAL_then GLOBAL_else))
   (write *1 (var-locus 'RET))
+
 
   )
