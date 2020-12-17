@@ -15,8 +15,13 @@
         (and (symbol? x) (= "dart" (namespace x))))
       (every? dart-expr? x)))
 
+(defn has-recur?
+  "Takes a dartsexp and returns true when it contains an open recur."
+  [x]
+  (some {'dart/recur true} (tree-seq seq? #(case (first %) (dart/loop dart/fn) nil %) x)))
+
 (defn liftable
-  "takes a dartsexp and returns a [bindings expr] where expr is atomic
+  "Takes a dartsexp and returns a [bindings expr] where expr is atomic
    or nil if there are no bindings to lift."
   [x]
   (case (when (seq? x) (first x))
@@ -32,7 +37,7 @@
        tmp])
     nil))
 
-(defn lift-arg [must-lift x]
+(defn- lift-arg [must-lift x]
   (or (liftable x)
       (cond
         (atomic? x) [nil x]
@@ -56,6 +61,22 @@
                   acc (reverse positionals)))]
     (cond->> fn-call (seq bindings) (list 'dart/let bindings))))
 
+(defn emit-new [[_ & class+args] env]
+  (emit-fn-call class+args env))
+
+(defn emit-dot [[_ obj member & args] env]
+  (let [member (name member)
+        [_ prop name] (case member
+                        (- -- "-" "--") [nil nil member]
+                        (re-matches #"(-)?(.+)" member))
+        prop (and prop (nil? args))
+        op (if prop 'dart/.- 'dart/.)
+        fn-call (emit-fn-call (cons obj args) env)]
+    (case (first fn-call)
+      dart/let (let [[_ bindings [obj & args]] fn-call]
+                 (list 'dart/let bindings (list* op obj name args)))
+      (list* op (first fn-call) name (next fn-call)))))
+
 (defn emit-let [[_ bindings & body] env]
   (let [[dart-bindings env]
         (reduce
@@ -74,13 +95,17 @@
       (list 'dart/let bindings (list 'dart/if test (emit then env) (emit else env)))
       (list 'dart/if test (emit then env) (emit else env)))))
 
-(defn emit [x env]
+(defn emit
+  "Takes a clojure form and a lexical environment and returns a dartsexp."
+  [x env]
   (cond
     (symbol? x) (or (env x) (symbol (str "GLOBAL_" x)))
     (or (string? x) (number? x)) x
     (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
     (seq? x)
     (case (first x)
+      . (emit-dot x env)
+      new (emit-new x env)
       let* (emit-let x env)
       if (emit-if x env)
       (emit-fn-call x env))))
@@ -104,6 +129,10 @@
   {:pre ""
    :post ""})
 
+(def paren-locus
+  {:pre "("
+   :post ")"})
+
 (def arg-locus
   {:pre ""
    :post ", "})
@@ -118,7 +147,19 @@
    :decl (str "var " varname ";\n")
    :fork (declared-var-locus varname)})
 
-(defn write [x locus]
+(defn- write-args [args]
+  (let [[positionals nameds] (split-with (complement keyword?) args)]
+    (print "(")
+    (run! #(write % arg-locus) positionals)
+    (run! (fn [[k x]]
+            (print (str (name k) ": "))
+            (write x arg-locus)) (partition 2 nameds))
+    (print ")")))
+
+(defn write
+  "Takes a dartsexp and a locus.
+   Prints valid dart code."
+  [x locus]
   (cond
     (seq? x)
     (case (first x)
@@ -139,16 +180,55 @@
         (print "}else{\n")
         (write else locus)
         (print "}\n"))
-      (let [f (first x)
-            [positionals nameds] (split-with (complement keyword?) (next x))]
+      dart/.-
+      (let [[_ obj fld] x]
+        (print (:pre locus))
+        (write obj expr-locus)
+        (print (str "." fld))
+        (print (:post locus)))
+      dart/.
+      (let [[_ obj meth & args] x]
+        (print (:pre locus))
+        (case meth
+          ;; operators
+          "[]" (do
+                 (write obj expr-locus)
+                 (print "[")
+                 (write (first args) expr-locus)
+                 (print "]"))
+          "[]=" (do
+                  (write obj expr-locus)
+                  (print "[")
+                  (write (first args) expr-locus)
+                  (print "]=")
+                  (write (second args) expr-locus))
+          "~" (do
+                (print meth)
+                (write obj paren-locus))
+          "-" (if args
+                (do
+                  (write obj paren-locus)
+                  (print meth)
+                  (write (first args) paren-locus))
+                (do
+                  (print meth)
+                  (write obj paren-locus)))
+          ("<" ">" "<=" ">=" "==" "+" "~/" "/" "*" "%" "|" "^" "&" "<<" ">>" ">>>")
+          (do
+            (write obj paren-locus)
+            (print meth)
+            (write (first args) paren-locus))
+          ;; else plain method
+          (do
+            (write obj expr-locus)
+            (print (str "." meth))
+            (write-args args)))
+        (print (:post locus)))
+      ;; plain fn call
+      (let [[f & args] x]
         (print (:pre locus))
         (write f expr-locus)
-        (print "(")
-        (run! #(write % arg-locus) positionals)
-        (run! (fn [[k x]]
-                (print (str (name k) ": "))
-                (write x arg-locus)) (partition 2 nameds))
-        (print ")")
+        (write-args args)
         (print (:post locus))))
     :else (do (print (:pre locus)) (pr x) (print (:post locus)))))
 
@@ -190,5 +270,44 @@
   (dart/let ([_10434 1]) (dart/if _10434 GLOBAL_then GLOBAL_else))
   (write *1 (var-locus 'RET))
 
+  (emit '(. a "[]" i) {})
+  (dart/. GLOBAL_a "[]" GLOBAL_i)
+  (write *1 (var-locus 'RET))
+
+  (emit '(let* [b (new List)] (. b "[]=" 0 "hello") b) {})
+  (dart/let ([_11752 (GLOBAL_List)] [nil (dart/. _11752 "[]=" 0 "hello")]) _11752)
+  (write *1 (var-locus 'RET))
+
+  (emit '(. obj meth) {})
+  (dart/. GLOBAL_obj "meth")
+  (emit '(. obj -prop) {})
+  (dart/.- GLOBAL_obj "prop")
+
+  (emit '(. obj meth a & :b :c) {})
+  (dart/. GLOBAL_obj "meth" GLOBAL_a :b (GLOBAL_cljd.Keyword/intern nil "c"))
+
+  (emit '(. (. a + b) * (. c + d)) {})
+  (dart/. (dart/. GLOBAL_a "+" GLOBAL_b) "*" (dart/. GLOBAL_c "+" GLOBAL_d))
+  (write *1 (var-locus 'RET))
+  ;; var RET=((GLOBAL_a)+(GLOBAL_b))*((GLOBAL_c)+(GLOBAL_d));
+
+  (emit '(. (. a + (if flag 0 1)) * (. c + d)) {})
+  (dart/let ([_12035 (dart/if GLOBAL_flag 0 1)] [_12036 (dart/. GLOBAL_a "+" _12035)]) (dart/. _12036 "*" (dart/. GLOBAL_c "+" GLOBAL_d)))
+  (write *1 (var-locus 'RET))
+  ;; var _12035;
+  ;; var _12039=GLOBAL_flag;
+  ;; if(_12039!=null && _12039!=false){
+  ;; _12035=0;
+  ;; }else{
+  ;; _12035=1;
+  ;; }
+  ;; var _12036=(GLOBAL_a)+(_12035);
+  ;; var RET=(_12036)*((GLOBAL_c)+(GLOBAL_d));
+
+  (emit '(. (let* [a (new Obj)] a) meth) {})
+  (dart/let ([_11858 (GLOBAL_Obj)]) (dart/. _11858 "meth"))
+  (write *1 (var-locus 'RET))
+  ;; var _11858=GLOBAL_Obj();
+  ;; var RET=_11858.meth();
 
   )
