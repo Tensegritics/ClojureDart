@@ -7,13 +7,16 @@
 (defn atomic?
   [x] (not (coll? x)))
 
-(defn dart-expr?
-  "Takes a dartsexp and returns true if it can be emitted as a Dart expression."
-  [x]
-  (or (atomic? x)
-      (when-some [[x] (when (seq? x) x)]
-        (and (symbol? x) (= "dart" (namespace x))))
-      (every? dart-expr? x)))
+(comment
+  ; TODO replace atomic? by something more finegrained
+  (defn dart-expr?
+    "Takes a dartsexp and returns true if it can be emitted as a Dart expression."
+    [x]
+    (cond
+      (not (coll? x)) true
+      (case (when (seq? x) (first x))
+        (dart/if dart/let dart/loop dart/let-fn) true false) false
+      :else (every? dart-expr? x))))
 
 (defn has-recur?
   "Takes a dartsexp and returns true when it contains an open recur."
@@ -108,6 +111,52 @@
       (list 'dart/let bindings (list 'dart/if test (emit then env) (emit else env)))
       (list 'dart/if test (emit then env) (emit else env)))))
 
+(defn- variadic? [[params]] (some #{'&} params))
+
+(defn- non-variadic-body [[params & body] all-params]
+  (list* 'let* (interleave params all-params) body))
+
+(defn- variadic-body [[params & body] all-params]
+  #_(list* 'let* (map vector params all-params) body))
+
+(defn emit-fn [[_ & bodies] env]
+  (let [bodies (cond-> bodies (vector? (first bodies)) list)
+        [variadic & too-many-variadics] (filter variadic? bodies)
+        variadic-min
+        (some-> variadic first (take-while (complement #{'&})) count)
+        non-variadics
+        (->> bodies (remove variadic?)
+             (group-by (comp count first))
+             (sort-by key)
+             (into []
+                   (map (fn [[n [body & too-many-bodies]]]
+                          (when too-many-bodies
+                            (throw (ex-info "Can't have 2 overloads with same arity" {})))
+                          body))))
+        non-variadics-max (-> non-variadics peek first count)
+        params-min (or (some-> non-variadics ffirst count) variadic-min)
+        params-max (if variadic 20 non-variadics-max)
+        all-params (vec (repeatedly params-max tmpvar))
+        last-body (or (some-> variadic (variadic-body all-params))
+                      (some-> (peek non-variadics) (non-variadic-body all-params)))
+        non-variadics (cond-> non-variadics (not variadic) pop)
+        ;; map all-params into the env to prevent re-tmpvar
+        env (into env (zipmap all-params all-params))]
+    (prn last-body)
+    (when (some-> variadic-min (< non-variadics-max))
+      (throw (ex-info "Can't have fixed arity function with more params than variadic function" {})))
+    (list 'dart/fn (take params-min all-params) (drop params-min all-params)
+          (emit
+           (reduce
+            (fn [last-body [params :as body]]
+              (let [next-p (nth all-params (count params))]
+                (list 'if (list 'cljd/missing-arg? next-p)
+                      (non-variadic-body body all-params)
+                      last-body)))
+            last-body
+            (rseq non-variadics))
+           env))))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
@@ -116,14 +165,16 @@
     (or (string? x) (number? x)) x
     (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
     (seq? x)
-    (case (first x)
-      . (emit-dot x env)
-      new (emit-new x env)
-      let* (emit-let x env)
-      loop* (emit-loop x env)
-      recur (emit-recur x env)
-      if (emit-if x env)
-      (emit-fn-call x env))))
+    (let [emit (case (first x)
+                 . emit-dot
+                 new emit-new
+                 let* emit-let
+                 loop* emit-loop
+                 recur emit-recur
+                 if emit-if
+                 fn* emit-fn
+                 emit-fn-call)]
+      (emit x env))))
 
 (defn closed-overs [emitted env]
   (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
@@ -163,6 +214,8 @@
    :post ";\n"
    :decl (str "var " varname ";\n")
    :fork (declared-var-locus varname)})
+
+(declare write)
 
 (defn- write-args [args]
   (let [[positionals nameds] (split-with (complement keyword?) args)]
@@ -405,4 +458,22 @@
   ;; continue;
   ;; break;
   ;; } while(true);
+
+  (emit-fn '(fn [x] x) {})
+  (dart/fn (_12891) () (dart/let ([_12892 _12891]) _12892))
+
+  (emit-fn '(fn ([x] x) ([x y] y)) {})
+  (dart/fn (_12895) (_12896)
+    (dart/if (GLOBAL_cljd/missing-arg? _12896)
+      (dart/let ([_12897 _12895]) _12897)
+      (dart/let ([_12898 _12895] [_12899 _12896]) _12899)))
+
+  (emit-fn '(fn ([x] x) ([x y] y) ([u v w x y] u)) {})
+  (dart/fn (_12902) (_12903 _12904 _12905 _12906)
+    (dart/if (GLOBAL_cljd/missing-arg? _12903)
+      (dart/let ([_12907 _12902]) _12907)
+      (dart/if (GLOBAL_cljd/missing-arg? _12904)
+        (dart/let ([_12908 _12902] [_12909 _12903]) _12909)
+        (dart/let ([_12910 _12902] [_12911 _12903] [_12912 _12904] [_12913 _12905] [_12914 _12906]) _12910))))
+
   )
