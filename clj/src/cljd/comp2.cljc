@@ -92,6 +92,9 @@
       ; wrap only when ther are actual bindings
       (seq dart-bindings) (list 'dart/let dart-bindings))))
 
+(defn emit-do [[_ & body] env]
+  (list 'dart/let (for [x (butlast body)] [nil (emit x env)]) (emit (last body) env)))
+
 (defn emit-loop [[_ bindings & body] env]
   (let [[dart-bindings env]
         (reduce
@@ -107,7 +110,7 @@
 
 (defn emit-if [[_ test then else] env]
   (let [test (emit test env)]
-    (if-some [[_ bindings test] (liftable test)]
+    (if-some [[bindings test] (liftable test)]
       (list 'dart/let bindings (list 'dart/if test (emit then env) (emit else env)))
       (list 'dart/if test (emit then env) (emit else env)))))
 
@@ -162,11 +165,12 @@
   [x env]
   (cond
     (symbol? x) (or (env x) (symbol (str "GLOBAL_" x)))
-    (or (string? x) (number? x)) x
+    (or (string? x) (number? x) (boolean? x)) x
     (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
     (seq? x)
     (let [emit (case (first x)
                  . emit-dot
+                 do emit-do
                  new emit-new
                  let* emit-let
                  loop* emit-loop
@@ -183,7 +187,7 @@
 (defn declaration [locus] (:decl locus ""))
 (defn declared [locus]
   ; merge to conserve custom attributes
-  (merge locus (:fork locus)))
+  (merge (dissoc locus :fork :decl) (:fork locus)))
 
 (def statement-locus
   {:pre ""
@@ -233,6 +237,15 @@
   (cond
     (seq? x)
     (case (first x)
+      dart/fn
+      (let [[_ & params+body] x
+            params (apply concat (butlast params+body))
+            body (last params+body)]
+        (print (:pre locus))
+        (write-args params)
+        (print "{\n")
+        (write body (-> return-locus declared (assoc :loop-bindings params)))
+        (print "}" (:post locus)))
       dart/let
       (let [[_ bindings expr] x]
         (doseq [[v e] bindings]
@@ -253,13 +266,15 @@
       dart/loop
       (let [[_ bindings expr] x
             decl (declaration locus)
-            locus (-> locus declared (assoc :loop-bindings (map first bindings)))]
+            has-recur (has-recur? expr)
+            locus (cond-> (declared locus)
+                    has-recur (assoc :loop-bindings (map first bindings)))]
         (print decl)
         (doseq [[v e] bindings]
           (write e (var-locus v)))
-        (print "do {\n")
+        (when has-recur (print "do {\n"))
         (write expr locus)
-        (print "break;\n} while(true);\n"))
+        (when has-recur (print "break;\n} while(true);\n")))
       dart/recur
       (let [[_ & exprs] x
             {:keys [loop-bindings]} locus
@@ -332,10 +347,10 @@
         (print (:post locus)))
       ;; plain fn call
       (let [[f & args] x]
-        (print (:pre locus))
+        (print (str (:pre locus) (:pre paren-locus)))
         (write f expr-locus)
         (write-args args)
-        (print (:post locus))))
+        (print (str (:post paren-locus) (:post locus)))))
     :else (do (print (:pre locus)) (pr x) (print (:post locus)))))
 
 (comment
@@ -344,13 +359,12 @@
   (write *1 (var-locus 'RET))
 
   (emit '(let* [a 1] (println "BOOH") (a 2)) {})
-  (dart/let ([_10174 1]
-             [nil (GLOBAL_println "BOOH")])
-    (_10174 2))
-  (write (emit '(let* [a 1] (println "BOOH") (a 2)) {}) return-locus)
+  (dart/let ([_6612 1] [nil (GLOBAL_println "BOOH")]) (_6612 2))
+  (write *1 return-locus)
 
   (emit '(a (b c) (d e)) {})
   (GLOBAL_a (GLOBAL_b GLOBAL_c) (GLOBAL_d GLOBAL_e))
+  (write *1 return-locus)
 
   (emit '(a (side-effect! 42) (let* [d 1] (d e)) (side-effect! 33)) {})
   (dart/let ([_10294 (GLOBAL_side-effect! 42)] [_10292 1] [_10293 (_10292 GLOBAL_e)]) (GLOBAL_a _10294 _10293 (GLOBAL_side-effect! 33)))
@@ -364,6 +378,10 @@
   (dart/if GLOBAL_b GLOBAL_c GLOBAL_d)
   (write *1 (var-locus 'RET))
 
+  (emit '(if (if true "true") c d) {})
+  (dart/let [[_9946 (dart/if true "true" nil)]] (dart/if _9946 GLOBAL_c GLOBAL_d))
+  (write *1 (var-locus 'RET))
+
   (emit '(if b (let* [c 1] c) d) {})
   (dart/if GLOBAL_b (dart/let ([_10417 1]) _10417) GLOBAL_d)
   (write *1 return-locus)
@@ -371,6 +389,8 @@
   (emit '(if b (let* [c 1] (if c x y)) d) {})
   (dart/if GLOBAL_b (dart/let ([_10425 1]) (dart/if _10425 GLOBAL_x GLOBAL_y)) GLOBAL_d)
   (write *1 (var-locus 'RET))
+
+
 
   (emit '(if (let* [x 1] x) then else) {})
   (dart/let ([_10434 1]) (dart/if _10434 GLOBAL_then GLOBAL_else))
@@ -388,6 +408,10 @@
   (dart/. GLOBAL_obj "meth")
   (emit '(. obj -prop) {})
   (dart/.- GLOBAL_obj "prop")
+
+  (emit '(. (let* [o obj] o) -prop) {})
+  (write *1 (var-locus 'RET))
+
 
   (emit '(. obj meth a & :b :c) {})
   (dart/. GLOBAL_obj "meth" GLOBAL_a :b (GLOBAL_cljd.Keyword/intern nil "c"))
@@ -459,6 +483,11 @@
   ;; break;
   ;; } while(true);
 
+
+  (emit '(loop* [a 1 b 2] a b 3 4 (recur 1 2 )) {})
+  (dart/loop [[_10053 1] [_10054 2]] (dart/let ([nil _10053] [nil _10054] [nil 3] [nil 4]) (dart/recur 1 2)))
+  (write *1 return-locus)
+
   (emit-fn '(fn [x] x) {})
   (dart/fn (_12891) () (dart/let ([_12892 _12891]) _12892))
 
@@ -476,4 +505,22 @@
         (dart/let ([_12908 _12902] [_12909 _12903]) _12909)
         (dart/let ([_12910 _12902] [_12911 _12903] [_12912 _12904] [_12913 _12905] [_12914 _12906]) _12910))))
 
+  (emit-fn '(fn ([x] (recur x)) ([x y] y) ([u v w x y] u)) {})
+  (dart/fn (_10059) (_10060 _10061 _10062 _10063)
+    (dart/if (GLOBAL_cljd/missing-arg? _10060)
+      (dart/let ([_10064 _10059]) (dart/recur _10064))
+      (dart/if (GLOBAL_cljd/missing-arg? _10061)
+        (dart/let ([_10065 _10059] [_10066 _10060]) _10066)
+        (dart/let ([_10067 _10059] [_10068 _10060] [_10069 _10061] [_10070 _10062] [_10071 _10063]) _10067))))
+
+  (emit '(let* [inc (fn* [x] (. x "+" 1))] (inc 3)) {})
+  (write *1 (var-locus "DDDD"))
+
+  (emit '(loop* [a 4 b 5] a (recur b a)) {})
+  (dart/loop [[_8698 4] [_8699 4]] (dart/let ([nil _8698]) _8699))
+  (write *1 (var-locus "DDDD"))
+
+  (emit '(do 1 2 3 4 (a 1) "ddd") {})
+  (dart/let ([nil 1] [nil 2] [nil 3] [nil 4] [nil (GLOBAL_a 1)]) "ddd")
+  (write *1 (var-locus "this"))
   )
