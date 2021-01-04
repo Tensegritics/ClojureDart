@@ -116,10 +116,12 @@
 
 (defn- variadic? [[params]] (some #{'&} params))
 
-(defn- non-variadic-body [[params & body] all-params]
-  (list* 'let* (interleave params all-params) body))
+(defn- emit-non-variadic-body [[params & body] all-params env]
+  (let [env (into env (zipmap params (repeatedly tmpvar)))
+        body (emit body env)]
+    (list* (if (has-recur? body) 'dart/loop 'dart/let) (map vector (map env params) all-params) body)))
 
-(defn- variadic-body [[params & body] all-params]
+(defn- emit-variadic-body [[params & body] all-params env]
   #_(list* 'let* (map vector params all-params) body))
 
 (defn emit-fn [[_ & bodies] env]
@@ -140,25 +142,20 @@
         params-min (or (some-> non-variadics ffirst count) variadic-min)
         params-max (if variadic 20 non-variadics-max)
         all-params (vec (repeatedly params-max tmpvar))
-        last-body (or (some-> variadic (variadic-body all-params))
-                      (some-> (peek non-variadics) (non-variadic-body all-params)))
-        non-variadics (cond-> non-variadics (not variadic) pop)
-        ;; map all-params into the env to prevent re-tmpvar
-        env (into env (zipmap all-params all-params))]
-    (prn last-body)
+        last-body (or (some-> variadic (emit-variadic-body all-params env))
+                      (some-> (peek non-variadics) (emit-non-variadic-body all-params env)))
+        non-variadics (cond-> non-variadics (not variadic) pop)]
     (when (some-> variadic-min (< non-variadics-max))
       (throw (ex-info "Can't have fixed arity function with more params than variadic function" {})))
     (list 'dart/fn (take params-min all-params) (drop params-min all-params)
-          (emit
-           (reduce
-            (fn [last-body [params :as body]]
-              (let [next-p (nth all-params (count params))]
-                (list 'if (list 'cljd/missing-arg? next-p)
-                      (non-variadic-body body all-params)
-                      last-body)))
-            last-body
-            (rseq non-variadics))
-           env))))
+          (reduce
+           (fn [else [params :as body]]
+             (let [next-p (nth all-params (count params))]
+               (list 'dart/if (list (emit 'cljd/missing-arg? env) next-p)
+                     (emit-non-variadic-body body all-params env)
+                     else)))
+           last-body
+           (rseq non-variadics)))))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -238,14 +235,18 @@
     (seq? x)
     (case (first x)
       dart/fn
-      (let [[_ & params+body] x
-            params (apply concat (butlast params+body))
-            body (last params+body)]
+      (let [[_ fixed-params opt-params body] x]
         (print (:pre locus))
-        (write-args params)
-        (print "{\n")
-        (write body (-> return-locus declared (assoc :loop-bindings params)))
-        (print "}" (:post locus)))
+        (print "(")
+        (run! print (interleave fixed-params (repeat ", ")))
+        (when (seq opt-params)
+          (print "[")
+          (run! print (interleave opt-params (repeat ", ")))
+          (print "]"))
+        (print "){\n")
+        (write body return-locus)
+        (print "}")
+        (print (:post locus)))
       dart/let
       (let [[_ bindings expr] x]
         (doseq [[v e] bindings]
@@ -266,15 +267,13 @@
       dart/loop
       (let [[_ bindings expr] x
             decl (declaration locus)
-            has-recur (has-recur? expr)
-            locus (cond-> (declared locus)
-                    has-recur (assoc :loop-bindings (map first bindings)))]
+            locus (-> locus declared (assoc :loop-bindings (map first bindings)))]
         (print decl)
         (doseq [[v e] bindings]
           (write e (var-locus v)))
-        (when has-recur (print "do {\n"))
+        (print "do {\n")
         (write expr locus)
-        (when has-recur (print "break;\n} while(true);\n")))
+        (print "break;\n} while(true);\n"))
       dart/recur
       (let [[_ & exprs] x
             {:keys [loop-bindings]} locus
@@ -347,10 +346,10 @@
         (print (:post locus)))
       ;; plain fn call
       (let [[f & args] x]
-        (print (str (:pre locus) (:pre paren-locus)))
+        (print (:pre locus))
         (write f expr-locus)
         (write-args args)
-        (print (str (:post paren-locus) (:post locus)))))
+        (print (:post locus))))
     :else (do (print (:pre locus)) (pr x) (print (:post locus)))))
 
 (comment
@@ -506,12 +505,13 @@
         (dart/let ([_12910 _12902] [_12911 _12903] [_12912 _12904] [_12913 _12905] [_12914 _12906]) _12910))))
 
   (emit-fn '(fn ([x] (recur x)) ([x y] y) ([u v w x y] u)) {})
-  (dart/fn (_10059) (_10060 _10061 _10062 _10063)
-    (dart/if (GLOBAL_cljd/missing-arg? _10060)
-      (dart/let ([_10064 _10059]) (dart/recur _10064))
-      (dart/if (GLOBAL_cljd/missing-arg? _10061)
-        (dart/let ([_10065 _10059] [_10066 _10060]) _10066)
-        (dart/let ([_10067 _10059] [_10068 _10060] [_10069 _10061] [_10070 _10062] [_10071 _10063]) _10067))))
+  (dart/fn (_13991) (_13992 _13993 _13994 _13995)
+    (dart/if (GLOBAL_cljd/missing-arg? _13992)
+      (dart/loop ([_14005 _13991]) (dart/recur _14005))
+      (dart/if (GLOBAL_cljd/missing-arg? _13993)
+        (dart/let ([_14002 _13991] [_14003 _13992]) _14003)
+        (dart/let ([_13996 _13991] [_13997 _13992] [_13998 _13993] [_13999 _13994] [_14000 _13995]) _13996))))
+  (write *1 (var-locus "XXX"))
 
   (emit '(let* [inc (fn* [x] (. x "+" 1))] (inc 3)) {})
   (write *1 (var-locus "DDDD"))
