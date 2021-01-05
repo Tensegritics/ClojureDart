@@ -125,7 +125,10 @@
   #_(list* 'let* (map vector params all-params) body))
 
 (defn emit-fn [[_ & bodies] env]
-  (let [bodies (cond-> bodies (vector? (first bodies)) list)
+  (let [name (when (symbol? (first bodies)) (first bodies))
+        env (cond-> env name (assoc name (tmpvar))) ; TODO munge
+        bodies (cond->> bodies name next)
+        bodies (cond-> bodies (vector? (first bodies)) list)
         [variadic & too-many-variadics] (filter variadic? bodies)
         variadic-min
         (some-> variadic first (take-while (complement #{'&})) count)
@@ -144,18 +147,103 @@
         all-params (vec (repeatedly params-max tmpvar))
         last-body (or (some-> variadic (emit-variadic-body all-params env))
                       (some-> (peek non-variadics) (emit-non-variadic-body all-params env)))
-        non-variadics (cond-> non-variadics (not variadic) pop)]
+        non-variadics (cond-> non-variadics (not variadic) pop)
+        dart-fn
+        (list 'dart/fn (env name) (take params-min all-params) (drop params-min all-params)
+              (reduce
+               (fn [else [params :as body]]
+                 (let [next-p (nth all-params (count params))]
+                   (list 'dart/if (list (emit 'cljd/missing-arg? env) next-p)
+                         (emit-non-variadic-body body all-params env)
+                         else)))
+               last-body
+               (rseq non-variadics)))]
     (when (some-> variadic-min (< non-variadics-max))
       (throw (ex-info "Can't have fixed arity function with more params than variadic function" {})))
-    (list 'dart/fn (take params-min all-params) (drop params-min all-params)
-          (reduce
-           (fn [else [params :as body]]
-             (let [next-p (nth all-params (count params))]
-               (list 'dart/if (list (emit 'cljd/missing-arg? env) next-p)
-                     (emit-non-variadic-body body all-params env)
-                     else)))
-           last-body
-           (rseq non-variadics)))))
+    (if name ; systematically lift named functions
+      (list 'dart/let [[nil dart-fn]] (env name))
+      dart-fn)))
+
+(defn emit-method [[mname [this-arg & fixed-args] named-args & body] env]
+  ;; args destructuring will be added by a macro
+  ;; named-args need to have been fully expanded to triples [keyword symbol default] by the macro
+ #_ (let [dartargs (into [] (map (fn [arg] [arg (tmpvar)])) fixed-args) ; it's a vector and not map cause a binding may appear several times
+        env (-> env
+                (assoc this-arg (DartExpr. "this"))
+                (into dartargs)
+                (into
+                 (map (fn [[k sym]] [sym (DartExpr. (name k))]))
+                 named-args)
+                (assoc ::loop-bindings
+                       (into [] (map second) dartargs)))]
+    (write! mname)
+    (write! "(")
+    (doseq [[_ arg] dartargs] (write! arg) (write! ", "))
+    (when (seq named-args)
+      (write! "{")
+      (doseq [[k sym default] named-args]
+        (write! (name k))
+        (write! "=")
+        (emit-const-expr default)
+        (write! ", "))
+      (write! "}"))
+    (flush! "){\ndo {\n")
+    (write! "return " (emit-body body env) ";\n")
+    (flush! "} while(true);\n}\n\n"))
+  nil)
+
+(defn emit-reify [[_ opts & specs] env]
+  #_(let [{:keys [extends] :or {extends 'Object}} opts
+        [ctor-op base & ctor-args :as ctor] (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
+        ctor-meth (when (= '. ctor-op) (first ctor-args))
+        ctor-args (cond-> ctor-args (= '. ctor-op) next)
+        [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'&}) ctor-args)
+        positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
+        named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
+        super-ctor
+        {:method ctor-meth ; nil for new
+         :positional-args positional-ctor-params
+         :named-args (map vector (take-nth 2 named-ctor-args) named-ctor-params)}
+        class-name (tmpvar)  ; TODO change this to a more telling name
+        classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
+        methods (remove symbol? specs)  ; crude
+        mixins(filter (comp :mixin meta) classes)
+        ifaces (remove (comp :mixin meta) classes)
+        need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
+
+        env {} #_(closed-overs-recording-env env)
+        closed-overs nil #_(get-closed-overs env)
+        reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))]
+    (->>
+     (with-string-emitter
+       (open-prior! "class " class-name)
+       (when base
+         (write! " extends " (symbol-literal base {}))) ; TODO munge
+       (when (seq ifaces)
+         (write! " implements " (str/join ", " (map name ifaces)))) ; TODO aliasing
+       (when (seq mixins)
+         (write! " with " (str/join ", " (map name mixins)))) ; TODO aliasing
+       (flush! " {\n")
+       ;; closed overs
+       (doseq [field (vals closed-overs)]
+                                        ; revisit when support for :once
+         (write! "final " field ";\n"))
+       ;; methods
+       (when (seq methods)
+         (doseq [m methods]
+           (write! (emit-method m env))))
+       ;; constructor
+       (flush! class-name "(" (str/join ", " (concat positional-ctor-params named-ctor-params
+                                                     (map #(str "this." (name %)) (vals closed-overs)))))
+       (when super-ctor
+         (write! ": " (emit-literal super-ctor {}) ";\n"))
+       ;; noSuchMethod
+       (when need-nsm
+         (write! "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
+       (close-prior! "}\n\n"))
+     (assoc {:type :class} :code)
+     (swap! nses do-def class-name))
+    (with-ret (write! (emit reify-ctor {})))))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -235,8 +323,9 @@
     (seq? x)
     (case (first x)
       dart/fn
-      (let [[_ fixed-params opt-params body] x]
+      (let [[_ name fixed-params opt-params body] x]
         (print (:pre locus))
+        (some-> name print) ; name is not nil only when locus is statement
         (print "(")
         (run! print (interleave fixed-params (repeat ", ")))
         (when (seq opt-params)
@@ -257,7 +346,7 @@
             decl (declaration locus)
             locus (declared locus)
             test-var (tmpvar)]
-        (print decl)
+        (some-> decl print)
         (write test (var-locus test-var))
         (print (str "if(" test-var "!=null && " test-var "!=false){\n"))
         (write then locus)
@@ -268,7 +357,7 @@
       (let [[_ bindings expr] x
             decl (declaration locus)
             locus (-> locus declared (assoc :loop-bindings (map first bindings)))]
-        (print decl)
+        (some-> decl print)
         (doseq [[v e] bindings]
           (write e (var-locus v)))
         (print "do {\n")
@@ -523,4 +612,21 @@
   (emit '(do 1 2 3 4 (a 1) "ddd") {})
   (dart/let ([nil 1] [nil 2] [nil 3] [nil 4] [nil (GLOBAL_a 1)]) "ddd")
   (write *1 (var-locus "this"))
+
+  (emit '((((fn* [] (fn* [] (fn* [] 42)))))) {})
+  ((((dart/fn () () (dart/let () (dart/fn () () (dart/let () (dart/fn () () (dart/let () 42)))))))))
+  (write *1 (var-locus "DDDD"))
+
+  (emit '(fn* [x] x) {})
+  (dart/fn nil (_16639) () (dart/let ([_16640 _16639]) _16640))
+  (write *1 return-locus)
+
+  (emit '(fn* fname [x] 42) {})
+  (dart/let [[nil (dart/fn _16623 (_16624) () (dart/let ([_16625 _16624]) 42))]] _16623)
+  (write *1 return-locus)
+
+  (emit '((fn* fname [x] 42)) {})
+  (dart/let ([nil (dart/fn _16631 (_16632) () (dart/let ([_16633 _16632]) 42))]) (_16631))
+  (write *1 return-locus)
+
   )
