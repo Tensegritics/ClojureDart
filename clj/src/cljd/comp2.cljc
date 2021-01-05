@@ -1,4 +1,39 @@
-(ns cljd.comp2)
+(ns cljd.comp2
+  (:refer-clojure :exclude [macroexpand-all macroexpand-1 munge load-file]))
+
+(def nses (atom {:current-ns 'user
+                 'user {}}))
+
+(defn macroexpand-1 [env form]
+  (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
+    (let [name (name f)
+          ;; TODO symbol resolution and macro lookup in cljd
+          #?@(:clj [clj-var (ns-resolve (find-ns (:current-ns @nses)) f)])]
+      ;; TODO add proper expansion here, before defaults
+      (cond
+        (env f) form
+        #?@(:clj                        ; macro overrides
+            [(= 'ns f) form
+             (= 'reify f) nil #_(apply expand-reify args)]) ;; @TODO : change this
+        (= '. f) form
+        #?@(:clj
+            [(-> clj-var meta :macro)
+                                        ; force &env to nil when cross-compiling, should be ok
+             (apply @clj-var form nil (next form))]
+            :cljd
+            [TODO TODO])
+        (.endsWith name ".")
+        (list* 'new
+               (symbol (namespace f) (subs name 0 (dec (count name))))
+               args)
+        (.startsWith name ".")
+        (list* '. (first args) (symbol (subs name 1)) (next args))
+        :else form))
+    form))
+
+(defn macroexpand-all [env form]
+  (let [ex (macroexpand-1 env form)]
+    (cond->> ex (not (identical? ex form)) (recur env))))
 
 (declare emit)
 
@@ -157,25 +192,35 @@
            last-body
            (rseq non-variadics)))))
 
+(defn emit-def [[_ sym expr] env]
+  (let [expr (macroexpand-all env expr)]
+    (if (and (seq? expr) (= 'fn* (first expr)))
+      (swap! nses do-def sym
+             {:type :dartfn
+              :code (with-string-emitter (emit-top-fn sym expr env))}))
+    (emit sym env)))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
-  (cond
-    (symbol? x) (or (env x) (symbol (str "GLOBAL_" x)))
-    (or (string? x) (number? x) (boolean? x)) x
-    (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
-    (seq? x)
-    (let [emit (case (first x)
-                 . emit-dot
-                 do emit-do
-                 new emit-new
-                 let* emit-let
-                 loop* emit-loop
-                 recur emit-recur
-                 if emit-if
-                 fn* emit-fn
-                 emit-fn-call)]
-      (emit x env))))
+  (let [x (macroexpand-all env x)]
+    (cond
+      (symbol? x) (or (env x) (symbol (str "GLOBAL_" x)))
+      (or (string? x) (number? x) (boolean? x)) x
+      (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
+      (seq? x)
+      (let [emit (case (first x)
+                   . emit-dot
+                   do emit-do
+                   new emit-new
+                   let* emit-let
+                   loop* emit-loop
+                   recur emit-recur
+                   if emit-if
+                   fn* emit-fn
+                   def emit-def
+                   emit-fn-call)]
+        (emit x env)))))
 
 (defn closed-overs [emitted env]
   (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
@@ -523,4 +568,47 @@
   (emit '(do 1 2 3 4 (a 1) "ddd") {})
   (dart/let ([nil 1] [nil 2] [nil 3] [nil 4] [nil (GLOBAL_a 1)]) "ddd")
   (write *1 (var-locus "this"))
+
+  (emit '(or 1 2 3 4 (a 1) "ddd") {})
+  (dart/let ([_9757 1]) (dart/if _9757 _9757 (dart/let ([_9758 2]) (dart/if _9758 _9758 (dart/let ([_9759 3]) (dart/if _9759 _9759 (dart/let ([_9760 4]) (dart/if _9760 _9760 (dart/let ([_9761 (GLOBAL_a 1)]) (dart/if _9761 _9761 "ddd"))))))))))
+  (write *1 return-locus)
+
+  (macroexpand-all {} '(fn* nom [a] a))
+  )
+
+
+(defn do-ns [[_ ns-sym & ns-clauses]]
+  (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
+        mappings
+        (transduce
+         (comp
+          (mapcat (fn [[directive & args]] (map #(vector directive %) args)))
+          (map
+           (fn [[directive arg]]
+             (case directive
+               :require
+               (let [arg (if (vector? arg) arg [arg])
+                     alias (name (gensym "lib"))
+                     clauses (into {} (partition-all 2) (next arg))]
+                 (cond-> (assoc {} :imports [[(name (first arg)) alias]])
+                   (:as clauses) (assoc-in [:aliases (name (:as clauses))] alias)
+                   (:refer clauses) (assoc :mappings (into {} (map #(vector % (str alias "." (name %)))) (:refer clauses)))))
+               :import (/ 0)
+               :refer-clojure (/ 0)
+               :use (/ 0)))))
+         (partial merge-with into)
+         {} ns-clauses)]
+    (swap! nses assoc ns-sym mappings :current-ns ns-sym))
+  #_(swap! nses assoc :current-ns (doto (second expr)
+                                    #?@(:clj [create-ns]))) ;hacky
+  )
+(comment
+
+  (do-ns '(ns cljd.user
+            (:require [cljd.bordeaux :refer [reviews] :as awesome]
+                      [cljd.ste :as ste]
+                      ["package:flutter/material.dart"]
+                      clojure.string)))
+
+
   )
