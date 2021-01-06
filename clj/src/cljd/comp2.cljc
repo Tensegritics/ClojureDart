@@ -1,5 +1,6 @@
 (ns cljd.comp2
-  (:refer-clojure :exclude [macroexpand macroexpand-1 munge load-file]))
+  (:refer-clojure :exclude [macroexpand macroexpand-1 munge load-file])
+  (:require [clojure.string :as str]))
 
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
@@ -341,21 +342,61 @@
                              (var-locus (name sym))))}))
     (emit sym env)))
 
+(defn emit-symbol
+  [x env]
+  (or (env x)
+      (let [nses @nses
+            {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+        (else->> (if (current-ns x) x)
+                 (or (get mappings x))
+                 (if-some [alias (get aliases (namespace x))] (str alias "." (name x)))
+                 #_"TODO next form should throw"
+                 (symbol (str "GLOBAL_" x))))))
+
+(defn- replace-all [^String s regexp f]
+  #?(:cljd
+     (.replaceAllMapped s regexp f)
+     :clj
+     (str/replace s regexp f)))
+
+(defn emit-string-literal [s]
+  (str \"
+       (replace-all s #"([\x00-\x1f])|[$\"]"
+                    (fn [match]
+                      (let [[match control-char] (-> match #?@(:cljd [re-groups]))]
+                        (if control-char
+                          (case control-char
+                            "\b" "\\b"
+                            "\n" "\\n"
+                            "\r" "\\r"
+                            "\t" "\\t"
+                            "\f" "\\f"
+                            "\13" "\\v"
+                            (str "\\x"
+                                 #?(:clj
+                                    (-> control-char (nth 0) long
+                                        (+ 0x100)
+                                        Long/toHexString
+                                        (subs 1))
+                                    :cld
+                                    (-> control-char
+                                        (.codeUnitAt 0)
+                                        (.toRadixString 16)
+                                        (.padLeft 2 "0")))))
+                          (str "\\" match)))))
+       \"))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
   (let [x (macroexpand env x)]
     (cond
-      (symbol? x) (or (env x)
-                      (let [nses @nses
-                            {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
-                        (else->> (if (current-ns x) x)
-                                 (or (get mappings x))
-                                 (if-some [alias (get aliases (namespace x))] (str alias "." (name x)))
-                                 #_"TODO next form should throw"
-                                 (symbol (str "GLOBAL_" x)))))
-      (or (string? x) (number? x) (boolean? x)) x
+      (symbol? x) (emit-symbol x env)
+      (string? x) (emit-string-literal x)
+      #?@(:clj [(char? x) (emit-string-literal (str x))])
+      (or (number? x) (boolean? x)) x
       (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
+      (nil? x) 'null
       (seq? x)
       (let [emit (case (first x)
                    . emit-dot
