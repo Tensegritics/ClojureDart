@@ -7,6 +7,39 @@
 (def nses (atom {:current-ns 'user
                  'user {}}))
 
+#?(:clj
+   (do
+     (defn- roll-leading-opts [body]
+       (loop [[k v & more :as body] (seq body) opts {}]
+         (if (and body (keyword? k))
+           (recur more (assoc opts k v))
+           [opts body])))
+
+     (defn- expand-reify [&  opts+specs]
+       (let [[opts specs] (roll-leading-opts opts+specs)]
+         #_(list* 'reify* opts
+                (map
+                 (fn [spec]
+                   (if (seq? spec)
+                     (let [[mname arglist & body] spec
+                           [positional-args [delim & opt-args]] (split-with (complement '#{& &named}) arglist)
+                           delim (case delim &named :named :positional)
+                           triples
+                           (loop [triples [] xs named-args]
+                             (if-some [[sym & [k :as xs]] xs]
+                               (if (symbol? sym)
+                                 (let [[k [v :as xs]] (if (keyword? k) [k (next xs)] [(keyword sym) xs])
+                                       [v xs] (if (symbol? v) [nil xs] [v (next xs)])]
+                                   (recur (conj triples [k sym v]) xs))
+                                 (throw (ex-info "Unexpected form, expecting a symbol" {:form sym})))
+                               triples))]
+                       ;; TODO: mname resolution against protocol ifaces
+                       (list* mname positional-args delim triples body))
+                     spec))
+                 specs))))
+
+     (defn- expand-do [& body] (list* 'let* [] body))))
+
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
     (let [name (name f)
@@ -15,20 +48,21 @@
       ;; TODO add proper expansion here, before defaults
       (cond
         (env f) form
-        #?@(:clj                        ; macro overrides
+        #?@(:clj ; macro overrides
             [(= 'ns f) form
-             (= 'reify f) nil #_(apply expand-reify args)]) ;; @TODO : change this
+             (= 'reify f) (apply expand-reify args)
+             (= 'do f) (apply expand-do args)])
         (= '. f) form
         #?@(:clj
             [(-> clj-var meta :macro)
-                                        ; force &env to nil when cross-compiling, should be ok
+             ; force &env to nil when cross-compiling, should be ok
              (apply @clj-var form nil (next form))]
             :cljd
             [TODO TODO])
         (.endsWith name ".")
         (list* 'new
-               (symbol (namespace f) (subs name 0 (dec (count name))))
-               args)
+          (symbol (namespace f) (subs name 0 (dec (count name))))
+          args)
         (.startsWith name ".")
         (list* '. (first args) (symbol (subs name 1)) (next args))
         :else form))
@@ -130,9 +164,6 @@
       ; wrap only when ther are actual bindings
       (seq dart-bindings) (list 'dart/let dart-bindings))))
 
-(defn emit-do [[_ & body] env]
-  (list 'dart/let (for [x (butlast body)] [nil (emit x env)]) (emit (last body) env)))
-
 (defn emit-loop [[_ bindings & body] env]
   (let [[dart-bindings env]
         (reduce
@@ -156,8 +187,14 @@
 
 (defn- emit-non-variadic-body [[params & body] all-params env]
   (let [env (into env (zipmap params (repeatedly tmpvar)))
-        body (emit (list* 'do body) env)]
-    (list (if (has-recur? body) 'dart/loop 'dart/let) (map vector (map env params) all-params) body)))
+        body (emit (cons 'do body) env)
+        bindings (map vector (map env params) all-params)]
+    (cond
+      (has-recur? body) (list 'dart/loop bindings body)
+      ;; the test below has no functional value,
+      ;; it avoids emitting useless dart/lets
+      (seq bindings) (list 'dart/let bindings body)
+      :else body)))
 
 (defn- emit-variadic-body [[params & body] all-params env]
   #_(list* 'let* (map vector params all-params) body))
@@ -283,8 +320,10 @@
      (swap! nses do-def class-name))
     (with-ret (write! (emit reify-ctor {})))))
 
+(declare write top-fn-locus var-locus)
+
 (defn write-top-dartfn [sym x]
-  (write x (top-fn-locus (name sym))))
+    (write x (top-fn-locus (name sym))))
 
 (defn do-def [nses sym m]
   (assoc-in nses [(:current-ns nses) sym] m))
@@ -320,7 +359,6 @@
       (seq? x)
       (let [emit (case (first x)
                    . emit-dot
-                   do emit-do
                    new emit-new
                    let* emit-let
                    loop* emit-loop
@@ -328,6 +366,7 @@
                    if emit-if
                    fn* emit-fn
                    def emit-def
+                   reify* emit-reify
                    emit-fn-call)]
         (emit x env)))))
 
@@ -740,6 +779,7 @@
   (dart/let ([nil (dart/fn _16631 (_16632) () (dart/let ([_16633 _16632]) 42))]) (_16631))
   (write *1 return-locus)
 
+
   (emit '(def oo (fn* [x] 42)) {})
   (write *1 return-locus)
 
@@ -748,21 +788,17 @@
   (emit '(def oo1 42) {})
 
 
-  (emit '(def oo (fn* [x] (if (.-isOdd x) (recur (. x + 1)) x ))) {})
+  (emit '(def oo (fn* [x] (if (.-isOdd x) (recur (. x + 1)) x ))) {})`
   nses
 
   (emit '(def oo "caca\n") {})
 
   (write *1 return-locus)
 
+  (emit '(fn* aa [x] x) {})
+  (dart/let [[nil (dart/fn _16717 (_16718) () (dart/let ([_16719 _16718]) _16719))]] _16717)
 
-
-
-
-
-
-
-
-
+  (emit '(fn* [] (fn* aa [x] x)) {})
+  (dart/fn nil () () (dart/let ([nil (dart/fn _18396 (_18397) () (dart/let ([_18398 _18397]) (GLOBAL_do _18398)))]) (GLOBAL_do _18396)))
 
   )
