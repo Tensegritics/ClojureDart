@@ -18,24 +18,19 @@
 
      (defn- expand-reify [&  opts+specs]
        (let [[opts specs] (roll-leading-opts opts+specs)]
-         #_(list* 'reify* opts
+         (list* 'reify* opts
                 (map
                  (fn [spec]
                    (if (seq? spec)
                      (let [[mname arglist & body] spec
-                           [positional-args [delim & opt-args]] (split-with (complement '#{& &named}) arglist)
-                           delim (case delim &named :named :positional)
-                           triples
-                           (loop [triples [] xs named-args]
-                             (if-some [[sym & [k :as xs]] xs]
-                               (if (symbol? sym)
-                                 (let [[k [v :as xs]] (if (keyword? k) [k (next xs)] [(keyword sym) xs])
-                                       [v xs] (if (symbol? v) [nil xs] [v (next xs)])]
-                                   (recur (conj triples [k sym v]) xs))
-                                 (throw (ex-info "Unexpected form, expecting a symbol" {:form sym})))
-                               triples))]
+                           [positional-args [delim & opt-args]] (split-with (complement '#{& |}) arglist)
+                           delim (case delim & :named :positional)
+                           opt-params
+                           (for [[p d] (partition-all 2 1 opt-args)
+                                 :when (symbol? p)]
+                             [p (when-not (symbol? d) d)])]
                        ;; TODO: mname resolution against protocol ifaces
-                       (list* mname positional-args delim triples body))
+                       (list* mname positional-args delim opt-params body))
                      spec))
                  specs))))
 
@@ -240,86 +235,82 @@
       (list 'dart/let [[nil dart-fn]] (env name))
       dart-fn)))
 
-(defn emit-method [[mname [this-arg & fixed-args] named-args & body] env]
-  ;; args destructuring will be added by a macro
-  ;; named-args need to have been fully expanded to triples [keyword symbol default] by the macro
- #_ (let [dartargs (into [] (map (fn [arg] [arg (tmpvar)])) fixed-args) ; it's a vector and not map cause a binding may appear several times
-        env (-> env
-                (assoc this-arg (DartExpr. "this"))
-                (into dartargs)
-                (into
-                 (map (fn [[k sym]] [sym (DartExpr. (name k))]))
-                 named-args)
-                (assoc ::loop-bindings
-                       (into [] (map second) dartargs)))]
-    (write! mname)
-    (write! "(")
-    (doseq [[_ arg] dartargs] (write! arg) (write! ", "))
-    (when (seq named-args)
-      (write! "{")
-      (doseq [[k sym default] named-args]
-        (write! (name k))
-        (write! "=")
-        (emit-const-expr default)
-        (write! ", "))
-      (write! "}"))
-    (flush! "){\ndo {\n")
-    (write! "return " (emit-body body env) ";\n")
-    (flush! "} while(true);\n}\n\n"))
-  nil)
+(defn emit-method [[mname [this-param & fixed-params] opt-kind opt-params & body] env]
+  ;; params destructuring will be added by a macro
+  ;; opt-params need to have been fully expanded to a list of [symbol default]
+  ;; by the macro
+  (let [dart-fixed-params (repeatedly (count fixed-params) tmpvar)
+        dart-opt-params (for [[p d] opt-params]
+                          [(case opt-kind
+                             :named p
+                             :positional (tmpvar))
+                           (emit d env)])
+        env (into (assoc env this-param 'this)
+                  (zipmap (concat fixed-params (map first opt-params))
+                          (concat dart-fixed-params (map first dart-opt-params))))
+        dart-body (emit (cons 'do body) env)
+        recur-params (when (has-recur? dart-body) dart-fixed-params)
+        dart-fixed-params (if recur-params
+                            (repeatedly (count fixed-params) tmpvar)
+                            dart-fixed-params)
+        dart-body (cond->> dart-body
+                    recur-params
+                    (list 'dart/loop (map vector recur-params dart-fixed-params)))]
+    [mname dart-fixed-params opt-kind dart-opt-params dart-body]))
+
+(defn closed-overs [emitted env]
+  (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
+
+(defn method-closed-overs [[mname dart-fixed-params opt-kind dart-opt-params dart-body] env]
+  (reduce disj (closed-overs dart-body env) (cons 'this (concat dart-fixed-params (map second dart-opt-params)))))
+
+(declare write-class)
 
 (defn emit-reify [[_ opts & specs] env]
-  #_(let [{:keys [extends] :or {extends 'Object}} opts
-        [ctor-op base & ctor-args :as ctor] (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
+  (let [{:keys [extends] :or {extends 'Object}} opts
+        [ctor-op base & ctor-args :as ctor]
+        (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
         [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'&}) ctor-args)
         positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
         named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
-        super-ctor
-        {:method ctor-meth ; nil for new
-         :positional-args positional-ctor-params
-         :named-args (map vector (take-nth 2 named-ctor-args) named-ctor-params)}
         class-name (tmpvar)  ; TODO change this to a more telling name
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
         methods (remove symbol? specs)  ; crude
         mixins(filter (comp :mixin meta) classes)
         ifaces (remove (comp :mixin meta) classes)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
-
-        env {} #_(closed-overs-recording-env env)
-        closed-overs nil #_(get-closed-overs env)
-        reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))]
-    (->>
-     (with-string-emitter
-       (open-prior! "class " class-name)
-       (when base
-         (write! " extends " (symbol-literal base {}))) ; TODO munge
-       (when (seq ifaces)
-         (write! " implements " (str/join ", " (map name ifaces)))) ; TODO aliasing
-       (when (seq mixins)
-         (write! " with " (str/join ", " (map name mixins)))) ; TODO aliasing
-       (flush! " {\n")
-       ;; closed overs
-       (doseq [field (vals closed-overs)]
-                                        ; revisit when support for :once
-         (write! "final " field ";\n"))
-       ;; methods
-       (when (seq methods)
-         (doseq [m methods]
-           (write! (emit-method m env))))
-       ;; constructor
-       (flush! class-name "(" (str/join ", " (concat positional-ctor-params named-ctor-params
-                                                     (map #(str "this." (name %)) (vals closed-overs)))))
-       (when super-ctor
-         (write! ": " (emit-literal super-ctor {}) ";\n"))
-       ;; noSuchMethod
-       (when need-nsm
-         (write! "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
-       (close-prior! "}\n\n"))
-     (assoc {:type :class} :code)
-     (swap! nses do-def class-name))
-    (with-ret (write! (emit reify-ctor {})))))
+        dart-methods (map #(emit-method % env) methods)
+        closed-overs (transduce (map #(method-closed-overs % env)) into #{}
+                                dart-methods)
+        reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))
+        class
+        {:name class-name
+         :fields closed-overs
+         :extends base
+         :implements ifaces
+         :with mixins
+         :ctor-params
+         (concat
+          (map #(list '. %) closed-overs)
+          positional-ctor-params
+          named-ctor-params)
+         :super-ctor
+         {:method ctor-meth ; nil for new
+          :args
+          (concat positional-ctor-params
+                  (interleave (take-nth 2 named-ctor-args) named-ctor-params))}
+         :methods dart-methods
+         :nsm need-nsm}
+        reify-ctor-call (list*
+                         'new class-name
+                         (concat closed-overs
+                                 positional-ctor-args
+                                 (take-nth 2 (next named-ctor-args))))]
+    ;; DO in NS
+    (write-class class)
+    (emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
 
 (defn do-def [nses sym m]
   (assoc-in nses [(:current-ns nses) sym] m))
@@ -396,9 +387,6 @@
                    reify* emit-reify
                    emit-fn-call)]
         (emit x env)))))
-
-(defn closed-overs [emitted env]
-  (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
 
 ;; WRITING
 (defn declaration [locus] (:decl locus ""))
@@ -494,6 +482,45 @@
     (string? x) (write-string-literal x)
     (nil? x) (print 'null)
     :else (pr x)))
+
+(defn write-class [{class-name :name :keys [extends implements with fields ctor-params super-ctor methods nsm]}]
+  (print "class" class-name)
+  (some->> extends (print " extends"))
+  (some->> implements seq (str/join ", ") (print " implements"))
+  (some->> with seq (str/join ", ") (print " with"))
+  (print " {\n")
+  (doseq [field fields] (print (str "final " field ";")))
+  (newline)
+
+  (print (str class-name "("))
+  (doseq [p ctor-params]
+    (print (if (seq? p) (str "this." (second p)) p))
+    (print ", "))
+  (print "):super")
+  (some->> super-ctor :method (str ".") print)
+  (write-args (:args super-ctor))
+  (print ";\n")
+
+  (doseq [[mname dart-fixed-params opt-kind dart-opt-params dart-body] methods]
+    (newline)
+    (print mname)
+    (print "(")
+    (doseq [p dart-fixed-params] (print p) (print ", "))
+    (when (seq dart-opt-params)
+      (print (case opt-kind :positional "[" "{"))
+      (doseq [[p d] dart-opt-params]
+        (print p "= ")
+        (write d arg-locus))
+        (print (case opt-kind :positional "]" "}")))
+    (print "){\n")
+    (write dart-body return-locus)
+    (print "}\n"))
+
+  (when nsm
+    (newline)
+    (print "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
+
+  (print "}\n"))
 
 (defn write
   "Takes a dartsexp and a locus.
@@ -909,4 +936,15 @@
   (dart/fn nil () () (dart/let [[nil (dart/fn _6644 (_6645) () (dart/let ([_6646 _6645]) _6646))]] _6644))
   (dart/fn nil () () (dart/let ([nil (dart/fn _18396 (_18397) () (dart/let ([_18398 _18397]) (GLOBAL_do _18398)))]) (GLOBAL_do _18396)))
 
-  )
+  (emit '(reify Object (boo [self x & y 33] (.toString self))) {})
+  (GLOBAL__22982)
+
+  (emit '(reify Object (boo [self x | y 33] (.toString self))) {})
+  (GLOBAL__22986)
+
+  (emit '(let [x 42] (reify Object (boo [self] (str x "-" self)))) {})
+  (dart/let ([_22991 42]) (GLOBAL__22992 _22991))
+
+  (emit '(let [x 42] (reify Object (boo [self] (let [x 33] (str x "-" self))))) {})
+  (dart/let ([_22995 42]) (GLOBAL__22996))
+)
