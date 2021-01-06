@@ -321,13 +321,10 @@
      (swap! nses do-def class-name))
     (with-ret (write! (emit reify-ctor {})))))
 
-(declare write top-fn-locus var-locus)
-
-(defn write-top-dartfn [sym x]
-    (write x (top-fn-locus (name sym))))
-
 (defn do-def [nses sym m]
   (assoc-in nses [(:current-ns nses) sym] m))
+
+(declare write-top-dartfn write-top-field)
 
 (defn emit-def [[_ sym expr] env]
   (let [expr (macroexpand env expr)]
@@ -337,9 +334,7 @@
               :code (with-out-str (write-top-dartfn sym (emit expr env)))})
       (swap! nses do-def sym
              {:type :field
-              :code (with-out-str
-                      (write (emit (if (seq? expr) (list (list 'fn* [] expr)) expr) env)
-                             (var-locus (name sym))))}))
+              :code (with-out-str (write-top-field sym (emit (if (seq? expr) (list (list 'fn* [] expr)) expr) env)))}))
     (emit sym env)))
 
 (defn emit-symbol
@@ -353,54 +348,21 @@
                  #_"TODO next form should throw"
                  (symbol (str "GLOBAL_" x))))))
 
-(defn- replace-all [^String s regexp f]
-  #?(:cljd
-     (.replaceAllMapped s regexp f)
-     :clj
-     (str/replace s regexp f)))
-
-(defn emit-string-literal [s]
-  (str \"
-       (replace-all s #"([\x00-\x1f])|[$\"]"
-                    (fn [match]
-                      (let [[match control-char] (-> match #?@(:cljd [re-groups]))]
-                        (if control-char
-                          (case control-char
-                            "\b" "\\b"
-                            "\n" "\\n"
-                            "\r" "\\r"
-                            "\t" "\\t"
-                            "\f" "\\f"
-                            "\13" "\\v"
-                            (str "\\x"
-                                 #?(:clj
-                                    (-> control-char (nth 0) long
-                                        (+ 0x100)
-                                        Long/toHexString
-                                        (subs 1))
-                                    :cld
-                                    (-> control-char
-                                        (.codeUnitAt 0)
-                                        (.toRadixString 16)
-                                        (.padLeft 2 "0")))))
-                          (str "\\" match)))))
-       \"))
-
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
   (let [x (macroexpand env x)]
     (cond
       (symbol? x) (emit-symbol x env)
-      (string? x) (emit-string-literal x)
-      #?@(:clj [(char? x) (emit-string-literal (str x))])
-      (or (number? x) (boolean? x)) x
+      #?@(:clj [(char? x) (str x)])
+      (or (number? x) (boolean? x) (string? x)) x
       (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
-      (nil? x) 'null
+      (nil? x) nil
       (seq? x)
       (let [emit (case (first x)
                    . emit-dot
                    new emit-new
+                   #_#_quote emit-quoted
                    let* emit-let
                    loop* emit-loop
                    recur emit-recur
@@ -428,10 +390,6 @@
   {:pre "return "
    :post ";\n"})
 
-(defn top-fn-locus [fnname]
-  {:pre  fnname
-   :post "\n"})
-
 (def expr-locus
   {:pre ""
    :post ""})
@@ -456,6 +414,14 @@
 
 (declare write)
 
+(defn write-top-dartfn [sym x]
+  (print (name sym))
+  (write x expr-locus)
+  (print "\n"))
+
+(defn write-top-field [sym x]
+  (write x (var-locus (name sym))))
+
 (defn- write-args [args]
   (let [[positionals nameds] (split-with (complement keyword?) args)]
     (print "(")
@@ -464,6 +430,46 @@
             (print (str (name k) ": "))
             (write x arg-locus)) (partition 2 nameds))
     (print ")")))
+
+(defn- replace-all [^String s regexp f]
+  #?(:cljd
+     (.replaceAllMapped s regexp f)
+     :clj
+     (str/replace s regexp f)))
+
+(defn write-string-literal [s]
+  (print
+   (str \"
+        (replace-all s #"([\x00-\x1f])|[$\"]"
+                     (fn [match]
+                       (let [[match control-char] (-> match #?@(:cljd [re-groups]))]
+                         (if control-char
+                           (case control-char
+                             "\b" "\\b"
+                             "\n" "\\n"
+                             "\r" "\\r"
+                             "\t" "\\t"
+                             "\f" "\\f"
+                             "\13" "\\v"
+                             (str "\\x"
+                                  #?(:clj
+                                     (-> control-char (nth 0) long
+                                         (+ 0x100)
+                                         Long/toHexString
+                                         (subs 1))
+                                     :cld
+                                     (-> control-char
+                                         (.codeUnitAt 0)
+                                         (.toRadixString 16)
+                                         (.padLeft 2 "0")))))
+                           (str "\\" match)))))
+        \")))
+
+(defn write-literal [x]
+  (cond
+    (string? x) (write-string-literal x)
+    (nil? x) (print 'null)
+    :else (pr x)))
 
 (defn write
   "Takes a dartsexp and a locus.
@@ -589,7 +595,7 @@
         (write f expr-locus)
         (write-args args)
         (print (:post locus))))
-    :else (do (print (:pre locus)) (pr x) (print (:post locus)))))
+    :else (do (print (:pre locus)) (write-literal x) (print (:post locus)))))
 
 (comment
   (emit '(a b c & :d e) {})
@@ -829,7 +835,7 @@
   (emit '(def oo1 42) {})
 
 
-  (emit '(def oo (fn* [x] (if (.-isOdd x) (recur (. x + 1)) x ))) {})`
+  (emit '(def oo (fn* [x] (if (.-isOdd x) (recur (. x + 1)) x ))) {})
   nses
 
   (emit '(def oo "caca\n") {})
@@ -840,6 +846,7 @@
   (dart/let [[nil (dart/fn _16717 (_16718) () (dart/let ([_16719 _16718]) _16719))]] _16717)
 
   (emit '(fn* [] (fn* aa [x] x)) {})
+  (dart/fn nil () () (dart/let [[nil (dart/fn _6644 (_6645) () (dart/let ([_6646 _6645]) _6646))]] _6644))
   (dart/fn nil () () (dart/let ([nil (dart/fn _18396 (_18397) () (dart/let ([_18398 _18397]) (GLOBAL_do _18398)))]) (GLOBAL_do _18396)))
 
   )
