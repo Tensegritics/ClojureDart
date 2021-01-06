@@ -309,7 +309,10 @@
                                  positional-ctor-args
                                  (take-nth 2 (next named-ctor-args))))]
     ;; DO in NS
-    (write-class class)
+    #_(write-class class)
+    (swap! nses do-def class-name
+             {:type :class
+              :code (with-out-str (write-class class))})
     (emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
 
 (defn do-def [nses sym m]
@@ -941,6 +944,7 @@
 
   (emit '(reify Object (boo [self x | y 33] (.toString self))) {})
   (GLOBAL__22986)
+  (write *1 return-locus)
 
   (emit '(let [x 42] (reify Object (boo [self] (str x "-" self)))) {})
   (dart/let ([_22991 42]) (GLOBAL__22992 _22991))
