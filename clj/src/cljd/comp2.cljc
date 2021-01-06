@@ -344,9 +344,32 @@
             {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
         (else->> (if (current-ns x) x)
                  (or (get mappings x))
-                 (if-some [alias (get aliases (namespace x))] (str alias "." (name x)))
+                 (if-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
                  #_"TODO next form should throw"
                  (symbol (str "GLOBAL_" x))))))
+
+(defn emit-ns [[_ ns-sym & ns-clauses] _]
+  (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
+        mappings
+        (transduce
+         (comp
+          (mapcat (fn [[directive & args]] (map #(vector directive %) args)))
+          (map
+           (fn [[directive arg]]
+             (case directive
+               :require
+               (let [arg (if (vector? arg) arg [arg])
+                     alias (name (gensym "lib"))
+                     clauses (into {} (partition-all 2) (next arg))]
+                 (cond-> (assoc {} :imports [[(name (first arg)) alias]])
+                   (:as clauses) (assoc-in [:aliases (name (:as clauses))] alias)
+                   (:refer clauses) (assoc :mappings (into {} (map #(vector % (str alias "." (name %)))) (:refer clauses)))))
+               :import (/ 0)
+               :refer-clojure (/ 0)
+               :use (/ 0)))))
+         (partial merge-with into)
+         {} ns-clauses)]
+    (swap! nses assoc ns-sym mappings :current-ns ns-sym)))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -362,6 +385,7 @@
       (let [emit (case (first x)
                    . emit-dot
                    new emit-new
+                   ns emit-ns
                    #_#_quote emit-quoted
                    let* emit-let
                    loop* emit-loop
@@ -597,6 +621,63 @@
         (print (:post locus))))
     :else (do (print (:pre locus)) (write-literal x) (print (:post locus)))))
 
+;; Compile clj -> dart file
+(defn dump-ns [ns-map]
+  (doseq [[lib alias] (:imports ns-map)]
+    (print "import ")
+    (write-string-literal lib)
+    (print " as ")
+    (print alias)
+    (print ";\n"))
+  (print "\n")
+  (doseq [[sym v] ns-map
+          :when (symbol? sym)
+          :let [{:keys [type code]} v]]
+    (print code)))
+
+(defn load-file [in]
+  #?(:clj
+     (let [in (clojure.lang.LineNumberingPushbackReader. in)]
+       (loop []
+         (let [form (read {:eof in} in)]
+           (when-not (identical? form in)
+             (emit form {})
+             (recur)))))))
+
+(defn make-ns-to-out [^String target-dir]
+  #?(:clj (let [out-dir (java.io.File. target-dir)]
+            (.mkdirs out-dir)
+            (fn [ns-sym]
+              (let [ns-path (str (.replace (name ns-sym) "." "/") ".dart")
+                    ns-file (doto (java.io.File. out-dir ns-path) (-> .getParentFile .mkdirs))
+                    writer (java.io.FileWriter. ns-file java.nio.charset.StandardCharsets/UTF_8)]
+                (fn
+                  ([]
+                   (.close writer))
+                  ([x]
+                   (.write writer (str x)))))))
+     :cljd 'TODO))
+
+(defn compile-file [in ns-to-out]
+  (load-file in)
+  (let [{:keys [current-ns] :as nses} @nses
+        out! (ns-to-out current-ns)]
+    (out! (with-out-str (dump-ns (nses current-ns))))
+    (out!)))
+
+(comment
+
+  (require '[clojure.java.io :as io])
+  (binding [*ns* *ns*]
+    (ns cljd.bordeaux)
+    (ns cljd.ste)
+    (ns cljd.user))
+  (compile-file (io/reader "test.cljd") (make-ns-to-out "targetdir/ohoh"))
+
+  (set! *warn-on-reflection* true)
+
+  )
+
 (comment
   (emit '(a b c & :d e) {})
   (GLOBAL_a GLOBAL_b GLOBAL_c :d GLOBAL_e)
@@ -778,36 +859,15 @@
   )
 
 
-(defn do-ns [[_ ns-sym & ns-clauses]]
-  (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
-        mappings
-        (transduce
-         (comp
-          (mapcat (fn [[directive & args]] (map #(vector directive %) args)))
-          (map
-           (fn [[directive arg]]
-             (case directive
-               :require
-               (let [arg (if (vector? arg) arg [arg])
-                     alias (name (gensym "lib"))
-                     clauses (into {} (partition-all 2) (next arg))]
-                 (cond-> (assoc {} :imports [[(name (first arg)) alias]])
-                   (:as clauses) (assoc-in [:aliases (name (:as clauses))] alias)
-                   (:refer clauses) (assoc :mappings (into {} (map #(vector % (str alias "." (name %)))) (:refer clauses)))))
-               :import (/ 0)
-               :refer-clojure (/ 0)
-               :use (/ 0)))))
-         (partial merge-with into)
-         {} ns-clauses)]
-    (swap! nses assoc ns-sym mappings :current-ns ns-sym)))
+
 
 (comment
 
-  (do-ns '(ns cljd.user
+  (emit-ns '(ns cljd.user
             (:require [cljd.bordeaux :refer [reviews] :as awesome]
                       [cljd.ste :as ste]
                       ["package:flutter/material.dart"]
-                      clojure.string)))
+                      clojure.string)) {})
 
 
   (emit '((((fn* [] (fn* [] (fn* [] 42)))))) {})
