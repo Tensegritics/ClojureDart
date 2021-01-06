@@ -132,6 +132,24 @@
                   acc (reverse positionals)))]
     (cond->> fn-call (seq bindings) (list 'dart/let bindings))))
 
+(defn emit-coll
+  ([coll env] (emit-coll identity coll env))
+  ([f coll env]
+   (let [items (into [] (comp (if (map? coll) cat identity) (map f)) coll)
+         [bindings items]
+         (reduce (fn [[bindings fn-call] x]
+                   (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
+                     [(concat bindings' bindings) (cons x' fn-call)]))
+                 [nil ()] (rseq items))
+        fn-sym (cond
+                 (map? coll) 'cljd.core/into-map ; is there a cljs equivalent?
+                 (vector? coll) 'cljd.core/vec
+                 (set? coll) 'cljd.core/set
+                 (seq? coll) 'cljd.core/into-list ; should we use apply list?
+                 :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
+         fn-call (list (emit fn-sym env) (vec items))]
+     (cond->> fn-call (seq bindings) (list 'dart/let bindings)))))
+
 (defn emit-new [[_ & class+args] env]
   (emit-fn-call class+args env))
 
@@ -342,6 +360,12 @@
                  #_"TODO next form should throw"
                  (symbol (str "GLOBAL_" x))))))
 
+(defn emit-quoted [[_ x] env]
+  (cond
+    (coll? x) (emit-coll #(list 'quote %) x env)
+    (symbol? x) (emit (list 'cljd.core/symbol (namespace x) (name x)) env)
+    :else (emit x env)))
+
 (defn emit-ns [[_ ns-sym & ns-clauses] _]
   (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
         mappings
@@ -380,7 +404,7 @@
                    . emit-dot
                    new emit-new
                    ns emit-ns
-                   #_#_quote emit-quoted
+                   quote emit-quoted
                    let* emit-let
                    loop* emit-loop
                    recur emit-recur
@@ -389,7 +413,9 @@
                    def emit-def
                    reify* emit-reify
                    emit-fn-call)]
-        (emit x env)))))
+        (emit x env))
+      (coll? x) (emit-coll x env)
+      :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))))
 
 ;; WRITING
 (defn declaration [locus] (:decl locus ""))
@@ -530,6 +556,8 @@
    Prints valid dart code."
   [x locus]
   (cond
+    (vector? x)
+    (do (print "[") (run! #(write % arg-locus) x) (print "]"))
     (seq? x)
     (case (first x)
       dart/fn
@@ -951,4 +979,21 @@
 
   (emit '(let [x 42] (reify Object (boo [self] (let [x 33] (str x "-" self))))) {})
   (dart/let ([_22995 42]) (GLOBAL__22996))
+
+  (emit '[1 2 3] {})
+  (GLOBAL_cljd.core/vec [1 2 3])
+  (write *1 expr-locus)
+
+  (emit '[1 (inc 1) [1 1 1]] {})
+  (GLOBAL_cljd.core/vec [1 (GLOBAL_inc 1) (GLOBAL_cljd.core/vec [1 1 1])])
+
+  (emit ''[1 (inc 1) [1 1 1]] {})
+
+  (GLOBAL_cljd.core/vec [1 (GLOBAL_inc 1) (GLOBAL_cljd.core/vec [1 1 1])])
+
+  (emit '[1 (inc 1) [(let [x 3] x)]] {})
+  (dart/let ([_24320 (GLOBAL_inc 1)] [_24318 3] [_24319 (GLOBAL_cljd.core/vec [_24318])]) (GLOBAL_cljd.core/vec [1 _24320 _24319]))
+  (write *1 expr-locus)
+
+
 )
