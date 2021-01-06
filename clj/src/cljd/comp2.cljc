@@ -1,5 +1,8 @@
 (ns cljd.comp2
-  (:refer-clojure :exclude [macroexpand-all macroexpand-1 munge load-file]))
+  (:refer-clojure :exclude [macroexpand macroexpand-1 munge load-file]))
+
+(defmacro ^:private else->> [& forms]
+  `(->> ~@(reverse forms)))
 
 (def nses (atom {:current-ns 'user
                  'user {}}))
@@ -31,7 +34,7 @@
         :else form))
     form))
 
-(defn macroexpand-all [env form]
+(defn macroexpand [env form]
   (let [ex (macroexpand-1 env form)]
     (cond->> ex (not (identical? ex form)) (recur env))))
 
@@ -153,8 +156,8 @@
 
 (defn- emit-non-variadic-body [[params & body] all-params env]
   (let [env (into env (zipmap params (repeatedly tmpvar)))
-        body (emit body env)]
-    (list* (if (has-recur? body) 'dart/loop 'dart/let) (map vector (map env params) all-params) body)))
+        body (emit (list* 'do body) env)]
+    (list (if (has-recur? body) 'dart/loop 'dart/let) (map vector (map env params) all-params) body)))
 
 (defn- emit-variadic-body [[params & body] all-params env]
   #_(list* 'let* (map vector params all-params) body))
@@ -280,20 +283,38 @@
      (swap! nses do-def class-name))
     (with-ret (write! (emit reify-ctor {})))))
 
+(defn write-top-dartfn [sym x]
+  (write x (top-fn-locus (name sym))))
+
+(defn do-def [nses sym m]
+  (assoc-in nses [(:current-ns nses) sym] m))
+
 (defn emit-def [[_ sym expr] env]
-  (let [expr (macroexpand-all env expr)]
-    (if (and (seq? expr) (= 'fn* (first expr)))
+  (let [expr (macroexpand env expr)]
+    (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
       (swap! nses do-def sym
              {:type :dartfn
-              :code (with-string-emitter (emit-top-fn sym expr env))}))
+              :code (with-out-str (write-top-dartfn sym (emit expr env)))})
+      (swap! nses do-def sym
+             {:type :field
+              :code (with-out-str
+                      (write (emit (if (seq? expr) (list (list 'fn* [] expr)) expr) env)
+                             (var-locus (name sym))))}))
     (emit sym env)))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
-  (let [x (macroexpand-all env x)]
+  (let [x (macroexpand env x)]
     (cond
-      (symbol? x) (or (env x) (symbol (str "GLOBAL_" x)))
+      (symbol? x) (or (env x)
+                      (let [nses @nses
+                            {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+                        (else->> (if (current-ns x) x)
+                                 (or (get mappings x))
+                                 (if-some [alias (get aliases (namespace x))] (str alias "." (name x)))
+                                 #_"TODO next form should throw"
+                                 (symbol (str "GLOBAL_" x)))))
       (or (string? x) (number? x) (boolean? x)) x
       (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
       (seq? x)
@@ -326,6 +347,10 @@
 (def return-locus
   {:pre "return "
    :post ";\n"})
+
+(defn top-fn-locus [fnname]
+  {:pre  fnname
+   :post "\n"})
 
 (def expr-locus
   {:pre ""
@@ -663,7 +688,7 @@
   (dart/let ([_9757 1]) (dart/if _9757 _9757 (dart/let ([_9758 2]) (dart/if _9758 _9758 (dart/let ([_9759 3]) (dart/if _9759 _9759 (dart/let ([_9760 4]) (dart/if _9760 _9760 (dart/let ([_9761 (GLOBAL_a 1)]) (dart/if _9761 _9761 "ddd"))))))))))
   (write *1 return-locus)
 
-  (macroexpand-all {} '(fn* nom [a] a))
+  (macroexpand {} '(fn* nom [a] a))
   )
 
 
@@ -688,10 +713,8 @@
                :use (/ 0)))))
          (partial merge-with into)
          {} ns-clauses)]
-    (swap! nses assoc ns-sym mappings :current-ns ns-sym))
-  #_(swap! nses assoc :current-ns (doto (second expr)
-                                    #?@(:clj [create-ns]))) ;hacky
-  )
+    (swap! nses assoc ns-sym mappings :current-ns ns-sym)))
+
 (comment
 
   (do-ns '(ns cljd.user
@@ -716,5 +739,30 @@
   (emit '((fn* fname [x] 42)) {})
   (dart/let ([nil (dart/fn _16631 (_16632) () (dart/let ([_16633 _16632]) 42))]) (_16631))
   (write *1 return-locus)
+
+  (emit '(def oo (fn* [x] 42)) {})
+  (write *1 return-locus)
+
+
+
+  (emit '(def oo1 42) {})
+
+
+  (emit '(def oo (fn* [x] (if (.-isOdd x) (recur (. x + 1)) x ))) {})
+  nses
+
+  (emit '(def oo "caca\n") {})
+
+  (write *1 return-locus)
+
+
+
+
+
+
+
+
+
+
 
   )
