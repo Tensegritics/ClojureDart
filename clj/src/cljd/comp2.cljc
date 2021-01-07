@@ -102,7 +102,7 @@
       (let [tmp (tmpvar)]
         [(concat (second x) [[tmp (last x)]])
          tmp]))
-    dart/if ; no ternary for now
+    (dart/if dart/try) ; no ternary for now
     (let [tmp (tmpvar)]
       [[[tmp x]]
        tmp])
@@ -387,6 +387,19 @@
          {} ns-clauses)]
     (swap! nses assoc ns-sym mappings :current-ns ns-sym)))
 
+(defn emit-try [x env]
+  (let [[[_ & body] catches] (split-with #(not (and (seq? %) (#{'catch 'finally} (first %)))) x)]
+    (list* 'dart/try (emit (list* 'let* [] body) env)
+           (map (fn [x]
+                  (case (first x)
+                    catch (let [[_ classname name & expr] x
+                                tmp (tmpvar)
+                                tmpst (when (symbol? (first expr)) (tmpvar))
+                                expr (cond-> expr tmpst next)
+                                env (cond-> (assoc env name tmp) tmpst (assoc (first expr) tmpst))]
+                            (list 'catch classname [tmp tmpst] (emit (list* 'let [] expr) env) ))
+                    finally (list 'finally (emit (list* 'let [] (next x)) env)))) catches))))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
@@ -402,6 +415,7 @@
                    . emit-dot
                    new emit-new
                    ns emit-ns
+                   try emit-try
                    quote emit-quoted
                    let* emit-let
                    loop* emit-loop
@@ -577,6 +591,28 @@
         (doseq [[v e] bindings]
           (write e (if v (var-locus v) statement-locus)))
         (write expr locus))
+      dart/try
+      (let [[_ body & catches] x
+            decl (declaration locus)
+            locus (declared locus)]
+        (some-> decl print)
+        (print "try {\n")
+        (write body locus)
+        (print "}\n")
+        (doseq [c catches]
+          (case (first c)
+            catch (let [[_ classname [identifier statement] expr] c]
+                    (print "on ")
+                    (print classname) ;; TODO aliasing
+                    (print " catch (")
+                    (print identifier)
+                    (some->> statement (str ",") print)
+                    (print ") {\n")
+                    (some-> expr (write statement-locus))
+                    (print "}\n"))
+            finally (do (print "finally {\n")
+                        (some-> (second c) (write statement-locus))
+                        (print "}\n")))))
       dart/if
       (let [[_ test then else] x
             decl (declaration locus)
@@ -920,10 +956,10 @@
 (comment
 
   (emit-ns '(ns cljd.user
-            (:require [cljd.bordeaux :refer [reviews] :as awesome]
-                      [cljd.ste :as ste]
-                      ["package:flutter/material.dart"]
-                      clojure.string)) {})
+              (:require [cljd.bordeaux :refer [reviews] :as awesome]
+                        [cljd.ste :as ste]
+                        ["package:flutter/material.dart"]
+                        clojure.string)) {})
 
 
   (emit '((((fn* [] (fn* [] (fn* [] 42)))))) {})
@@ -993,5 +1029,11 @@
   (dart/let ([_24320 (GLOBAL_inc 1)] [_24318 3] [_24319 (GLOBAL_cljd.core/vec [_24318])]) (GLOBAL_cljd.core/vec [1 _24320 _24319]))
   (write *1 expr-locus)
 
+  (emit '(let [x (try 1 2 3 4 (catch Exception e e1 (print e) 2 3))] x) {})
+  (dart/let ([_17563 (dart/try (dart/let ([nil 1] [nil 2] [nil 3]) 4) (catch Exception [_17564 _17565] (dart/let ([nil (GLOBAL_print _17564)] [nil 2]) 3)))]) _17563)
+  (write *1 return-locus)
 
-)
+  (emit '(if (try 1 2 3 4 (catch Exception e "noooo") (finally "log me")) "yeahhh") {})
+  (write *1 return-locus)
+
+  )
