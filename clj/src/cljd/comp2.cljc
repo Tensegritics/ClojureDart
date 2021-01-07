@@ -141,12 +141,12 @@
                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
                      [(concat bindings' bindings) (cons x' fn-call)]))
                  [nil ()] (rseq items))
-        fn-sym (cond
-                 (map? coll) 'cljd.core/into-map ; is there a cljs equivalent?
-                 (vector? coll) 'cljd.core/vec
-                 (set? coll) 'cljd.core/set
-                 (seq? coll) 'cljd.core/into-list ; should we use apply list?
-                 :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
+         fn-sym (cond
+                  (map? coll) 'cljd.core/into-map ; is there a cljs equivalent?
+                  (vector? coll) 'cljd.core/vec
+                  (set? coll) 'cljd.core/set
+                  (seq? coll) 'cljd.core/into-list ; should we use apply list?
+                  :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
          fn-call (list (emit fn-sym env) (vec items))]
      (cond->> fn-call (seq bindings) (list 'dart/let bindings)))))
 
@@ -284,6 +284,9 @@
 
 (declare write-class)
 
+(defn do-def [nses sym m]
+  (assoc-in nses [(:current-ns nses) sym] m))
+
 (defn emit-reify [[_ opts & specs] env]
   (let [{:keys [extends] :or {extends 'Object}} opts
         [ctor-op base & ctor-args :as ctor]
@@ -326,15 +329,10 @@
                          (concat closed-overs
                                  positional-ctor-args
                                  (take-nth 2 (next named-ctor-args))))]
-    ;; DO in NS
-    #_(write-class class)
     (swap! nses do-def class-name
              {:type :class
               :code (with-out-str (write-class class))})
     (emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
-
-(defn do-def [nses sym m]
-  (assoc-in nses [(:current-ns nses) sym] m))
 
 (declare write-top-dartfn write-top-field)
 
