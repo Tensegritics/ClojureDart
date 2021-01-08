@@ -435,20 +435,18 @@
          {} ns-clauses)]
     (swap! nses assoc ns-sym mappings :current-ns ns-sym)))
 
-(defn emit-try [x env]
-  (let [[[_ & body] catches] (split-with #(not (and (seq? %) (#{'catch 'finally} (first %)))) x)]
-    (list* 'dart/try (emit (list* 'let* [] body) env)
-           (map (fn [x]
-                  (case (first x)
-                    catch (let [[_ classname e & [maybe-st & exprs :as body]] x
-                                st (when (and exprs (symbol? maybe-st)) maybe-st)
-                                exprs (if st exprs body)
-                                env (cond-> (assoc env e (tmpvar e))
-                                      st (assoc st (tmpvar st)))]
-                            (list 'catch classname
-                                  (cond-> [(env e)] st (conj (env st)))
-                                  (emit (cons 'do exprs) env)))
-                    finally (list 'finally (emit (cons 'do (next x)) env)))) catches))))
+(defn emit-try [[_ & body] env]
+  (let [{body nil catches 'catch [[_ & finally-body]] 'finally}
+        (group-by #(when (seq? %) (#{'finally 'catch} (first %))) body)]
+    (list 'dart/try
+           (emit (cons 'do body) env)
+           (for [[_ classname e & [maybe-st & exprs :as body]] catches
+                 :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
+                       exprs (if st exprs body)
+                       env (cond-> (assoc env e (tmpvar e))
+                             st (assoc st (tmpvar st)))]]
+             [classname (env e) (some-> st env) (emit (cons 'do exprs) env)])
+           (some-> finally-body (conj 'do) (emit env)))))
 
 (defn emit-throw [[_ body] env]
   (let [[bindings x] (lift-arg nil (emit body env))]
@@ -641,27 +639,26 @@
           (write e (if v (var-locus v) statement-locus)))
         (write expr locus))
       dart/try
-      (let [[_ body & catches] x
+      (let [[_ body catches final] x
             decl (declaration locus)
             locus (declared locus)]
         (some-> decl print)
         (print "try {\n")
         (write body locus)
         (print "}\n")
-        (doseq [c catches]
-          (case (first c)
-            catch (let [[_ classname [e st] expr] c]
-                    (print "on ")
-                    (print classname) ;; TODO aliasing
-                    (print " catch (")
-                    (print e)
-                    (some->> st (print ","))
-                    (print ") {\n")
-                    (some-> expr (write locus))
-                    (print "}\n"))
-            finally (do (print "finally {\n")
-                        (some-> (second c) (write statement-locus))
-                        (print "}\n")))))
+        (doseq [[classname e st expr] catches]
+          (print "on ")
+          (print classname) ;; TODO aliasing
+          (print " catch (")
+          (print e)
+          (some->> st (print ","))
+          (print ") {\n")
+          (some-> expr (write locus))
+          (print "}\n"))
+        (when final
+          (print "finally {\n")
+          (write final statement-locus)
+          (print "}\n")))
       dart/throw
       (let [[_ body] x]
         (print (:pre locus))
@@ -1093,11 +1090,11 @@
   (write *1 return-locus)
 
   (emit '(try (catch E e st)) {})
-  (dart/try nil (catch E [e_$16_] GLOBAL_st))
+  (dart/try nil ([E e_$19_ nil GLOBAL_st]) nil)
   (write *1 return-locus)
 
-  (emit '(try (catch E e st x)) {})
-  (dart/try nil (catch E [e_$17_ st_$18_] GLOBAL_x))
+  (emit '(try 42 33 (catch E e st x) (finally (print "boo"))) {})
+  (dart/try (dart/let ([nil 42]) 33) ([E e_$24_ st_$25_ GLOBAL_x]) (GLOBAL_print "boo"))
   (write *1 return-locus)
 
   (emit '[1 (let [x 2] x) 3] {})
