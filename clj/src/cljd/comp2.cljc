@@ -46,7 +46,7 @@
                   (or (char-map x)
                       (str "_$u"
                            ; TODO :cljd version
-                           (str/join "u" (map #(Long/toHexString (int %)) x))
+                           (str/join "__$u" (map #(Long/toHexString (int %)) x))
                            "_"))))))
 
 (defonce ^:private gens (atom 1))
