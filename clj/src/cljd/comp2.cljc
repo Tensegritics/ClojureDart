@@ -435,18 +435,23 @@
          {} ns-clauses)]
     (swap! nses assoc ns-sym mappings :current-ns ns-sym)))
 
+(defn- emit-no-recur [expr env]
+  (let [dart-expr (emit expr env)]
+    (when (has-recur? dart-expr)
+      (throw (ex-info "Cannot recur across try." {:expr expr})))))
+
 (defn emit-try [[_ & body] env]
   (let [{body nil catches 'catch [[_ & finally-body]] 'finally}
         (group-by #(when (seq? %) (#{'finally 'catch} (first %))) body)]
     (list 'dart/try
-           (emit (cons 'do body) env)
+           (emit-no-recur (cons 'do body) env)
            (for [[_ classname e & [maybe-st & exprs :as body]] catches
                  :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
                        exprs (if st exprs body)
                        env (cond-> (assoc env e (tmpvar e))
                              st (assoc st (tmpvar st)))]]
-             [classname (env e) (some-> st env) (emit (cons 'do exprs) env)])
-           (some-> finally-body (conj 'do) (emit env)))))
+             [classname (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
+           (some-> finally-body (conj 'do) (emit-no-recur env)))))
 
 (defn emit-throw [[_ expr] env]
   ;; always emit throw as a statement (in case it gets promoted to rethrow)
@@ -1162,4 +1167,5 @@
   (write *1 return-locus)
   (write *2 statement-locus)
 
+  (emit '(try (if x (recur))) {})
   )
