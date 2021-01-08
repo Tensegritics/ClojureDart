@@ -494,11 +494,13 @@
 
 (def return-locus
   {:pre "return "
-   :post ";\n"})
+   :post ";\n"
+   :exit true})
 
 (def throw-locus
   {:pre "throw "
-   :post ";\n"})
+   :post ";\n"
+   :exit true})
 
 (def expr-locus
   {:pre ""
@@ -618,7 +620,8 @@
 
 (defn write
   "Takes a dartsexp and a locus.
-   Prints valid dart code."
+   Prints valid dart code.
+   Returns true when the just-written code is exiting control flow (return throw continue) -- this enable some dead code removal."
   [x locus]
   (cond
     (vector? x)
@@ -641,46 +644,54 @@
         (print (:post locus)))
       dart/let
       (let [[_ bindings expr] x]
-        (doseq [[v e] bindings]
-          (write e (if v (var-locus v) statement-locus)))
-        (write expr locus))
+        (or
+         (some (fn [[v e]] (write e (if v (var-locus v) statement-locus)))
+               bindings)
+          (write expr locus)))
       dart/try
       (let [[_ body catches final] x
             decl (declaration locus)
-            locus (declared locus)]
-        (some-> decl print)
-        (print "try {\n")
-        (write body locus)
-        (doseq [[classname e st expr] catches]
-          (print "} on ")
-          (print classname) ;; TODO aliasing
-          (print " catch (")
-          (print e)
-          (some->> st (print ","))
-          (print ") {\n")
-          (binding [*caught-exception-symbol* e]
-            (write expr locus)))
+            locus (declared locus)
+            _  (some-> decl print)
+            _ (print "try {\n")
+            exit (write body locus)
+            exit
+            (transduce
+             (map (fn [[classname e st expr]]
+                    (print "} on ")
+                    (print classname) ;; TODO aliasing
+                    (print " catch (")
+                    (print e)
+                    (some->> st (print ","))
+                    (print ") {\n")
+                    (binding [*caught-exception-symbol* e]
+                      (write expr locus))))
+             (completing (fn [a b] (and a b)))
+             exit catches)]
         (when final
           (print "} finally {\n")
           (write final statement-locus))
-        (print "}\n"))
+        (print "}\n")
+        exit)
       dart/throw
       (let [[_ expr] x]
         (if (= expr *caught-exception-symbol*)
           (print "rethrow;\n")
-          (write expr throw-locus)))
+          (write expr throw-locus))
+        true)
       dart/if
       (let [[_ test then else] x
             decl (declaration locus)
             locus (declared locus)
-            test-var (tmpvar "-test")]
-        (some-> decl print)
-        (write test (var-locus test-var))
-        (print (str "if(" test-var "!=null && " test-var "!=false){\n"))
-        (write then locus)
-        (print "}else{\n")
-        (write else locus)
-        (print "}\n"))
+            test-var (tmpvar "-test")
+            _ (some-> decl print)
+            _ (write test (var-locus test-var))
+            _ (print (str "if(" test-var "!=null && " test-var "!=false){\n"))
+            then-exit (write then locus)
+            _ (print "}else{\n")
+            else-exit (write else locus)]
+        (print "}\n")
+        (and then-exit else-exit))
       dart/loop
       (let [[_ bindings expr] x
             decl (declaration locus)
@@ -689,8 +700,9 @@
         (doseq [[v e] bindings]
           (write e (var-locus v)))
         (print "do {\n")
-        (write expr locus)
-        (print "break;\n} while(true);\n"))
+        (when-not (write expr locus)
+          (print "break;\n"))
+        (print "} while(true);\n"))
       dart/recur
       (let [[_ & exprs] x
             {:keys [loop-bindings]} locus
@@ -716,7 +728,8 @@
             (write e (if-some [tmp (tmps v)] (var-locus tmp) (declared-var-locus v))))
           (doseq [[v tmp] tmps]
             (write tmp (declared-var-locus v)))
-          (print "continue;\n")))
+          (print "continue;\n")
+          true))
       dart/.-
       (let [[_ obj fld] x]
         (print (:pre locus))
@@ -767,7 +780,11 @@
         (write f expr-locus)
         (write-args args)
         (print (:post locus))))
-    :else (do (print (:pre locus)) (write-literal x) (print (:post locus)))))
+    :else (do
+            (print (:pre locus))
+            (write-literal x)
+            (print (:post locus))
+            (:exit locus))))
 
 ;; Compile clj -> dart file
 (defn dump-ns [ns-map]
@@ -1125,7 +1142,7 @@
 
 
   (emit '(let [a (throw 1)] a) {})
-  (dart/let ([a_$40_ (dart/let [[nil (dart/throw 1)]] nil)]) a_$40_)
+  (dart/let ([a_$50_ (dart/let [[nil (dart/throw 1)]] nil)]) a_$50_)
   (write *1 return-locus)
 
   (emit '(let [a (throw (if x y z))] a) {})
@@ -1135,5 +1152,14 @@
   (emit '(try (catch E e (throw e))) {})
   (dart/try nil ([E e_$47_ nil (dart/let [[nil (dart/throw e_$47_)]] nil)]) nil)
   (write *1 return-locus)
+
+  (emit '(loop [] (recur)) {})
+  (dart/loop [] (dart/recur))
+  (write *1 return-locus)
+
+  (emit '(loop [] (if x (recur))) {})
+  (dart/loop [] (dart/if GLOBAL_x (dart/recur) nil))
+  (write *1 return-locus)
+  (write *2 statement-locus)
 
   )
