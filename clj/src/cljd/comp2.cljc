@@ -450,6 +450,10 @@
                                   (emit (cons 'do exprs) env)))
                     finally (list 'finally (emit (cons 'do (next x)) env)))) catches))))
 
+(defn emit-throw [[_ body] env]
+  (let [[bindings x] (lift-arg nil (emit body env))]
+    (cond->> (list 'dart/throw x) bindings (list 'dart/let bindings))))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
@@ -463,6 +467,7 @@
       (seq? x)
       (let [emit (case (first x)
                    . emit-dot
+                   throw emit-throw
                    new emit-new
                    ns emit-ns
                    try emit-try
@@ -657,6 +662,12 @@
             finally (do (print "finally {\n")
                         (some-> (second c) (write statement-locus))
                         (print "}\n")))))
+      dart/throw
+      (let [[_ body] x]
+        (print (:pre locus))
+        (print "throw ")
+        (write body expr-locus)
+        (print (:post locus)))
       dart/if
       (let [[_ test then else] x
             decl (declaration locus)
@@ -1095,4 +1106,31 @@
 
   (emit '[(f) (let [x 2] x) 3] {})
   (dart/let ([_25772 (GLOBAL_f)] [_25771 2]) (GLOBAL_cljd.core/vec [_25772 _25771 3]))
+
+
+  (emit '(try 1 2 3 4 (catch Exception e st 1 2)) {})
+  (dart/try (dart/let ([nil 1] [nil 2] [nil 3]) 4) (catch Exception [e_$4_ st_$5_] (dart/let ([nil 1]) 2)) (catch Exception [e_$6_] GLOBAL_st))
+  (write *1 return-locus)
+
+  (emit '(throw 1) {})
+  (dart/throw 1)
+  (write *1 (var-locus "prout"))
+
+  (emit '(throw (let [a 1] (. a + 3))) {})
+  (dart/let ([a_$28_ 1] [_$29_ (dart/. a_$28_ "+" 3)]) (dart/throw _$29_))
+  (write *1 return-locus)
+
+
+
+
+  (emit '(let [a (throw 1)] a) {})
+  (dart/let ([a_$9_ (dart/throw 1)]) a_$9_)
+  (write *1 return-locus)
+
+
+
+
+
+
+
   )
