@@ -5,6 +5,56 @@
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
 
+(defn- replace-all [^String s regexp f]
+  #?(:cljd
+     (.replaceAllMapped s regexp f)
+     :clj
+     (str/replace s regexp f)))
+
+(def char-map
+  {"-"    "_"
+   "_"    "_$UNDERSCORE_"
+   "$"    "_$DOLLAR_"
+   ":"    "_$COLON_"
+   "+"    "_$PLUS_"
+   ">"    "_$GT_"
+   "<"    "_$LT_"
+   "="    "_$EQ_"
+   "~"    "_$TILDE_"
+   "!"    "_$BANG_"
+   "@"    "_$CIRCA_"
+   "#"    "_$SHARP_"
+   "'"    "_$SINGLEQUOTE_"
+   "\"" "_$DOUBLEQUOTE_"
+   "%"    "_$PERCENT_"
+   "^"    "_$CARET_"
+   "&"    "_$AMPERSAND_"
+   "*"    "_$STAR_"
+   "|"    "_$BAR_"
+   "{"    "_$LBRACE_"
+   "}"    "_$RBRACE_"
+   "["    "_$LBRACK_"
+   "]"    "_$RBRACK_"
+   "/"    "_$SLASH_"
+   "\\" "_$BSLASH_"
+   "?"    "_$QMARK_"})
+
+(defn munge [s]
+  (symbol
+   (replace-all (name s) #"[^a-zA-Z0-9]"
+                (fn [x]
+                  (or (char-map x)
+                      (str "_$u"
+                           ; TODO :cljd version
+                           (str/join "u" (map #(Long/toHexString (int %)) x))
+                           "_"))))))
+
+(defonce ^:private gens (atom 1))
+(defn tmpvar
+  ([] (tmpvar ""))
+  ([prefix]
+   (symbol (str (munge prefix) "_$" (swap! gens inc) "_"))))
+
 (def nses (atom {:current-ns 'user
                  'user {}}))
 
@@ -69,8 +119,6 @@
     (cond->> ex (not (identical? ex form)) (recur env))))
 
 (declare emit)
-
-(defn tmpvar [] (gensym "_"))
 
 (defn atomic?
   [x] (not (coll? x)))
@@ -168,7 +216,7 @@
   (let [[dart-bindings env]
         (reduce
          (fn [[dart-bindings env] [k v]]
-           (let [tmp (tmpvar)]
+           (let [tmp (tmpvar k)]
              [(conj dart-bindings [tmp (emit v env)])
               (assoc env k tmp)]))
          [[] env] (partition 2 bindings))
@@ -182,7 +230,7 @@
   (let [[dart-bindings env]
         (reduce
          (fn [[dart-bindings env] [k v]]
-           (let [tmp (tmpvar)]
+           (let [tmp (tmpvar k)]
              [(conj dart-bindings [tmp (emit v env)])
               (assoc env k tmp)]))
          [[] env] (partition 2 bindings))]
@@ -200,7 +248,7 @@
 (defn- variadic? [[params]] (some #{'&} params))
 
 (defn- emit-non-variadic-body [[params & body] all-params env]
-  (let [env (into env (zipmap params (repeatedly tmpvar)))
+  (let [env (into env (for [p params] [p (tmpvar p)]))
         body (emit (cons 'do body) env)
         bindings (map vector (map env params) all-params)]
     (cond
@@ -215,7 +263,7 @@
 
 (defn emit-fn [[_ & bodies] env]
   (let [name (when (symbol? (first bodies)) (first bodies))
-        env (cond-> env name (assoc name (tmpvar))) ; TODO munge
+        env (cond-> env name (assoc name (tmpvar name)))
         bodies (cond->> bodies name next)
         bodies (cond-> bodies (vector? (first bodies)) list)
         [variadic & too-many-variadics] (filter variadic? bodies)
@@ -257,11 +305,11 @@
   ;; params destructuring will be added by a macro
   ;; opt-params need to have been fully expanded to a list of [symbol default]
   ;; by the macro
-  (let [dart-fixed-params (repeatedly (count fixed-params) tmpvar)
+  (let [dart-fixed-params (map tmpvar fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
-                             :named p
-                             :positional (tmpvar))
+                             :named p ; here p must be a valid dart identifier
+                             :positional (tmpvar p))
                            (emit d env)])
         env (into (assoc env this-param 'this)
                   (zipmap (concat fixed-params (map first opt-params))
@@ -269,7 +317,7 @@
         dart-body (emit (cons 'do body) env)
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         dart-fixed-params (if recur-params
-                            (repeatedly (count fixed-params) tmpvar)
+                            (map tmpvar fixed-params)
                             dart-fixed-params)
         dart-body (cond->> dart-body
                     recur-params
@@ -296,7 +344,7 @@
         [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'&}) ctor-args)
         positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
         named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
-        class-name (tmpvar)  ; TODO change this to a more telling name
+        class-name (tmpvar "-reify")  ; TODO change this to a more telling name
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
         methods (remove symbol? specs)  ; crude
         mixins(filter (comp :mixin meta) classes)
@@ -347,16 +395,16 @@
               :code (with-out-str (write-top-field sym (emit (if (seq? expr) (list (list 'fn* [] expr)) expr) env)))}))
     (emit sym env)))
 
-(defn emit-symbol
-  [x env]
-  (or (env x)
-      (let [nses @nses
-            {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
-        (else->> (if (current-ns x) x)
-                 (or (get mappings x))
-                 (if-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
-                 #_"TODO next form should throw"
-                 (symbol (str "GLOBAL_" x))))))
+(defn emit-symbol [x env]
+  (let [nses @nses
+        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+    (or
+     (env x)
+     (when (current-ns x) x)
+     (get mappings x)
+     (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
+     #_"TODO next form should throw"
+     (symbol (str "GLOBAL_" x)))))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -433,7 +481,7 @@
 (defn declaration [locus] (:decl locus ""))
 (defn declared [locus]
   ; merge to conserve custom attributes
-  (merge (dissoc locus :fork :decl) (:fork locus)))
+  (merge  (dissoc locus :fork :decl) (:fork locus)))
 
 (def statement-locus
   {:pre ""
@@ -483,12 +531,6 @@
             (print (str (name k) ": "))
             (write x arg-locus)) (partition 2 nameds))
     (print ")")))
-
-(defn- replace-all [^String s regexp f]
-  #?(:cljd
-     (.replaceAllMapped s regexp f)
-     :clj
-     (str/replace s regexp f)))
 
 (defn write-string-literal [s]
   (print
@@ -617,7 +659,7 @@
       (let [[_ test then else] x
             decl (declaration locus)
             locus (declared locus)
-            test-var (tmpvar)]
+            test-var (tmpvar "-test")]
         (some-> decl print)
         (write test (var-locus test-var))
         (print (str "if(" test-var "!=null && " test-var "!=false){\n"))
@@ -654,7 +696,7 @@
                            (reductions into)
                            reverse)
               tmps (into {}
-                         (map (fn [v vs] (when (vs v) [v (tmpvar)]))
+                         (map (fn [v vs] (when (vs v) [v (tmpvar v)])) ; TODO using tmpvar in write is going to cause double munging
                               loop-bindings vars-usages))]
           (doseq [[v e] (map vector loop-bindings exprs)]
             (write e (if-some [tmp (tmps v)] (var-locus tmp) (declared-var-locus v))))
@@ -967,7 +1009,7 @@
   (write *1 (var-locus "DDDD"))
 
   (emit '(fn* [x] x) {})
-  (dart/fn nil (_16639) () (dart/let ([_16640 _16639]) _16640))
+  (dart/fn nil (_$7_) () (dart/let ([x_$8_ _$7_]) x_$8_))
   (write *1 return-locus)
 
   (emit '(fn* fname [x] 42) {})
@@ -978,6 +1020,7 @@
   (dart/let ([nil (dart/fn _16631 (_16632) () (dart/let ([_16633 _16632]) 42))]) (_16631))
   (write *1 return-locus)
 
+  ()
 
   (emit '(def oo (fn* [x] 42)) {})
   (write *1 return-locus)
@@ -998,7 +1041,7 @@
   (dart/let [[nil (dart/fn _16717 (_16718) () (dart/let ([_16719 _16718]) _16719))]] _16717)
 
   (emit '(fn* [] (fn* aa [x] x)) {})
-  (dart/fn nil () () (dart/let [[nil (dart/fn _6644 (_6645) () (dart/let ([_6646 _6645]) _6646))]] _6644))
+  (dart/fn nil () () (dart/let [[nil (dart/fn aa_$9_ (_$10_) () (dart/let ([x_$11_ _$10_]) x_$11_))]] aa_$9_))
   (dart/fn nil () () (dart/let ([nil (dart/fn _18396 (_18397) () (dart/let ([_18398 _18397]) (GLOBAL_do _18398)))]) (GLOBAL_do _18396)))
 
   (emit '(reify Object (boo [self x & y 33] (.toString self))) {})
@@ -1012,7 +1055,7 @@
   (dart/let ([_22991 42]) (GLOBAL__22992 _22991))
 
   (emit '(let [x 42] (reify Object (boo [self] (let [x 33] (str x "-" self))))) {})
-  (dart/let ([_22995 42]) (GLOBAL__22996))
+  (dart/let ([x_$4_ 42]) (_reify_$5_))
 
   (emit '[1 2 3] {})
   (GLOBAL_cljd.core/vec [1 2 3])
@@ -1036,4 +1079,10 @@
   (emit '(if (try 1 2 3 4 (catch Exception e "noooo") (finally "log me")) "yeahhh") {})
   (write *1 return-locus)
 
+  (emit '[1 (let [x 2] x) 3] {})
+  (dart/let ([__$3_ 2]) (GLOBAL_cljd.core/vec [1 __$3_ 3]))
+  (dart/let ([_25768 2]) (GLOBAL_cljd.core/vec [1 _25768 3]))
+
+  (emit '[(f) (let [x 2] x) 3] {})
+  (dart/let ([_25772 (GLOBAL_f)] [_25771 2]) (GLOBAL_cljd.core/vec [_25772 _25771 3]))
   )
