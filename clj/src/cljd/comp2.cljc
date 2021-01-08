@@ -448,9 +448,9 @@
              [classname (env e) (some-> st env) (emit (cons 'do exprs) env)])
            (some-> finally-body (conj 'do) (emit env)))))
 
-(defn emit-throw [[_ body] env]
-  (let [[bindings x] (lift-arg nil (emit body env))]
-    (cond->> (list 'dart/throw x) bindings (list 'dart/let bindings))))
+(defn emit-throw [[_ expr] env]
+  ;; always emit throw as a statement (in case it gets promoted to rethrow)
+  (list 'dart/let [[nil (list 'dart/throw (emit expr env))]] nil))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -494,6 +494,10 @@
 
 (def return-locus
   {:pre "return "
+   :post ";\n"})
+
+(def throw-locus
+  {:pre "throw "
    :post ";\n"})
 
 (def expr-locus
@@ -610,6 +614,8 @@
 
   (print "}\n"))
 
+(def ^:private ^:dynamic *caught-exception-symbol* nil)
+
 (defn write
   "Takes a dartsexp and a locus.
    Prints valid dart code."
@@ -645,26 +651,24 @@
         (some-> decl print)
         (print "try {\n")
         (write body locus)
-        (print "}\n")
         (doseq [[classname e st expr] catches]
-          (print "on ")
+          (print "} on ")
           (print classname) ;; TODO aliasing
           (print " catch (")
           (print e)
           (some->> st (print ","))
           (print ") {\n")
-          (some-> expr (write locus))
-          (print "}\n"))
+          (binding [*caught-exception-symbol* e]
+            (write expr locus)))
         (when final
-          (print "finally {\n")
-          (write final statement-locus)
-          (print "}\n")))
+          (print "} finally {\n")
+          (write final statement-locus))
+        (print "}\n"))
       dart/throw
-      (let [[_ body] x]
-        (print (:pre locus))
-        (print "throw ")
-        (write body expr-locus)
-        (print (:post locus)))
+      (let [[_ expr] x]
+        (if (= expr *caught-exception-symbol*)
+          (print "rethrow;\n")
+          (write expr throw-locus)))
       dart/if
       (let [[_ test then else] x
             decl (declaration locus)
@@ -1121,13 +1125,15 @@
 
 
   (emit '(let [a (throw 1)] a) {})
-  (dart/let ([a_$9_ (dart/throw 1)]) a_$9_)
+  (dart/let ([a_$40_ (dart/let [[nil (dart/throw 1)]] nil)]) a_$40_)
   (write *1 return-locus)
 
+  (emit '(let [a (throw (if x y z))] a) {})
+  (dart/let ([a_$41_ (dart/let [[nil (dart/throw (dart/if GLOBAL_x GLOBAL_y GLOBAL_z))]] nil)]) a_$41_)
+  (write *1 return-locus)
 
-
-
-
-
+  (emit '(try (catch E e (throw e))) {})
+  (dart/try nil ([E e_$47_ nil (dart/let [[nil (dart/throw e_$47_)]] nil)]) nil)
+  (write *1 return-locus)
 
   )
