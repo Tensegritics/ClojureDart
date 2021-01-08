@@ -440,13 +440,15 @@
     (list* 'dart/try (emit (list* 'let* [] body) env)
            (map (fn [x]
                   (case (first x)
-                    catch (let [[_ classname name & expr] x
-                                tmp (tmpvar)
-                                tmpst (when (symbol? (first expr)) (tmpvar))
-                                expr (cond-> expr tmpst next)
-                                env (cond-> (assoc env name tmp) tmpst (assoc (first expr) tmpst))]
-                            (list 'catch classname [tmp tmpst] (emit (list* 'let [] expr) env) ))
-                    finally (list 'finally (emit (list* 'let [] (next x)) env)))) catches))))
+                    catch (let [[_ classname e & [maybe-st & exprs :as body]] x
+                                st (when (and exprs (symbol? maybe-st)) maybe-st)
+                                exprs (if st exprs body)
+                                env (cond-> (assoc env e (tmpvar e))
+                                      st (assoc st (tmpvar st)))]
+                            (list 'catch classname
+                                  (cond-> [(env e)] st (conj (env st)))
+                                  (emit (cons 'do exprs) env)))
+                    finally (list 'finally (emit (cons 'do (next x)) env)))) catches))))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -643,14 +645,14 @@
         (print "}\n")
         (doseq [c catches]
           (case (first c)
-            catch (let [[_ classname [identifier statement] expr] c]
+            catch (let [[_ classname [e st] expr] c]
                     (print "on ")
                     (print classname) ;; TODO aliasing
                     (print " catch (")
-                    (print identifier)
-                    (some->> statement (str ",") print)
+                    (print e)
+                    (some->> st (print ","))
                     (print ") {\n")
-                    (some-> expr (write statement-locus))
+                    (some-> expr (write locus))
                     (print "}\n"))
             finally (do (print "finally {\n")
                         (some-> (second c) (write statement-locus))
@@ -1077,6 +1079,14 @@
   (write *1 return-locus)
 
   (emit '(if (try 1 2 3 4 (catch Exception e "noooo") (finally "log me")) "yeahhh") {})
+  (write *1 return-locus)
+
+  (emit '(try (catch E e st)) {})
+  (dart/try nil (catch E [e_$16_] GLOBAL_st))
+  (write *1 return-locus)
+
+  (emit '(try (catch E e st x)) {})
+  (dart/try nil (catch E [e_$17_ st_$18_] GLOBAL_x))
   (write *1 return-locus)
 
   (emit '[1 (let [x 2] x) 3] {})
