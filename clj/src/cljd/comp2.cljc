@@ -151,7 +151,7 @@
         [(concat (second x) [[tmp (last x)]])
          tmp]))
     (dart/if dart/try) ; no ternary for now
-    (let [tmp (tmpvar)]
+    (let [tmp (tmpvar (first x))]
       [[[tmp x]]
        tmp])
     nil))
