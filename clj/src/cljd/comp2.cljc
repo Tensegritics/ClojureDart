@@ -11,6 +11,15 @@
      :clj
      (str/replace s regexp f)))
 
+(def reserved-words ; and buitlt-in identifiers for good measure
+  #{"Function" "abstract" "as" "assert" "async" "await" "break" "case" "catch"
+    "class" "const" "continue" "covariant" "default" "deferred" "do" "dynamic"
+    "else" "enum" "export" "extends" "extension" "external" "factory" "false"
+    "final" "finally" "for" "get" "hide" "if" "implements" "import" "in"
+    "interface" "is" "library" "mixin" "new" "null" "on" "operator" "part"
+    "rethrow" "return" "set" "show" "static" "super" "switch" "sync" "this"
+    "throw" "true" "try" "typedef" "var" "void" "while" "with" "yield"})
+
 (def char-map
   {"-"    "_"
    "_"    "_$UNDERSCORE_"
@@ -25,7 +34,7 @@
    "@"    "_$CIRCA_"
    "#"    "_$SHARP_"
    "'"    "_$SINGLEQUOTE_"
-   "\"" "_$DOUBLEQUOTE_"
+   "\""   "_$DOUBLEQUOTE_"
    "%"    "_$PERCENT_"
    "^"    "_$CARET_"
    "&"    "_$AMPERSAND_"
@@ -36,18 +45,20 @@
    "["    "_$LBRACK_"
    "]"    "_$RBRACK_"
    "/"    "_$SLASH_"
-   "\\" "_$BSLASH_"
+   "\\"   "_$BSLASH_"
    "?"    "_$QMARK_"})
 
 (defn munge [s]
-  (symbol
-   (replace-all (name s) #"[^a-zA-Z0-9]"
-                (fn [x]
-                  (or (char-map x)
-                      (str "_$u"
-                           ; TODO :cljd version
-                           (str/join "__$u" (map #(Long/toHexString (int %)) x))
-                           "_"))))))
+  (let [s (name s)]
+    (symbol
+     (or (some-> (reserved-words s) (str "$"))
+         (replace-all s #"[^a-zA-Z0-9]"
+                      (fn [x]
+                        (or (char-map x)
+                            (str "_$u"
+                                        ; TODO :cljd version
+                                 (str/join "__$u" (map #(Long/toHexString (int %)) x))
+                                 "_"))))))))
 
 (defonce ^:private gens (atom 1))
 (defn tmpvar
@@ -1167,5 +1178,4 @@
   (write *1 return-locus)
   (write *2 statement-locus)
 
-  (emit '(try (if x (recur))) {})
   )
