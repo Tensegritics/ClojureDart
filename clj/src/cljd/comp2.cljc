@@ -611,10 +611,14 @@
   (write-args (:args super-ctor))
   (print ";\n")
 
-  (doseq [[mname dart-fixed-params opt-kind dart-opt-params dart-body] methods]
+  (doseq [[mname dart-fixed-params opt-kind dart-opt-params dart-body] methods
+          :let [{:keys [getter setter]} (meta mname)]]
     (newline)
+    (cond
+      getter (print "get ")
+      setter (print "set "))
     (print mname)
-    (print "(")
+    (when-not getter (print "("))
     (doseq [p dart-fixed-params] (print p) (print ", "))
     (when (seq dart-opt-params)
       (print (case opt-kind :positional "[" "{"))
@@ -622,7 +626,8 @@
         (print p "= ")
         (write d arg-locus))
         (print (case opt-kind :positional "]" "}")))
-    (print "){\n")
+    (when-not getter (print ")"))
+    (print "{\n")
     (write dart-body return-locus)
     (print "}\n"))
 
@@ -1177,5 +1182,10 @@
   (dart/loop [] (dart/if GLOBAL_x (dart/recur) nil))
   (write *1 return-locus)
   (write *2 statement-locus)
+
+  (emit '(reify Object (^:getter hashCode [] 42)
+           (^:setter foo [this x] (println x))
+           (meth [a b] "regular method")) {})
+  (_reify_$8_)
 
   )
