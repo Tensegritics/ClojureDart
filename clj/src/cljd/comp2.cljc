@@ -84,8 +84,8 @@
                  (fn [spec]
                    (if (seq? spec)
                      (let [[mname arglist & body] spec
-                           [positional-args [delim & opt-args]] (split-with (complement '#{& |}) arglist)
-                           delim (case delim & :named :positional)
+                           [positional-args [delim & opt-args]] (split-with (complement '#{.& ...}) arglist)
+                           delim (case delim .& :named :positional)
                            opt-params
                            (for [[p d] (partition-all 2 1 opt-args)
                                  :when (symbol? p)]
@@ -178,7 +178,7 @@
         [nil x])))
 
 (defn emit-fn-call [fn-call env]
-  (let [[positionals [_ & nameds]] (split-with (complement #{'&}) fn-call)
+  (let [[positionals [_ & nameds]] (split-with (complement #{'.&}) fn-call)
         [bindings fn-call]
         (as-> [nil ()] acc
           (reduce (fn [[bindings fn-call] [k x]]
@@ -352,7 +352,7 @@
         (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
-        [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'&}) ctor-args)
+        [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'.&}) ctor-args)
         positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
         named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
         class-name (tmpvar "-reify")  ; TODO change this to a more telling name
@@ -866,7 +866,7 @@
   )
 
 (comment
-  (emit '(a b c & :d e) {})
+  (emit '(a b c .& :d e) {})
   (GLOBAL_a GLOBAL_b GLOBAL_c :d GLOBAL_e)
   (write *1 (var-locus 'RET))
 
@@ -925,7 +925,7 @@
   (write *1 (var-locus 'RET))
 
 
-  (emit '(. obj meth a & :b :c) {})
+  (emit '(. obj meth a .& :b :c) {})
   (dart/. GLOBAL_obj "meth" GLOBAL_a :b (GLOBAL_cljd.Keyword/intern nil "c"))
 
   (emit '(. (. a + b) * (. c + d)) {})
@@ -1100,7 +1100,7 @@
   (emit '(reify Object (boo [self x & y 33] (.toString self))) {})
   (GLOBAL__22982)
 
-  (emit '(reify Object (boo [self x | y 33] (.toString self))) {})
+  (emit '(reify Object (boo [self x ... y 33] (.toString self))) {})
   (GLOBAL__22986)
   (write *1 return-locus)
 
