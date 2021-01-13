@@ -393,6 +393,50 @@
               :code (with-out-str (write-class class))})
     (emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
 
+(defn- emit-strict-expr
+  "If expr is suitable as an expression (ie liftable of its emission returns nil),
+   its emission is returned as is, otherwise a IIFE (thunk invocation) is returned."
+  [expr env]
+  (let [dart-expr (emit expr env)]
+  (if-some [[bindings dart-expr] (liftable dart-expr)]
+    (list (list 'dart/fn nil () () (list 'dart/let bindings dart-expr)))
+    dart-expr)))
+
+(defn emit-deftype [[_ class-name fields opts & specs] env]
+  (let [{:keys [extends] :or {extends 'Object}} opts
+        [ctor-op base & ctor-args :as ctor]
+        (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
+        ctor-meth (when (= '. ctor-op) (first ctor-args))
+        ctor-args (cond-> ctor-args (= '. ctor-op) next)
+        [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'.&}) ctor-args)
+        classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
+        methods (remove symbol? specs)  ; crude
+        mixins(filter (comp :mixin meta) classes)
+        ifaces (remove (comp :mixin meta) classes)
+        need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
+        env (zipmap fields fields)
+        dart-methods (map #(emit-method % env) methods)
+        class
+        {:name class-name
+         :fields fields
+         :extends base
+         :implements ifaces
+         :with mixins
+         :ctor-params (map #(list '. %) fields)
+         :super-ctor
+         {:method ctor-meth ; nil for new
+          :args
+          (concat (map #(emit-strict-expr % env) positional-ctor-args)
+                  (->> named-ctor-args (partition 2)
+                       (mapcat (fn [[name arg]] [name (emit-strict-expr arg env)]))))}
+         :methods dart-methods
+         :nsm need-nsm}]
+    (swap! nses do-def class-name
+             {:type :class
+              :code (with-out-str (write-class class))})
+    ;; TODO ->TypeName
+    #_(emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
+
 (declare write-top-dartfn write-top-field)
 
 (defn emit-def [[_ sym expr] env]
@@ -416,6 +460,26 @@
      (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
      #_"TODO next form should throw"
      (symbol (str "GLOBAL_" x)))))
+
+(defn emit-type [tag]
+  (let [nses @nses
+        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+    (replace-all (str tag) #"(?:([a-zA-Z0-9_$]+)\.)?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?"
+                 (fn [[_ alias type identifier]]
+                   (prn alias type identifier)
+                   (cond->
+                       (if alias
+                         (or
+                          (some-> (get aliases alias) (str "." type))
+                          (throw (ex-info (str "Unknown alias " alias " in type tag " tag)
+                                          {:alias alias :tag tag})))
+                         (or
+                          (#{"Function" "void" "dynamic"} type)
+                          (when (current-ns (symbol type)) type)
+                          (some-> mappings (get (symbol type)) str)
+                          (throw (ex-info (str "Unknown type " type " in type tage " tag)
+                                          {:type type :tag tag}))))
+                     identifier (str identifier))))))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -494,6 +558,7 @@
                    fn* emit-fn
                    def emit-def
                    reify* emit-reify
+                   deftype* emit-deftype
                    emit-fn-call)]
         (emit x env))
       (coll? x) (emit-coll x env)
@@ -600,7 +665,9 @@
   (some->> implements seq (str/join ", ") (print " implements"))
   (some->> with seq (str/join ", ") (print " with"))
   (print " {\n")
-  (doseq [field fields] (print (str "final " field ";")))
+  (doseq [field fields
+          :let [{:keys [mutable]} (meta field)]]
+    (print (str (if mutable "var ""final ") field ";")))
   (newline)
 
   (print (str class-name "("))
@@ -1188,5 +1255,12 @@
            (^:setter foo [this x] (println x))
            (meth [a b] "regular method")) {})
   (_reify_$8_)
+
+  (emit '(deftype* MyClass [^:mutable a b]
+           {:extends (ParentClass. (+ a b))}
+           Object
+           (meth [a b] :positional nil "regular method")
+           (^:getter hashCode [_] :positional nil 42)) {})
+  {:current-ns user, user {MyClass {:type :class, :code "class MyClass extends ParentClass implements Object {\nvar a;final b;\nMyClass(this.a, this.b, ):super(GLOBAL_+(a, b, ), );\n\nmeth(b_$25_, ){\nreturn \"regular method\";\n}\n\nget hashCode{\nreturn 42;\n}\n\nnoSuchMethod(i)=>super.noSuchMethod(i);\n}\n"}}}
 
   )
