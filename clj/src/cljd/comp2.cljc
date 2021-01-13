@@ -226,6 +226,32 @@
                  (list 'dart/let bindings (list* op obj name args)))
       (list* op (first fn-call) name (next fn-call)))))
 
+(defn emit-set! [[_ target expr] env]
+  (let [target (macroexpand env target)]
+    (cond
+      (symbol? target)
+      (if-some [dart-var (env target)]
+        (if (-> dart-var meta :mutable)
+          (list 'dart/let
+                [[nil (list 'dart/set! dart-var (emit expr env))]]
+                dart-var)
+          (throw (ex-info (str "Cannot assign to non-mutable: " target) {:target target})))
+        (throw (ex-info (str "Unable to resolve symbol: " target " in this lexical context") {:target target})))
+      (and (seq? target) (= '. (first target)))
+      (let [[_ obj member] target]
+        (if-some [[_ fld] (re-matches #"-(.+)" (name member))]
+          (let [tmpobj (tmpvar "objset")
+                tmpval (tmpvar fld)]
+            (list 'dart/let
+                  [[tmpobj (emit obj env)]
+                   [tmpval (emit expr env)]
+                   [nil (list 'dart/set! (list 'dart/.- tmpobj fld) tmpval)]]
+                  tmpval))
+          (throw (ex-info (str "Cannot assign to a non-property: " member ", make sure the property name is prefixed by a dash.")
+                          {:target target}))))
+      :else
+      (throw (ex-info (str "Unsupported target for assignment: " target) {:target target})))))
+
 (defn emit-let [[_ bindings & body] env]
   (let [[dart-bindings env]
         (reduce
@@ -549,6 +575,7 @@
       (seq? x)
       (let [emit (case (first x)
                    . emit-dot
+                   set! emit-set!
                    throw emit-throw
                    new emit-new
                    ns emit-ns
@@ -822,6 +849,13 @@
             (write tmp (declared-var-locus v)))
           (print "continue;\n")
           true))
+      dart/set!
+      (let [[_ target val] x]
+        (write val (declared-var-locus
+                    (if (symbol? target)
+                      target
+                      (let [[op obj fld] target]
+                        (case op dart/.- (str obj "." fld)))))))
       dart/.-
       (let [[_ obj fld] x]
         (print (:pre locus))
