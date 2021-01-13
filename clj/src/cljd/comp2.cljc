@@ -449,7 +449,8 @@
 (defn- emit-no-recur [expr env]
   (let [dart-expr (emit expr env)]
     (when (has-recur? dart-expr)
-      (throw (ex-info "Cannot recur across try." {:expr expr})))))
+      (throw (ex-info "Cannot recur across try." {:expr expr})))
+    dart-expr))
 
 (defn emit-try [[_ & body] env]
   (let [{body nil catches 'catch [[_ & finally-body]] 'finally}
