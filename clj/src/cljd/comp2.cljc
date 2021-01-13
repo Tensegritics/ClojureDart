@@ -77,23 +77,23 @@
            (recur more (assoc opts k v))
            [opts body])))
 
-     (defn- expand-reify [&  opts+specs]
+     (defn- expand-opts+specs [& opts+specs]
        (let [[opts specs] (roll-leading-opts opts+specs)]
-         (list* 'reify* opts
-                (map
-                 (fn [spec]
-                   (if (seq? spec)
-                     (let [[mname arglist & body] spec
-                           [positional-args [delim & opt-args]] (split-with (complement '#{.& ...}) arglist)
-                           delim (case delim .& :named :positional)
-                           opt-params
-                           (for [[p d] (partition-all 2 1 opt-args)
-                                 :when (symbol? p)]
-                             [p (when-not (symbol? d) d)])]
-                       ;; TODO: mname resolution against protocol ifaces
-                       (list* mname positional-args delim opt-params body))
-                     spec))
-                 specs))))
+         (cons opts
+               (map
+                (fn [spec]
+                  (if (seq? spec)
+                    (let [[mname arglist & body] spec
+                          [positional-args [delim & opt-args]] (split-with (complement '#{.& ...}) arglist)
+                          delim (case delim .& :named :positional)
+                          opt-params
+                          (for [[p d] (partition-all 2 1 opt-args)
+                                :when (symbol? p)]
+                            [p (when-not (symbol? d) d)])]
+                      ;; TODO: mname resolution against protocol ifaces
+                      (list* mname positional-args delim opt-params body))
+                    spec))
+                specs))))
 
      (defn- expand-do [& body] (list* 'let* [] body))))
 
@@ -107,7 +107,10 @@
         (env f) form
         #?@(:clj ; macro overrides
             [(= 'ns f) form
-             (= 'reify f) (apply expand-reify args)
+             (= 'reify f) (cons 'reify* (apply expand-opts+specs args))
+             (= 'deftype f) (let [[class-name fields & args] args]
+                              (list* 'deftype* class-name fields
+                                     (apply expand-opts+specs args)))
              (= 'do f) (apply expand-do args)])
         (= '. f) form
         #?@(:clj
