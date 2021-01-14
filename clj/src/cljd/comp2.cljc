@@ -554,7 +554,7 @@
         class
         {:name class-name
          :fields (vals env)
-         :extends base
+         :extends (emit base env)
          :implements ifaces
          :with mixins
          :ctor-params (map #(list '. %) fields)
