@@ -2,6 +2,17 @@
   (:refer-clojure :exclude [macroexpand macroexpand-1 munge load-file])
   (:require [clojure.string :as str]))
 
+(def ^:dynamic *clj-path*
+  "Sequential collection of directories to search for clj files."
+  ["clj/"])
+
+(def ^:dynamic *lib-path* "lib/")
+
+(def ^:dynamic *target-subdir*
+  "Relative path to the lib directory (*lib-dir*) where compiled dart file will be put.
+   Defaults to \"cljd/\"."
+  "cljd/")
+
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
 
@@ -60,15 +71,83 @@
                                  (str/join "__$u" (map #(Long/toHexString (int %)) x))
                                  "_"))))))))
 
+(def ns-prototype
+  {:imports [["dart:core" "dc"]] ; dc can't clash with user aliases because they go through tmpvar
+   :aliases {}
+   :mappings
+   '{Type dc.Type,
+     BidirectionalIterator dc.BidirectionalIterator,
+     bool dc.bool,
+     UnimplementedError dc.UnimplementedError,
+     Match dc.Match,
+     Error dc.Error,
+     Uri dc.Uri,
+     Object dc.Object,
+     IndexError dc.IndexError,
+     MapEntry dc.MapEntry,
+     DateTime dc.DateTime,
+     StackTrace dc.StackTrace,
+     Symbol dc.Symbol,
+     String dc.String,
+     Future dc.Future,
+     StringSink dc.StringSink,
+     Expando dc.Expando,
+     BigInt dc.BigInt,
+     num dc.num,
+     Function dc.Function,
+     TypeError dc.TypeError,
+     StackOverflowError dc.StackOverflowError,
+     Comparator dc.Comparator,
+     double dc.double,
+     Iterable dc.Iterable,
+     UnsupportedError dc.UnsupportedError,
+     Iterator dc.Iterator,
+     Stopwatch dc.Stopwatch,
+     int dc.int,
+     Invocation dc.Invocation,
+     RuneIterator dc.RuneIterator,
+     RegExpMatch dc.RegExpMatch,
+     Deprecated dc.Deprecated,
+     StateError dc.StateError,
+     Map dc.Map,
+     pragma dc.pragma,
+     Sink dc.Sink,
+     NoSuchMethodError dc.NoSuchMethodError,
+     Set dc.Set,
+     FallThroughError dc.FallThroughError,
+     StringBuffer dc.StringBuffer,
+     RangeError dc.RangeError,
+     Comparable dc.Comparable,
+     CyclicInitializationError dc.CyclicInitializationError,
+     LateInitializationError dc.LateInitializationError,
+     FormatException dc.FormatException,
+     Null dc.Null,
+     NullThrownError dc.NullThrownError,
+     Exception dc.Exception,
+     RegExp dc.RegExp,
+     Stream dc.Stream,
+     Pattern dc.Pattern,
+     AbstractClassInstantiationError
+     dc.AbstractClassInstantiationError,
+     OutOfMemoryError dc.OutOfMemoryError,
+     UriData dc.UriData,
+     Runes dc.Runes,
+     IntegerDivisionByZeroException
+     dc.IntegerDivisionByZeroException,
+     ConcurrentModificationError dc.ConcurrentModificationError,
+     AssertionError dc.AssertionError,
+     Duration dc.Duration,
+     ArgumentError dc.ArgumentError,
+     List dc.List}})
+
 (def nses (atom {:current-ns 'user
-                 'user {}}))
+                 'user ns-prototype}))
 
 (defn emit-type [tag]
   (let [nses @nses
         {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
     (replace-all (str tag) #"(?:([a-zA-Z0-9_$]+)\.)?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?"
                  (fn [[_ alias type identifier]]
-                   (prn alias type identifier)
                    (cond->
                        (if alias
                          (or
@@ -79,7 +158,8 @@
                           (#{"Function" "void" "dynamic"} type)
                           (when (current-ns (symbol type)) type)
                           (some-> mappings (get (symbol type)) str)
-                          (throw (ex-info (str "Unknown type " type " in type tage " tag)
+                          (str "UNKNOWN_" type) ; TODO remove
+                          (throw (ex-info (str "Unknown type " type " in type tag " tag)
                                           {:type type :tag tag}))))
                      identifier (str identifier))))))
 
@@ -254,7 +334,7 @@
     (cond
       (symbol? target)
       (if-some [dart-var (env target)]
-        (if (-> dart-var meta :mutable)
+        (if (-> dart-var meta :dart/mutable)
           (list 'dart/let
                 [[nil (list 'dart/set! dart-var (emit expr env))]]
                 dart-var)
@@ -522,28 +602,35 @@
     (symbol? x) (emit (list 'cljd.core/symbol (namespace x) (name x)) env)
     :else (emit x env)))
 
+(defn ns-to-lib [ns-name]
+  (str *target-subdir* (replace-all (name ns-name) #"[.]" {"." "/"}) ".dart"))
+
+(declare compile-namespace)
+
 (defn emit-ns [[_ ns-sym & ns-clauses] _]
   (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
-        mappings
-        (transduce
-         (comp
-          (mapcat (fn [[directive & args]] (map #(vector directive %) args)))
-          (map
-           (fn [[directive arg]]
-             (case directive
-               :require
-               (let [arg (if (vector? arg) arg [arg])
-                     alias (name (gensym "lib"))
-                     clauses (into {} (partition-all 2) (next arg))]
-                 (cond-> (assoc {} :imports [[(name (first arg)) alias]])
-                   (:as clauses) (assoc-in [:aliases (name (:as clauses))] alias)
-                   (:refer clauses) (assoc :mappings (into {} (map #(vector % (str alias "." (name %)))) (:refer clauses)))))
-               :import (/ 0)
-               :refer-clojure (/ 0)
-               :use (/ 0)))))
-         (partial merge-with into)
-         {} ns-clauses)]
-    (swap! nses assoc ns-sym mappings :current-ns ns-sym)))
+        ns-map
+        (reduce
+         (partial merge-with into) ns-prototype
+         (for [[directive & args] ns-clauses
+               arg args]
+           (case directive
+             :require
+             (let [arg (if (vector? arg) arg [arg])
+                   {:keys [as refer]} (apply hash-map (next arg))
+                   alias (name (tmpvar (or as "lib")))
+                   lib (first arg)
+                   dartlib (else->>
+                            (if (string? lib) lib)
+                            (if-some [{:keys [lib]} (@nses lib)] lib)
+                            (compile-namespace lib))]
+               (cond-> (assoc {} :imports [[dartlib alias]])
+                 as (assoc-in [:aliases (name as)] alias)
+                 refer (assoc :mappings (into {} (for [r refer] [r (str alias "." (name r))])))))
+             :import (/ 0)
+             :refer-clojure (/ 0)
+             :use (/ 0))))]
+    (swap! nses assoc ns-sym ns-map :current-ns ns-sym)))
 
 (defn- emit-no-recur [expr env]
   (let [dart-expr (emit expr env)]
@@ -703,7 +790,7 @@
   (print " {\n")
   (doseq [field fields
           :let [{:keys [dart/mutable]} (meta field)]]
-    (print (str (if-not mutable "final " "") (-> field meta (:dart/type (if mutable "var" ""))) " " field ";")))
+    (print (str (if mutable "" "final ") (-> field meta (:dart/type (if mutable "var" ""))) " " field ";")))
   (newline)
 
   (print (str class-name "("))
@@ -941,37 +1028,44 @@
              (emit form {})
              (recur)))))))
 
-(defn make-ns-to-out [^String target-dir]
-  #?(:clj (let [out-dir (java.io.File. target-dir)]
-            (.mkdirs out-dir)
-            (fn [ns-sym]
-              (let [ns-path (str (.replace (name ns-sym) "." "/") ".dart")
-                    ns-file (doto (java.io.File. out-dir ns-path) (-> .getParentFile .mkdirs))
-                    writer (java.io.FileWriter. ns-file java.nio.charset.StandardCharsets/UTF_8)]
-                (fn
-                  ([]
-                   (.close writer))
-                  ([x]
-                   (.write writer (str x)))))))
-     :cljd 'TODO))
-
-(defn compile-file [in ns-to-out]
+(defn compile-file [in]
   (load-file in)
-  (let [{:keys [current-ns] :as nses} @nses
-        out! (ns-to-out current-ns)]
-    (out! (with-out-str (dump-ns (nses current-ns))))
-    (out!)))
+  (let [{:keys [current-ns] :as all-nses} @nses
+        libname (ns-to-lib current-ns)]
+    (with-open [out (-> (java.io.File. *lib-path* libname)
+                        (doto (-> .getParentFile .mkdirs))
+                        java.io.FileWriter.)]
+      (binding [*out* out]
+        (dump-ns (all-nses current-ns))))
+    (swap! nses assoc-in [current-ns :lib] libname)
+    libname))
+
+(defn ns-to-paths [ns-name]
+  (let [base (replace-all (name ns-name) #"[.-]" {"." "/" "-" "_"})]
+    [(str base ".cljd") (str base ".cljc")]))
+
+(defn compile-namespace [ns-name]
+  ;; iterate first on file variants then on paths, not the other way!
+  (let [file-paths (ns-to-paths ns-name)]
+    (if-some [file
+              (first
+               (for [file-path file-paths
+                     dir *clj-path*
+                     :let [file (java.io.File. dir file-path)]
+                     :when (.exists file)]
+                 file))]
+      (with-open [in (java.io.FileInputStream. file)]
+        (compile-file (java.io.InputStreamReader. in "UTF-8")))
+      (throw (ex-info (str "Could not locate "
+                           (str/join " or " file-paths)
+                           " on *clj-path*.")
+                      {:ns ns-name})))))
 
 (comment
-
-  (require '[clojure.java.io :as io])
-  (binding [*ns* *ns*]
-    (ns cljd.bordeaux)
-    (ns cljd.ste)
-    (ns cljd.user))
-  (compile-file (io/reader "test.cljd") (make-ns-to-out "targetdir/ohoh"))
-
-  (set! *warn-on-reflection* true)
+  (binding [*ns* *ns*] (ns hello-flutter.core))
+  (binding [*clj-path* ["../../../examples/hello-flutter/src"]
+            *lib-path* "../../../examples/hello-flutter/lib"]
+    (compile-namespace 'hello-flutter.core))
 
   )
 
@@ -1299,12 +1393,12 @@
            (meth [a b] "regular method")) {})
   (_reify_$8_)
 
-  (emit '(deftype MyClass [^:mutable a b]
+  (emit '(deftype MyClass [^:mutable ^List a b ^Map c]
            :extends (ParentClass. (+ a b) (if 1 2 3))
            Object
            (meth [_ b] (set! a (if (rand-bool) 33 42)))
            (meth2 [this b] (set! (.-a this) "yup"))
-           (^:getter hashCode [_]  42)) {})
+           (^:getter hashCode [_] (let [^Number n 42] n))) {})
 
 
   )

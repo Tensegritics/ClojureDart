@@ -1,0 +1,13 @@
+(ns hello-flutter.core
+  (:require ["package:flutter/material.dart" :as material]))
+
+(defn main []
+  (material/runApp
+   (reify
+     :extends material/StatelessWidget
+     (build [_ context]
+       (material/MaterialApp.
+        .& :title "Welcome to Flutter"
+        :home (material/Scaffold.
+               .& :appBar (material/AppBar. .& :title (material/Text. "Welcome to Flutter"))
+               :body (material/Center. .& :child (material/Text. "Hello World"))))))))
