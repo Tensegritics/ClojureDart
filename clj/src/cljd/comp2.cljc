@@ -288,8 +288,8 @@
         [bindings fn-call]
         (as-> [nil ()] acc
           (reduce (fn [[bindings fn-call] [k x]]
-                  (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
-                    [(concat bindings' bindings) (list* k x' fn-call)]))
+                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
+                      [(concat bindings' bindings) (list* k x' fn-call)]))
                   acc (reverse (partition 2 nameds)))
           (reduce (fn [[bindings fn-call] x]
                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
@@ -500,7 +500,7 @@
         class
         {:name class-name
          :fields closed-overs
-         :extends base
+         :extends (emit base env)
          :implements ifaces
          :with mixins
          :ctor-params
