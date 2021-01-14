@@ -60,14 +60,37 @@
                                  (str/join "__$u" (map #(Long/toHexString (int %)) x))
                                  "_"))))))))
 
+(def nses (atom {:current-ns 'user
+                 'user {}}))
+
+(defn emit-type [tag]
+  (let [nses @nses
+        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+    (replace-all (str tag) #"(?:([a-zA-Z0-9_$]+)\.)?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?"
+                 (fn [[_ alias type identifier]]
+                   (prn alias type identifier)
+                   (cond->
+                       (if alias
+                         (or
+                          (some-> (get aliases alias) (str "." type))
+                          (throw (ex-info (str "Unknown alias " alias " in type tag " tag)
+                                          {:alias alias :tag tag})))
+                         (or
+                          (#{"Function" "void" "dynamic"} type)
+                          (when (current-ns (symbol type)) type)
+                          (some-> mappings (get (symbol type)) str)
+                          (throw (ex-info (str "Unknown type " type " in type tage " tag)
+                                          {:type type :tag tag}))))
+                     identifier (str identifier))))))
+
 (defonce ^:private gens (atom 1))
 (defn tmpvar
   ([] (tmpvar ""))
   ([prefix]
-   (symbol (str (munge prefix) "_$" (swap! gens inc) "_"))))
-
-(def nses (atom {:current-ns 'user
-                 'user {}}))
+   (let [tag (:tag (meta prefix))]
+     (cond->
+         (symbol (str (munge prefix) "_$" (swap! gens inc) "_"))
+       tag (vary-meta assoc :dart/type (emit-type tag))))))
 
 #?(:clj
    (do
@@ -443,11 +466,14 @@
         mixins(filter (comp :mixin meta) classes)
         ifaces (remove (comp :mixin meta) classes)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
-        env (zipmap fields fields)
+        env (into {} (for [f fields
+                           :let [{:keys [tag mutable]} (meta f)]]
+                       [f (with-meta (munge f) {:dart/type (some-> tag emit-type)
+                                                :dart/mutable mutable})]))
         dart-methods (map #(emit-method % env) methods)
         class
         {:name class-name
-         :fields fields
+         :fields (vals env)
          :extends base
          :implements ifaces
          :with mixins
@@ -489,26 +515,6 @@
      (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
      #_"TODO next form should throw"
      (symbol (str "GLOBAL_" x)))))
-
-(defn emit-type [tag]
-  (let [nses @nses
-        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
-    (replace-all (str tag) #"(?:([a-zA-Z0-9_$]+)\.)?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?"
-                 (fn [[_ alias type identifier]]
-                   (prn alias type identifier)
-                   (cond->
-                       (if alias
-                         (or
-                          (some-> (get aliases alias) (str "." type))
-                          (throw (ex-info (str "Unknown alias " alias " in type tag " tag)
-                                          {:alias alias :tag tag})))
-                         (or
-                          (#{"Function" "void" "dynamic"} type)
-                          (when (current-ns (symbol type)) type)
-                          (some-> mappings (get (symbol type)) str)
-                          (throw (ex-info (str "Unknown type " type " in type tage " tag)
-                                          {:type type :tag tag}))))
-                     identifier (str identifier))))))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -626,15 +632,15 @@
   {:pre ""
    :post ", "})
 
-(defn declared-var-locus [varname]
-  {:pre (str varname "=")
+(defn assignment-locus [left-value]
+  {:pre (str left-value "=")
    :post ";\n"})
 
 (defn var-locus [varname]
-  {:pre (str "var " varname "=")
+  {:pre (str (-> varname meta (:dart/type "var")) " " varname "=")
    :post ";\n"
-   :decl (str "var " varname ";\n")
-   :fork (declared-var-locus varname)})
+   :decl (str (-> varname meta (:dart/type "var")) " " varname ";\n")
+   :fork (assignment-locus varname)})
 
 (declare write)
 
@@ -696,8 +702,8 @@
   (some->> with seq (str/join ", ") (print " with"))
   (print " {\n")
   (doseq [field fields
-          :let [{:keys [mutable]} (meta field)]]
-    (print (str (if mutable "var ""final ") field ";")))
+          :let [{:keys [dart/mutable]} (meta field)]]
+    (print (str (if-not mutable "final " "") (-> field meta (:dart/type (if mutable "var" ""))) " " field ";")))
   (newline)
 
   (print (str class-name "("))
@@ -844,14 +850,14 @@
                          (map (fn [v vs] (when (vs v) [v (tmpvar v)])) ; TODO using tmpvar in write is going to cause double munging
                               loop-bindings vars-usages))]
           (doseq [[v e] (map vector loop-bindings exprs)]
-            (write e (if-some [tmp (tmps v)] (var-locus tmp) (declared-var-locus v))))
+            (write e (if-some [tmp (tmps v)] (var-locus tmp) (assignment-locus v))))
           (doseq [[v tmp] tmps]
-            (write tmp (declared-var-locus v)))
+            (write tmp (assignment-locus v)))
           (print "continue;\n")
           true))
       dart/set!
       (let [[_ target val] x]
-        (write val (declared-var-locus
+        (write val (assignment-locus
                     (if (symbol? target)
                       target
                       (let [[op obj fld] target]
@@ -1293,11 +1299,12 @@
            (meth [a b] "regular method")) {})
   (_reify_$8_)
 
-  (emit '(deftype* MyClass [^:mutable a b]
-           {:extends (ParentClass. (+ a b))}
+  (emit '(deftype MyClass [^:mutable a b]
+           :extends (ParentClass. (+ a b) (if 1 2 3))
            Object
-           (meth [a b] :positional nil "regular method")
-           (^:getter hashCode [_] :positional nil 42)) {})
-  {:current-ns user, user {MyClass {:type :class, :code "class MyClass extends ParentClass implements Object {\nvar a;final b;\nMyClass(this.a, this.b, ):super(GLOBAL_+(a, b, ), );\n\nmeth(b_$25_, ){\nreturn \"regular method\";\n}\n\nget hashCode{\nreturn 42;\n}\n\nnoSuchMethod(i)=>super.noSuchMethod(i);\n}\n"}}}
+           (meth [_ b] (set! a (if (rand-bool) 33 42)))
+           (meth2 [this b] (set! (.-a this) "yup"))
+           (^:getter hashCode [_]  42)) {})
+
 
   )
