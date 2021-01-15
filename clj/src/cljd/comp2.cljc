@@ -272,8 +272,12 @@
         :else
         [nil x])))
 
+(defn- split-args [args]
+  (let [[positional-args [_ & named-args]] (split-with (complement '#{.&}) args)]
+    [positional-args named-args]))
+
 (defn emit-fn-call [fn-call env]
-  (let [[positionals [_ & nameds]] (split-with (complement #{'.&}) fn-call)
+  (let [[positionals nameds] (split-args fn-call)
         [bindings fn-call]
         (as-> [nil ()] acc
           (reduce (fn [[bindings fn-call] [k x]]
@@ -467,43 +471,48 @@
 (defn do-def [nses sym m]
   (assoc-in nses [(:current-ns nses) sym] m))
 
-(defn emit-reify [[_ opts & specs] env]
+(defn- emit-class-specs [opts specs env]
   (let [{:keys [extends] :or {extends 'Object}} opts
         [ctor-op base & ctor-args :as ctor]
         (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
-        [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'.&}) ctor-args)
-        positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
-        named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
-        class-name (tmpvar "-reify")  ; TODO change this to a more telling name
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
         methods (remove symbol? specs)  ; crude
         mixins(filter (comp :mixin meta) classes)
         ifaces (remove (comp :mixin meta) classes)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
-        dart-methods (map #(emit-method % env) methods)
+        dart-methods (map #(emit-method % env) methods)]
+    {:extends (emit base env)
+     :implements ifaces
+     :with mixins
+     :super-ctor
+     {:method ctor-meth ; nil for new
+      :args ctor-args}
+     :methods dart-methods
+     :nsm need-nsm}))
+
+(defn emit-reify [[_ opts & specs] env]
+  (let [class (emit-class-specs opts specs env)
+        [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
+        positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
+        named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
+        class-name (tmpvar "-reify")  ; TODO change this to a more telling name
         closed-overs (transduce (map #(method-closed-overs % env)) into #{}
-                                dart-methods)
+                                (:methods class))
+        class (-> class
+                  (assoc :name class-name
+                         :fields closed-overs
+                         :ctor-params
+                         (concat
+                          (map #(list '. %) closed-overs)
+                          positional-ctor-params
+                          named-ctor-params))
+                  (assoc-in [:super-ctor :args]
+                            (concat positional-ctor-params
+                                    (interleave (take-nth 2 named-ctor-args)
+                                                named-ctor-params))))
         reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))
-        class
-        {:name class-name
-         :fields closed-overs
-         :extends (emit base env)
-         :implements ifaces
-         :with mixins
-         :ctor-params
-         (concat
-          (map #(list '. %) closed-overs)
-          positional-ctor-params
-          named-ctor-params)
-         :super-ctor
-         {:method ctor-meth ; nil for new
-          :args
-          (concat positional-ctor-params
-                  (interleave (take-nth 2 named-ctor-args) named-ctor-params))}
-         :methods dart-methods
-         :nsm need-nsm}
         reify-ctor-call (list*
                          'new class-name
                          (concat closed-overs
@@ -524,37 +533,19 @@
     dart-expr)))
 
 (defn emit-deftype [[_ class-name fields opts & specs] env]
-  (let [{:keys [extends] :or {extends 'Object}} opts
-        [ctor-op base & ctor-args :as ctor]
-        (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
-        ctor-meth (when (= '. ctor-op) (first ctor-args))
-        ctor-args (cond-> ctor-args (= '. ctor-op) next)
-        [positional-ctor-args [_ & named-ctor-args]] (split-with (complement #{'.&}) ctor-args)
-        classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
-        methods (remove symbol? specs)  ; crude
-        mixins(filter (comp :mixin meta) classes)
-        ifaces (remove (comp :mixin meta) classes)
-        need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
-        env (into {} (for [f fields
+  (let [env (into {} (for [f fields
                            :let [{:keys [tag mutable]} (meta f)]]
                        [f (with-meta (munge f) {:dart/type (some-> tag emit-type)
                                                 :dart/mutable mutable})]))
-        dart-methods (map #(emit-method % env) methods)
-        class
-        {:name class-name
-         :fields (vals env)
-         :extends (emit base env)
-         :implements ifaces
-         :with mixins
-         :ctor-params (map #(list '. %) fields)
-         :super-ctor
-         {:method ctor-meth ; nil for new
-          :args
-          (concat (map #(emit-strict-expr % env) positional-ctor-args)
-                  (->> named-ctor-args (partition 2)
-                       (mapcat (fn [[name arg]] [name (emit-strict-expr arg env)]))))}
-         :methods dart-methods
-         :nsm need-nsm}]
+        class (emit-class-specs opts specs env)
+        [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
+        class (-> class
+                  (assoc :name class-name
+                         :fields (vals env))
+                  (assoc-in [:super-ctor :args]
+                            (concat (map #(emit-strict-expr % env) positional-ctor-args)
+                                    (->> named-ctor-args (partition 2)
+                                         (mapcat (fn [[name arg]] [name (emit-strict-expr arg env)]))))))]
     (swap! nses do-def class-name
              {:type :class
               :code (with-out-str (write-class class))})
