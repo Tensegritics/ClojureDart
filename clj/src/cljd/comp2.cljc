@@ -240,17 +240,6 @@
 (defn atomic?
   [x] (not (coll? x)))
 
-(comment
-  ; TODO replace atomic? by something more finegrained
-  (defn dart-expr?
-    "Takes a dartsexp and returns true if it can be emitted as a Dart expression."
-    [x]
-    (cond
-      (not (coll? x)) true
-      (case (when (seq? x) (first x))
-        (dart/if dart/let dart/loop dart/let-fn) true false) false
-      :else (every? dart-expr? x))))
-
 (defn has-recur?
   "Takes a dartsexp and returns true when it contains an open recur."
   [x]
