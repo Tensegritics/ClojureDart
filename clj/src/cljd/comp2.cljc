@@ -180,7 +180,7 @@
            (recur more (assoc opts k v))
            [opts body])))
 
-     (defn- expand-opts+specs [& opts+specs]
+     (defn- expand-opts+specs [opts+specs]
        (let [[opts specs] (roll-leading-opts opts+specs)]
          (cons opts
                (map
@@ -198,6 +198,21 @@
                     spec))
                 specs))))
 
+     (defn- expand-deftype [& args]
+       (let [[class-name fields & args] args]
+         (list 'do
+               (list* 'deftype* class-name fields
+                      (expand-opts+specs args))
+               (list 'defn
+                     (symbol (str "->" class-name))
+                     (vec fields)
+                     (list* 'new class-name fields)))))
+
+     (defn- expand-definterface [iface & meths]
+       (list* 'deftype* (vary-meta iface assoc :abstract true) []
+              (expand-opts+specs (for [[meth args] (doto meths prn)]
+                                   (list meth (into '[_] args))))))
+
      (defn- expand-do [& body] (list* 'let* [] body))))
 
 (defn macroexpand-1 [env form]
@@ -210,10 +225,9 @@
         (env f) form
         #?@(:clj ; macro overrides
             [(= 'ns f) form
-             (= 'reify f) (cons 'reify* (apply expand-opts+specs args))
-             (= 'deftype f) (let [[class-name fields & args] args]
-                              (list* 'deftype* class-name fields
-                                     (apply expand-opts+specs args)))
+             (= 'reify f) (cons 'reify* (expand-opts+specs args))
+             (= 'deftype f) (apply expand-deftype args)
+             (= 'definterface f) (apply expand-definterface args)
              (= 'do f) (apply expand-do args)])
         (= '. f) form
         #?@(:clj
@@ -458,7 +472,7 @@
         dart-body (cond->> dart-body
                     recur-params
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))]
-    [mname dart-fixed-params opt-kind dart-opt-params dart-body]))
+    [mname dart-fixed-params opt-kind dart-opt-params (nil? (seq body)) dart-body]))
 
 (defn closed-overs [emitted env]
   (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
@@ -768,50 +782,55 @@
     :else (pr x)))
 
 (defn write-class [{class-name :name :keys [extends implements with fields ctor-params super-ctor methods nsm]}]
-  (print "class" class-name)
-  (some->> extends (print " extends"))
-  (some->> implements seq (str/join ", ") (print " implements"))
-  (some->> with seq (str/join ", ") (print " with"))
-  (print " {\n")
-  (doseq [field fields
-          :let [{:keys [dart/mutable]} (meta field)]]
-    (print (str (if mutable "" "final ") (-> field meta (:dart/type (if mutable "var" ""))) " " field ";")))
-  (newline)
-
-  (print (str class-name "("))
-  (doseq [p ctor-params]
-    (print (if (seq? p) (str "this." (second p)) p))
-    (print ", "))
-  (print "):super")
-  (some->> super-ctor :method (str ".") print)
-  (write-args (:args super-ctor))
-  (print ";\n")
-
-  (doseq [[mname dart-fixed-params opt-kind dart-opt-params dart-body] methods
-          :let [{:keys [getter setter]} (meta mname)]]
+  (let [abstract (-> class-name meta :abstract)]
+    (when abstract (print "abstract "))
+    (print "class" class-name)
+    (some->> extends (print " extends"))
+    (some->> implements seq (str/join ", ") (print " implements"))
+    (some->> with seq (str/join ", ") (print " with"))
+    (print " {\n")
+    (doseq [field fields
+            :let [{:keys [dart/mutable]} (meta field)]]
+      (print (str (if mutable "" "final ") (-> field meta (:dart/type (if mutable "var" ""))) " " field ";")))
     (newline)
-    (cond
-      getter (print "get ")
-      setter (print "set "))
-    (print mname)
-    (when-not getter (print "("))
-    (doseq [p dart-fixed-params] (print p) (print ", "))
-    (when (seq dart-opt-params)
-      (print (case opt-kind :positional "[" "{"))
-      (doseq [[p d] dart-opt-params]
-        (print p "= ")
-        (write d arg-locus))
+
+    (print (str class-name "("))
+    (doseq [p ctor-params]
+      (print (if (seq? p) (str "this." (second p)) p))
+      (print ", "))
+    (print "):super")
+    (some->> super-ctor :method (str ".") print)
+    (write-args (:args super-ctor))
+    (print ";\n")
+
+    (doseq [[mname dart-fixed-params opt-kind dart-opt-params no-explicit-body dart-body] methods
+            :let [{:keys [getter setter]} (meta mname)]]
+      (newline)
+      (cond
+        getter (print "get ")
+        setter (print "set "))
+      (print mname)
+      (when-not getter (print "("))
+      (doseq [p dart-fixed-params] (print p) (print ", "))
+      (when (seq dart-opt-params)
+        (print (case opt-kind :positional "[" "{"))
+        (doseq [[p d] dart-opt-params]
+          (print p "= ")
+          (write d arg-locus))
         (print (case opt-kind :positional "]" "}")))
-    (when-not getter (print ")"))
-    (print "{\n")
-    (write dart-body return-locus)
-    (print "}\n"))
+      (when-not getter (print ")"))
+      (if (and abstract no-explicit-body)
+        (print ";\n")
+        (do
+          (print "{\n")
+          (write dart-body return-locus)
+          (print "}\n"))))
 
-  (when nsm
-    (newline)
-    (print "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
+    (when nsm
+      (newline)
+      (print "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
 
-  (print "}\n"))
+    (print "}\n")))
 
 (def ^:private ^:dynamic *caught-exception-symbol* nil)
 
@@ -1387,4 +1406,8 @@
 
   (emit '(defn <meh> [] (<meh>)) {})
 
+  (emit '(definterface IFn
+           (-invoke [a b c])) {})
+
+  nses
   )
