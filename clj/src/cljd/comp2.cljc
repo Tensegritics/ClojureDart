@@ -357,7 +357,7 @@
               (assoc env k tmp)]))
          [[] env] (partition 2 bindings))
         dart-bindings
-        (concat dart-bindings (for [x (butlast body)] [nil (emit x env)]))]
+        (into dart-bindings (for [x (butlast body)] [nil (emit x env)]))]
     (cond->> (emit (last body) env)
       ; wrap only when ther are actual bindings
       (seq dart-bindings) (list 'dart/let dart-bindings))))
@@ -519,8 +519,9 @@
                                  positional-ctor-args
                                  (take-nth 2 (next named-ctor-args))))]
     (swap! nses do-def class-name
-             {:type :class
-              :code (with-out-str (write-class class))})
+           {:dartsym (munge class-name)
+            :type :class
+            :code (with-out-str (write-class class))})
     (emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
 
 (defn- emit-strict-expr
@@ -547,22 +548,26 @@
                                     (->> named-ctor-args (partition 2)
                                          (mapcat (fn [[name arg]] [name (emit-strict-expr arg env)]))))))]
     (swap! nses do-def class-name
-             {:type :class
+             {:dartsym (munge class-name)
+              :type :class
               :code (with-out-str (write-class class))})
-    ;; TODO ->TypeName
-    #_(emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
+    (emit class-name env)))
 
 (declare write-top-dartfn write-top-field)
 
 (defn emit-def [[_ sym expr] env]
-  (let [expr (macroexpand env expr)]
+  (let [expr (macroexpand env expr)
+        dartsym (munge sym)]
+    (swap! nses do-def sym {:dartsym dartsym :type :field}) ; predecl so that the def is visible in recursive defs
     (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
       (swap! nses do-def sym
-             {:type :dartfn
-              :code (with-out-str (write-top-dartfn sym (emit expr env)))})
+             {:dartsym dartsym
+              :type :dartfn
+              :code (with-out-str (write-top-dartfn dartsym (emit expr env)))})
       (swap! nses do-def sym
-             {:type :field
-              :code (with-out-str (write-top-field sym (emit (if (seq? expr) (list (list 'fn* [] expr)) expr) env)))}))
+             {:dartsym dartsym
+              :type :field
+              :code (with-out-str (write-top-field dartsym (emit (if (seq? expr) (list (list 'fn* [] expr)) expr) env)))}))
     (emit sym env)))
 
 (defn emit-symbol [x env]
@@ -570,7 +575,7 @@
         {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
     (or
      (env x)
-     (when (current-ns x) x)
+     (-> x current-ns :dartsym)
      (get mappings x)
      (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
      #_"TODO next form should throw"
@@ -1378,7 +1383,8 @@
            Object
            (meth [_ b] (set! a (if (rand-bool) 33 42)))
            (meth2 [this b] (set! (.-a this) "yup"))
-           (^:getter hashCode [_] (let [^Number n 42] n))) {})
+           (^:getter hashCode [_] (let [^num n 42] n))) {})
 
+  (emit '(defn <meh> [] (<meh>)) {})
 
   )
