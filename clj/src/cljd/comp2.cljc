@@ -217,14 +217,14 @@
 
      (defn- expand-defprotocol [proto & methods]
        ;; TODO do something with docstrings
-       (let [[docstring & methods] (if (string? (first methods)) methods (list* nil methods))
+       (let [[doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
              method-mapping
              (into {} (map (fn [[m & arglists]]
                              (let [dart-m (munge m)
-                                   [docstring & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
-                               [m (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" l))
-                                                                        :args %}]))
-                                        arglists)]))) methods)
+                                   [doc-string & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
+                               [(with-meta m {:doc doc-string}) (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" l))
+                                                                                                      :args %}]))
+                                                                      arglists)]))) methods)
              protocol-meta {:sigs method-mapping}
              class-name (vary-meta proto assoc :protocol protocol-meta)]
          (list* 'do
@@ -597,8 +597,15 @@
 
 (declare write-top-dartfn write-top-field)
 
-(defn emit-def [[_ sym expr] env]
-  (let [expr (macroexpand env expr)
+(defn emit-def [[_ sym & doc-string?+expr] env]
+  (let [[doc-string expr]
+        (else->> (let [l (count doc-string?+expr)])
+                 (if (= 1 l) (cons (:doc (meta sym)) doc-string?+expr))
+                 (if (and (= 2 l) (string? (first doc-string?+expr))) doc-string?+expr)
+                 (if  (= 2 l) (throw (ex-info "doc-string must be a string" {})))
+                 (throw (ex-info "Too many arguments to def" {})))
+        sym (vary-meta sym assoc :doc doc-string)
+        expr (macroexpand env expr)
         dartname (munge sym)]
     (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
     (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
@@ -1325,6 +1332,8 @@
 
   (emit '(def oo "caca\n") {})
 
+  (emit '(def oo "docstring" (let [a "caca"] a)) {})
+
   (write *1 return-locus)
 
   (emit '(fn* aa [x] x) {})
@@ -1453,4 +1462,12 @@
   (dart/let [[nil MyClass]] __$GT_MyClass)
 
   nses
+
+  (macroexpand-1 {} '(defn aaa "docstring2" [ooo] "content"))
+
+  (emit '(defn aaa "docstring2" [ooo] "content") {})
+  (emit '(def ooo "docstirng" 42) {})
+
+
+
     )
