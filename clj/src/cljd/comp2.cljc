@@ -1,6 +1,7 @@
 (ns cljd.comp2
   (:refer-clojure :exclude [macroexpand macroexpand-1 munge load-file])
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            #?@(:clj [[cljd.core]])))
 
 (def ^:dynamic *clj-path*
   "Sequential collection of directories to search for clj files."
@@ -172,103 +173,34 @@
          (symbol (str (munge prefix) "_$" (swap! gens inc) "_"))
        tag (vary-meta assoc :dart/type (emit-type tag))))))
 
-#?(:clj
-   (do
-     (defn- roll-leading-opts [body]
-       (loop [[k v & more :as body] (seq body) opts {}]
-         (if (and body (keyword? k))
-           (recur more (assoc opts k v))
-           [opts body])))
-
-     (defn- expand-opts+specs [opts+specs]
-       (let [[opts specs] (roll-leading-opts opts+specs)
-             current-ns (@nses (:current-ns @nses))
-             last-seen-type (atom nil)]
-         (cons opts
-               (map
-                (fn [spec]
-                  (if (seq? spec)
-                    (let [[mname arglist & body] spec
-                          mname (get-in current-ns [@last-seen-type :meta :protocol :sigs mname (count arglist) :dart/name] mname)
-                          [positional-args [delim & opt-args]] (split-with (complement '#{.& ...}) arglist)
-                          delim (case delim .& :named :positional)
-                          opt-params
-                          (for [[p d] (partition-all 2 1 opt-args)
-                                :when (symbol? p)]
-                            [p (when-not (symbol? d) d)])]
-                      (list* mname positional-args delim opt-params body))
-                    (reset! last-seen-type spec)))
-                specs))))
-
-     (defn- expand-deftype [& args]
-       (let [[class-name fields & args] args]
-         (list 'do
-               (list* 'deftype* class-name fields
-                      (expand-opts+specs args))
-               (list 'defn
-                     (symbol (str "->" class-name))
-                     (vec fields)
-                     (list* 'new class-name fields)))))
-
-     (defn- expand-definterface [iface & meths]
-       (list* 'deftype* (vary-meta iface assoc :abstract true) []
-              (expand-opts+specs (for [[meth args] meths]
-                                   (list meth (into '[_] args))))))
-
-     (defn- expand-defprotocol [proto & methods]
-       ;; TODO do something with docstrings
-       (let [[docstring & methods] (if (string? (first methods)) methods (list* nil methods))
-             method-mapping
-             (into {} (map (fn [[m & arglists]]
-                             (let [dart-m (munge m)
-                                   [docstring & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
-                               [m (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" l))
-                                                                        :args %}]))
-                                        arglists)]))) methods)
-             protocol-meta {:sigs method-mapping}
-             class-name (vary-meta proto assoc :protocol protocol-meta)]
-         (list* 'do
-                (list* 'definterface class-name
-                       (for [[method arity-mapping] method-mapping
-                             {:keys [dart/name args]} (vals arity-mapping)]
-                         (list name (subvec args 1))))
-                (concat
-                 (for [[method arity-mapping] method-mapping]
-                   (list* 'defn method
-                          (for [{:keys [dart/name args]} (vals arity-mapping)]
-                            (list args (list* '. (first args) name (next args))))))
-                 (list class-name)))))
-
-     (defn- expand-do [& body] (list* 'let* [] body))))
-
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
-    (let [name (name f)
+    (let [f-name (name f)
           ;; TODO symbol resolution and macro lookup in cljd
-          #?@(:clj [clj-var (ns-resolve (find-ns (:current-ns @nses)) f)])]
+          #?@(:clj [clj-ns (find-ns (:current-ns @nses))
+                    clj-var (ns-resolve clj-ns f)
+                    clj-var (or
+                             (when (some-> clj-var meta :ns ns-name (= 'clojure.core))
+                               (ns-resolve clj-ns (symbol "cljd.core" (-> clj-var meta :name name))))
+                             clj-var)])]
       ;; TODO add proper expansion here, before defaults
       (cond
         (env f) form
-        #?@(:clj ; macro overrides
-            [(= 'ns f) form
-             (= 'reify f) (cons 'reify* (expand-opts+specs args))
-             (= 'deftype f) (apply expand-deftype args)
-             (= 'definterface f) (apply expand-definterface args)
-             (= 'defprotocol f) (apply expand-defprotocol args)
-             (= 'do f) (apply expand-do args)])
+        #?@(:clj ; macro override
+            [(= 'ns f) form])
         (= '. f) form
         #?@(:clj
             [(-> clj-var meta :macro)
-             ; force &env to nil when cross-compiling, should be ok
+             ;; force &env to nil when cross-compiling, should be ok
              (apply @clj-var form nil (next form))]
             :cljd
             [TODO TODO])
-        (.endsWith name ".")
+        (.endsWith f-name ".")
         (list* 'new
-          (symbol (namespace f) (subs name 0 (dec (count name))))
-          args)
-        (.startsWith name ".")
-        (list* '. (first args) (symbol (subs name 1)) (next args))
+               (symbol (namespace f) (subs f-name 0 (dec (count f-name))))
+               args)
+        (.startsWith f-name ".")
+        (list* '. (first args) (symbol (subs f-name 1)) (next args))
         :else form))
     form))
 
@@ -402,6 +334,9 @@
     (cond->> (emit (last body) env)
       ; wrap only when ther are actual bindings
       (seq dart-bindings) (list 'dart/let dart-bindings))))
+
+(defn emit-do [[_ & body] env]
+  (emit (list* 'let* [] body) env))
 
 (defn emit-loop [[_ bindings & body] env]
   (let [[dart-bindings env]
