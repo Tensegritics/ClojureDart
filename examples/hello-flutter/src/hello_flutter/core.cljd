@@ -1,6 +1,14 @@
 (ns hello-flutter.core
   (:require ["package:flutter/material.dart" :as material]))
 
+(defprotocol IProtocol
+  (meth? [one] [one two] [one two three four]))
+
+(deftype MyType [field]
+  IProtocol
+  (meth? [one two] "Two params")
+  (meth? [one two three four] "Four params"))
+
 (defn main []
   (material/runApp
     (reify

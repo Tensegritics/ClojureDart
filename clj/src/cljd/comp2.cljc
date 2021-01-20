@@ -181,21 +181,23 @@
            [opts body])))
 
      (defn- expand-opts+specs [opts+specs]
-       (let [[opts specs] (roll-leading-opts opts+specs)]
+       (let [[opts specs] (roll-leading-opts opts+specs)
+             current-ns (@nses (:current-ns @nses))
+             last-seen-type (atom nil)]
          (cons opts
                (map
                 (fn [spec]
                   (if (seq? spec)
                     (let [[mname arglist & body] spec
+                          mname (get-in current-ns [@last-seen-type :meta :protocol :sigs mname (count arglist) :dart/name] mname)
                           [positional-args [delim & opt-args]] (split-with (complement '#{.& ...}) arglist)
                           delim (case delim .& :named :positional)
                           opt-params
                           (for [[p d] (partition-all 2 1 opt-args)
                                 :when (symbol? p)]
                             [p (when-not (symbol? d) d)])]
-                      ;; TODO: mname resolution against protocol ifaces
                       (list* mname positional-args delim opt-params body))
-                    spec))
+                    (reset! last-seen-type spec)))
                 specs))))
 
      (defn- expand-deftype [& args]
@@ -210,8 +212,29 @@
 
      (defn- expand-definterface [iface & meths]
        (list* 'deftype* (vary-meta iface assoc :abstract true) []
-              (expand-opts+specs (for [[meth args] (doto meths prn)]
+              (expand-opts+specs (for [[meth args] meths]
                                    (list meth (into '[_] args))))))
+
+     (defn- expand-defprotocol [proto & methods]
+       (let [method-mapping
+             (into {} (map (fn [[m & arglists]]
+                             (let [dart-m (munge m)]
+                               [m (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" l))
+                                                                        :args %}]))
+                                        arglists)]))) methods)
+             protocol-meta {:sigs method-mapping}
+             class-name (vary-meta proto assoc :protocol protocol-meta)]
+         (list* 'do
+                (list* 'definterface class-name
+                       (for [[method arity-mapping] method-mapping
+                             {:keys [dart/name args]} (vals arity-mapping)]
+                         (list name (subvec args 1))))
+                (concat
+                 (for [[method arity-mapping] method-mapping]
+                   (list* 'defn method
+                          (for [{:keys [dart/name args]} (vals arity-mapping)]
+                            (list args (list* '. (first args) name (next args))))))
+                 (list class-name)))))
 
      (defn- expand-do [& body] (list* 'let* [] body))))
 
@@ -228,6 +251,7 @@
              (= 'reify f) (cons 'reify* (expand-opts+specs args))
              (= 'deftype f) (apply expand-deftype args)
              (= 'definterface f) (apply expand-definterface args)
+             (= 'defprotocol f) (apply expand-defprotocol args)
              (= 'do f) (apply expand-do args)])
         (= '. f) form
         #?@(:clj
@@ -483,7 +507,7 @@
 (declare write-class)
 
 (defn do-def [nses sym m]
-  (assoc-in nses [(:current-ns nses) sym] m))
+  (assoc-in nses [(:current-ns nses) sym] (assoc m :meta (merge (meta sym) (:meta m)))))
 
 (defn- emit-class-specs [opts specs env]
   (let [{:keys [extends] :or {extends 'Object}} opts
@@ -533,9 +557,9 @@
                                  positional-ctor-args
                                  (take-nth 2 (next named-ctor-args))))]
     (swap! nses do-def class-name
-           {:dartsym (munge class-name)
+           {:dart/name class-name
             :type :class
-            :code (with-out-str (write-class class))})
+            :dart/code (with-out-str (write-class class))})
     (emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
 
 (defn- emit-strict-expr
@@ -556,32 +580,33 @@
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         class (-> class
                   (assoc :name class-name
-                         :fields (vals env))
+                         :fields (vals env)
+                         :ctor-params (map #(list '. %) (vals env)))
                   (assoc-in [:super-ctor :args]
                             (concat (map #(emit-strict-expr % env) positional-ctor-args)
                                     (->> named-ctor-args (partition 2)
                                          (mapcat (fn [[name arg]] [name (emit-strict-expr arg env)]))))))]
     (swap! nses do-def class-name
-             {:dartsym (munge class-name)
+             {:dart/name (munge class-name)
               :type :class
-              :code (with-out-str (write-class class))})
+              :dart/code (with-out-str (write-class class))})
     (emit class-name env)))
 
 (declare write-top-dartfn write-top-field)
 
 (defn emit-def [[_ sym expr] env]
   (let [expr (macroexpand env expr)
-        dartsym (munge sym)]
-    (swap! nses do-def sym {:dartsym dartsym :type :field}) ; predecl so that the def is visible in recursive defs
+        dartname (munge sym)]
+    (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
     (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
       (swap! nses do-def sym
-             {:dartsym dartsym
+             {:dart/name dartname
               :type :dartfn
-              :code (with-out-str (write-top-dartfn dartsym (emit expr env)))})
+              :dart/code (with-out-str (write-top-dartfn dartname (emit expr env)))})
       (swap! nses do-def sym
-             {:dartsym dartsym
+             {:dart/name dartname
               :type :field
-              :code (with-out-str (write-top-field dartsym (emit (if (seq? expr) (list (list 'fn* [] expr)) expr) env)))}))
+              :dart/code (with-out-str (write-top-field dartname (emit (if (seq? expr) (list (list 'fn* [] expr)) expr) env)))}))
     (emit sym env)))
 
 (defn emit-symbol [x env]
@@ -589,7 +614,7 @@
         {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
     (or
      (env x)
-     (-> x current-ns :dartsym)
+     (-> x current-ns :dart/name)
      (get mappings x)
      (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
      #_"TODO next form should throw"
@@ -1020,7 +1045,7 @@
   (print "\n")
   (doseq [[sym v] ns-map
           :when (symbol? sym)
-          :let [{:keys [type code]} v]]
+          :let [{:keys [type dart/code]} v]]
     (print code)))
 
 (defn load-file [in]
@@ -1071,6 +1096,7 @@
             *lib-path* "../../../examples/hello-flutter/lib"]
     (compile-namespace 'hello-flutter.core))
 
+  nses
   )
 
 (comment
@@ -1404,10 +1430,17 @@
            (meth2 [this b] (set! (.-a this) "yup"))
            (^:getter hashCode [_] (let [^num n 42] n))) {})
 
-  (emit '(defn <meh> [] (<meh>)) {})
 
-  (emit '(definterface IFn
-           (-invoke [a b c])) {})
+  (emit '(defprotocol IProtocol_ (meth [a] [a b] [a b c]) (-coucou [a])) {})
+  (dart/let [[nil IProtocol_$UNDERSCORE_] [nil meth] [nil _coucou]] IProtocol_$UNDERSCORE_)
+
+  (emit '(deftype MyClass [^:mutable ^List a b ^Map c]
+           :extends (ParentClass. (+ a b) (if 1 2 3))
+           IProtocol_
+           (meth [a] "a")
+           (meth [b c] "e")
+           (meth [c d e] "oo")) {})
+  (dart/let [[nil MyClass]] __$GT_MyClass)
 
   nses
-  )
+    )
