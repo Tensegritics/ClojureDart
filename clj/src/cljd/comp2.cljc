@@ -216,9 +216,12 @@
                                    (list meth (into '[_] args))))))
 
      (defn- expand-defprotocol [proto & methods]
-       (let [method-mapping
+       ;; TODO do something with docstrings
+       (let [[docstring & methods] (if (string? (first methods)) methods (list* nil methods))
+             method-mapping
              (into {} (map (fn [[m & arglists]]
-                             (let [dart-m (munge m)]
+                             (let [dart-m (munge m)
+                                   [docstring & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
                                [m (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" l))
                                                                         :args %}]))
                                         arglists)]))) methods)
@@ -1434,8 +1437,15 @@
   (emit '(defprotocol IProtocol_ (meth [a] [a b] [a b c]) (-coucou [a])) {})
   (dart/let [[nil IProtocol_$UNDERSCORE_] [nil meth] [nil _coucou]] IProtocol_$UNDERSCORE_)
 
+  (emit '(defprotocol IMarker "This protocol is only a marker") {})
+  (dart/let [[nil IMarker]] IMarker)
+
+  (emit '(defprotocol IMarker2 "Docstring" (meth [one] [one two] "Docstring") (ops [one] [one two]) (opa [one] "Coucou")) {})
+  (dart/let [[nil IMarker] [nil meth] [nil ops] [nil opa]] IMarker)
+
   (emit '(deftype MyClass [^:mutable ^List a b ^Map c]
            :extends (ParentClass. (+ a b) (if 1 2 3))
+           IMarker
            IProtocol_
            (meth [a] "a")
            (meth [b c] "e")
