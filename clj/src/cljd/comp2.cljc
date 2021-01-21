@@ -643,6 +643,7 @@
                    ns emit-ns
                    try emit-try
                    quote emit-quoted
+                   do emit-do
                    let* emit-let
                    loop* emit-loop
                    recur emit-recur
