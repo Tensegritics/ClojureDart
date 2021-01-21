@@ -61,5 +61,8 @@
        ~@(for [[method arity-mapping] method-mapping]
            `(defn ~method
               ~@(for [{:keys [dart/name args]} (vals arity-mapping)]
-                  `(~args (. ~(first args) ~name ~@(next args))))))
+                  `(~args
+                    (if (dart-is? ~(first args) ~class-name)
+                      (. ~(first args) ~name ~@(next args))
+                      #_TODO_EXTENSIONS)))))
        ~class-name)))

@@ -224,16 +224,27 @@
   [x]
   (case (when (seq? x) (first x))
     dart/let
-    (if (atomic? (last x))
-      (next x)
-      (let [tmp (tmpvar)]
-        [(concat (second x) [[tmp (last x)]])
-         tmp]))
+    (let [[_ bindings expr] x]
+      (if-some [[bindings' expr] (liftable expr)]
+         [(concat bindings bindings') expr]
+         (if (atomic? expr)
+           [bindings expr]
+           ;; this case should not happen
+           (let [tmp (tmpvar)]
+             [(conj (vec bindings) [tmp expr]) tmp]))))
     (dart/if dart/try) ; no ternary for now
     (let [tmp (tmpvar (first x))]
       [[[tmp x]]
        tmp])
     nil))
+
+(defmacro lifting
+  "Wraps the return value in a dart/let if needed"
+  [[x sub-expr] expr]
+  `(let [~x ~sub-expr]
+     (if-some [[bindings# ~x] (liftable ~x)]
+       (list 'dart/let bindings# ~expr)
+       ~expr)))
 
 (defn- lift-arg [must-lift x]
   (or (liftable x)
@@ -352,10 +363,8 @@
   (cons 'dart/recur (map #(emit % env) exprs)))
 
 (defn emit-if [[_ test then else] env]
-  (let [test (emit test env)]
-    (if-some [[bindings test] (liftable test)]
-      (list 'dart/let bindings (list 'dart/if test (emit then env) (emit else env)))
-      (list 'dart/if test (emit then env) (emit else env)))))
+  (lifting [test (emit test env)]
+    (list 'dart/if test (emit then env) (emit else env))))
 
 (defn- variadic? [[params]] (some #{'&} params))
 
@@ -624,6 +633,12 @@
   ;; always emit throw as a statement (in case it gets promoted to rethrow)
   (list 'dart/let [[nil (list 'dart/throw (emit expr env))]] nil))
 
+(defn emit-dart-is [[_ x type] env]
+  (when (or (not (symbol? type)) (env type))
+    (throw (ex-info (str "The second argument to dart-is? must be a literal type. Got: " (pr-str type)) {:type type})))
+  (lifting [x (emit x env)]
+           (list 'dart/is (emit x env) (emit type env))))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
@@ -638,6 +653,8 @@
       (let [emit (case (first x)
                    . emit-dot
                    set! emit-set!
+                   ; have to think twice about hwo to handle namespacing of new specials by syntax quote -cgrand
+                   (cljd.core/dart-is? dart-is?) emit-dart-is
                    throw emit-throw
                    new emit-new
                    ns emit-ns
@@ -860,6 +877,15 @@
           (write final statement-locus))
         (print "}\n")
         exit)
+      dart/is
+      (let [[_ expr type] x]
+        (print (:pre locus))
+        (print "(")
+        (write expr expr-locus)
+        (print " is ")
+        (write type expr-locus)
+        (print ")")
+        (print (:post locus)))
       dart/throw
       (let [[_ expr] x]
         (if (= expr *caught-exception-symbol*)
@@ -1404,6 +1430,8 @@
   (emit '(defn aaa "docstring2" [ooo] "content") {})
   (emit '(def ooo "docstirng" 42) {})
 
-
+  (emit '(dart-is? 0 num) {})
+  (dart/is 0 dc.num)
+  (write *1 return-locus)
 
     )
