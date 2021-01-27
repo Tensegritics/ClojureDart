@@ -593,29 +593,42 @@
 
 (declare compile-namespace)
 
+(defn- import-to-require [spec]
+  (cond
+    (symbol? spec) (let [[_ ns id] (re-matches (name spec) #"(.+)\.(.+)")]
+                     [(symbol ns) :refer [(symbol id)]])
+    (sequential? spec) [(first spec) :refer (rest spec)]
+    :else (throw (ex-info (str "Unsupported import spec: "
+                               (pr-str spec)) {:spec spec}))))
+
+(defn- use-to-require [spec]
+  (if (sequential? spec)
+    (let [lib (first spec)
+          {:keys [only]} (apply hash-map (rest spec))]
+      [lib :refer only])))
+
 (defn emit-ns [[_ ns-sym & ns-clauses] _]
   (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
         ns-map
         (reduce
          (partial merge-with into) ns-prototype
-         (for [[directive & args] ns-clauses
-               arg args]
-           (case directive
-             :require
-             (let [arg (if (vector? arg) arg [arg])
-                   {:keys [as refer]} (apply hash-map (next arg))
-                   alias (name (tmpvar (or as "lib")))
-                   lib (first arg)
-                   dartlib (else->>
-                            (if (string? lib) lib)
-                            (if-some [{:keys [lib]} (@nses lib)] lib)
-                            (compile-namespace lib))]
-               (cond-> (assoc {} :imports [[dartlib alias]])
-                 as (assoc-in [:aliases (name as)] alias)
-                 refer (assoc :mappings (into {} (for [r refer] [r (str alias "." (name r))])))))
-             :import (/ 0)
-             :refer-clojure (/ 0)
-             :use (/ 0))))]
+         (for [[directive & specs] ns-clauses
+               :let [f (case directive
+                         :require #(if (sequential? %) % [%])
+                         :import import-to-require
+                         :use use-to-require
+                         :refer-clojure nil)]
+               :when f ; TODO fix refer-clojure
+               spec specs]
+           (let [[lib & {:keys [as refer]}] (f spec)
+                 alias (name (tmpvar (or as "lib")))
+                 dartlib (else->>
+                          (if (string? lib) lib)
+                          (if-some [{:keys [lib]} (@nses lib)] lib)
+                          (compile-namespace lib))]
+             (cond-> (assoc {} :imports [[dartlib alias]])
+               as (assoc-in [:aliases (name as)] alias)
+               refer (assoc :mappings (into {} (for [r refer] [r (str alias "." (name r))])))))))]
     (swap! nses assoc ns-sym ns-map :current-ns ns-sym)))
 
 (defn- emit-no-recur [expr env]
