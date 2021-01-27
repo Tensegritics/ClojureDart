@@ -1435,3 +1435,101 @@
   (write *1 return-locus)
 
     )
+
+(comment
+
+  ;; 1/ arite unique
+  ;; 1a/ soit y'a pas de varargs -> map sur des fn dart natives
+  ;; 1b/ soit y'a du varargs -> par [a b c d e & more] (metthons threshold a 2)
+  ;; 1b/ de 0 a threshold -> -invoke []
+  ;; 1b/ de threshold a (params - 2)
+  ;; (fn ([] "no") ([a & b] b))
+  ;; threshold a 4
+  (let [env  {}
+        threshold 10 ; means up to (dec threshold) fn args incl
+        f '(fn* ([] "no")
+                ([a b c] "three")
+                ([a b d e f g & c] "ahah" "hihi")
+                #_([aa ab ac ad] "ohoh") )
+        #_#_f '(fn* ([& more] "hahhahaha" "ohohohoh" more))
+        #_f #_'(fn* ([a] body))
+        #_'(fn* [a] body)
+        #_'(fn* ([] "0") ([a] a))
+        #_'(fn*  ([a] body) ([a & more] body))
+        #_'(fn* ([] "oups" "coucou") ([a b c d e f & prefix] "e f g" prefix))
+        #_'(fn* ([] "oups" "coucou") ([a] "coucou") ([a b c prefix] "bebe " prefix) ([a b c d e f prefix] "e f g" prefix))]
+    (let [bodies (next f)
+          fixed-bodies (remove variadic? bodies)
+          max-fixed-arity (some->> fixed-bodies seq (map first) (map count) (reduce max))
+          [vararg-params & vararg-body] (some #(when (variadic? %) %) bodies)
+          base-vararg-arity (some->> vararg-params (take-while (complement #{'&})) count)
+          this (tmpvar "this") ; TODO if named use name instead of this
+          invoke-exts
+          (for [[params & body] fixed-bodies
+                :let [n (count params)]
+                :when (>= n threshold)]
+            (list* (symbol (str "-invoke$ext" n)) (into [this] params) body))
+          invokes
+          (concat
+           (for [[params & body] fixed-bodies
+                 :when (< (count params) threshold)]
+             (list* '-invoke (into [this] params) body))
+           (when vararg-params
+             (let [rest-arg (nth vararg-params (inc base-vararg-arity))
+                   base-params (into [this] (subvec vararg-params 0 base-vararg-arity))
+                   rest-params (vec (repeatedly (- threshold base-vararg-arity) tmpvar))]
+               (cons
+                (list* '-invoke$vararg (conj base-params rest-arg) vararg-body)
+                (for [n (range (if (= base-vararg-arity max-fixed-arity) 1 0)
+                               (count rest-params))
+                      :let [rest-params (subvec rest-params 0 n)]]
+                  (list '-invoke (into base-params rest-params)
+                        (cons '.-invoke$vararg (cond-> base-params rest-arg (conj rest-params)))))))))
+          more-params (vec (repeatedly (dec threshold) tmpvar))
+          more-param (tmpvar "more")
+          invoke-more-vararg-dispatch
+          (when vararg-params
+            `(if (< ~(- base-vararg-arity threshold) (count ~more-param))
+               (let [~(subvec vararg-params (dec (min threshold (count vararg-params)))) ~more-param]
+                 (. ~this ~'-invoke$vararg ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min threshold (count vararg-params)))))))
+               (/ 0)))
+          invoke-exts-dispatch
+          (->> (mapcat (fn [[meth params]]
+                         [(- (count params) threshold)
+                          (list 'let [(subvec params threshold) more-param]
+                                (list* '. this meth (concat more-params (subvec params threshold))))]) invoke-exts)
+               (list* 'case (list 'count more-param)))
+          invoke-more
+          (when (or vararg-params (seq invoke-exts))
+            (list (list '-invoke-more (into [this] (conj more-params more-param))
+                        (concat invoke-exts-dispatch (some-> invoke-more-vararg-dispatch list)))))]
+      (list* 'reify 'IFn (concat invoke-more invokes invoke-exts))))
+
+
+
+
+
+  '(fn* ([] "no")
+        ([a b c] "three")
+        ([a b d e f g & c] "ahah" "hihi")
+        ([aa ab ac ad] "ohoh") )
+
+  ;; threshold 5
+  ;; fix inf threshold
+  ((a b) (a b c & ds))
+  ((a b) (a b c d & es))
+  ((a b) (a b c d e & fs))
+  ((a b c d e))
+  ((a b c d e) (a b c d e & fs))
+  ((a b c d e) (a b c d e f & gs))
+  ((a b c d e f) (a b c d e f g h i & js))
+
+
+  ;; max-fixed-arity  < threshold
+  (defn -invoke-more [this a b c d e f g h i j more]
+    (let [a a b b c more] body))
+
+  ;; max-fixed-arity < threshold
+  ;; base-vararg < threshold inf egal sup ou nonexistant
+
+  )
