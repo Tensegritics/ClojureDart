@@ -232,7 +232,7 @@
            ;; this case should not happen
            (let [tmp (tmpvar)]
              [(conj (vec bindings) [tmp expr]) tmp]))))
-    (dart/if dart/try) ; no ternary for now
+    (dart/if dart/try dart/case) ; no ternary for now
     (let [tmp (tmpvar (first x))]
       [[[tmp x]]
        tmp])
@@ -332,7 +332,7 @@
       :else
       (throw (ex-info (str "Unsupported target for assignment: " target) {:target target})))))
 
-(defn emit-let [[_ bindings & body] env]
+(defn emit-let* [[_ bindings & body] env]
   (let [[dart-bindings env]
         (reduce
          (fn [[dart-bindings env] [k v]]
@@ -349,7 +349,7 @@
 (defn emit-do [[_ & body] env]
   (emit (list* 'let* [] body) env))
 
-(defn emit-loop [[_ bindings & body] env]
+(defn emit-loop* [[_ bindings & body] env]
   (let [[dart-bindings env]
         (reduce
          (fn [[dart-bindings env] [k v]]
@@ -365,6 +365,14 @@
 (defn emit-if [[_ test then else] env]
   (lifting [test (emit test env)]
     (list 'dart/if test (emit then env) (emit else env))))
+
+(defn emit-case* [[op expr clauses default] env]
+  (if (seq clauses)
+    (list 'dart/case (emit expr env)
+          (for [[vs e] clauses]
+            [(map #(emit % {}) vs) (emit e env)])
+          (emit default env))
+    (emit default env)))
 
 (defn- variadic? [[params]] (some #{'&} params))
 
@@ -382,7 +390,6 @@
 (defn- emit-variadic-body [[params & body] all-params env]
   #_(list* 'let* (map vector params all-params) body))
 
-(defn emit-fn [[_ & bodies] env]
   (let [name (when (symbol? (first bodies)) (first bodies))
         env (cond-> env name (assoc name (tmpvar name)))
         bodies (cond->> bodies name next)
@@ -421,6 +428,7 @@
     (if name ; systematically lift named functions
       (list 'dart/let [[nil dart-fn]] (env name))
       dart-fn)))
+(defn emit-fn* [[_ & bodies] env]
 
 (defn emit-method [[mname [this-param & fixed-params] opt-kind opt-params & body] env]
   ;; params destructuring will be added by a macro
@@ -477,7 +485,7 @@
      :methods dart-methods
      :nsm need-nsm}))
 
-(defn emit-reify [[_ opts & specs] env]
+(defn emit-reify* [[_ opts & specs] env]
   (let [class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
@@ -518,7 +526,7 @@
     (list (list 'dart/fn nil () () (list 'dart/let bindings dart-expr)))
     dart-expr)))
 
-(defn emit-deftype [[_ class-name fields opts & specs] env]
+(defn emit-deftype* [[_ class-name fields opts & specs] env]
   (let [env (into {} (for [f fields
                            :let [{:keys [tag mutable]} (meta f)]]
                        [f (with-meta (munge f) {:dart/type (some-> tag emit-type)
@@ -659,16 +667,17 @@
                    new emit-new
                    ns emit-ns
                    try emit-try
+                   case* emit-case*
                    quote emit-quoted
                    do emit-do
-                   let* emit-let
-                   loop* emit-loop
+                   let* emit-let*
+                   loop* emit-loop*
                    recur emit-recur
                    if emit-if
-                   fn* emit-fn
+                   fn* emit-fn*
                    def emit-def
-                   reify* emit-reify
-                   deftype* emit-deftype
+                   reify* emit-reify*
+                   deftype* emit-deftype*
                    emit-fn-call)]
         (emit x env))
       (coll? x) (emit-coll x env)
@@ -892,6 +901,26 @@
           (print "rethrow;\n")
           (write expr throw-locus))
         true)
+      dart/case
+      (let [[_ expr clauses default-expr] x
+            decl (declaration locus)
+            locus (declared locus)
+            _ (some-> decl print)
+            _ (print "switch(")
+            _ (write expr expr-locus)
+            _ (print "){\n")
+            exit (reduce
+                  (fn [exit [vals expr]]
+                    (run! #(do (print "case ") (write % expr-locus) (print ":\n")) vals)
+                    (if (write expr locus)
+                      exit
+                      (print "break;\n")))
+                  true
+                  clauses)
+            _ (print "default:\n")
+            exit (and (write default-expr locus) exit)]
+        (print "}\n")
+        exit)
       dart/if
       (let [[_ test then else] x
             decl (declaration locus)
@@ -1024,7 +1053,7 @@
   #?(:clj
      (let [in (clojure.lang.LineNumberingPushbackReader. in)]
        (loop []
-         (let [form (read {:eof in} in)]
+         (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
            (when-not (identical? form in)
              (emit form {})
              (recur)))))))
@@ -1432,6 +1461,9 @@
 
   (emit '(dart-is? 0 num) {})
   (dart/is 0 dc.num)
+
+  (emit `(str (case x# 12 "hello" (13 14) "bye")) {})
+
   (write *1 return-locus)
 
     )

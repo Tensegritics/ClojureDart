@@ -1,5 +1,15 @@
 (ns cljd.core
   (:refer-clojure :exclude [reify deftype defprotocol definterface]))
+(defmacro case [expr & clauses]
+  (if (or (symbol? expr) (odd? (count clauses)))
+    (let [clauses (vec (partition-all 2 clauses))
+          last-clause (peek clauses)
+          clauses (cond-> clauses (nil? (next last-clause)) pop)
+          default (if (next last-clause)
+                    `(throw (ex-info (str "No matching clause: " ~expr) {:value ~expr}))
+                    (first last-clause))]
+      (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
+    `(let [test# ~expr] (case test# ~@clauses))))
 
 (defn- roll-leading-opts [body]
   (loop [[k v & more :as body] (seq body) opts {}]
