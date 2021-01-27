@@ -1,5 +1,7 @@
 (ns cljd.core
-  (:refer-clojure :exclude [reify deftype defprotocol definterface]))
+  (:refer-clojure :exclude [reify deftype defprotocol definterface case])
+  (:require [clojure.core :as clj]))
+
 (defmacro case [expr & clauses]
   (if (or (symbol? expr) (odd? (count clauses)))
     (let [clauses (vec (partition-all 2 clauses))
@@ -25,7 +27,7 @@
              (if (seq? spec)
                (let [[mname arglist & body] spec
                      [positional-args [delim & opt-args]] (split-with (complement '#{.& ...}) arglist)
-                     delim (case delim .& :named :positional)
+                     delim (clj/case delim .& :named :positional)
                      opt-params
                      (for [[p d] (partition-all 2 1 opt-args)
                            :when (symbol? p)]

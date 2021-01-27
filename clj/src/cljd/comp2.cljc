@@ -390,6 +390,7 @@
 (defn- emit-variadic-body [[params & body] all-params env]
   #_(list* 'let* (map vector params all-params) body))
 
+(defn emit-fn* [[_ & bodies] env]
   (let [name (when (symbol? (first bodies)) (first bodies))
         env (cond-> env name (assoc name (tmpvar name)))
         bodies (cond->> bodies name next)
@@ -428,7 +429,6 @@
     (if name ; systematically lift named functions
       (list 'dart/let [[nil dart-fn]] (env name))
       dart-fn)))
-(defn emit-fn* [[_ & bodies] env]
 
 (defn emit-method [[mname [this-param & fixed-params] opt-kind opt-params & body] env]
   ;; params destructuring will be added by a macro
