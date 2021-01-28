@@ -1062,7 +1062,7 @@
           :let [{:keys [type dart/code]} v]]
     (print code)))
 
-(defn load-file [in]
+(defn load-input [in]
   #?(:clj
      (let [in (clojure.lang.LineNumberingPushbackReader. in)]
        (loop []
@@ -1071,8 +1071,8 @@
              (emit form {})
              (recur)))))))
 
-(defn compile-file [in]
-  (load-file in)
+(defn compile-input [in]
+  (load-input in)
   (let [{:keys [current-ns] :as all-nses} @nses
         libname (ns-to-lib current-ns)]
     (with-open [out (-> (java.io.File. *lib-path* libname)
@@ -1087,18 +1087,26 @@
   (let [base (replace-all (name ns-name) #"[.-]" {"." "/" "-" "_"})]
     [(str base ".cljd") (str base ".cljc")]))
 
+(defn find-file
+  "Search for a file on the clojure path."
+  [filename]
+  (first
+   (for [dir *clj-path*
+         :let [file (java.io.File. dir filename)]
+         :when (.exists file)]
+     file)))
+
+(defn load-file
+  [filename]
+  (with-open [in (java.io.FileInputStream. (find-file filename))]
+    (load-input in)))
+
 (defn compile-namespace [ns-name]
   ;; iterate first on file variants then on paths, not the other way!
   (let [file-paths (ns-to-paths ns-name)]
-    (if-some [file
-              (first
-               (for [file-path file-paths
-                     dir *clj-path*
-                     :let [file (java.io.File. dir file-path)]
-                     :when (.exists file)]
-                 file))]
+    (if-some [file (some find-file file-paths)]
       (with-open [in (java.io.FileInputStream. file)]
-        (compile-file (java.io.InputStreamReader. in "UTF-8")))
+        (compile-input (java.io.InputStreamReader. in "UTF-8")))
       (throw (ex-info (str "Could not locate "
                            (str/join " or " file-paths)
                            " on *clj-path*.")
