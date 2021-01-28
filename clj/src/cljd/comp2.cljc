@@ -376,59 +376,90 @@
 
 (defn- variadic? [[params]] (some #{'&} params))
 
-(defn- emit-non-variadic-body [[params & body] all-params env]
-  (let [env (into env (for [p params] [p (tmpvar p)]))
-        body (emit (cons 'do body) env)
-        bindings (map vector (map env params) all-params)]
-    (cond
-      (has-recur? body) (list 'dart/loop bindings body)
-      ;; the test below has no functional value,
-      ;; it avoids emitting useless dart/lets
-      (seq bindings) (list 'dart/let bindings body)
-      :else body)))
+(def ^:dynamic *threshold* 10)
 
-(defn- emit-variadic-body [[params & body] all-params env]
-  #_(list* 'let* (map vector params all-params) body))
+(defn- emit-ifn [name bodies env]
+  (let [fixed-bodies (remove variadic? bodies)
+        max-fixed-arity (some->> fixed-bodies seq (map first) (map count) (reduce max))
+        [vararg-params & vararg-body] (some #(when (variadic? %) %) bodies)
+        base-vararg-arity (some->> vararg-params (take-while (complement #{'&})) count)
+        this (tmpvar "this") ; TODO if named use name instead of this
+        invoke-exts
+        (for [[params & body] fixed-bodies
+              :let [n (count params)]
+              :when (>= n *threshold*)]
+          (list* (symbol (str "-invoke$ext" n)) (into [this] params) body))
+        invokes
+        (concat
+         (for [[params & body] fixed-bodies
+               :when (< (count params) *threshold*)]
+           (list* '-invoke (into [this] params) body))
+         (when vararg-params
+           (let [rest-arg (nth vararg-params (inc base-vararg-arity))
+                 base-params (into [this] (subvec vararg-params 0 base-vararg-arity))
+                 rest-params (vec (repeatedly (- *threshold* base-vararg-arity) tmpvar))]
+             (cons
+              (list* '-invoke$vararg (conj base-params rest-arg) vararg-body)
+              (for [n (range (if (= base-vararg-arity max-fixed-arity) 1 0)
+                             (count rest-params))
+                    :let [rest-params (subvec rest-params 0 n)]]
+                (list '-invoke (into base-params rest-params)
+                      (cons '.-invoke$vararg (cond-> base-params rest-arg (conj rest-params)))))))))
+        more-params (vec (repeatedly (dec *threshold*) tmpvar))
+        more-param (tmpvar "more")
+        invoke-more-vararg-dispatch
+        (when vararg-params
+          `(if (< ~(- base-vararg-arity *threshold*) (count ~more-param))
+             (let [~(subvec vararg-params (dec (min *threshold* (count vararg-params)))) ~more-param]
+               (. ~this ~'-invoke$vararg ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min *threshold* (count vararg-params)))))))
+             (/ 0)))
+        invoke-exts-dispatch
+        (->> (mapcat (fn [[meth params]]
+                       [(- (count params) *threshold*)
+                        (list 'let [(subvec params *threshold*) more-param]
+                              (list* '. this meth (concat more-params (subvec params *threshold*))))]) invoke-exts)
+             (list* 'case (list 'count more-param)))
+        invoke-more
+        (when (or vararg-params (seq invoke-exts))
+          (list (list '-invoke-more (into [this] (conj more-params more-param))
+                      (concat invoke-exts-dispatch (some-> invoke-more-vararg-dispatch list)))))]
+    (list* 'reify 'IFn (concat invoke-more invokes invoke-exts))))
 
+(defn- emit-dart-fn [dart-fn-name [params & body] env]
+  (let [[fixed-params [delim & opt-params]] (split-with (complement #{'... '.&}) params)
+        opt-params (for [[p d] (partition-all 2 1 opt-params)
+                         :when (symbol? p)]
+                     [p (when-not (symbol? d) d)])
+        opt-kind (case delim .& :named :positional)
+        dart-fixed-params (map tmpvar fixed-params)
+        dart-opt-params (for [[p d] opt-params]
+                          [(case opt-kind
+                             :named p ; here p must be a valid dart identifier
+                             :positional (tmpvar p))
+                           (emit d env)])
+        env (into env (zipmap (concat fixed-params (map first opt-params))
+                              (concat dart-fixed-params (map first dart-opt-params))))
+        dart-body (emit (cons 'do body) env)
+        recur-params (when (has-recur? dart-body) dart-fixed-params)
+        dart-fixed-params (if recur-params
+                            (map tmpvar fixed-params)
+                            dart-fixed-params)
+        dart-body (cond->> dart-body
+                    recur-params
+                    (list 'dart/loop (map vector recur-params dart-fixed-params)))
+        dart-fn
+        (list 'dart/fn dart-fixed-params opt-kind dart-opt-params dart-body)]
+    (if dart-fn-name
+      (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name)
+      dart-fn)))
+
+(defn emit-fn* [[_ & bodies] env]
   (let [name (when (symbol? (first bodies)) (first bodies))
         env (cond-> env name (assoc name (tmpvar name)))
-        bodies (cond->> bodies name next)
-        bodies (cond-> bodies (vector? (first bodies)) list)
-        [variadic & too-many-variadics] (filter variadic? bodies)
-        variadic-min
-        (some-> variadic first (take-while (complement #{'&})) count)
-        non-variadics
-        (->> bodies (remove variadic?)
-             (group-by (comp count first))
-             (sort-by key)
-             (into []
-                   (map (fn [[n [body & too-many-bodies]]]
-                          (when too-many-bodies
-                            (throw (ex-info "Can't have 2 overloads with same arity" {})))
-                          body))))
-        non-variadics-max (-> non-variadics peek first count)
-        params-min (or (some-> non-variadics ffirst count) variadic-min)
-        params-max (if variadic 20 non-variadics-max)
-        all-params (vec (repeatedly params-max tmpvar))
-        last-body (or (some-> variadic (emit-variadic-body all-params env))
-                      (some-> (peek non-variadics) (emit-non-variadic-body all-params env)))
-        non-variadics (cond-> non-variadics (not variadic) pop)
-        dart-fn
-        (list 'dart/fn (env name) (take params-min all-params) (drop params-min all-params)
-              (reduce
-               (fn [else [params :as body]]
-                 (let [next-p (nth all-params (count params))]
-                   (list 'dart/if (list (emit 'cljd/missing-arg? env) next-p)
-                         (emit-non-variadic-body body all-params env)
-                         else)))
-               last-body
-               (rseq non-variadics)))]
-    (when (some-> variadic-min (< non-variadics-max))
-      (throw (ex-info "Can't have fixed arity function with more params than variadic function" {})))
-    (if name ; systematically lift named functions
-      (list 'dart/let [[nil dart-fn]] (env name))
-      dart-fn)))
-(defn emit-fn* [[_ & bodies] env]
+        [body nbody :as bodies] (cond->> bodies (vector? (first bodies)) list name next)]
+    (if (or (seq nbody) (variadic? body))
+      (emit-ifn name bodies env)
+      (emit-dart-fn name body env))))
 
 (defn emit-method [[mname [this-param & fixed-params] opt-kind opt-params & body] env]
   ;; params destructuring will be added by a macro
@@ -523,7 +554,7 @@
   [expr env]
   (let [dart-expr (emit expr env)]
   (if-some [[bindings dart-expr] (liftable dart-expr)]
-    (list (list 'dart/fn nil () () (list 'dart/let bindings dart-expr)))
+    (list (list 'dart/fn nil () :positional () (list 'dart/let bindings dart-expr)))
     dart-expr)))
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
@@ -706,6 +737,10 @@
   {:pre ""
    :post ";\n"})
 
+(defn named-fn-locus [name]
+  {:pre name
+   :post "\n"})
+
 (def return-locus
   {:pre "return "
    :post ";\n"
@@ -791,6 +826,17 @@
     (nil? x) (print 'null)
     :else (pr x)))
 
+(defn write-params [fixed-params opt-kind opt-params]
+  (print "(")
+  (doseq [p fixed-params] (print p) (print ", "))
+  (when (seq opt-params)
+    (print (case opt-kind :positional "[" "{"))
+    (doseq [[p d] opt-params]
+      (print p "= ")
+      (write d arg-locus))
+    (print (case opt-kind :positional "]" "}")))
+  (print ")"))
+
 (defn write-class [{class-name :name :keys [extends implements with fields ctor-params super-ctor methods nsm]}]
   (let [abstract (-> class-name meta :abstract)]
     (when abstract (print "abstract "))
@@ -813,27 +859,19 @@
     (write-args (:args super-ctor))
     (print ";\n")
 
-    (doseq [[mname dart-fixed-params opt-kind dart-opt-params no-explicit-body dart-body] methods
+    (doseq [[mname fixed-params opt-kind opt-params no-explicit-body body] methods
             :let [{:keys [getter setter]} (meta mname)]]
       (newline)
       (cond
         getter (print "get ")
         setter (print "set "))
       (print mname)
-      (when-not getter (print "("))
-      (doseq [p dart-fixed-params] (print p) (print ", "))
-      (when (seq dart-opt-params)
-        (print (case opt-kind :positional "[" "{"))
-        (doseq [[p d] dart-opt-params]
-          (print p "= ")
-          (write d arg-locus))
-        (print (case opt-kind :positional "]" "}")))
-      (when-not getter (print ")"))
+      (when-not getter (write-params fixed-params opt-kind opt-params))
       (if (and abstract no-explicit-body)
         (print ";\n")
         (do
           (print "{\n")
-          (write dart-body return-locus)
+          (write body return-locus)
           (print "}\n"))))
 
     (when nsm
@@ -855,23 +893,19 @@
     (seq? x)
     (case (first x)
       dart/fn
-      (let [[_ name fixed-params opt-params body] x]
+      (let [[_ fixed-params opt-kind opt-params body] x]
         (print (:pre locus))
-        (some-> name print) ; name is not nil only when locus is statement
-        (print "(")
-        (run! print (interleave fixed-params (repeat ", ")))
-        (when (seq opt-params)
-          (print "[")
-          (run! print (interleave opt-params (repeat ", ")))
-          (print "]"))
-        (print "){\n")
+        (write-params fixed-params opt-kind opt-params)
+        (print "{\n")
         (write body return-locus)
         (print "}")
         (print (:post locus)))
       dart/let
       (let [[_ bindings expr] x]
         (or
-         (some (fn [[v e]] (write e (if v (var-locus v) statement-locus)))
+         (some (fn [[v e]] (write e (cond (nil? v) statement-locus
+                                          (and (seq? e) (= 'dart/fn (first e))) (named-fn-locus v)
+                                          :else (var-locus v))))
                bindings)
           (write expr locus)))
       dart/try
@@ -1479,6 +1513,12 @@
 
   (write *1 return-locus)
 
+  (emit `(case 12  12 "hello" (13 14) "bye") {})
+
+  (macroexpand-1 {} '(case 12 12 "hello"))
+
+  (clojure.core/let [test__6312__auto__ 12] (cljd.core/case test__6312__auto__ 12 "hello"))
+
     )
 
 (comment
@@ -1491,7 +1531,7 @@
   ;; (fn ([] "no") ([a & b] b))
   ;; threshold a 4
   (let [env  {}
-        threshold 10 ; means up to (dec threshold) fn args incl
+        threshold 2 ; means up to (dec threshold) fn args incl
         f '(fn* ([] "no")
                 ([a b c] "three")
                 ([a b d e f g & c] "ahah" "hihi")
@@ -1554,27 +1594,34 @@
 
 
 
-  '(fn* ([] "no")
-        ([a b c] "three")
-        ([a b d e f g & c] "ahah" "hihi")
-        ([aa ab ac ad] "ohoh") )
-
-  ;; threshold 5
-  ;; fix inf threshold
-  ((a b) (a b c & ds))
-  ((a b) (a b c d & es))
-  ((a b) (a b c d e & fs))
-  ((a b c d e))
-  ((a b c d e) (a b c d e & fs))
-  ((a b c d e) (a b c d e f & gs))
-  ((a b c d e f) (a b c d e f g h i & js))
 
 
-  ;; max-fixed-arity  < threshold
-  (defn -invoke-more [this a b c d e f g h i j more]
-    (let [a a b b c more] body))
+  )
 
-  ;; max-fixed-arity < threshold
-  ;; base-vararg < threshold inf egal sup ou nonexistant
+
+(comment
+
+
+  (let [env  {}
+        threshold 2 ; means up to (dec threshold) fn args incl
+        f '(fn* ([] "no")
+                ([a b c] "three")
+                ([a b d e f g & c] "ahah" "hihi")
+                #_([aa ab ac ad] "ohoh") )
+        #_#_f '(fn* ([& more] "hahhahaha" "ohohohoh" more))
+        #_f #_'(fn* ([a] body))
+        #_'(fn* [a] body)
+        #_'(fn* ([] "0") ([a] a))
+        #_'(fn*  ([a] body) ([a & more] body))
+        #_'(fn* ([] "oups" "coucou") ([a b c d e f & prefix] "e f g" prefix))
+        #_'(fn* ([] "oups" "coucou") ([a] "coucou") ([a b c prefix] "bebe " prefix) ([a b c d e f prefix] "e f g" prefix))])
+
+
+
+
+  (emit-fn* '(fn ([] "coucou") ([a b] a)) {})
+
+
+
 
   )
