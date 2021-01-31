@@ -262,17 +262,18 @@
 
 (defn emit-fn-call [fn-call env]
   (let [[positionals nameds] (split-args fn-call)
-        [bindings fn-call]
+        [bindings fn-call']
         (as-> [nil ()] acc
-          (reduce (fn [[bindings fn-call] [k x]]
+          (reduce (fn [[bindings fn-call'] [k x]]
                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
-                      [(concat bindings' bindings) (list* k x' fn-call)]))
+                      [(concat bindings' bindings) (list* k x' fn-call')]))
                   acc (reverse (partition 2 nameds)))
-          (reduce (fn [[bindings fn-call] x]
+          (reduce (fn [[bindings fn-call'] x]
                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
-                      [(concat bindings' bindings) (cons x' fn-call)]))
+                      [(concat bindings' bindings) (cons x' fn-call')]))
                   acc (reverse positionals)))]
-    (cond->> fn-call (seq bindings) (list 'dart/let bindings))))
+    (cond->> (cons (vary-meta (first fn-call') merge (meta (first fn-call))) (next fn-call'))
+      (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-coll
   ([coll env] (emit-coll identity coll env))
@@ -292,8 +293,8 @@
          fn-call (list (emit fn-sym env) (vec items))]
      (cond->> fn-call (seq bindings) (list 'dart/let bindings)))))
 
-(defn emit-new [[_ & class+args] env]
-  (emit-fn-call class+args env))
+(defn emit-new [[_ class & args] env]
+  (emit-fn-call (cons (vary-meta class assoc :dart/native true) args) env))
 
 (defn emit-dot [[_ obj member & args] env]
   (let [member (name member)
@@ -404,14 +405,15 @@
                              (count rest-params))
                     :let [rest-params (subvec rest-params 0 n)]]
                 (list '-invoke (into base-params rest-params)
-                      (cons '.-invoke$vararg (cond-> base-params rest-arg (conj rest-params)))))))))
+                      (cons '.--invoke$vararg (cond-> base-params rest-arg (conj rest-params)))
+                      #_(list* '. this '-invoke$vararg (next (cond-> base-params rest-arg (conj rest-params))))))))))
         more-params (vec (repeatedly (dec *threshold*) tmpvar))
         more-param (tmpvar "more")
         invoke-more-vararg-dispatch
         (when vararg-params
           `(if (< ~(- base-vararg-arity *threshold*) (count ~more-param))
              (let [~(subvec vararg-params (dec (min *threshold* (count vararg-params)))) ~more-param]
-               (. ~this ~'-invoke$vararg ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min *threshold* (count vararg-params)))))))
+               (. ~this ~'--invoke$vararg ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min *threshold* (count vararg-params)))))))
              (/ 0)))
         invoke-exts-dispatch
         (->> (mapcat (fn [[meth params]]
@@ -423,7 +425,7 @@
         (when (or vararg-params (seq invoke-exts))
           (list (list '-invoke-more (into [this] (conj more-params more-param))
                       (concat invoke-exts-dispatch (some-> invoke-more-vararg-dispatch list)))))]
-    (list* 'reify 'IFn (concat invoke-more invokes invoke-exts))))
+    (emit (list* 'reify 'IFn (concat invoke-more invokes invoke-exts)) env)))
 
 (defn- emit-dart-fn [dart-fn-name [params & body] env]
   (let [[fixed-params [delim & opt-params]] (split-with (complement #{'... '.&}) params)
@@ -1071,10 +1073,23 @@
             (write-args args)))
         (print (:post locus)))
       ;; plain fn call
-      (let [[f & args] x]
+      (let [[f & args] x
+            {:keys [dart/native]} (meta f)]
         (print (:pre locus))
-        (write f expr-locus)
-        (write-args args)
+        (if native
+          (do (write f expr-locus)
+              (write-args args))
+          (do (print "((")
+              (write f expr-locus)
+              (print " is IFn) ? (")
+              (write f expr-locus)
+              (print " as IFn).invoke")
+              (write-args args)
+              (print " : (")
+              (write f expr-locus)
+              (print " as Function)")
+              (write-args args)
+              (print ")")))
         (print (:post locus))))
     :else (do
             (print (:pre locus))
