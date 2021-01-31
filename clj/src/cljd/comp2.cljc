@@ -456,8 +456,8 @@
 (defn emit-fn* [[_ & bodies] env]
   (let [name (when (symbol? (first bodies)) (first bodies))
         env (cond-> env name (assoc name (tmpvar name)))
-        [body nbody :as bodies] (cond->> bodies (vector? (first bodies)) list name next)]
-    (if (or (seq nbody) (variadic? body))
+        [body & more-bodies :as bodies] (cond->> bodies (vector? (first bodies)) list name next)]
+    (if (or more-bodies (variadic? body))
       (emit-ifn name bodies env)
       (emit-dart-fn name body env))))
 
