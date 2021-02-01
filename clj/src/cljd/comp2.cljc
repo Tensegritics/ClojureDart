@@ -173,21 +173,102 @@
          (symbol (str (munge prefix) "_$" (swap! gens inc) "_"))
        tag (vary-meta assoc :dart/type (emit-type tag))))))
 
+
+
+#?(:clj
+   (do
+     (defn- roll-leading-opts [body]
+       (loop [[k v & more :as body] (seq body) opts {}]
+         (if (and body (keyword? k))
+           (recur more (assoc opts k v))
+           [opts body])))
+
+     (defn- expand-opts+specs [opts+specs]
+       (let [[opts specs] (roll-leading-opts opts+specs)
+             current-ns (@nses (:current-ns @nses))
+             last-seen-type (atom nil)]
+         (cons opts
+               (map
+                (fn [spec]
+                  (if (seq? spec)
+                    (let [[mname arglist & body] spec
+                          mname (get-in current-ns [@last-seen-type :meta :protocol :sigs mname (count arglist) :dart/name] mname)
+                          [positional-args [delim & opt-args]] (split-with (complement '#{.& ...}) arglist)
+                          delim (case delim .& :named :positional)
+                          opt-params
+                          (for [[p d] (partition-all 2 1 opt-args)
+                                :when (symbol? p)]
+                            [p (when-not (symbol? d) d)])]
+                      ;; TODO: mname resolution against protocol ifaces
+                      (list* mname positional-args delim opt-params body))
+                    (reset! last-seen-type spec)))
+                specs))))
+
+     #_(defmacro reify [& args]
+       `(reify* ~@(expand-opts+specs args)))
+
+     (defn-  expand-deftype [& args]
+       (let [[class-name fields & args] args]
+         (list 'do
+               (list* 'deftype* class-name fields
+                      (expand-opts+specs args))
+               (list 'defn
+                     (symbol (str "->" class-name))
+                     (vec fields)
+                     (list* 'new class-name fields)))))
+
+     (defn- expand-definterface [iface & meths]
+       (list* 'deftype* (vary-meta iface assoc :abstract true) []
+              (expand-opts+specs (for [[meth args] meths]
+                                   (list meth (into '[_] args))))))
+
+     (defn- expand-defprotocol [proto & methods]
+       ;; TODO do something with docstrings
+       (let [[doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
+             method-mapping
+             (into {} (map (fn [[m & arglists]]
+                             (let [dart-m (munge m)
+                                   [doc-string & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
+                               [(with-meta m {:doc doc-string}) (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" l))
+                                                                                                      :args %}]))
+                                                                      arglists)]))) methods)
+             protocol-meta {:sigs method-mapping}
+             class-name (vary-meta proto assoc :protocol protocol-meta)]
+         (list* 'do
+                (list* 'definterface class-name
+                       (for [[method arity-mapping] method-mapping
+                             {:keys [dart/name args]} (vals arity-mapping)]
+                         (list name (subvec args 1))))
+                (concat
+                 (for [[method arity-mapping] method-mapping]
+                   (list* 'defn method
+                          (for [{:keys [dart/name args]} (vals arity-mapping)]
+                            (list args
+                                  (list 'if (list 'dart-is? (first args) class-name)
+                                        (list* '. (first args) name (next args))
+                                        #_TODO_EXTENSIONS)))))
+                 (list class-name)))))))
+
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
     (let [f-name (name f)
           ;; TODO symbol resolution and macro lookup in cljd
-          #?@(:clj [clj-ns (find-ns (:current-ns @nses))
-                    clj-var (ns-resolve clj-ns f)
-                    clj-var (or
-                             (when (some-> clj-var meta :ns ns-name (= 'clojure.core))
-                               (ns-resolve clj-ns (symbol "cljd.core" (-> clj-var meta :name name))))
-                             clj-var)])]
+          #?@(:clj [clj-var (ns-resolve (find-ns (:current-ns @nses)) f)
+                    #_#_clj-ns (find-ns (:current-ns @nses))
+                    #_#_clj-var (ns-resolve clj-ns f)
+                    #_#_clj-var (or
+                                 (when (some-> clj-var meta :ns ns-name (= 'clojure.core))
+                                   (ns-resolve clj-ns (symbol "cljd.core" (-> clj-var meta :name name))))
+                                 clj-var)])]
       ;; TODO add proper expansion here, before defaults
       (cond
         (env f) form
-        #?@(:clj ; macro override
-            [(= 'ns f) form])
+        #?@(:clj ; macro overrides
+            [(= 'ns f) form
+             (= 'reify f) (cons 'reify* (expand-opts+specs args))
+             (= 'deftype f) (apply expand-deftype args)
+             (= 'definterface f) (apply expand-definterface args)
+             (= 'defprotocol f) (apply expand-defprotocol args)])
         (= '. f) form
         #?@(:clj
             [(-> clj-var meta :macro)
@@ -261,18 +342,22 @@
     [positional-args named-args]))
 
 (defn emit-fn-call [fn-call env]
-  (let [[positionals nameds] (split-args fn-call)
-        [bindings fn-call']
+  (let [[[f & positionals] nameds] (split-args fn-call)
+        [bindings dart-fn-args]
         (as-> [nil ()] acc
-          (reduce (fn [[bindings fn-call'] [k x]]
+          (reduce (fn [[bindings dart-fn-args] [k x]]
                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
-                      [(concat bindings' bindings) (list* k x' fn-call')]))
+                      [(concat bindings' bindings) (list* k x' dart-fn-args)]))
                   acc (reverse (partition 2 nameds)))
-          (reduce (fn [[bindings fn-call'] x]
+          (reduce (fn [[bindings dart-fn-args] x]
                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
-                      [(concat bindings' bindings) (cons x' fn-call')]))
-                  acc (reverse positionals)))]
-    (cond->> (cons (vary-meta (first fn-call') merge (meta (first fn-call))) (next fn-call'))
+                      [(concat bindings' bindings) (cons x' dart-fn-args)]))
+                  acc (reverse positionals)))
+        ;; always force lifting of non-atomic f to avoid multiple evaluation in fn call sites (see write)
+        [bindings' dart-f] (lift-arg true (emit f env))
+        dart-f (cond-> dart-f (seq nameds) (vary-meta assoc :dart/native true))
+        bindings (concat bindings' bindings)]
+    (cond->> (cons dart-f dart-fn-args)
       (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-coll
@@ -294,7 +379,7 @@
      (cond->> fn-call (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-new [[_ class & args] env]
-  (emit-fn-call (cons (vary-meta class assoc :dart/native true) args) env))
+  (emit-fn-call (cons (vary-meta class assoc :dart true) args) env))
 
 (defn emit-dot [[_ obj member & args] env]
   (let [member (name member)
@@ -425,7 +510,8 @@
         (when (or vararg-params (seq invoke-exts))
           (list (list '-invoke-more (into [this] (conj more-params more-param))
                       (concat invoke-exts-dispatch (some-> invoke-more-vararg-dispatch list)))))]
-    (emit (list* 'reify 'IFn (concat invoke-more invokes invoke-exts)) env)))
+    (emit (list* 'reify 'IFn (concat invoke-more invokes invoke-exts)) env)
+    #_(list* 'reify 'IFn (concat invoke-more invokes invoke-exts))))
 
 (defn- emit-dart-fn [dart-fn-name [params & body] env]
   (let [[fixed-params [delim & opt-params]] (split-with (complement #{'... '.&}) params)
@@ -606,14 +692,18 @@
 
 (defn emit-symbol [x env]
   (let [nses @nses
-        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
-    (or
-     (env x)
-     (-> x current-ns :dart/name)
-     (get mappings x)
-     (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
-     #_"TODO next form should throw"
-     (symbol (str "GLOBAL_" x)))))
+        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))
+        meta-x (meta x)
+        dart-sym
+        (or
+         (env x)
+         (-> x current-ns :dart/name)
+         (get mappings x)
+         (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
+         #_"TODO next form should throw"
+         (symbol (str "GLOBAL_" x)))]
+    (with-meta dart-sym {:dart/native (:dart meta-x)
+                         :dart/ifn (:clj meta-x)})))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -1074,22 +1164,29 @@
         (print (:post locus)))
       ;; plain fn call
       (let [[f & args] x
-            {:keys [dart/native]} (meta f)]
+            {:keys [dart/native dart/ifn]} (meta f)]
         (print (:pre locus))
-        (if native
+        (cond
+          native
           (do (write f expr-locus)
               (write-args args))
-          (do (print "((")
-              (write f expr-locus)
-              (print " is IFn) ? (")
+          ifn
+          (do (print "(")
               (write f expr-locus)
               (print " as IFn).invoke")
-              (write-args args)
-              (print " : (")
-              (write f expr-locus)
-              (print " as Function)")
-              (write-args args)
-              (print ")")))
+              (write-args args))
+          :else
+          (do
+            (print "((")
+            (write f expr-locus)
+            (print " is IFn) ? (")
+            (write f expr-locus)
+            (print " as IFn).invoke")
+            (write-args args)
+            (print " : ")
+            (write f expr-locus)
+            (write-args args)
+            (print ")")))
         (print (:post locus))))
     :else (do
             (print (:pre locus))
@@ -1544,83 +1641,6 @@
 
     )
 
-(comment
-
-  ;; 1/ arite unique
-  ;; 1a/ soit y'a pas de varargs -> map sur des fn dart natives
-  ;; 1b/ soit y'a du varargs -> par [a b c d e & more] (metthons threshold a 2)
-  ;; 1b/ de 0 a threshold -> -invoke []
-  ;; 1b/ de threshold a (params - 2)
-  ;; (fn ([] "no") ([a & b] b))
-  ;; threshold a 4
-  (let [env  {}
-        threshold 2 ; means up to (dec threshold) fn args incl
-        f '(fn* ([] "no")
-                ([a b c] "three")
-                ([a b d e f g & c] "ahah" "hihi")
-                #_([aa ab ac ad] "ohoh") )
-        #_#_f '(fn* ([& more] "hahhahaha" "ohohohoh" more))
-        #_f #_'(fn* ([a] body))
-        #_'(fn* [a] body)
-        #_'(fn* ([] "0") ([a] a))
-        #_'(fn*  ([a] body) ([a & more] body))
-        #_'(fn* ([] "oups" "coucou") ([a b c d e f & prefix] "e f g" prefix))
-        #_'(fn* ([] "oups" "coucou") ([a] "coucou") ([a b c prefix] "bebe " prefix) ([a b c d e f prefix] "e f g" prefix))]
-    (let [bodies (next f)
-          fixed-bodies (remove variadic? bodies)
-          max-fixed-arity (some->> fixed-bodies seq (map first) (map count) (reduce max))
-          [vararg-params & vararg-body] (some #(when (variadic? %) %) bodies)
-          base-vararg-arity (some->> vararg-params (take-while (complement #{'&})) count)
-          this (tmpvar "this") ; TODO if named use name instead of this
-          invoke-exts
-          (for [[params & body] fixed-bodies
-                :let [n (count params)]
-                :when (>= n threshold)]
-            (list* (symbol (str "-invoke$ext" n)) (into [this] params) body))
-          invokes
-          (concat
-           (for [[params & body] fixed-bodies
-                 :when (< (count params) threshold)]
-             (list* '-invoke (into [this] params) body))
-           (when vararg-params
-             (let [rest-arg (nth vararg-params (inc base-vararg-arity))
-                   base-params (into [this] (subvec vararg-params 0 base-vararg-arity))
-                   rest-params (vec (repeatedly (- threshold base-vararg-arity) tmpvar))]
-               (cons
-                (list* '-invoke$vararg (conj base-params rest-arg) vararg-body)
-                (for [n (range (if (= base-vararg-arity max-fixed-arity) 1 0)
-                               (count rest-params))
-                      :let [rest-params (subvec rest-params 0 n)]]
-                  (list '-invoke (into base-params rest-params)
-                        (cons '.-invoke$vararg (cond-> base-params rest-arg (conj rest-params)))))))))
-          more-params (vec (repeatedly (dec threshold) tmpvar))
-          more-param (tmpvar "more")
-          invoke-more-vararg-dispatch
-          (when vararg-params
-            `(if (< ~(- base-vararg-arity threshold) (count ~more-param))
-               (let [~(subvec vararg-params (dec (min threshold (count vararg-params)))) ~more-param]
-                 (. ~this ~'-invoke$vararg ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min threshold (count vararg-params)))))))
-               (/ 0)))
-          invoke-exts-dispatch
-          (->> (mapcat (fn [[meth params]]
-                         [(- (count params) threshold)
-                          (list 'let [(subvec params threshold) more-param]
-                                (list* '. this meth (concat more-params (subvec params threshold))))]) invoke-exts)
-               (list* 'case (list 'count more-param)))
-          invoke-more
-          (when (or vararg-params (seq invoke-exts))
-            (list (list '-invoke-more (into [this] (conj more-params more-param))
-                        (concat invoke-exts-dispatch (some-> invoke-more-vararg-dispatch list)))))]
-      (list* 'reify 'IFn (concat invoke-more invokes invoke-exts))))
-
-
-
-
-
-
-
-  )
-
 
 (comment
 
@@ -1640,10 +1660,166 @@
         #_'(fn* ([] "oups" "coucou") ([a] "coucou") ([a b c prefix] "bebe " prefix) ([a b c d e f prefix] "e f g" prefix))])
 
 
+  (emit '(.add (List.) 1) {})
+  (write *1 statement-locus)
 
 
-  (emit-fn* '(fn ([] "coucou") ([a b] a)) {})
+  (emit '(fn ([] "coucou") ([a b] a)) {})
 
+  ;; fn call
+  ;; mname resolution
+  ;; reify call
+  ;; invoke-more simplififcation when (count) < 0
+
+  (macroexpand-1 {} '(fn ([] "coucou") ([a & b] "pas bien")))
+
+  (emit '(defprotocol IFn (-invoke [this] [this a] [this a b])) {})
+  (macroexpand-1 {} '(defprotocol IFn (-invoke [this] [this a] [this a b])))
+
+  (emit-fn* '(fn* coucou ([] "coucou") ([one] one)) {})
+
+  (macroexpand {} '(definterface
+                       IFn
+                     (_invoke$7 [a b c d e f])
+                     (_invoke$20 [a b c d e f g h i j k l m n o p q r s])
+                     (_invoke$1 [])
+                     (_invoke$4 [a b c])
+                     (_invoke$15 [a b c d e f g h i j k l m n])
+                     (_invoke$21 [a b c d e f g h i j k l m n o p q r s t])
+                     (_invoke$13 [a b c d e f g h i j k l])
+                     (_invoke$22 [a b c d e f g h i j k l m n o p q r s t rest])
+                     (_invoke$6 [a b c d e])
+                     (_invoke$17 [a b c d e f g h i j k l m n o p])
+                     (_invoke$3 [a b])
+                     (_invoke$12 [a b c d e f g h i j k])
+                     (_invoke$2 [a])
+                     (_invoke$19 [a b c d e f g h i j k l m n o p q r])
+                     (_invoke$11 [a b c d e f g h i j])
+                     (_invoke$9 [a b c d e f g h])
+                     (_invoke$5 [a b c d])
+                     (_invoke$14 [a b c d e f g h i j k l m])
+                     (_invoke$16 [a b c d e f g h i j k l m n o])
+                     (_invoke$10 [a b c d e f g h i])
+                     (_invoke$18 [a b c d e f g h i j k l m n o p q])
+                     (_invoke$8 [a b c d e f g])))
+
+  (macroexpand {}  '(defprotocol IFn
+                      (-invoke
+                        [this]
+                        [this a]
+                        [this a b]
+                        [this a b c]
+                        [this a b c d]
+                        [this a b c d e]
+                        [this a b c d e f]
+                        [this a b c d e f g]
+                        [this a b c d e f g h]
+                        [this a b c d e f g h i]
+                        [this a b c d e f g h i j]
+                        [this a b c d e f g h i j k]
+                        [this a b c d e f g h i j k l]
+                        [this a b c d e f g h i j k l m]
+                        [this a b c d e f g h i j k l m n]
+                        [this a b c d e f g h i j k l m n o]
+                        [this a b c d e f g h i j k l m n o p]
+                        [this a b c d e f g h i j k l m n o p q]
+                        [this a b c d e f g h i j k l m n o p q r]
+                        [this a b c d e f g h i j k l m n o p q r s]
+                        [this a b c d e f g h i j k l m n o p q r s t]
+                        [this a b c d e f g h i j k l m n o p q r s t rest])))
+
+  (emit '(defprotocol IFn
+           (-invoke
+             [this]
+             [this a]
+             [this a b]
+             [this a b c]
+             [this a b c d]
+             [this a b c d e]
+             [this a b c d e f]
+             [this a b c d e f g]
+             [this a b c d e f g h]
+             [this a b c d e f g h i]
+             [this a b c d e f g h i j]
+             [this a b c d e f g h i j k]
+             [this a b c d e f g h i j k l]
+             [this a b c d e f g h i j k l m]
+             [this a b c d e f g h i j k l m n]
+             [this a b c d e f g h i j k l m n o]
+             [this a b c d e f g h i j k l m n o p]
+             [this a b c d e f g h i j k l m n o p q]
+             [this a b c d e f g h i j k l m n o p q r]
+             [this a b c d e f g h i j k l m n o p q r s]
+             [this a b c d e f g h i j k l m n o p q r s t]
+             [this a b c d e f g h i j k l m n o p q r s t rest])) {})
+
+
+
+  nses
+
+
+
+
+
+  nses
+
+
+
+
+
+
+
+
+  ;; S0 : sources du compilo qui interprète abstract et qui utilise abstract
+  ;; C0 compilo résultatnt de S0
+  ;; S1 : S0 sauf que le compilo a été modifié pour comprendre recondite et qui utilise abstract
+  ;; C0(S1) -> C1
+  ;; S2 : S1 sauf que les usages de asbtract ont ét traduits en recondite
+  ;; C1(S2) -> C2
+
+  ;; S0 : compilo c qui target x64
+  ;; S1 : compilo c qui target ARM
+  ;; C0(S1) -> C1 compilateur c (binaire x64) qui génère du ARM
+  ;; S2 : tweaks sur S1 pour accomoder le changementde plateforme ()
+  ;; C1(S2) -> C2 compilo c (binaire arm ) qui génère du arm
+
+
+  (emit '(deftype MyClass [^:mutable ^List a b ^Map c]
+           :extends (ParentClass. (+ a b) (if 1 2 3))
+           IMarker
+           IProtocol_
+           (meth [a] "a")
+           (meth [b c] "e")
+           (meth [c d e] "oo")) {})
+
+  (macroexpand-1 {} '(deftype MyClass [^:mutable ^List a b ^Map c]
+                       :extends (ParentClass. (+ a b) (if 1 2 3))
+                       IMarker
+                       IProtocol_
+                       (meth [a] "a")
+                       (meth [b c] "e")
+                       (meth [c d e] "oo")))
+
+  (emit '(deftype*
+           MyClass
+           [^{:tag List, :mutable true} a b ^Map c]
+           {:extends (ParentClass. (+ a b) (if 1 2 3))}
+           IMarker
+           IProtocol_
+           (meth (a) :positional () "a")
+           (meth (b c) :positional () "e")
+           (meth (c d e) :positional () "oo")) {})
+
+  {:extends GLOBAL_ParentClass
+   :ctor-params ((. a) (. b) (. c))
+   :nsm true
+   :name MyClass
+   :fields (a b c)
+   :super-ctor {:method nil
+                :args ((GLOBAL_+ a b) ((dart/fn nil () :positional () (dart/let [[if$_$2802_ (dart/if 1 2 3)]] if$_$2802_))))}
+   :methods ([meth () :positional () false a] [meth (c_$2803_) :positional () false e] [meth (d_$2804_ e_$2805_) :positional () false oo])
+   :with ()
+   :implements (IMarker IProtocol_)}
 
 
 
