@@ -814,6 +814,11 @@
   (lifting [x (emit x env)]
            (list 'dart/is x (emit type env))))
 
+(defn- ensure-new-special [x]
+  (case (and (symbol? x) (name x))
+    "dart-is?" 'dart-is?
+    x))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
@@ -825,7 +830,7 @@
       (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
       (nil? x) nil
       (seq? x)
-      (let [emit (case (first x)
+      (let [emit (case (-> (first x) ensure-new-special)
                    . emit-dot
                    set! emit-set!
                    ; have to think twice about hwo to handle namespacing of new specials by syntax quote -cgrand
