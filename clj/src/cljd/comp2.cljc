@@ -189,6 +189,15 @@
      (cond-> (symbol (str hint "_$" n "_"))
        tag (vary-meta assoc :dart/type (emit-type tag))))))
 
+(defn- parse-dart-params [params]
+  (let [[fixed-params [delim & opt-params]] (split-with (complement '#{.& ...}) params)]
+    {:fixed-params fixed-params
+     :opt-kind (case delim .& :named :positional)
+     :opt-params
+     (for [[p d] (partition-all 2 1 opt-params)
+           :when (symbol? p)]
+       [p (when-not (symbol? d) d)])}))
+
 #?(:clj
    (do
      (defn- roll-leading-opts [body]
@@ -206,15 +215,9 @@
                 (fn [spec]
                   (if (seq? spec)
                     (let [[mname arglist & body] spec
-                          mname (get-in current-ns [@last-seen-type :meta :protocol :sigs mname (count arglist) :dart/name] mname)
-                          [positional-args [delim & opt-args]] (split-with (complement '#{.& ...}) arglist)
-                          delim (case delim .& :named :positional)
-                          opt-params
-                          (for [[p d] (partition-all 2 1 opt-args)
-                                :when (symbol? p)]
-                            [p (when-not (symbol? d) d)])]
+                          mname (get-in current-ns [@last-seen-type :meta :protocol :sigs mname (count arglist) :dart/name] mname)]
                       ;; TODO: mname resolution against protocol ifaces
-                      (list* mname positional-args delim opt-params body))
+                      (list* mname (parse-dart-params arglist) body))
                     (reset! last-seen-type spec)))
                 specs))))
 
@@ -544,11 +547,7 @@
     #_(list* 'reify 'IFn (concat invoke-more invokes invoke-exts))))
 
 (defn- emit-dart-fn [dart-fn-name [params & body] env]
-  (let [[fixed-params [delim & opt-params]] (split-with (complement #{'... '.&}) params)
-        opt-params (for [[p d] (partition-all 2 1 opt-params)
-                         :when (symbol? p)]
-                     [p (when-not (symbol? d) d)])
-        opt-kind (case delim .& :named :positional)
+  (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
         dart-fixed-params (map dart-local fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
@@ -579,7 +578,7 @@
       (emit-ifn name bodies env)
       (emit-dart-fn name body env))))
 
-(defn emit-method [[mname [this-param & fixed-params] opt-kind opt-params & body] env]
+(defn emit-method [[mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
   ;; params destructuring will be added by a macro
   ;; opt-params need to have been fully expanded to a list of [symbol default]
   ;; by the macro
