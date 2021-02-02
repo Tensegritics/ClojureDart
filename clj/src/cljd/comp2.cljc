@@ -64,10 +64,11 @@
   (let [s (name s)]
     (symbol
      (or (some-> (reserved-words s) (str "$"))
-         (replace-all s #"__(\d+)__auto__|[^a-zA-Z0-9]"
-                      (fn [[x autogensym]]
+         (replace-all s #"__(\d+)|__auto__|[^a-zA-Z0-9]"
+                      (fn [[x n]]
                         (else->>
-                         (if autogensym (str "_$AUTO" autogensym "_"))
+                         (if n (str "_$" n "_"))
+                         (if (= "__auto__" x) "_$AUTO_")
                          (or (char-map x))
                          (str "_$u"
                               ;; TODO :cljd version
@@ -498,7 +499,7 @@
         max-fixed-arity (some->> fixed-bodies seq (map first) (map count) (reduce max))
         [vararg-params & vararg-body] (some #(when (variadic? %) %) bodies)
         base-vararg-arity (some->> vararg-params (take-while (complement #{'&})) count)
-        this (tmpvar "this") ; TODO if named use name instead of this
+        this (or name (gensym "this"))
         invoke-exts
         (for [[params & body] fixed-bodies
               :let [n (count params)]
@@ -513,18 +514,16 @@
          (when vararg-params
            (let [rest-arg (nth vararg-params (inc base-vararg-arity))
                  base-params (into [this] (subvec vararg-params 0 base-vararg-arity))
-                 rest-params (vec (repeatedly (- *threshold* base-vararg-arity) tmpvar))]
+                 rest-params (vec (repeatedly (- *threshold* base-vararg-arity) #(gensym "arg")))]
              (cons
               (list* vararg-mname (conj base-params rest-arg) vararg-body)
               (for [n (range (if (= base-vararg-arity max-fixed-arity) 1 0)
                              (count rest-params))
                     :let [rest-params (subvec rest-params 0 n)]]
                 (list '-invoke (into base-params rest-params)
-                      `(. ~(first base-params) ~vararg-mname ~@(next base-params) ~rest-params)
-                      #_(cons (dont-munge "_invoke$vararg") #_'.--invoke$vararg (conj base-params rest-params))
-                      #_(list* '. this '-invoke$vararg (next (cond-> base-params rest-arg (conj rest-params))))))))))
-        more-params (vec (repeatedly (dec *threshold*) tmpvar))
-        more-param (tmpvar "more")
+                      `(. ~(first base-params) ~vararg-mname ~@(next base-params) ~rest-params)))))))
+        more-params (vec (repeatedly (dec *threshold*) #(gensym "p")))
+        more-param (gensym "more")
         invoke-more-vararg-dispatch
         (when vararg-params
           `(if (< ~(- base-vararg-arity *threshold*) (count ~more-param))
@@ -1788,24 +1787,26 @@
            (meth (b c) :positional () "e")
            (meth (c d e) :positional () "oo")) {})
 
-  (emit '(defprotocol IFn
-           "Protocol for adding the ability to invoke an object as a function.
+  (emit-test
+   '(defprotocol IFn
+      "Protocol for adding the ability to invoke an object as a function.
   For example, a vecttor can also be used to look up a value:
   ([1 2 3 4] 1) => 2"
-           (-invoke
-             [this]
-             [this a]
-             [this a b]
-             [this a b c]
-             [this a b c d]
-             [this a b c d e]
-             [this a b c d e f]
-             [this a b c d e f g]
-             [this a b c d e f g h]
-             [this a b c d e f g h i]
-             #_[this a b c d e f g h i j])
-           #_(-invoke-more [this a b c d e f g h i j rest])
-           (-invoke-more [this a b c d e f g h i rest])) {})
+      (-invoke
+        [this]
+        [this a]
+        [this a b]
+        [this a b c]
+        [this a b c d]
+        [this a b c d e]
+        [this a b c d e f]
+        [this a b c d e f g]
+        [this a b c d e f g h]
+        [this a b c d e f g h i]
+        #_[this a b c d e f g h i j])
+      #_(-invoke-more [this a b c d e f g h i j rest])
+      (-invoke-more [this a b c d e f g h i rest])))
+  (dart/let [[nil IFn] [nil _invoke] [nil _invoke_more]] IFn)
 
   nses
   (macroexpand-1 {} '(defprotocol IFn
@@ -1823,8 +1824,9 @@
                          [this a b c d e f g]
                          [this a b c d e f g h]
                          [this a b c d e f g h i]
-                         [this a b c d e f g h i j])
-                       (-invoke-more [this a b c d e f g h i j rest])))
+ #_                        [this a b c d e f g h i j])
+                       (-invoke-more [this a b c d e f g h i #_j rest])))
+
 
   (emit '(fn*
           ([thiss a b c d e f g & i]
