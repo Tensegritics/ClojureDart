@@ -247,7 +247,18 @@
                                   (list 'if (list 'dart-is? (first args) class-name)
                                         (list* '. (first args) name (next args))
                                         #_TODO_EXTENSIONS)))))
-                 (list class-name)))))))
+                 (list class-name)))))
+
+     (defn- expand-case [expr & clauses]
+       (if (or (symbol? expr) (odd? (count clauses)))
+         (let [clauses (vec (partition-all 2 clauses))
+               last-clause (peek clauses)
+               clauses (cond-> clauses (nil? (next last-clause)) pop)
+               default (if (next last-clause)
+                         `(throw (ex-info (str "No matching clause: " ~expr) {:value ~expr}))
+                         (first last-clause))]
+           (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
+         `(let [test# ~expr] (~'case test# ~@clauses))))))
 
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
@@ -268,7 +279,8 @@
              (= 'reify f) (cons 'reify* (expand-opts+specs args))
              (= 'deftype f) (apply expand-deftype args)
              (= 'definterface f) (apply expand-definterface args)
-             (= 'defprotocol f) (apply expand-defprotocol args)])
+             (= 'defprotocol f) (apply expand-defprotocol args)
+             (= 'case f) (apply expand-case args)])
         (= '. f) form
         #?@(:clj
             [(-> clj-var meta :macro)
@@ -464,6 +476,10 @@
 
 (def ^:dynamic *threshold* 10)
 
+(defn- dont-munge [& args]
+  (let [sym (symbol (apply str args))]
+    (with-meta sym {:dart/name sym})))
+
 (defn- emit-ifn [name bodies env]
   (let [fixed-bodies (remove variadic? bodies)
         max-fixed-arity (some->> fixed-bodies seq (map first) (map count) (reduce max))
@@ -474,7 +490,8 @@
         (for [[params & body] fixed-bodies
               :let [n (count params)]
               :when (>= n *threshold*)]
-          (list* (symbol (str "-invoke$ext" n)) (into [this] params) body))
+          (list* (dont-munge "_invoke$ext" n) (into [this] params) body))
+        vararg-mname (dont-munge "_invoke$vararg")
         invokes
         (concat
          (for [[params & body] fixed-bodies
@@ -485,12 +502,13 @@
                  base-params (into [this] (subvec vararg-params 0 base-vararg-arity))
                  rest-params (vec (repeatedly (- *threshold* base-vararg-arity) tmpvar))]
              (cons
-              (list* '-invoke$vararg (conj base-params rest-arg) vararg-body)
+              (list* vararg-mname (conj base-params rest-arg) vararg-body)
               (for [n (range (if (= base-vararg-arity max-fixed-arity) 1 0)
                              (count rest-params))
                     :let [rest-params (subvec rest-params 0 n)]]
                 (list '-invoke (into base-params rest-params)
-                      (cons '.--invoke$vararg (cond-> base-params rest-arg (conj rest-params)))
+                      `(. ~(first base-params) ~vararg-mname ~@(next base-params) ~rest-params)
+                      #_(cons (dont-munge "_invoke$vararg") #_'.--invoke$vararg (conj base-params rest-params))
                       #_(list* '. this '-invoke$vararg (next (cond-> base-params rest-arg (conj rest-params))))))))))
         more-params (vec (repeatedly (dec *threshold*) tmpvar))
         more-param (tmpvar "more")
@@ -498,7 +516,7 @@
         (when vararg-params
           `(if (< ~(- base-vararg-arity *threshold*) (count ~more-param))
              (let [~(subvec vararg-params (dec (min *threshold* (count vararg-params)))) ~more-param]
-               (. ~this ~'--invoke$vararg ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min *threshold* (count vararg-params)))))))
+               (. ~this ~vararg-mname ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min *threshold* (count vararg-params)))))))
              (/ 0)))
         invoke-exts-dispatch
         (->> (mapcat (fn [[meth params]]
@@ -781,7 +799,7 @@
   (when (or (not (symbol? type)) (env type))
     (throw (ex-info (str "The second argument to dart-is? must be a literal type. Got: " (pr-str type)) {:type type})))
   (lifting [x (emit x env)]
-           (list 'dart/is (emit x env) (emit type env))))
+           (list 'dart/is x (emit type env))))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -1664,71 +1682,10 @@
   (write *1 statement-locus)
 
 
-  (emit '(fn ([] "coucou") ([a b] a)) {})
-
-  ;; fn call
-  ;; mname resolution
-  ;; reify call
-  ;; invoke-more simplififcation when (count) < 0
-
-  (macroexpand-1 {} '(fn ([] "coucou") ([a & b] "pas bien")))
-
-  (emit '(defprotocol IFn (-invoke [this] [this a] [this a b])) {})
-  (macroexpand-1 {} '(defprotocol IFn (-invoke [this] [this a] [this a b])))
-
-  (emit-fn* '(fn* coucou ([] "coucou") ([one] one)) {})
-
-  (macroexpand {} '(definterface
-                       IFn
-                     (_invoke$7 [a b c d e f])
-                     (_invoke$20 [a b c d e f g h i j k l m n o p q r s])
-                     (_invoke$1 [])
-                     (_invoke$4 [a b c])
-                     (_invoke$15 [a b c d e f g h i j k l m n])
-                     (_invoke$21 [a b c d e f g h i j k l m n o p q r s t])
-                     (_invoke$13 [a b c d e f g h i j k l])
-                     (_invoke$22 [a b c d e f g h i j k l m n o p q r s t rest])
-                     (_invoke$6 [a b c d e])
-                     (_invoke$17 [a b c d e f g h i j k l m n o p])
-                     (_invoke$3 [a b])
-                     (_invoke$12 [a b c d e f g h i j k])
-                     (_invoke$2 [a])
-                     (_invoke$19 [a b c d e f g h i j k l m n o p q r])
-                     (_invoke$11 [a b c d e f g h i j])
-                     (_invoke$9 [a b c d e f g h])
-                     (_invoke$5 [a b c d])
-                     (_invoke$14 [a b c d e f g h i j k l m])
-                     (_invoke$16 [a b c d e f g h i j k l m n o])
-                     (_invoke$10 [a b c d e f g h i])
-                     (_invoke$18 [a b c d e f g h i j k l m n o p q])
-                     (_invoke$8 [a b c d e f g])))
-
-  (macroexpand {}  '(defprotocol IFn
-                      (-invoke
-                        [this]
-                        [this a]
-                        [this a b]
-                        [this a b c]
-                        [this a b c d]
-                        [this a b c d e]
-                        [this a b c d e f]
-                        [this a b c d e f g]
-                        [this a b c d e f g h]
-                        [this a b c d e f g h i]
-                        [this a b c d e f g h i j]
-                        [this a b c d e f g h i j k]
-                        [this a b c d e f g h i j k l]
-                        [this a b c d e f g h i j k l m]
-                        [this a b c d e f g h i j k l m n]
-                        [this a b c d e f g h i j k l m n o]
-                        [this a b c d e f g h i j k l m n o p]
-                        [this a b c d e f g h i j k l m n o p q]
-                        [this a b c d e f g h i j k l m n o p q r]
-                        [this a b c d e f g h i j k l m n o p q r s]
-                        [this a b c d e f g h i j k l m n o p q r s t]
-                        [this a b c d e f g h i j k l m n o p q r s t rest])))
-
   (emit '(defprotocol IFn
+           "Protocol for adding the ability to invoke an object as a function.
+  For example, a vector can also be used to look up a value:
+  ([1 2 3 4] 1) => 2"
            (-invoke
              [this]
              [this a]
@@ -1740,29 +1697,31 @@
              [this a b c d e f g]
              [this a b c d e f g h]
              [this a b c d e f g h i]
-             [this a b c d e f g h i j]
-             [this a b c d e f g h i j k]
-             [this a b c d e f g h i j k l]
-             [this a b c d e f g h i j k l m]
-             [this a b c d e f g h i j k l m n]
-             [this a b c d e f g h i j k l m n o]
-             [this a b c d e f g h i j k l m n o p]
-             [this a b c d e f g h i j k l m n o p q]
-             [this a b c d e f g h i j k l m n o p q r]
-             [this a b c d e f g h i j k l m n o p q r s]
-             [this a b c d e f g h i j k l m n o p q r s t]
-             [this a b c d e f g h i j k l m n o p q r s t rest])) {})
+             [this a b c d e f g h i j])
+           (-invoke-more [this a b c d e f g h i j rest])) {})
+
+
+  (macroexpand-1 {} '(defprotocol IFn
+                       "Protocol for adding the ability to invoke an object as a function.
+  For example, a vector can also be used to look up a value:
+  ([1 2 3 4] 1) => 2"
+                       (-invoke
+                         [this]
+                         [this a]
+                         [this a b]
+                         [this a b c]
+                         [this a b c d]
+                         [this a b c d e]
+                         [this a b c d e f]
+                         [this a b c d e f g]
+                         [this a b c d e f g h]
+                         [this a b c d e f g h i]
+                         [this a b c d e f g h i j])
+                       (-invoke-more [this a b c d e f g h i j rest])))
 
 
 
   nses
-
-
-
-
-
-  nses
-
 
 
 
@@ -1810,16 +1769,55 @@
            (meth (b c) :positional () "e")
            (meth (c d e) :positional () "oo")) {})
 
-  {:extends GLOBAL_ParentClass
-   :ctor-params ((. a) (. b) (. c))
-   :nsm true
-   :name MyClass
-   :fields (a b c)
-   :super-ctor {:method nil
-                :args ((GLOBAL_+ a b) ((dart/fn nil () :positional () (dart/let [[if$_$2802_ (dart/if 1 2 3)]] if$_$2802_))))}
-   :methods ([meth () :positional () false a] [meth (c_$2803_) :positional () false e] [meth (d_$2804_ e_$2805_) :positional () false oo])
-   :with ()
-   :implements (IMarker IProtocol_)}
+  (emit '(defprotocol IFn
+           "Protocol for adding the ability to invoke an object as a function.
+  For example, a vecttor can also be used to look up a value:
+  ([1 2 3 4] 1) => 2"
+           (-invoke
+             [this]
+             [this a]
+             [this a b]
+             [this a b c]
+             [this a b c d]
+             [this a b c d e]
+             [this a b c d e f]
+             [this a b c d e f g]
+             [this a b c d e f g h]
+             [this a b c d e f g h i]
+             #_[this a b c d e f g h i j])
+           #_(-invoke-more [this a b c d e f g h i j rest])
+           (-invoke-more [this a b c d e f g h i rest])) {})
+
+  nses
+  (macroexpand-1 {} '(defprotocol IFn
+                       "Protocol for adding the ability to invoke an object as a function.
+  For example, a vecttor can also be used to look up a value:
+  ([1 2 3 4] 1) => 2"
+                       (-invoke
+                         [this]
+                         [this a]
+                         [this a b]
+                         [this a b c]
+                         [this a b c d]
+                         [this a b c d e]
+                         [this a b c d e f]
+                         [this a b c d e f g]
+                         [this a b c d e f g h]
+                         [this a b c d e f g h i]
+                         [this a b c d e f g h i j])
+                       (-invoke-more [this a b c d e f g h i j rest])))
+
+  (emit '(fn*
+          ([thiss a b c d e f g & i]
+           (if (dart-is? thiss IFn) (. thiss _invoke$10 a b c d e f g h i)))
+          ([thiss a b c d e f g]
+           (if (dart-is? thiss IFn) (. thiss _invoke$8 a b c d e f g)))) {})
+
+
+
+
+
+
 
 
 
