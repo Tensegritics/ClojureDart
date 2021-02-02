@@ -605,7 +605,7 @@
 (defn closed-overs [emitted env]
   (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
 
-(defn method-closed-overs [[mname dart-fixed-params opt-kind dart-opt-params dart-body] env]
+(defn method-closed-overs [[mname dart-fixed-params opt-kind dart-opt-params _ dart-body] env]
   (reduce disj (closed-overs dart-body env) (cons 'this (concat dart-fixed-params (map second dart-opt-params)))))
 
 (declare write-class)
@@ -1809,9 +1809,12 @@
         #_[this a b c d e f g h i j])
       #_(-invoke-more [this a b c d e f g h i j rest])
       (-invoke-more [this a b c d e f g h i rest])))
+  (dart/let [[nil IFn] [nil _invoke] [nil _invoke_more]] IFn)
 
 
   nses
+  (emit-test '(let [a 42 b 43 c (fn ([] "coucou") ([d] b))] (c)))
+  (dart/let [[a_$1_ 42] [b_$1_ 43] [c_$1_ (_reify_$35_ b_$1_)]] (c_$1_))
   (macroexpand-1 {} '(defprotocol IFn
                        "Protocol for adding the ability to invoke an object as a function.
   For example, a vecttor can also be used to look up a value:
@@ -1840,9 +1843,10 @@
 
 
 
-
-
-
+  (emit-test
+   '(let [a 42]
+      (reify Object (meth [_] a))))
+(dart/let [[a_$1_ 42]] (_reify_$34_ a_$1_))
 
 
   )
