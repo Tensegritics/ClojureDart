@@ -64,13 +64,15 @@
   (let [s (name s)]
     (symbol
      (or (some-> (reserved-words s) (str "$"))
-         (replace-all s #"[^a-zA-Z0-9]"
-                      (fn [x]
-                        (or (char-map x)
-                            (str "_$u"
-                                        ; TODO :cljd version
-                                 (str/join "__$u" (map #(Long/toHexString (int %)) x))
-                                 "_"))))))))
+         (replace-all s #"__(\d+)__auto__|[^a-zA-Z0-9]"
+                      (fn [[x autogensym]]
+                        (else->>
+                         (if autogensym (str "_$AUTO" autogensym "_"))
+                         (or (char-map x))
+                         (str "_$u"
+                              ;; TODO :cljd version
+                              (str/join "__$u" (map #(Long/toHexString (int %)) x))
+                              "_"))))))))
 
 (def ns-prototype
   {:imports [["dart:core" "dc"]] ; dc can't clash with user aliases because they go through tmpvar
@@ -173,7 +175,18 @@
          (symbol (str (munge prefix) "_$" (swap! gens inc) "_"))
        tag (vary-meta assoc :dart/type (emit-type tag))))))
 
-
+(def ^:dynamic *locals-gen*)
+(defn dart-local
+  "Generates a unique (relative to the top-level being compiled) dart symbol.
+   Hint is a string/symbol/keyword which gives a hint (duh) on how to name the
+   dart symbol. Type tags when present are translated."
+  ([] (dart-local ""))
+  ([hint]
+   (let [tag (:tag (meta hint))
+         hint (munge hint)
+         {n hint} (set! *locals-gen* (assoc *locals-gen* hint (inc (*locals-gen* hint 0))))]
+     (cond-> (symbol (str hint "_$" n "_"))
+       tag (vary-meta assoc :dart/type (emit-type tag))))))
 
 #?(:clj
    (do
@@ -323,10 +336,10 @@
          (if (atomic? expr)
            [bindings expr]
            ;; this case should not happen
-           (let [tmp (tmpvar)]
+           (let [tmp (dart-local)]
              [(conj (vec bindings) [tmp expr]) tmp]))))
     (dart/if dart/try dart/case) ; no ternary for now
-    (let [tmp (tmpvar (first x))]
+    (let [tmp (dart-local (first x))]
       [[[tmp x]]
        tmp])
     nil))
@@ -339,12 +352,12 @@
        (list 'dart/let bindings# ~expr)
        ~expr)))
 
-(defn- lift-arg [must-lift x]
+(defn- lift-arg [must-lift x hint]
   (or (liftable x)
       (cond
         (atomic? x) [nil x]
         must-lift
-        (let [tmp (tmpvar)]
+        (let [tmp (dart-local hint)]
           [[[tmp x]] tmp])
         :else
         [nil x])))
@@ -358,15 +371,15 @@
         [bindings dart-fn-args]
         (as-> [nil ()] acc
           (reduce (fn [[bindings dart-fn-args] [k x]]
-                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
+                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) k)]
                       [(concat bindings' bindings) (list* k x' dart-fn-args)]))
                   acc (reverse (partition 2 nameds)))
           (reduce (fn [[bindings dart-fn-args] x]
-                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
+                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "-arg")]
                       [(concat bindings' bindings) (cons x' dart-fn-args)]))
                   acc (reverse positionals)))
         ;; always force lifting of non-atomic f to avoid multiple evaluation in fn call sites (see write)
-        [bindings' dart-f] (lift-arg true (emit f env))
+        [bindings' dart-f] (lift-arg true (emit f env) "-f")
         dart-f (cond-> dart-f (seq nameds) (vary-meta assoc :dart/native true))
         bindings (concat bindings' bindings)]
     (cond->> (cons dart-f dart-fn-args)
@@ -378,7 +391,7 @@
    (let [items (into [] (comp (if (map? coll) cat identity) (map f)) coll)
          [bindings items]
          (reduce (fn [[bindings fn-call] x]
-                   (let [[bindings' x'] (lift-arg (seq bindings) (emit x env))]
+                   (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "-item")]
                      [(concat bindings' bindings) (cons x' fn-call)]))
                  [nil ()] (rseq items))
          fn-sym (cond
@@ -418,8 +431,8 @@
       (and (seq? target) (= '. (first target)))
       (let [[_ obj member] target]
         (if-some [[_ fld] (re-matches #"-(.+)" (name member))]
-          (let [tmpobj (tmpvar "objset")
-                tmpval (tmpvar fld)]
+          (let [tmpobj (dart-local "objset")
+                tmpval (dart-local fld)]
             (list 'dart/let
                   [[tmpobj (emit obj env)]
                    [tmpval (emit expr env)]
@@ -434,7 +447,7 @@
   (let [[dart-bindings env]
         (reduce
          (fn [[dart-bindings env] [k v]]
-           (let [tmp (tmpvar k)]
+           (let [tmp (dart-local k)]
              [(conj dart-bindings [tmp (emit v env)])
               (assoc env k tmp)]))
          [[] env] (partition 2 bindings))
@@ -451,7 +464,7 @@
   (let [[dart-bindings env]
         (reduce
          (fn [[dart-bindings env] [k v]]
-           (let [tmp (tmpvar k)]
+           (let [tmp (dart-local k)]
              [(conj dart-bindings [tmp (emit v env)])
               (assoc env k tmp)]))
          [[] env] (partition 2 bindings))]
@@ -537,18 +550,18 @@
                          :when (symbol? p)]
                      [p (when-not (symbol? d) d)])
         opt-kind (case delim .& :named :positional)
-        dart-fixed-params (map tmpvar fixed-params)
+        dart-fixed-params (map dart-local fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
                              :named p ; here p must be a valid dart identifier
-                             :positional (tmpvar p))
+                             :positional (dart-local p))
                            (emit d env)])
         env (into env (zipmap (concat fixed-params (map first opt-params))
                               (concat dart-fixed-params (map first dart-opt-params))))
         dart-body (emit (cons 'do body) env)
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         dart-fixed-params (if recur-params
-                            (map tmpvar fixed-params)
+                            (map dart-local fixed-params)
                             dart-fixed-params)
         dart-body (cond->> dart-body
                     recur-params
@@ -561,7 +574,7 @@
 
 (defn emit-fn* [[_ & bodies] env]
   (let [name (when (symbol? (first bodies)) (first bodies))
-        env (cond-> env name (assoc name (tmpvar name)))
+        env (cond-> env name (assoc name (dart-local name)))
         [body & more-bodies :as bodies] (cond->> bodies (vector? (first bodies)) list name next)]
     (if (or more-bodies (variadic? body))
       (emit-ifn name bodies env)
@@ -571,11 +584,11 @@
   ;; params destructuring will be added by a macro
   ;; opt-params need to have been fully expanded to a list of [symbol default]
   ;; by the macro
-  (let [dart-fixed-params (map tmpvar fixed-params)
+  (let [dart-fixed-params (map dart-local fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
                              :named p ; here p must be a valid dart identifier
-                             :positional (tmpvar p))
+                             :positional (dart-local p))
                            (emit d env)])
         env (into (assoc env this-param 'this)
                   (zipmap (concat fixed-params (map first opt-params))
@@ -583,7 +596,7 @@
         dart-body (emit (cons 'do body) env)
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         dart-fixed-params (if recur-params
-                            (map tmpvar fixed-params)
+                            (map dart-local fixed-params)
                             dart-fixed-params)
         dart-body (cond->> dart-body
                     recur-params
@@ -625,8 +638,8 @@
 (defn emit-reify* [[_ opts & specs] env]
   (let [class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
-        positional-ctor-params (repeatedly (count positional-ctor-args) tmpvar)
-        named-ctor-params (repeatedly (quot (count named-ctor-args) 2) tmpvar)
+        positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "-param"))
+        named-ctor-params (map dart-local (take-nth 2 named-ctor-args))
         class-name (tmpvar "-reify")  ; TODO change this to a more telling name
         closed-overs (transduce (map #(method-closed-overs % env)) into #{}
                                 (:methods class))
@@ -788,8 +801,8 @@
            (for [[_ classname e & [maybe-st & exprs :as body]] catches
                  :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
                        exprs (if st exprs body)
-                       env (cond-> (assoc env e (tmpvar e))
-                             st (assoc st (tmpvar st)))]]
+                       env (cond-> (assoc env e (dart-local e))
+                             st (assoc st (dart-local st)))]]
              [classname (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
            (some-> finally-body (conj 'do) (emit-no-recur env)))))
 
@@ -838,6 +851,10 @@
         (emit x env))
       (coll? x) (emit-coll x env)
       :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))))
+
+(defn emit-test [expr]
+  (binding [*locals-gen* {}]
+    (emit expr {})))
 
 ;; WRITING
 (defn declaration [locus] (:decl locus ""))
@@ -1084,7 +1101,7 @@
       (let [[_ test then else] x
             decl (declaration locus)
             locus (declared locus)
-            test-var (tmpvar "-test")
+            test-var (dart-local "-test")
             _ (some-> decl print)
             _ (write test (var-locus test-var))
             _ (print (str "if(" test-var "!=null && " test-var "!=false){\n"))
@@ -1123,7 +1140,7 @@
                            (reductions into)
                            reverse)
               tmps (into {}
-                         (map (fn [v vs] (when (vs v) [v (tmpvar v)])) ; TODO using tmpvar in write is going to cause double munging
+                         (map (fn [v vs] (when (vs v) [v (dart-local v)])) ; TODO using dart-local in write is going to cause double munging
                               loop-bindings vars-usages))]
           (doseq [[v e] (map vector loop-bindings exprs)]
             (write e (if-some [tmp (tmps v)] (var-locus tmp) (assignment-locus v))))
@@ -1234,7 +1251,7 @@
        (loop []
          (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
            (when-not (identical? form in)
-             (emit form {})
+             (binding [*locals-gen* {}] (emit form {}))
              (recur)))))))
 
 (defn compile-input [in]
@@ -1288,20 +1305,20 @@
   )
 
 (comment
-  (emit '(a b c .& :d e) {})
+  (emit-test '(a b c .& :d e))
   (GLOBAL_a GLOBAL_b GLOBAL_c :d GLOBAL_e)
   (write *1 (var-locus 'RET))
 
-  (emit '(let* [a 1] (println "BOOH") (a 2)) {})
-  (dart/let ([_6612 1] [nil (GLOBAL_println "BOOH")]) (_6612 2))
+  (emit-test '(let* [a 1] (println "BOOH") (a 2)))
+  (dart/let [[a_$1_ 1] [nil (GLOBAL_println "BOOH")]] (a_$1_ 2))
   (write *1 return-locus)
 
   (emit '(a (b c) (d e)) {})
   (GLOBAL_a (GLOBAL_b GLOBAL_c) (GLOBAL_d GLOBAL_e))
   (write *1 return-locus)
 
-  (emit '(a (side-effect! 42) (let* [d 1] (d e)) (side-effect! 33)) {})
-  (dart/let ([_10294 (GLOBAL_side-effect! 42)] [_10292 1] [_10293 (_10292 GLOBAL_e)]) (GLOBAL_a _10294 _10293 (GLOBAL_side-effect! 33)))
+  (emit-test '(a (side-effect! 42) (let* [d 1] (d e)) (side-effect! 33)))
+  (dart/let ([_arg_$3_ (GLOBAL_side-effect! 42)] [d_$1_ 1] [_$2_ (d_$1_ GLOBAL_e)]) (GLOBAL_a _arg_$3_ _$2_ (GLOBAL_side-effect! 33)))
   (write *1 return-locus)
 
   (emit '(a (if b c d)) {})
