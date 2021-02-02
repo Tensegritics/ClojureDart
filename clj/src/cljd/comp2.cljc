@@ -904,9 +904,12 @@
 (declare write)
 
 (defn write-top-dartfn [sym x]
-  (print (name sym))
-  (write x expr-locus)
-  (print "\n"))
+  (case (first x)
+    dart/fn (do
+              (print (name sym))
+              (write x expr-locus)
+              (print "\n"))
+    (write x (var-locus (name sym)))))
 
 (defn write-top-field [sym x]
   (write x (var-locus (name sym))))
@@ -1806,7 +1809,7 @@
         #_[this a b c d e f g h i j])
       #_(-invoke-more [this a b c d e f g h i j rest])
       (-invoke-more [this a b c d e f g h i rest])))
-  (dart/let [[nil IFn] [nil _invoke] [nil _invoke_more]] IFn)
+
 
   nses
   (macroexpand-1 {} '(defprotocol IFn
