@@ -23,7 +23,7 @@
      :clj
      (str/replace s regexp f)))
 
-(def reserved-words ; and buitlt-in identifiers for good measure
+(def reserved-words ; and built-in identifiers for good measure
   #{"Function" "abstract" "as" "assert" "async" "await" "break" "case" "catch"
     "class" "const" "continue" "covariant" "default" "deferred" "do" "dynamic"
     "else" "enum" "export" "extends" "extension" "external" "factory" "false"
@@ -76,7 +76,7 @@
                               "_"))))))))
 
 (def ns-prototype
-  {:imports [["dart:core" "dc"]] ; dc can't clash with user aliases because they go through tmpvar
+  {:imports [["dart:core" "dc"]] ; dc can't clash with user aliases because they go through dart-global
    :aliases {}
    :mappings
    '{Type dc.Type,
@@ -168,8 +168,8 @@
                      identifier (str identifier))))))
 
 (defonce ^:private gens (atom 1))
-(defn tmpvar
-  ([] (tmpvar ""))
+(defn dart-global
+  ([] (dart-global ""))
   ([prefix]
    (let [tag (:tag (meta prefix))]
      (cond->
@@ -638,7 +638,7 @@
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "-param"))
         named-ctor-params (map dart-local (take-nth 2 named-ctor-args))
-        class-name (tmpvar "-reify")  ; TODO change this to a more telling name
+        class-name (dart-global "-reify")  ; TODO change this to a more telling name
         closed-overs (transduce (map #(method-closed-overs % env)) into #{}
                                 (:methods class))
         class (-> class
@@ -773,7 +773,7 @@
                :when f ; TODO fix refer-clojure
                spec specs
                :let [[lib & {:keys [as refer rename]}] (f spec)
-                     alias (name (tmpvar (or as "lib")))
+                     alias (name (dart-global (or as "lib")))
                      dartlib (else->>
                               (if (string? lib) lib)
                               (if-some [{:keys [lib]} (@nses lib)] lib)
