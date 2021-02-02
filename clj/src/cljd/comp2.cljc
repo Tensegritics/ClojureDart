@@ -745,8 +745,8 @@
 (defn- use-to-require [spec]
   (if (sequential? spec)
     (let [lib (first spec)
-          {:keys [only]} (apply hash-map (rest spec))]
-      [lib :refer only])))
+          {:keys [only rename]} (apply hash-map (rest spec))]
+      [lib :refer only :rename rename])))
 
 (defn emit-ns [[_ ns-sym & ns-clauses] _]
   (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
@@ -760,16 +760,18 @@
                          :use use-to-require
                          :refer-clojure nil)]
                :when f ; TODO fix refer-clojure
-               spec specs]
-           (let [[lib & {:keys [as refer]}] (f spec)
-                 alias (name (tmpvar (or as "lib")))
-                 dartlib (else->>
-                          (if (string? lib) lib)
-                          (if-some [{:keys [lib]} (@nses lib)] lib)
-                          (compile-namespace lib))]
-             (cond-> (assoc {} :imports [[dartlib alias]])
-               as (assoc-in [:aliases (name as)] alias)
-               refer (assoc :mappings (into {} (for [r refer] [r (str alias "." (name r))])))))))]
+               spec specs
+               :let [[lib & {:keys [as refer rename]}] (f spec)
+                     alias (name (tmpvar (or as "lib")))
+                     dartlib (else->>
+                              (if (string? lib) lib)
+                              (if-some [{:keys [lib]} (@nses lib)] lib)
+                              (compile-namespace lib))
+                     to-dart-sym (if (string? lib) identity munge)]]
+           (cond-> {:imports [[dartlib alias]]
+                    :mappings (into {} (for [[from to] (concat (zipmap refer refer) rename)]
+                                         [from (str alias "." (to-dart-sym to))]))}
+             as (assoc :aliases {(name as) alias}))))]
     (swap! nses assoc ns-sym ns-map :current-ns ns-sym)))
 
 (defn- emit-no-recur [expr env]
