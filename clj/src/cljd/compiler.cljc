@@ -348,14 +348,6 @@
        tmp])
     nil))
 
-(defmacro lifting
-  "Wraps the return value in a dart/let if needed"
-  [[x sub-expr] expr]
-  `(let [~x ~sub-expr]
-     (if-some [[bindings# ~x] (liftable ~x)]
-       (list 'dart/let bindings# ~expr)
-       ~expr)))
-
 (defn- lift-arg [must-lift x hint]
   (or (liftable x)
       (cond
@@ -478,8 +470,11 @@
   (cons 'dart/recur (map #(emit % env) exprs)))
 
 (defn emit-if [[_ test then else] env]
-  (lifting [test (emit test env)]
-    (list 'dart/if test (emit then env) (emit else env))))
+  (let [test (emit test env)]
+    (if-some [[bindings test] (lift-arg true test "-test")]
+      (list 'dart/let bindings
+            (list 'dart/if test (emit then env) (emit else env)))
+      (list 'dart/if test (emit then env) (emit else env)))))
 
 (defn emit-case* [[op expr clauses default] env]
   (if (seq clauses)
@@ -811,8 +806,10 @@
 (defn emit-dart-is [[_ x type] env]
   (when (or (not (symbol? type)) (env type))
     (throw (ex-info (str "The second argument to dart-is? must be a literal type. Got: " (pr-str type)) {:type type})))
-  (lifting [x (emit x env)]
-           (list 'dart/is x (emit type env))))
+  (let [x (emit x env)]
+    (if-some [[bindings x] (liftable x)]
+      (list 'dart/let bindings (list 'dart/is x (emit type env)))
+      (list 'dart/is x (emit type env)))))
 
 (defn- ensure-new-special [x]
   (case (and (symbol? x) (name x))
@@ -1107,10 +1104,12 @@
       (let [[_ test then else] x
             decl (declaration locus)
             locus (declared locus)
-            test-var (dart-local "-test")
             _ (some-> decl print)
-            _ (write test (var-locus test-var))
-            _ (print (str "if(" test-var "!=null && " test-var "!=false){\n"))
+            _ (print "if(")
+            _ (write test expr-locus)
+            _ (print "!=null && ")
+            _ (write test expr-locus)
+            _ (print "!=false){\n")
             then-exit (write then locus)
             _ (print "}else{\n")
             else-exit (write else locus)]
@@ -1845,7 +1844,9 @@
            (if (dart-is? thiss IFn) (. thiss _invoke$8 a b c d e f g)))) {})
 
 
-
+  (emit-test '(if (f) then else))
+  (dart/let [[_test_$1_ (GLOBAL_f)]] (dart/if _test_$1_ GLOBAL_then GLOBAL_else))
+  (write *2 (var-locus 'V))
 
   (emit-test
    '(let [a 42]
