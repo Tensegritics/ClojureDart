@@ -855,9 +855,9 @@
       (coll? x) (emit-coll x env)
       :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))))
 
-(defn emit-test [expr]
+(defn emit-test [expr env]
   (binding [*locals-gen* {}]
-    (emit expr {})))
+    (emit expr env)))
 
 ;; WRITING
 (defn declaration [locus] (:decl locus ""))
