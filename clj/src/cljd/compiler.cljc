@@ -470,11 +470,9 @@
   (cons 'dart/recur (map #(emit % env) exprs)))
 
 (defn emit-if [[_ test then else] env]
-  (let [test (emit test env)]
-    (if-some [[bindings test] (lift-arg true test "-test")]
-      (list 'dart/let bindings
-            (list 'dart/if test (emit then env) (emit else env)))
-      (list 'dart/if test (emit then env) (emit else env)))))
+  (let [[bindings test] (lift-arg true (emit test env) "-test")]
+    (cond->> (list 'dart/if test (emit then env) (emit else env))
+      (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-case* [[op expr clauses default] env]
   (if (seq clauses)
