@@ -1,4 +1,4 @@
-(ns cljd.comp2
+(ns cljd.compiler
   (:refer-clojure :exclude [macroexpand macroexpand-1 munge load-file])
   (:require [clojure.string :as str]
             #?@(:clj [[cljd.core]])))
