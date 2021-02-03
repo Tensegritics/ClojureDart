@@ -1,7 +1,6 @@
 (ns cljd.compiler
   (:refer-clojure :exclude [macroexpand macroexpand-1 munge load-file])
-  (:require [clojure.string :as str]
-            #?@(:clj [[cljd.core]])))
+  (:require [clojure.string :as str]))
 
 (def ^:dynamic *clj-path*
   "Sequential collection of directories to search for clj files."
@@ -22,58 +21,6 @@
      (.replaceAllMapped s regexp f)
      :clj
      (str/replace s regexp f)))
-
-(def reserved-words ; and built-in identifiers for good measure
-  #{"Function" "abstract" "as" "assert" "async" "await" "break" "case" "catch"
-    "class" "const" "continue" "covariant" "default" "deferred" "do" "dynamic"
-    "else" "enum" "export" "extends" "extension" "external" "factory" "false"
-    "final" "finally" "for" "get" "hide" "if" "implements" "import" "in"
-    "interface" "is" "library" "mixin" "new" "null" "on" "operator" "part"
-    "rethrow" "return" "set" "show" "static" "super" "switch" "sync" "this"
-    "throw" "true" "try" "typedef" "var" "void" "while" "with" "yield"})
-
-(def char-map
-  {"-"    "_"
-   "_"    "_$UNDERSCORE_"
-   "$"    "_$DOLLAR_"
-   ":"    "_$COLON_"
-   "+"    "_$PLUS_"
-   ">"    "_$GT_"
-   "<"    "_$LT_"
-   "="    "_$EQ_"
-   "~"    "_$TILDE_"
-   "!"    "_$BANG_"
-   "@"    "_$CIRCA_"
-   "#"    "_$SHARP_"
-   "'"    "_$SINGLEQUOTE_"
-   "\""   "_$DOUBLEQUOTE_"
-   "%"    "_$PERCENT_"
-   "^"    "_$CARET_"
-   "&"    "_$AMPERSAND_"
-   "*"    "_$STAR_"
-   "|"    "_$BAR_"
-   "{"    "_$LBRACE_"
-   "}"    "_$RBRACE_"
-   "["    "_$LBRACK_"
-   "]"    "_$RBRACK_"
-   "/"    "_$SLASH_"
-   "\\"   "_$BSLASH_"
-   "?"    "_$QMARK_"})
-
-(defn munge [s]
-  (let [s (name s)]
-    (symbol
-     (or (some-> (reserved-words s) (str "$"))
-         (replace-all s #"__(\d+)|__auto__|[^a-zA-Z0-9]"
-                      (fn [[x n]]
-                        (else->>
-                         (if n (str "_$" n "_"))
-                         (if (= "__auto__" x) "_$AUTO_")
-                         (or (char-map x))
-                         (str "_$u"
-                              ;; TODO :cljd version
-                              (str/join "__$u" (map #(Long/toHexString (int %)) x))
-                              "_"))))))))
 
 (def ns-prototype
   {:imports [["dart:core" "dc"]] ; dc can't clash with user aliases because they go through dart-global
@@ -167,14 +114,75 @@
                                           {:type type :tag tag}))))
                      identifier (str identifier))))))
 
+(defn dart-meta
+  "Takes a clojure symbol and returns its dart metadata."
+  [sym]
+  (let [m (meta sym)]
+    (cond-> {}
+      (:dart m) (assoc :dart/native true)
+      (:clj m) (assoc :dart/ifn true)
+      (:tag m) (assoc :dart/type (emit-type (:tag m))))))
+
+(def reserved-words ; and built-in identifiers for good measure
+  #{"Function" "abstract" "as" "assert" "async" "await" "break" "case" "catch"
+    "class" "const" "continue" "covariant" "default" "deferred" "do" "dynamic"
+    "else" "enum" "export" "extends" "extension" "external" "factory" "false"
+    "final" "finally" "for" "get" "hide" "if" "implements" "import" "in"
+    "interface" "is" "library" "mixin" "new" "null" "on" "operator" "part"
+    "rethrow" "return" "set" "show" "static" "super" "switch" "sync" "this"
+    "throw" "true" "try" "typedef" "var" "void" "while" "with" "yield"})
+
+(def char-map
+  {"-"    "_"
+   "_"    "_$UNDERSCORE_"
+   "$"    "_$DOLLAR_"
+   ":"    "_$COLON_"
+   "+"    "_$PLUS_"
+   ">"    "_$GT_"
+   "<"    "_$LT_"
+   "="    "_$EQ_"
+   "~"    "_$TILDE_"
+   "!"    "_$BANG_"
+   "@"    "_$CIRCA_"
+   "#"    "_$SHARP_"
+   "'"    "_$SINGLEQUOTE_"
+   "\""   "_$DOUBLEQUOTE_"
+   "%"    "_$PERCENT_"
+   "^"    "_$CARET_"
+   "&"    "_$AMPERSAND_"
+   "*"    "_$STAR_"
+   "|"    "_$BAR_"
+   "{"    "_$LBRACE_"
+   "}"    "_$RBRACE_"
+   "["    "_$LBRACK_"
+   "]"    "_$RBRACK_"
+   "/"    "_$SLASH_"
+   "\\"   "_$BSLASH_"
+   "?"    "_$QMARK_"})
+
+(defn munge [sym]
+  (let [s (name sym)]
+    (with-meta
+      (symbol
+       (or (some-> (reserved-words s) (str "$"))
+           (replace-all s #"__(\d+)|__auto__|[^a-zA-Z0-9]"
+                        (fn [[x n]]
+                          (else->>
+                           (if n (str "_$" n "_"))
+                           (if (= "__auto__" x) "_$AUTO_")
+                           (or (char-map x))
+                           (str "_$u"
+                                ;; TODO :cljd version
+                                (str/join "__$u" (map #(Long/toHexString (int %)) x))
+                                "_"))))))
+      (dart-meta sym))))
+
 (defonce ^:private gens (atom 1))
 (defn dart-global
   ([] (dart-global ""))
   ([prefix]
-   (let [tag (:tag (meta prefix))]
-     (cond->
-         (symbol (str (munge prefix) "_$" (swap! gens inc) "_"))
-       tag (vary-meta assoc :dart/type (emit-type tag))))))
+   (with-meta (symbol (str (munge prefix) "_$" (swap! gens inc) "_"))
+     (dart-meta prefix))))
 
 (def ^:dynamic *locals-gen*)
 (defn dart-local
@@ -183,11 +191,10 @@
    dart symbol. Type tags when present are translated."
   ([] (dart-local ""))
   ([hint]
-   (let [tag (:tag (meta hint))
-         hint (munge hint)
-         {n hint} (set! *locals-gen* (assoc *locals-gen* hint (inc (*locals-gen* hint 0))))]
-     (cond-> (symbol (str hint "_$" n "_"))
-       tag (vary-meta assoc :dart/type (emit-type tag))))))
+   (let [dart-hint (munge hint)
+         {n dart-hint} (set! *locals-gen* (assoc *locals-gen* dart-hint (inc (*locals-gen* dart-hint 0))))]
+     (with-meta (symbol (str dart-hint "_$" n "_"))
+       (dart-meta hint)))))
 
 (defn- parse-dart-params [params]
   (let [[fixed-params [delim & opt-params]] (split-with (complement '#{.& ...}) params)]
@@ -669,9 +676,8 @@
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
   (let [env (into {} (for [f fields
-                           :let [{:keys [tag mutable]} (meta f)]]
-                       [f (with-meta (munge f) {:dart/type (some-> tag emit-type)
-                                                :dart/mutable mutable})]))
+                           :let [{:keys [mutable]} (meta f)]]
+                       [f (vary-meta (munge f) assoc :dart/mutable mutable)]))
         class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         class (-> class
@@ -702,10 +708,15 @@
         dartname (munge sym)]
     (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
     (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
-      (swap! nses do-def sym
-             {:dart/name dartname
-              :type :dartfn
-              :dart/code (with-out-str (write-top-dartfn dartname (emit expr env)))})
+      (let [dart-fn (emit expr env)]
+        (swap! nses do-def sym
+               {:dart/name (with-meta dartname
+                             (into {(case (first dart-fn)
+                                      dart/fn :dart/native
+                                      :dart/ifn) true}
+                                   (meta dartname)))
+                :type :dartfn
+                :dart/code (with-out-str (write-top-dartfn dartname dart-fn))}))
       (swap! nses do-def sym
              {:dart/name dartname
               :type :field
@@ -715,7 +726,6 @@
 (defn emit-symbol [x env]
   (let [nses @nses
         {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))
-        meta-x (meta x)
         dart-sym
         (or
          (env x)
@@ -724,8 +734,7 @@
          (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
          #_"TODO next form should throw"
          (symbol (str "GLOBAL_" x)))]
-    (with-meta dart-sym {:dart/native (:dart meta-x)
-                         :dart/ifn (:clj meta-x)})))
+    (vary-meta dart-sym merge (dart-meta x))))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -953,8 +962,8 @@
 (defn write-literal [x]
   (cond
     (string? x) (write-string-literal x)
-    (nil? x) (print 'null)
-    :else (pr x)))
+    (nil? x) (print "null")
+    :else (print (str x))))
 
 (defn write-params [fixed-params opt-kind opt-params]
   (print "(")
@@ -1806,9 +1815,7 @@
         [this a b c d e f]
         [this a b c d e f g]
         [this a b c d e f g h]
-        [this a b c d e f g h i]
-        #_[this a b c d e f g h i j])
-      #_(-invoke-more [this a b c d e f g h i j rest])
+        [this a b c d e f g h i])
       (-invoke-more [this a b c d e f g h i rest])))
   (dart/let [[nil IFn] [nil _invoke] [nil _invoke_more]] IFn)
 
@@ -1842,7 +1849,7 @@
            (if (dart-is? thiss IFn) (. thiss _invoke$8 a b c d e f g)))) {})
 
 
-  (emit-test '(if (f) then else))
+  (emit-test '(if (f) then else) {})
   (dart/let [[_test_$1_ (GLOBAL_f)]] (dart/if _test_$1_ GLOBAL_then GLOBAL_else))
   (write *2 (var-locus 'V))
 
@@ -1851,5 +1858,37 @@
       (reify Object (meth [_] a))))
 (dart/let [[a_$1_ 42]] (_reify_$34_ a_$1_))
 
+(run! #(emit-test % {}) '[
+(defprotocol IFn
+      "Protocol for adding the ability to invoke an object as a function.
+  For example, a vecttor can also be used to look up a value:
+  ([1 2 3 4] 1) => 2"
+      (-invoke
+        [this]
+        [this a]
+        [this a b]
+        [this a b c]
+        [this a b c d]
+        [this a b c d e]
+        [this a b c d e f]
+        [this a b c d e f g]
+        [this a b c d e f g h]
+        [this a b c d e f g h i])
+      (-invoke-more [this a b c d e f g h i rest]))
+                          (defn < [a b] (.< a b))
+
+(defn pos? [a] (.< 0 a))
+
+(defn + [a b] (.+ a b))
+
+(defn - [a b] (.- a b))
+
+(defn nil? [x] (.== nil x))
+
+(defn fib [n]
+  (if (< 1 n)
+    (+ (fib (- n 1)) (fib (- n 2)))
+    1))])
+nses
 
   )
