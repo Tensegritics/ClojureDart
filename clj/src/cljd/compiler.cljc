@@ -119,8 +119,8 @@
   [sym]
   (let [m (meta sym)]
     (cond-> {}
-      (:dart m) (assoc :dart/native true)
-      (:clj m) (assoc :dart/ifn true)
+      (:dart m) (assoc :dart/fn-type :native)
+      (:clj m) (assoc :dart/fn-type :ifn)
       (:tag m) (assoc :dart/type (emit-type (:tag m))))))
 
 (def reserved-words ; and built-in identifiers for good measure
@@ -369,9 +369,11 @@
   (let [[positional-args [_ & named-args]] (split-with (complement '#{.&}) args)]
     [positional-args named-args]))
 
-(defn emit-fn-call [fn-call env]
-  (let [[[f & positionals] nameds] (split-args fn-call)
-        [bindings dart-fn-args]
+(defn emit-args
+  "[bindings dart-args has-nameds]"
+  [args env]
+  (let [[positionals nameds] (split-args args)
+        [bindings dart-args]
         (as-> [nil ()] acc
           (reduce (fn [[bindings dart-fn-args] [k x]]
                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) k)]
@@ -380,12 +382,27 @@
           (reduce (fn [[bindings dart-fn-args] x]
                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "-arg")]
                       [(concat bindings' bindings) (cons x' dart-fn-args)]))
-                  acc (reverse positionals)))
-        ;; always force lifting of non-atomic f to avoid multiple evaluation in fn call sites (see write)
-        [bindings' dart-f] (lift-arg true (emit f env) "-f")
-        dart-f (cond-> dart-f (seq nameds) (vary-meta assoc :dart/native true))
-        bindings (concat bindings' bindings)]
-    (cond->> (cons dart-f dart-fn-args)
+                  acc (reverse positionals)))]
+    [bindings dart-args (some? (seq nameds))]))
+
+(defn emit-fn-call [fn-call env]
+  (let [[bindings [dart-f & dart-args] has-nameds] (emit-args fn-call env)
+        [bindings dart-f dart-args]
+        ;; always force lifting of non-atomic f to avoid multiple evaluation in fn call sites
+        (if (atomic? dart-f)
+          [bindings dart-f dart-args]
+          (let [tmp (dart-local "-f")]
+            [(concat [[tmp dart-f]] bindings) tmp dart-args]))
+        dart-f (cond-> dart-f has-nameds (vary-meta assoc :dart/fn-type :native))
+        native-call (cons dart-f dart-args)
+        ifn-call (list* 'dart/. dart-f (str "_invoke$" (count dart-args)) dart-args)
+        dart-fn-call
+        (case (:dart/fn-type (meta dart-f))
+          :native native-call
+          :ifn ifn-call
+          (list 'dart/if (list 'dart/is dart-f (emit 'IFn env))
+                ifn-call native-call))]
+    (cond->> dart-fn-call
       (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-coll
@@ -414,11 +431,9 @@
         [_ prop name] (re-matches #"(-)?(.+)" member)
         prop (and prop (nil? args))
         op (if prop 'dart/.- 'dart/.)
-        fn-call (emit-fn-call (cons obj args) env)]
-    (case (first fn-call)
-      dart/let (let [[_ bindings [obj & args]] fn-call]
-                 (list 'dart/let bindings (list* op obj name args)))
-      (list* op (first fn-call) name (next fn-call)))))
+        [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)]
+    (cond-> (list* op dart-obj name dart-args)
+      (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
@@ -711,9 +726,10 @@
       (let [dart-fn (emit expr env)]
         (swap! nses do-def sym
                {:dart/name (with-meta dartname
-                             (into {(case (first dart-fn)
-                                      dart/fn :dart/native
-                                      :dart/ifn) true}
+                             (into {:dart/fn-type
+                                    (case (first dart-fn)
+                                      dart/fn :native
+                                      :ifn)}
                                    (meta dartname)))
                 :type :dartfn
                 :dart/code (with-out-str (write-top-dartfn dartname dart-fn))}))
@@ -1211,31 +1227,12 @@
             (print (str "." meth))
             (write-args args)))
         (print (:post locus)))
-      ;; plain fn call
+      ;; native fn call
       (let [[f & args] x
-            {:keys [dart/native dart/ifn]} (meta f)]
+            {:keys [dart/fn-type]} (meta f)]
         (print (:pre locus))
-        (cond
-          native
-          (do (write f expr-locus)
-              (write-args args))
-          ifn
-          (do (print "(")
-              (write f expr-locus)
-              (print " as IFn).invoke")
-              (write-args args))
-          :else
-          (do
-            (print "((")
-            (write f expr-locus)
-            (print " is IFn) ? (")
-            (write f expr-locus)
-            (print " as IFn).invoke")
-            (write-args args)
-            (print " : ")
-            (write f expr-locus)
-            (write-args args)
-            (print ")")))
+        (write f expr-locus)
+        (write-args args)
         (print (:post locus))))
     :else (do
             (print (:pre locus))
@@ -1885,7 +1882,7 @@
 
 (defn nil? [x] (.== nil x))
 
-(defn fib [n]
+(defn ^:dart fib [n]
   (if (< 1 n)
     (+ (fib (- n 1)) (fib (- n 2)))
     1))])
