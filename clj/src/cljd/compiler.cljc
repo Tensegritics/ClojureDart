@@ -134,46 +134,47 @@
 
 (def char-map
   {"-"    "_"
-   "_"    "_$UNDERSCORE_"
-   "$"    "_$DOLLAR_"
-   ":"    "_$COLON_"
-   "+"    "_$PLUS_"
-   ">"    "_$GT_"
-   "<"    "_$LT_"
-   "="    "_$EQ_"
-   "~"    "_$TILDE_"
-   "!"    "_$BANG_"
-   "@"    "_$CIRCA_"
-   "#"    "_$SHARP_"
-   "'"    "_$SINGLEQUOTE_"
-   "\""   "_$DOUBLEQUOTE_"
-   "%"    "_$PERCENT_"
-   "^"    "_$CARET_"
-   "&"    "_$AMPERSAND_"
-   "*"    "_$STAR_"
-   "|"    "_$BAR_"
-   "{"    "_$LBRACE_"
-   "}"    "_$RBRACE_"
-   "["    "_$LBRACK_"
-   "]"    "_$RBRACK_"
-   "/"    "_$SLASH_"
-   "\\"   "_$BSLASH_"
-   "?"    "_$QMARK_"})
+   "_"    "$UNDERSCORE_"
+   "$"    "$DOLLAR_"
+   ":"    "$COLON_"
+   "+"    "$PLUS_"
+   ">"    "$GT_"
+   "<"    "$LT_"
+   "="    "$EQ_"
+   "~"    "$TILDE_"
+   "!"    "$BANG_"
+   "@"    "$CIRCA_"
+   "#"    "$SHARP_"
+   "'"    "$SINGLEQUOTE_"
+   "\""   "$DOUBLEQUOTE_"
+   "%"    "$PERCENT_"
+   "^"    "$CARET_"
+   "&"    "$AMPERSAND_"
+   "*"    "$STAR_"
+   "|"    "$BAR_"
+   "{"    "$LBRACE_"
+   "}"    "$RBRACE_"
+   "["    "$LBRACK_"
+   "]"    "$RBRACK_"
+   "/"    "$SLASH_"
+   "\\"   "$BSLASH_"
+   "?"    "$QMARK_"})
 
 (defn munge [sym]
   (let [s (name sym)]
     (with-meta
       (symbol
-       (or (some-> (reserved-words s) (str "$"))
-           (replace-all s #"__(\d+)|__auto__|[^a-zA-Z0-9]"
-                        (fn [[x n]]
+       (or (when (reserved-words s) (str "$" s "_"))
+           (replace-all s #"__(\d+)|__auto__|(^-)|[^a-zA-Z0-9]"
+                        (fn [[x n leading-dash]]
                           (else->>
-                           (if n (str "_$" n "_"))
-                           (if (= "__auto__" x) "_$AUTO_")
+                           (if leading-dash "$_")
+                           (if n (str "$" n "_"))
+                           (if (= "__auto__" x) "$AUTO_")
                            (or (char-map x))
-                           (str "_$u"
+                           (str "$u"
                                 ;; TODO :cljd version
-                                (str/join "__$u" (map #(Long/toHexString (int %)) x))
+                                (str/join "_$u" (map #(Long/toHexString (int %)) x))
                                 "_"))))))
       (dart-meta sym))))
 
@@ -181,7 +182,7 @@
 (defn dart-global
   ([] (dart-global ""))
   ([prefix]
-   (with-meta (symbol (str (munge prefix) "_$" (swap! gens inc) "_"))
+   (with-meta (symbol (str (munge prefix) "$" (swap! gens inc) "_"))
      (dart-meta prefix))))
 
 (def ^:dynamic *locals-gen*)
@@ -193,7 +194,7 @@
   ([hint]
    (let [dart-hint (munge hint)
          {n dart-hint} (set! *locals-gen* (assoc *locals-gen* dart-hint (inc (*locals-gen* dart-hint 0))))]
-     (with-meta (symbol (str dart-hint "_$" n "_"))
+     (with-meta (symbol (str dart-hint "$" n "_"))
        (dart-meta hint)))))
 
 (defn- parse-dart-params [params]
@@ -380,7 +381,7 @@
                       [(concat bindings' bindings) (list* k x' dart-fn-args)]))
                   acc (reverse (partition 2 nameds)))
           (reduce (fn [[bindings dart-fn-args] x]
-                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "-arg")]
+                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "arg")]
                       [(concat bindings' bindings) (cons x' dart-fn-args)]))
                   acc (reverse positionals)))]
     [bindings dart-args (some? (seq nameds))]))
@@ -391,11 +392,11 @@
         ;; always force lifting of non-atomic f to avoid multiple evaluation in fn call sites
         (if (atomic? dart-f)
           [bindings dart-f dart-args]
-          (let [tmp (dart-local "-f")]
+          (let [tmp (dart-local "f")]
             [(concat [[tmp dart-f]] bindings) tmp dart-args]))
         dart-f (cond-> dart-f has-nameds (vary-meta assoc :dart/fn-type :native))
         native-call (cons dart-f dart-args)
-        ifn-call (list* 'dart/. dart-f (str "_invoke$" (count dart-args)) dart-args)
+        ifn-call (list* 'dart/. dart-f (str "$_invoke$" (count dart-args)) dart-args)
         dart-fn-call
         (case (:dart/fn-type (meta dart-f))
           :native native-call
@@ -411,7 +412,7 @@
    (let [items (into [] (comp (if (map? coll) cat identity) (map f)) coll)
          [bindings items]
          (reduce (fn [[bindings fn-call] x]
-                   (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "-item")]
+                   (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item")]
                      [(concat bindings' bindings) (cons x' fn-call)]))
                  [nil ()] (rseq items))
          fn-sym (cond
@@ -492,7 +493,7 @@
   (cons 'dart/recur (map #(emit % env) exprs)))
 
 (defn emit-if [[_ test then else] env]
-  (let [[bindings test] (lift-arg true (emit test env) "-test")]
+  (let [[bindings test] (lift-arg true (emit test env) "test")]
     (cond->> (list 'dart/if test (emit then env) (emit else env))
       (seq bindings) (list 'dart/let bindings))))
 
@@ -651,9 +652,9 @@
 (defn emit-reify* [[_ opts & specs] env]
   (let [class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
-        positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "-param"))
+        positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param"))
         named-ctor-params (map dart-local (take-nth 2 named-ctor-args))
-        class-name (dart-global "-reify")  ; TODO change this to a more telling name
+        class-name (dart-global "reify")  ; TODO change this to a more telling name
         closed-overs (transduce (map #(method-closed-overs % env)) into #{}
                                 (:methods class))
         class (-> class
