@@ -182,7 +182,7 @@
 (defn dart-global
   ([] (dart-global ""))
   ([prefix]
-   (with-meta (symbol (str (munge prefix) "$" (swap! gens inc) "_"))
+   (with-meta (symbol (str (munge prefix) "$" (swap! gens inc)))
      (dart-meta prefix))))
 
 (def ^:dynamic *locals-gen*)
@@ -194,7 +194,7 @@
   ([hint]
    (let [dart-hint (munge hint)
          {n dart-hint} (set! *locals-gen* (assoc *locals-gen* dart-hint (inc (*locals-gen* dart-hint 0))))]
-     (with-meta (symbol (str dart-hint "$" n "_"))
+     (with-meta (symbol (str dart-hint "$" n))
        (dart-meta hint)))))
 
 (defn- parse-dart-params [params]
@@ -254,7 +254,7 @@
              (into {} (map (fn [[m & arglists]]
                              (let [dart-m (munge m)
                                    [doc-string & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
-                               [(with-meta m {:doc doc-string}) (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" l))
+                               [(with-meta m {:doc doc-string}) (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" (dec l)))
                                                                                                       :args %}]))
                                                                       arglists)]))) methods)
              protocol-meta {:sigs method-mapping}
@@ -280,7 +280,7 @@
                last-clause (peek clauses)
                clauses (cond-> clauses (nil? (next last-clause)) pop)
                default (if (next last-clause)
-                         `(throw (ex-info (str "No matching clause: " ~expr) {:value ~expr}))
+                         `(throw (.value ~'ArgumentError ~expr nil "No matching clause."))
                          (first last-clause))]
            (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
          `(let [test# ~expr] (~'case test# ~@clauses))))))
@@ -326,7 +326,7 @@
   (let [ex (macroexpand-1 env form)]
     (cond->> ex (not (identical? ex form)) (recur env))))
 
-(declare emit)
+(declare emit infer-type)
 
 (defn atomic?
   [x] (not (coll? x)))
@@ -396,12 +396,12 @@
             [(concat [[tmp dart-f]] bindings) tmp dart-args]))
         dart-f (cond-> dart-f has-nameds (vary-meta assoc :dart/fn-type :native))
         native-call (cons dart-f dart-args)
-        ifn-call (list* 'dart/. dart-f (str "$_invoke$" (count dart-args)) dart-args)
+        ifn-call (list* 'dart/. (list 'dart/as dart-f (emit 'cljd.core/IFn env)) (str "$_invoke$" (count dart-args)) dart-args)
         dart-fn-call
         (case (:dart/fn-type (meta dart-f))
           :native native-call
           :ifn ifn-call
-          (list 'dart/if (list 'dart/is dart-f (emit 'IFn env))
+          (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn env))
                 ifn-call native-call))]
     (cond->> dart-fn-call
       (seq bindings) (list 'dart/let bindings))))
@@ -493,7 +493,13 @@
   (cons 'dart/recur (map #(emit % env) exprs)))
 
 (defn emit-if [[_ test then else] env]
-  (let [[bindings test] (lift-arg true (emit test env) "test")]
+  (let [dart-test (emit test env)
+        {:keys [dart/truthiness]} (infer-type dart-test)
+        [bindings test] (lift-arg (nil? truthiness) dart-test "test")
+        test (case truthiness
+               :bool test
+               :some (list 'dart/. test "!=" nil)
+               (list 'dart/. (list 'dart/. test "!=" false) "&" (list 'dart/. test "!=" nil)))]
     (cond->> (list 'dart/if test (emit then env) (emit else env))
       (seq bindings) (list 'dart/let bindings))))
 
@@ -545,10 +551,10 @@
         more-param (gensym "more")
         invoke-more-vararg-dispatch
         (when vararg-params
-          `(if (< ~(- base-vararg-arity *threshold*) (count ~more-param))
+          `(if (.< ~(- base-vararg-arity *threshold*) (count ~more-param))
              (let [~(subvec vararg-params (dec (min *threshold* (count vararg-params)))) ~more-param]
                (. ~this ~vararg-mname ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min *threshold* (count vararg-params)))))))
-             (/ 0)))
+             (/ 0) #_TODO))
         invoke-exts-dispatch
         (->> (mapcat (fn [[meth params]]
                        [(- (count params) *threshold*)
@@ -559,7 +565,7 @@
         (when (or vararg-params (seq invoke-exts))
           (list (list '-invoke-more (into [this] (conj more-params more-param))
                       (concat invoke-exts-dispatch (some-> invoke-more-vararg-dispatch list)))))]
-    (emit (list* 'reify 'IFn (concat invoke-more invokes invoke-exts)) env)
+    (emit (list* 'reify 'IFn #_TODO'cljd.core/IFn (concat invoke-more invokes invoke-exts)) env)
     #_(list* 'reify 'IFn (concat invoke-more invokes invoke-exts))))
 
 (defn- emit-dart-fn [dart-fn-name [params & body] env]
@@ -740,6 +746,26 @@
               :dart/code (with-out-str (write-top-field dartname (emit (if (seq? expr) (list (list 'fn* [] expr)) expr) env)))}))
     (emit sym env)))
 
+(defn ensure-import [the-ns]
+  (let [{:keys [current-ns] :as all-nses} @nses
+        the-lib (:lib (all-nses the-ns))]
+    (or
+     (some (fn [[lib alias]] (when (= lib the-lib) alias))
+           (:imports (all-nses current-ns)))
+     (let [[_ last-segment] (re-matches #".*?([^.]+)$" (name the-ns))
+           alias (str (dart-global last-segment))]
+       (swap! nses update-in [current-ns :imports] conj [the-lib alias])
+       alias))))
+
+(defn emit-fully-qualified-symbol [x]
+  (let [x-ns (some-> x namespace symbol)
+        x-ns (case x-ns clojure.core 'cljd.core x-ns)
+        ns-map (@nses x-ns)]
+    (when-some [{dart-name :dart/name} (get ns-map (symbol (name x)))]
+      (if (= (:current-ns @nses) x-ns)
+        dart-name
+        (symbol (str (ensure-import x-ns) "." dart-name))))))
+
 (defn emit-symbol [x env]
   (let [nses @nses
         {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))
@@ -749,6 +775,7 @@
          (-> x current-ns :dart/name)
          (get mappings x)
          (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
+         (emit-fully-qualified-symbol x)
          #_"TODO next form should throw"
          (symbol (str "GLOBAL_" x)))]
     (vary-meta dart-sym merge (dart-meta x))))
@@ -782,7 +809,8 @@
   (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
         ns-map
         (reduce
-         (partial merge-with into) ns-prototype
+         (partial merge-with into)
+         (assoc ns-prototype :lib (ns-to-lib ns-sym))
          (for [[directive & specs] ns-clauses
                :let [f (case directive
                          :require #(if (sequential? %) % [%])
@@ -800,7 +828,7 @@
                      to-dart-sym (if (string? lib) identity munge)]]
            (cond-> {:imports [[dartlib alias]]
                     :mappings (into {} (for [[from to] (concat (zipmap refer refer) rename)]
-                                         [from (str alias "." (to-dart-sym to))]))}
+                                         [from (symbol (str alias "." (to-dart-sym to)))]))}
              as (assoc :aliases {(name as) alias}))))]
     (swap! nses assoc ns-sym ns-map :current-ns ns-sym)))
 
@@ -843,38 +871,41 @@
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
-  (let [x (macroexpand env x)]
-    (cond
-      (symbol? x) (emit-symbol x env)
-      #?@(:clj [(char? x) (str x)])
-      (or (number? x) (boolean? x) (string? x)) x
-      (keyword? x) (recur (list 'cljd.Keyword/intern (namespace x) (name x)) env)
-      (nil? x) nil
-      (seq? x)
-      (let [emit (case (-> (first x) ensure-new-special)
-                   . emit-dot
-                   set! emit-set!
-                   ; have to think twice about hwo to handle namespacing of new specials by syntax quote -cgrand
-                   (cljd.core/dart-is? dart-is?) emit-dart-is
-                   throw emit-throw
-                   new emit-new
-                   ns emit-ns
-                   try emit-try
-                   case* emit-case*
-                   quote emit-quoted
-                   do emit-do
-                   let* emit-let*
-                   loop* emit-loop*
-                   recur emit-recur
-                   if emit-if
-                   fn* emit-fn*
-                   def emit-def
-                   reify* emit-reify*
-                   deftype* emit-deftype*
-                   emit-fn-call)]
-        (emit x env))
-      (coll? x) (emit-coll x env)
-      :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))))
+  (let [x (macroexpand env x)
+        dart-x
+        (cond
+          (symbol? x) (emit-symbol x env)
+          #?@(:clj [(char? x) (str x)])
+          (or (number? x) (boolean? x) (string? x)) x
+          (keyword? x) (emit (list 'cljd.Keyword/intern (namespace x) (name x)) env)
+          (nil? x) nil
+          (seq? x)
+          (let [emit (case (-> (first x) ensure-new-special)
+                       . emit-dot
+                       set! emit-set!
+                                        ; have to think twice about hwo to handle namespacing of new specials by syntax quote -cgrand
+                       (cljd.core/dart-is? dart-is?) emit-dart-is
+                       throw emit-throw
+                       new emit-new
+                       ns emit-ns
+                       try emit-try
+                       case* emit-case*
+                       quote emit-quoted
+                       do emit-do
+                       let* emit-let*
+                       loop* emit-loop*
+                       recur emit-recur
+                       if emit-if
+                       fn* emit-fn*
+                       def emit-def
+                       reify* emit-reify*
+                       deftype* emit-deftype*
+                       emit-fn-call)]
+            (emit x env))
+          (coll? x) (emit-coll x env)
+          :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
+    (cond-> dart-x
+      (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type dart-x)))))
 
 (defn emit-test [expr env]
   (binding [*locals-gen* {}]
@@ -1038,6 +1069,32 @@
 
 (def ^:private ^:dynamic *caught-exception-symbol* nil)
 
+(defn infer-type [x]
+  (let [m (meta x)]
+    (->
+     (cond
+       (:dart/inferred m) m
+       (boolean? x) {:dart/type "dc.bool" :dart/truth :boolean}
+       (seq? x)
+       (case (first x)
+         dart/.
+         (let [[_ a meth b] x]
+           (case meth
+             ("!" "<" ">" "<=" ">=" "==" "!=" "&" "|" "^")
+             {:dart/type "dc.bool" :dart/truth :boolean}
+             nil))
+         dart/is {:dart/type "dc.bool" :dart/truth :boolean}
+         dart/as (let [[_ _ type] x] {:dart/type type
+                                      :dart/truth
+                                      (case type
+                                        "dc.Object" nil
+                                        "dc.bool" :boolean
+                                        :some)})
+         nil)
+       :else nil)
+     (merge m)
+     (assoc :dart/inferred true))))
+
 (defn write
   "Takes a dartsexp and a locus.
    Prints valid dart code.
@@ -1089,6 +1146,15 @@
           (write final statement-locus))
         (print "}\n")
         exit)
+      dart/as
+      (let [[_ expr type] x]
+        (print (:pre locus))
+        (print "(")
+        (write expr expr-locus)
+        (print " as ")
+        (write type expr-locus)
+        (print ")")
+        (print (:post locus)))
       dart/is
       (let [[_ expr type] x]
         (print (:pre locus))
@@ -1131,9 +1197,7 @@
             _ (some-> decl print)
             _ (print "if(")
             _ (write test expr-locus)
-            _ (print "!=null && ")
-            _ (write test expr-locus)
-            _ (print "!=false){\n")
+            _ (print "){\n")
             then-exit (write then locus)
             _ (print "}else{\n")
             else-exit (write else locus)]
@@ -1194,7 +1258,7 @@
       (let [[_ obj meth & args] x]
         (print (:pre locus))
         (case meth
-          ;; operators
+          ;; operators, ! and != are cljd tricks
           "[]" (do
                  (write obj expr-locus)
                  (print "[")
@@ -1206,7 +1270,7 @@
                   (write (first args) expr-locus)
                   (print "]=")
                   (write (second args) expr-locus))
-          "~" (do
+          ("~" "!") (do
                 (print meth)
                 (write obj paren-locus))
           "-" (if args
@@ -1217,10 +1281,15 @@
                 (do
                   (print meth)
                   (write obj paren-locus)))
-          ("<" ">" "<=" ">=" "==" "+" "~/" "/" "*" "%" "|" "^" "&" "<<" ">>" ">>>")
+          ("<" ">" "<=" ">=" "==" "!=" "+" "~/" "/" "*" "%" "<<" ">>" ">>>")
           (do
             (write obj paren-locus)
             (print meth)
+            (write (first args) paren-locus))
+          ("|" "^" "&")
+          (do
+            (write obj paren-locus)
+            (print (str meth meth))
             (write (first args) paren-locus))
           ;; else plain method
           (do
@@ -1267,7 +1336,7 @@
 (defn compile-input [in]
   (load-input in)
   (let [{:keys [current-ns] :as all-nses} @nses
-        libname (ns-to-lib current-ns)]
+        libname (:lib (all-nses current-ns))]
     (with-open [out (-> (java.io.File. *lib-path* libname)
                         (doto (-> .getParentFile .mkdirs))
                         java.io.FileWriter.)]
@@ -1307,9 +1376,15 @@
 
 (comment
   (binding [*ns* *ns*] (ns hello-flutter.core))
-  (binding [*clj-path* ["../../../examples/hello-flutter/src"]
-            *lib-path* "../../../examples/hello-flutter/lib"]
+  (binding [*clj-path* ["examples/hello-flutter/src"]
+            *lib-path* "examples/hello-flutter/lib"]
     (compile-namespace 'hello-flutter.core))
+
+  (ns 'cljd.core)
+  (time
+   (binding [*clj-path* ["clj/src"]
+             *lib-path* "lib"]
+     (compile-namespace 'cljd.core)))
 
   nses
   )
