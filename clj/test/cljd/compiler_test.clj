@@ -10,38 +10,38 @@
                  (is (= f# '~dart-sexpr#))
                  (is (= (with-out-str (comp/write f# (comp/var-locus "RET"))) ~dart#)))) body)))
 
-(deftest dart-function-call-with-optional-named-param
+(deftest emit-tests
   (test-emit-write
    [(a b c .& :d e) {a a b b c c e e}
     (a b c :d e)
     "var RET=a(b, c, d: e, );\n"]
 
-   [(let [a 1] (println "BOOH") (a 2)) {println println}
-    (dart/let [[a_$1_ 1] [nil (println "BOOH")]] (a_$1_ 2))
-    "var a_$1_=1;
-((println is IFn) ? (println as IFn).invoke(\"BOOH\", ) : println(\"BOOH\", ));
-var RET=((a_$1_ is IFn) ? (a_$1_ as IFn).invoke(2, ) : a_$1_(2, ));\n"]
+   [(let [a 1] (^:dart println "BOOH") (^:dart a 2)) {println println}
+    (dart/let [[a$1 1] [nil (println "BOOH")]] (a$1 2))
+    "var a$1=1;
+println(\"BOOH\", );
+var RET=a$1(2, );\n"]
 
-   [(a (b c) (d e)) {a a b b c c d d e e}
+   [(^:dart a (^:dart b c) (^:dart d e)) {a a b b c c d d e e}
     (a (b c) (d e))
-    "var RET=((a is IFn) ? (a as IFn).invoke(((b is IFn) ? (b as IFn).invoke(c, ) : b(c, )), ((d is IFn) ? (d as IFn).invoke(e, ) : d(e, )), ) : a(((b is IFn) ? (b as IFn).invoke(c, ) : b(c, )), ((d is IFn) ? (d as IFn).invoke(e, ) : d(e, )), ));\n"]
+    "var RET=a(b(c, ), d(e, ), );\n"]
 
-   [(a (side-effect! 42) (let [d 1] (d e)) (side-effect! 33)) {a a side-effect! side-effect! e e}
-    (dart/let ([_arg_$1_ (side-effect! 42)] [d_$1_ 1] [_$1_ (d_$1_ e)]) (a _arg_$1_ _$1_ (side-effect! 33)))
-    "var _arg_$1_=((side-effect! is IFn) ? (side-effect! as IFn).invoke(42, ) : side-effect!(42, ));
-var d_$1_=1;
-var _$1_=((d_$1_ is IFn) ? (d_$1_ as IFn).invoke(e, ) : d_$1_(e, ));
-var RET=((a is IFn) ? (a as IFn).invoke(_arg_$1_, _$1_, ((side-effect! is IFn) ? (side-effect! as IFn).invoke(33, ) : side-effect!(33, )), ) : a(_arg_$1_, _$1_, ((side-effect! is IFn) ? (side-effect! as IFn).invoke(33, ) : side-effect!(33, )), ));\n"]
+   [(^:dart a (^:dart side-effect! 42) (let [d 1] (^:dart d e)) (^:dart side-effect! 33)) {a a side-effect! side-effect! e e}
+    (dart/let ([arg$1 (side-effect! 42)] [d$1 1] [$1 (d$1 e)]) (a arg$1 $1 (side-effect! 33)))
+    "var arg$1=side-effect!(42, );
+var d$1=1;
+var $1=d$1(e, );
+var RET=a(arg$1, $1, side-effect!(33, ), );\n"]
 
    [(. a "[]" i) {a a i i}
     (dart/. a "[]" i)
     "var RET=a[i];\n"]
 
    [(let [b (new List)] (. b "[]=" 0 "hello") b) {}
-    (dart/let [[b_$1_ (dc.List)] [nil (dart/. b_$1_ "[]=" 0 "hello")]] b_$1_)
-    "var b_$1_=dc.List();
-b_$1_[0]=\"hello\";
-var RET=b_$1_;\n"]
+    (dart/let [[b$1 (dc.List)] [nil (dart/. b$1 "[]=" 0 "hello")]] b$1)
+    "var b$1=dc.List();
+b$1[0]=\"hello\";
+var RET=b$1;\n"]
 
    [(. obj meth 1 2) {obj obj}
     (dart/. obj "meth" 1 2)
@@ -56,104 +56,403 @@ var RET=b_$1_;\n"]
     "var RET=obj.prop;\n"]
 
    [(. (let [o obj] o) -prop) {obj obj}
-    (dart/let ([o_$1_ obj]) (dart/.- o_$1_ "prop"))
-    "var o_$1_=obj;
-var RET=o_$1_.prop;\n"]
+    (dart/let ([o$1 obj]) (dart/.- o$1 "prop"))
+    "var o$1=obj;
+var RET=o$1.prop;\n"]
 
    [(. (. a + b) * (. c + d)) {a a b b c c d d}
-    (dart/let ([_f_$1_ (dart/. a "+" b)]) (dart/. _f_$1_ "*" (dart/. c "+" d)))
-    "var _f_$1_=(a)+(b);
-var RET=(_f_$1_)*((c)+(d));\n"]
+    (dart/. (dart/. a "+" b) "*" (dart/. c "+" d))
+    "var RET=((a)+(b))*((c)+(d));\n"]
 
    [(. (let [a (new Object)] a) meth) {}
-    (dart/let ([a_$1_ (dc.Object)]) (dart/. a_$1_ "meth"))
-    "var a_$1_=dc.Object();
-var RET=a_$1_.meth();\n"]
-   ))
+    (dart/let ([a$1 (dc.Object)]) (dart/. a$1 "meth"))
+    "var a$1=dc.Object();
+var RET=a$1.meth();\n"]
 
-(deftest fn-call-with-if-expr-as-argument
-  (let [form (comp/emit-test '(a (if b c d)) '{a a b b c c d d})]
-    (is (= form
-           '(dart/let ([if$_$1_ (dart/if b c d)]) (a if$_$1_))))
-    (is (= (with-out-str
-             (comp/write form (comp/var-locus 'RET)))
-           ""))))
+   [(^:dart a (if b c d)) {a a b b c c d d}
+    (dart/let ([$if_$1 (dart/if (dart/. (dart/. b "!=" false) "&" (dart/. b "!=" nil)) c d)]) (a $if_$1))
+    "var $if_$1;
+if(((b)!=(false))&&((b)!=(null))){
+$if_$1=c;
+}else{
+$if_$1=d;
+}
+var RET=a($if_$1, );\n"]
+
+   [(if b c d) {b b c c d d}
+    (dart/if (dart/. (dart/. b "!=" false) "&" (dart/. b "!=" nil)) c d)
+    "var RET;
+if(((b)!=(false))&&((b)!=(null))){
+RET=c;
+}else{
+RET=d;
+}\n"]
+
+   [(if (if true "true") c d) {c c d d}
+    (dart/let [[$if_$1 (dart/if (dart/. (dart/. true "!=" false) "&" (dart/. true "!=" nil)) "true" nil)]]
+      (dart/if (dart/. (dart/. $if_$1 "!=" false) "&" (dart/. $if_$1 "!=" nil)) c d))
+    "var $if_$1;
+if(((true)!=(false))&&((true)!=(null))){
+$if_$1=\"true\";
+}else{
+$if_$1=null;
+}
+var RET;
+if((($if_$1)!=(false))&&(($if_$1)!=(null))){
+RET=c;
+}else{
+RET=d;
+}\n"]
+
+   [(if b (let [c 1] c) d) {b b d d}
+    (dart/if (dart/. (dart/. b "!=" false) "&" (dart/. b "!=" nil)) (dart/let [[c$1 1]] c$1) d)
+    "var RET;
+if(((b)!=(false))&&((b)!=(null))){
+var c$1=1;
+RET=c$1;
+}else{
+RET=d;
+}\n"]
+
+   [(if b (let [c 1] (if c x y)) d) {b b x x y y d d}
+    (dart/if (dart/. (dart/. b "!=" false) "&" (dart/. b "!=" nil))
+      (dart/let [[c$1 1]]
+        (dart/if (dart/. (dart/. c$1 "!=" false) "&" (dart/. c$1 "!=" nil))
+          x y))
+      d)
+    "var RET;
+if(((b)!=(false))&&((b)!=(null))){
+var c$1=1;
+if(((c$1)!=(false))&&((c$1)!=(null))){
+RET=x;
+}else{
+RET=y;
+}
+}else{
+RET=d;
+}\n"]
+
+   [(. (. a + (if flag 0 1)) * (. c + d)) {a a flag flag c c d d}
+    (dart/let ([$if_$1 (dart/if (dart/. (dart/. flag "!=" false) "&" (dart/. flag "!=" nil)) 0 1)] [$1 (dart/. a "+" $if_$1)]) (dart/. $1 "*" (dart/. c "+" d)))
+    "var $if_$1;
+if(((flag)!=(false))&&((flag)!=(null))){
+$if_$1=0;
+}else{
+$if_$1=1;
+}
+var $1=(a)+($if_$1);
+var RET=($1)*((c)+(d));\n"]
+
+   [(loop [a 1] (if test (recur (^:dart inc a)) a)) {test test inc inc a a}
+    (dart/loop [[a$1 1]]
+      (dart/if (dart/. (dart/. test "!=" false) "&" (dart/. test "!=" nil))
+        (dart/recur (inc a$1))
+        a$1))
+    "var RET;
+var a$1=1;
+do {
+if(((test)!=(false))&&((test)!=(null))){
+a$1=inc(a$1, );
+continue;
+}else{
+RET=a$1;
+}
+break;
+} while(true);\n"]
+
+   #_[(loop [a 1 b 2] (recur b a)) {}
+    (dart/loop [[a$1 1] [b$1 2]] (dart/recur b$1 a$1))
+    "var RET;
+var a$1=1;
+do {
+if(((test)!=(false))&&((test)!=(null))){
+a$1=inc(a$1, );
+continue;
+}else{
+RET=a$1;
+}
+break;
+} while(true);\n"]
+
+   [(fn [x] x) {}
+    (dart/fn (x$1) :positional () x$1)
+    "var RET=(x$1, ){
+return x$1;
+};\n"]
+
+   [(let [inc (fn [x] (. x "+" 1))] (inc 3)) {}
+    (dart/let [[inc$1 (dart/fn (x$1) :positional () (dart/. x$1 "+" 1))]] (inc$1 3))
+    "inc$1(x$1, ){
+return (x$1)+(1);
+}
+var RET=inc$1(3, );\n"]
+
+   [(do 1 2 3 4 (^:dart a 1) "ddd") {a a}
+    (dart/let [[nil 1] [nil 2] [nil 3] [nil 4] [nil (a 1)]] "ddd")
+    "1;
+2;
+3;
+4;
+a(1, );
+var RET=\"ddd\";\n"]
+
+   [(or 1 2 3 4 (^:dart a 1) "ddd") {a a}
+    (dart/let [[or$5516_$AUTO_$1 1]]
+      (dart/if (dart/. (dart/. or$5516_$AUTO_$1 "!=" false) "&" (dart/. or$5516_$AUTO_$1 "!=" nil))
+        or$5516_$AUTO_$1
+        (dart/let [[or$5516_$AUTO_$2 2]]
+          (dart/if (dart/. (dart/. or$5516_$AUTO_$2 "!=" false) "&" (dart/. or$5516_$AUTO_$2 "!=" nil))
+            or$5516_$AUTO_$2
+            (dart/let [[or$5516_$AUTO_$3 3]]
+              (dart/if (dart/. (dart/. or$5516_$AUTO_$3 "!=" false) "&" (dart/. or$5516_$AUTO_$3 "!=" nil))
+                or$5516_$AUTO_$3
+                (dart/let [[or$5516_$AUTO_$4 4]]
+                  (dart/if (dart/. (dart/. or$5516_$AUTO_$4 "!=" false) "&" (dart/. or$5516_$AUTO_$4 "!=" nil))
+                    or$5516_$AUTO_$4
+                    (dart/let [[or$5516_$AUTO_$5 (a 1)]]
+                      (dart/if (dart/. (dart/. or$5516_$AUTO_$5 "!=" false) "&" (dart/. or$5516_$AUTO_$5 "!=" nil))
+                        or$5516_$AUTO_$5 "ddd"))))))))))
+     "var or$5516_$AUTO_$1=1;
+var RET;
+if(((or$5516_$AUTO_$1)!=(false))&&((or$5516_$AUTO_$1)!=(null))){
+RET=or$5516_$AUTO_$1;
+}else{
+var or$5516_$AUTO_$2=2;
+if(((or$5516_$AUTO_$2)!=(false))&&((or$5516_$AUTO_$2)!=(null))){
+RET=or$5516_$AUTO_$2;
+}else{
+var or$5516_$AUTO_$3=3;
+if(((or$5516_$AUTO_$3)!=(false))&&((or$5516_$AUTO_$3)!=(null))){
+RET=or$5516_$AUTO_$3;
+}else{
+var or$5516_$AUTO_$4=4;
+if(((or$5516_$AUTO_$4)!=(false))&&((or$5516_$AUTO_$4)!=(null))){
+RET=or$5516_$AUTO_$4;
+}else{
+var or$5516_$AUTO_$5=a(1, );
+if(((or$5516_$AUTO_$5)!=(false))&&((or$5516_$AUTO_$5)!=(null))){
+RET=or$5516_$AUTO_$5;
+}else{
+RET=\"ddd\";
+}
+}
+}
+}
+}\n"]
+
+   [((((fn [] (fn [] (fn [] 42)))))) {}
+    (dart/let ([f$1 (dart/fn () :positional () (dart/fn () :positional () (dart/fn () :positional () 42)))]
+               [$if_$1 (dart/if (dart/is f$1 GLOBAL_cljd.core/IFn) (dart/. (dart/as f$1 GLOBAL_cljd.core/IFn) "$_invoke$0") (f$1))]
+               [$if_$2 (dart/if (dart/is $if_$1 GLOBAL_cljd.core/IFn) (dart/. (dart/as $if_$1 GLOBAL_cljd.core/IFn) "$_invoke$0") ($if_$1))])
+      (dart/if (dart/is $if_$2 GLOBAL_cljd.core/IFn) (dart/. (dart/as $if_$2 GLOBAL_cljd.core/IFn) "$_invoke$0") ($if_$2)))
+    ""])
+
+  (comment
+
+    (run-tests)
+
+    ))
+
+
+
+
+
 
 (comment
 
-  (run-tests)
+  (emit-ns '(ns cljd.user
+              (:require [cljd.bordeaux :refer [reviews] :as awesome]
+                        [cljd.ste :as ste]
+                        ["package:flutter/material.dart"]
+                        clojure.string)) {})
 
-  )
+
+  (emit '((((fn* [] (fn* [] (fn* [] 42)))))) {})
+  ((((dart/fn () () (dart/let () (dart/fn () () (dart/let () (dart/fn () () (dart/let () 42)))))))))
+  (write *1 (var-locus "DDDD"))
+
+  (emit '(fn* [x] x) {})
+  (dart/fn nil (_$7_) () (dart/let ([x_$8_ _$7_]) x_$8_))
+  (write *1 return-locus)
+
+  (emit '(fn* fname [x] 42) {})
+  (dart/let [[nil (dart/fn _16623 (_16624) () (dart/let ([_16625 _16624]) 42))]] _16623)
+  (write *1 return-locus)
+
+  (emit '((fn* fname [x] 42)) {})
+  (dart/let ([nil (dart/fn _16631 (_16632) () (dart/let ([_16633 _16632]) 42))]) (_16631))
+  (write *1 return-locus)
+
+  ()
+
+  (emit '(def oo (fn* [x] 42)) {})
+  (write *1 return-locus)
 
 
+
+  (emit '(def oo1 42) {})
+
+
+  (emit '(def oo (fn* [x] (if (.-isOdd x) (recur (. x + 1)) x ))) {})
+  nses
+
+  (emit '(def oo "caca\n") {})
+
+  (emit '(def oo "docstring" (let [a "caca"] a)) {})
+
+  (write *1 return-locus)
+
+  (emit '(fn* aa [x] x) {})
+  (dart/let [[nil (dart/fn _16717 (_16718) () (dart/let ([_16719 _16718]) _16719))]] _16717)
+
+  (emit '(fn* [] (fn* aa [x] x)) {})
+  (dart/fn nil () () (dart/let [[nil (dart/fn aa_$9_ (_$10_) () (dart/let ([x_$11_ _$10_]) x_$11_))]] aa_$9_))
+  (dart/fn nil () () (dart/let ([nil (dart/fn _18396 (_18397) () (dart/let ([_18398 _18397]) (GLOBAL_do _18398)))]) (GLOBAL_do _18396)))
+
+  (emit '(reify Object (boo [self x & y 33] (.toString self))) {})
+  (GLOBAL__22982)
+
+  (emit '(reify Object (boo [self x ... y 33] (.toString self))) {})
+  (GLOBAL__22986)
+  (write *1 return-locus)
+
+  (emit '(let [x 42] (reify Object (boo [self] (str x "-" self)))) {})
+  (dart/let ([_22991 42]) (GLOBAL__22992 _22991))
+
+  (emit '(let [x 42] (reify Object (boo [self] (let [x 33] (str x "-" self))))) {})
+  (dart/let ([x_$4_ 42]) (_reify_$5_))
+
+  (emit '[1 2 3] {})
+  (GLOBAL_cljd.core/vec [1 2 3])
+  (write *1 expr-locus)
+
+  (emit '[1 (inc 1) [1 1 1]] {})
+  (GLOBAL_cljd.core/vec [1 (GLOBAL_inc 1) (GLOBAL_cljd.core/vec [1 1 1])])
+
+  (emit ''[1 (inc 1) [1 1 1]] {})
+
+  (GLOBAL_cljd.core/vec [1 (GLOBAL_inc 1) (GLOBAL_cljd.core/vec [1 1 1])])
+
+  (emit '[1 (inc 1) [(let [x 3] x)]] {})
+  (dart/let ([_24320 (GLOBAL_inc 1)] [_24318 3] [_24319 (GLOBAL_cljd.core/vec [_24318])]) (GLOBAL_cljd.core/vec [1 _24320 _24319]))
+  (write *1 expr-locus)
+
+  (emit '(let [x (try 1 2 3 4 (catch Exception e e1 (print e) 2 3))] x) {})
+  (dart/let ([_17563 (dart/try (dart/let ([nil 1] [nil 2] [nil 3]) 4) (catch Exception [_17564 _17565] (dart/let ([nil (GLOBAL_print _17564)] [nil 2]) 3)))]) _17563)
+  (write *1 return-locus)
+
+  (emit '(if (try 1 2 3 4 (catch Exception e "noooo") (finally "log me")) "yeahhh") {})
+  (write *1 return-locus)
+
+  (emit '(try (catch E e st)) {})
+  (dart/try nil ([E e_$19_ nil GLOBAL_st]) nil)
+  (write *1 return-locus)
+
+  (emit '(try 42 33 (catch E e st x) (finally (print "boo"))) {})
+  (dart/try (dart/let ([nil 42]) 33) ([E e_$24_ st_$25_ GLOBAL_x]) (GLOBAL_print "boo"))
+  (write *1 return-locus)
+
+  (emit '[1 (let [x 2] x) 3] {})
+  (dart/let ([__$3_ 2]) (GLOBAL_cljd.core/vec [1 __$3_ 3]))
+  (dart/let ([_25768 2]) (GLOBAL_cljd.core/vec [1 _25768 3]))
+
+  (emit '[(f) (let [x 2] x) 3] {})
+  (dart/let ([_25772 (GLOBAL_f)] [_25771 2]) (GLOBAL_cljd.core/vec [_25772 _25771 3]))
+
+
+  (emit '(try 1 2 3 4 (catch Exception e st 1 2)) {})
+  (dart/try (dart/let ([nil 1] [nil 2] [nil 3]) 4) (catch Exception [e_$4_ st_$5_] (dart/let ([nil 1]) 2)) (catch Exception [e_$6_] GLOBAL_st))
+  (write *1 return-locus)
+
+  (emit '(throw 1) {})
+  (dart/throw 1)
+  (write *1 (var-locus "prout"))
+
+  (emit '(throw (let [a 1] (. a + 3))) {})
+  (dart/let ([a_$28_ 1] [_$29_ (dart/. a_$28_ "+" 3)]) (dart/throw _$29_))
+  (write *1 return-locus)
+
+
+
+
+  (emit '(let [a (throw 1)] a) {})
+  (dart/let ([a_$50_ (dart/let [[nil (dart/throw 1)]] nil)]) a_$50_)
+  (write *1 return-locus)
+
+  (emit '(let [a (throw (if x y z))] a) {})
+  (dart/let ([a_$41_ (dart/let [[nil (dart/throw (dart/if GLOBAL_x GLOBAL_y GLOBAL_z))]] nil)]) a_$41_)
+  (write *1 return-locus)
+
+  (emit '(try (catch E e (throw e))) {})
+  (dart/try nil ([E e_$47_ nil (dart/let [[nil (dart/throw e_$47_)]] nil)]) nil)
+  (write *1 return-locus)
+
+  (emit '(loop [] (recur)) {})
+  (dart/loop [] (dart/recur))
+  (write *1 return-locus)
+
+  (emit '(loop [] (if x (recur))) {})
+  (dart/loop [] (dart/if GLOBAL_x (dart/recur) nil))
+  (write *1 return-locus)
+  (write *2 statement-locus)
+
+  (emit '(reify Object (^:getter hashCode [] 42)
+           (^:setter foo [this x] (println x))
+           (meth [a b] "regular method")) {})
+  (_reify_$8_)
+
+  (emit '(deftype MyClass [^:mutable ^List a b ^Map c]
+           :extends (ParentClass. (+ a b) (if 1 2 3))
+           Object
+           (meth [_ b] (set! a (if (rand-bool) 33 42)))
+           (meth2 [this b] (set! (.-a this) "yup"))
+           (^:getter hashCode [_] (let [^num n 42] n))) {})
+
+
+  (emit '(defprotocol IProtocol_ (meth [a] [a b] [a b c]) (-coucou [a])) {})
+  (dart/let [[nil IProtocol_$UNDERSCORE_] [nil meth] [nil _coucou]] IProtocol_$UNDERSCORE_)
+
+  (emit '(defprotocol IMarker "This protocol is only a marker") {})
+  (dart/let [[nil IMarker]] IMarker)
+
+  (emit '(defprotocol IMarker2 "Docstring" (meth [one] [one two] "Docstring") (ops [one] [one two]) (opa [one] "Coucou")) {})
+  (dart/let [[nil IMarker] [nil meth] [nil ops] [nil opa]] IMarker)
+
+  (emit '(deftype MyClass [^:mutable ^List a b ^Map c]
+           :extends (ParentClass. (+ a b) (if 1 2 3))
+           IMarker
+           IProtocol_
+           (meth [a] "a")
+           (meth [b c] "e")
+           (meth [c d e] "oo")) {})
+  (dart/let [[nil MyClass]] __$GT_MyClass)
+
+  nses
+
+  (macroexpand-1 {} '(defn aaa "docstring2" [ooo] "content"))
+
+  (emit '(defn aaa "docstring2" [ooo] "content") {})
+  (emit '(def ooo "docstirng" 42) {})
+
+  (emit '(dart-is? 0 num) {})
+  (dart/is 0 dc.num)
+
+  (emit `(str (case x# 12 "hello" (13 14) "bye")) {})
+
+  (write *1 return-locus)
+
+  (emit `(case 12  12 "hello" (13 14) "bye") {})
+
+  (macroexpand-1 {} '(case 12 12 "hello"))
+
+  (clojure.core/let [test__6312__auto__ 12] (cljd.core/case test__6312__auto__ 12 "hello"))
+
+    )
 
 (comment
 
-  (emit '(if b c d) {})
-  (dart/if GLOBAL_b GLOBAL_c GLOBAL_d)
-  (write *1 (var-locus 'RET))
-
-  (emit '(if (if true "true") c d) {})
-  (dart/let [[_9946 (dart/if true "true" nil)]] (dart/if _9946 GLOBAL_c GLOBAL_d))
-  (write *1 (var-locus 'RET))
-
-  (emit '(if b (let* [c 1] c) d) {})
-  (dart/if GLOBAL_b (dart/let ([_10417 1]) _10417) GLOBAL_d)
-  (write *1 return-locus)
-
-  (emit '(if b (let* [c 1] (if c x y)) d) {})
-  (dart/if GLOBAL_b (dart/let ([_10425 1]) (dart/if _10425 GLOBAL_x GLOBAL_y)) GLOBAL_d)
-  (write *1 (var-locus 'RET))
 
 
-
-  (emit '(if (let* [x 1] x) then else) {})
-  (dart/let ([_10434 1]) (dart/if _10434 GLOBAL_then GLOBAL_else))
-  (write *1 (var-locus 'RET))
-
-  (emit '(. (. a + (if flag 0 1)) * (. c + d)) {})
-  (dart/let ([_12035 (dart/if GLOBAL_flag 0 1)] [_12036 (dart/. GLOBAL_a "+" _12035)]) (dart/. _12036 "*" (dart/. GLOBAL_c "+" GLOBAL_d)))
-  (write *1 (var-locus 'RET))
-  ;; var _12035;
-  ;; var _12039=GLOBAL_flag;
-  ;; if(_12039!=null && _12039!=false){
-  ;; _12035=0;
-  ;; }else{
-  ;; _12035=1;
-  ;; }
-  ;; var _12036=(GLOBAL_a)+(_12035);
-  ;; var RET=(_12036)*((GLOBAL_c)+(GLOBAL_d));
-
-  (emit '(loop* [a 1] (if test (recur (inc a)) a)) {})
-  (dart/loop [[_12413 1]]
-    (dart/if GLOBAL_test
-      (dart/recur (GLOBAL_inc _12413))
-      _12413))
-  (write *1 return-locus)
-  ;; var _12413=1;
-  ;; do {
-  ;; var _12416=GLOBAL_test;
-  ;; if(_12416!=null && _12416!=false){
-  ;; _12413=GLOBAL_inc(_12413, );
-  ;; continue;
-  ;; }else{
-  ;; return _12413;
-  ;; }
-  ;; break;
-  ;; } while(true);
-
-  (emit '(loop* [a 1 b 2] (recur b a)) {})
-  (dart/loop [[_12419 1] [_12420 2]] (dart/recur _12420 _12419))
-  (write *1 return-locus)
-  ;; var _12419=1;
-  ;; var _12420=2;
-  ;; do {
-  ;; var _12423=_12420;
-  ;; _12420=_12419;
-  ;; _12419=_12423;
-  ;; continue;
-  ;; break;
-  ;; } while(true);
 
   (emit '(loop* [a 1 b 2] (recur (inc a) (dec b))) {})
   (dart/loop [[_12693 1] [_12694 2]] (dart/recur (GLOBAL_inc _12693) (GLOBAL_dec _12694)))
@@ -172,8 +471,7 @@ var RET=a_$1_.meth();\n"]
   (dart/loop [[_10053 1] [_10054 2]] (dart/let ([nil _10053] [nil _10054] [nil 3] [nil 4]) (dart/recur 1 2)))
   (write *1 return-locus)
 
-  (emit-fn '(fn [x] x) {})
-  (dart/fn (_12891) () (dart/let ([_12892 _12891]) _12892))
+
 
   (emit-fn '(fn ([x] x) ([x y] y)) {})
   (dart/fn (_12895) (_12896)
@@ -198,21 +496,11 @@ var RET=a_$1_.meth();\n"]
         (dart/let ([_13996 _13991] [_13997 _13992] [_13998 _13993] [_13999 _13994] [_14000 _13995]) _13996))))
   (write *1 (var-locus "XXX"))
 
-  (emit '(let* [inc (fn* [x] (. x "+" 1))] (inc 3)) {})
-  (write *1 (var-locus "DDDD"))
+
 
   (emit '(loop* [a 4 b 5] a (recur b a)) {})
   (dart/loop [[_8698 4] [_8699 4]] (dart/let ([nil _8698]) _8699))
   (write *1 (var-locus "DDDD"))
 
-  (emit '(do 1 2 3 4 (a 1) "ddd") {})
-  (dart/let ([nil 1] [nil 2] [nil 3] [nil 4] [nil (GLOBAL_a 1)]) "ddd")
-  (write *1 (var-locus "this"))
 
-
-  (emit '(or 1 2 3 4 (a 1) "ddd") {})
-  (dart/let ([_9757 1]) (dart/if _9757 _9757 (dart/let ([_9758 2]) (dart/if _9758 _9758 (dart/let ([_9759 3]) (dart/if _9759 _9759 (dart/let ([_9760 4]) (dart/if _9760 _9760 (dart/let ([_9761 (GLOBAL_a 1)]) (dart/if _9761 _9761 "ddd"))))))))))
-  (write *1 return-locus)
-
-  (macroexpand {} '(fn* nom [a] a))
   )
