@@ -23,7 +23,7 @@
      (str/replace s regexp f)))
 
 (def ns-prototype
-  {:imports [["dart:core" "dc"]] ; dc can't clash with user aliases because they go through dart-global
+  {:imports {"dc" {:lib "dart:core"}} ; dc can't clash with user aliases because they go through dart-global
    :aliases {}
    :mappings
    '{Type dc.Type,
@@ -274,6 +274,19 @@
                                         #_TODO_EXTENSIONS)))))
                  (list class-name)))))
 
+     (defn resolve-dart-mname
+       "Takes two symbols (a protocol and one of its method) and the number
+  of arguments passed to this method.
+  Returns the name (as symbol) of the dart method backing this clojure method."
+       [pname mname args-count]
+       (let [nses @nses
+             {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))
+             pns (namespace pname)
+             pns (or (some-> pns :aliases :ns) (some-> pns symbol))
+             ns-map (if pns (nses pns) current-ns)
+             protocol (ns-map pname)]
+         (get-in protocol [:meta :protocol :sigs mname args-count :dart/name])))
+
      (defn- expand-case [expr & clauses]
        (if (or (symbol? expr) (odd? (count clauses)))
          (let [clauses (vec (partition-all 2 clauses))
@@ -494,9 +507,9 @@
 
 (defn emit-if [[_ test then else] env]
   (let [dart-test (emit test env)
-        {:keys [dart/truthiness]} (infer-type dart-test)
-        [bindings test] (lift-arg (nil? truthiness) dart-test "test")
-        test (case truthiness
+        {:keys [dart/truth]} (infer-type dart-test)
+        [bindings test] (lift-arg (nil? truth) dart-test "test")
+        test (case truth
                :bool test
                :some (list 'dart/. test "!=" nil)
                (list 'dart/. (list 'dart/. test "!=" false) "&" (list 'dart/. test "!=" nil)))]
@@ -549,6 +562,7 @@
                       `(. ~(first base-params) ~vararg-mname ~@(next base-params) ~rest-params)))))))
         more-params (vec (repeatedly (dec *threshold*) #(gensym "p")))
         more-param (gensym "more")
+        ;; TODO : not finished :'(
         invoke-more-vararg-dispatch
         (when vararg-params
           `(if (.< ~(- base-vararg-arity *threshold*) (count ~more-param))
@@ -564,9 +578,36 @@
         invoke-more
         (when (or vararg-params (seq invoke-exts))
           (list (list '-invoke-more (into [this] (conj more-params more-param))
-                      (concat invoke-exts-dispatch (some-> invoke-more-vararg-dispatch list)))))]
-    (emit (list* 'reify 'IFn #_TODO'cljd.core/IFn (concat invoke-more invokes invoke-exts)) env)
-    #_(list* 'reify 'IFn (concat invoke-more invokes invoke-exts))))
+                      (concat invoke-exts-dispatch (some-> invoke-more-vararg-dispatch list)))))
+        ;; Call handling
+        call-arities (concat (->> invokes (remove #(= (str (first %)) "_invoke$vararg")) (map #(dec (count (second %)))) sort)
+                             (when (seq invoke-more) [(dec (count (second (first invoke-more))))]))
+        call-default (str (gensym "default")) #_(list 'new 'Symbol (str (dart-local 'default)))
+        call-params
+        (into [this] (comp (map-indexed (fn [idx x]
+                                          (let [i (first call-arities)]
+                                            (cond
+                                              (= idx i) ['...]
+                                              (< idx i) [x]
+                                              (> idx i) [x call-default])))) cat)
+              (repeatedly (inc (last call-arities)) #(gensym "p")))
+        [[this & req-call-params] [_ & opt-call-params]]
+        (split-with (complement #{'...}) call-params)
+        call-body
+        (loop [[[opt] :as in] (partition 2 opt-call-params)
+               [arity :as arities] call-arities
+               args req-call-params
+               res []]
+          (let [n-arities (if (= (count args) arity) (next arities) arities)
+                body (if (= (count args) arity) (list* '. this (resolve-dart-mname 'IFn '-invoke (inc (count args))) args) (list 'throw (list 'new 'ArgumentError "No arrity matching")))]
+            (if opt
+              (recur (next in)
+                     n-arities
+                     (concat args (list opt))
+                     (conj res [(list '= opt call-default) body]))
+              (conj res [true (if (seq invoke-more) (list* '. this (resolve-dart-mname 'IFn '-invoke-more (inc (count args))) args) body)]))))
+        call (list 'call call-params (list* 'cond (apply concat call-body)))]
+    (emit (list* 'reify 'IFn #_TODO'cljd.core/IFn (concat invoke-more invokes invoke-exts (list 'Object call))) {})))
 
 (defn- emit-dart-fn [dart-fn-name [params & body] env]
   (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
@@ -750,11 +791,11 @@
   (let [{:keys [current-ns] :as all-nses} @nses
         the-lib (:lib (all-nses the-ns))]
     (or
-     (some (fn [[lib alias]] (when (= lib the-lib) alias))
+     (some (fn [[alias {:keys [lib]}]] (when (= lib the-lib) alias))
            (:imports (all-nses current-ns)))
      (let [[_ last-segment] (re-matches #".*?([^.]+)$" (name the-ns))
            alias (str (dart-global last-segment))]
-       (swap! nses update-in [current-ns :imports] conj [the-lib alias])
+       (swap! nses update-in [current-ns :imports] assoc alias {:lib the-lib :ns the-ns})
        alias))))
 
 (defn emit-fully-qualified-symbol [x]
@@ -774,10 +815,10 @@
          (env x)
          (-> x current-ns :dart/name)
          (get mappings x)
-         (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (name x))))
+         (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (munge x))))
          (emit-fully-qualified-symbol x)
          #_"TODO next form should throw"
-         (symbol (str "GLOBAL_" x)))]
+         (munge (symbol (str "GLOBAL_" x))))]
     (vary-meta dart-sym merge (dart-meta x))))
 
 (defn emit-quoted [[_ x] env]
@@ -821,14 +862,15 @@
                spec specs
                :let [[lib & {:keys [as refer rename]}] (f spec)
                      alias (name (dart-global (or as "lib")))
+                     clj-ns (when-not (string? lib) lib)
                      dartlib (else->>
                               (if (string? lib) lib)
                               (if-some [{:keys [lib]} (@nses lib)] lib)
                               (compile-namespace lib))
-                     to-dart-sym (if (string? lib) identity munge)]]
-           (cond-> {:imports [[dartlib alias]]
+                     to-dart-sym (if clj-ns munge identity)]]
+           (cond-> {:imports {alias {:lib dartlib :ns clj-ns}}
                     :mappings (into {} (for [[from to] (concat (zipmap refer refer) rename)]
-                                         [from (symbol (str alias "." (to-dart-sym to)))]))}
+                                         [from (with-meta (symbol (str alias "." (to-dart-sym to))) {:dart/fn-type (when (nil? clj-ns) :native)})]))}
              as (assoc :aliases {(name as) alias}))))]
     (swap! nses assoc ns-sym ns-map :current-ns ns-sym)))
 
@@ -1193,16 +1235,19 @@
       dart/if
       (let [[_ test then else] x
             decl (declaration locus)
-            locus (declared locus)
-            _ (some-> decl print)
-            _ (print "if(")
-            _ (write test expr-locus)
-            _ (print "){\n")
-            then-exit (write then locus)
-            _ (print "}else{\n")
-            else-exit (write else locus)]
-        (print "}\n")
-        (and then-exit else-exit))
+            locus (declared locus)]
+        (some-> decl print)
+        (print "if(")
+        (write test expr-locus)
+        (print "){\n")
+        (if (write then locus)
+          (do
+            (print "}\n")
+            (write else locus))
+          (do
+            (print "}else{\n")
+            (write else locus)
+            (print "}"))))
       dart/loop
       (let [[_ bindings expr] x
             decl (declaration locus)
@@ -1242,7 +1287,7 @@
           (print "continue;\n")
           true))
       dart/set!
-      (let [[_ target val] x]
+      (let [[_ target val] x] ; TODO it's dubious that locus isn't used
         (write val (assignment-locus
                     (if (symbol? target)
                       target
@@ -1253,7 +1298,8 @@
         (print (:pre locus))
         (write obj expr-locus)
         (print (str "." fld))
-        (print (:post locus)))
+        (print (:post locus))
+        (:exit locus))
       dart/.
       (let [[_ obj meth & args] x]
         (print (:pre locus))
@@ -1296,14 +1342,16 @@
             (write obj expr-locus)
             (print (str "." meth))
             (write-args args)))
-        (print (:post locus)))
+        (print (:post locus))
+        (:exit locus))
       ;; native fn call
       (let [[f & args] x
             {:keys [dart/fn-type]} (meta f)]
         (print (:pre locus))
         (write f expr-locus)
         (write-args args)
-        (print (:post locus))))
+        (print (:post locus))
+        (:exit locus)))
     :else (do
             (print (:pre locus))
             (write-literal x)
@@ -1312,7 +1360,7 @@
 
 ;; Compile clj -> dart file
 (defn dump-ns [ns-map]
-  (doseq [[lib alias] (:imports ns-map)]
+  (doseq [[alias {:keys [lib]}] (:imports ns-map)]
     (print "import ")
     (write-string-literal lib)
     (print " as ")
@@ -1375,7 +1423,7 @@
                       {:ns ns-name})))))
 
 (comment
-  (binding [*ns* *ns*] (ns hello-flutter.core))
+  (binding [*ns* *ns*] (ns cljd.core) #_(ns hello-flutter.core))
   (binding [*clj-path* ["examples/hello-flutter/src"]
             *lib-path* "examples/hello-flutter/lib"]
     (compile-namespace 'hello-flutter.core))
@@ -1606,23 +1654,22 @@
   (write *1 statement-locus)
 
 
-  (emit '(defprotocol IFn
-           "Protocol for adding the ability to invoke an object as a function.
-  For example, a vector can also be used to look up a value:
+  (emit-test '(defprotocol IFn
+                "Protocol for adding the ability to invoke an object as a function.
+  For example, a vecttor can also be used to look up a value:
   ([1 2 3 4] 1) => 2"
-           (-invoke
-             [this]
-             [this a]
-             [this a b]
-             [this a b c]
-             [this a b c d]
-             [this a b c d e]
-             [this a b c d e f]
-             [this a b c d e f g]
-             [this a b c d e f g h]
-             [this a b c d e f g h i]
-             [this a b c d e f g h i j])
-           (-invoke-more [this a b c d e f g h i j rest])) {})
+                (-invoke
+                  [this]
+                  [this a]
+                  [this a b]
+                  [this a b c]
+                  [this a b c d]
+                  [this a b c d e]
+                  [this a b c d e f]
+                  [this a b c d e f g]
+                  [this a b c d e f g h]
+                  [this a b c d e f g h i])
+                (-invoke-more [this a b c d e f g h i rest])) {})
 
 
   (macroexpand-1 {} '(defprotocol IFn
