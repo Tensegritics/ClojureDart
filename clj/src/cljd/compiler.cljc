@@ -293,7 +293,7 @@
                last-clause (peek clauses)
                clauses (cond-> clauses (nil? (next last-clause)) pop)
                default (if (next last-clause)
-                         `(throw (.value ~'ArgumentError ~expr nil "No matching clause."))
+                         `(throw (.value ~'dc/ArgumentError ~expr nil "No matching clause."))
                          (first last-clause))]
            (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
          `(let [test# ~expr] (~'case test# ~@clauses))))))
@@ -437,6 +437,16 @@
          fn-call (list (emit fn-sym env) (vec items))]
      (cond->> fn-call (seq bindings) (list 'dart/let bindings)))))
 
+(defn emit-dart-literal [x env]
+  (if (vector? x)
+    (let [[bindings items]
+          (reduce (fn [[bindings fn-call] x]
+                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item")]
+                      [(concat bindings' bindings) (cons x' fn-call)]))
+                  [nil ()] (rseq x))]
+     (cond->> (vec items) (seq bindings) (list 'dart/let bindings)))
+    (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))))
+
 (defn emit-new [[_ class & args] env]
   (emit-fn-call (cons (vary-meta class assoc :dart true) args) env))
 
@@ -565,14 +575,18 @@
         ;; TODO : not finished :'(
         invoke-more-vararg-dispatch
         (when vararg-params
-          `(if (.< ~(- base-vararg-arity *threshold*) (count ~more-param))
-             ~(if (< base-vararg-arity *threshold*)
-                `(. ~this ~vararg-mname
-                    ~@(subvec more-params 0 base-vararg-arity)
-                    (vec (list* ~@(subvec more-params base-vararg-arity) ~more-param)))
-                `(let [~(subvec vararg-params (dec (min *threshold* (count vararg-params)))) ~more-param]
-                   (. ~this ~vararg-mname ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min *threshold* (count vararg-params))))))))
-             (/ 0) #_TODO))
+          (let [above-threshold (- base-vararg-arity *threshold*)]
+            (if (neg? above-threshold)
+              `(. ~this ~vararg-mname
+                  ~@(subvec more-params 0 base-vararg-arity)
+                  (.+ ~(tagged-literal 'dart (subvec more-params base-vararg-arity))
+                      ~more-param))
+              (let [more-destructuring (subvec vararg-params (dec *threshold*))
+                    bound-vars (remove #{'&} more-destructuring)]
+                `(if (.< ~above-threshold (count ~more-param))
+                   (let [~more-destructuring ~more-param]
+                     (. ~this ~vararg-mname ~@more-params ~@bound-vars))
+                   (throw (dc/ArgumentError. "No matching arity")))))))
         invoke-exts-dispatch
         (->> (mapcat (fn [[meth params]]
                        [(- (count params) *threshold*)
@@ -603,7 +617,7 @@
                args req-call-params
                res []]
           (let [n-arities (if (= (count args) arity) (next arities) arities)
-                body (if (= (count args) arity) (list* '. this (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count args))) args) (list 'throw (list 'new 'ArgumentError "No arrity matching")))]
+                body (if (= (count args) arity) (list* '. this (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count args))) args) (list 'throw (list 'new 'dc/ArgumentError "No arity matching")))]
             (if opt
               (recur (next in)
                      n-arities
@@ -692,7 +706,7 @@
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
         dart-methods (map #(emit-method % env) methods)]
     {:extends (emit base env)
-     :implements ifaces
+     :implements (map #(emit % env) ifaces)
      :with mixins
      :super-ctor
      {:method ctor-meth ; nil for new
@@ -948,6 +962,7 @@
                        deftype* emit-deftype*
                        emit-fn-call)]
             (emit x env))
+          (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
           (coll? x) (emit-coll x env)
           :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
     (cond-> dart-x
@@ -1378,12 +1393,13 @@
 
 (defn load-input [in]
   #?(:clj
-     (let [in (clojure.lang.LineNumberingPushbackReader. in)]
-       (loop []
-         (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
-           (when-not (identical? form in)
-             (binding [*locals-gen* {}] (emit form {}))
-             (recur)))))))
+     (binding [*data-readers* (assoc *data-readers* 'dart tagged-literal)]
+         (let [in (clojure.lang.LineNumberingPushbackReader. in)]
+           (loop []
+             (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
+               (when-not (identical? form in)
+                 (binding [*locals-gen* {}] (emit form {}))
+                 (recur))))))))
 
 (defn compile-input [in]
   (load-input in)
