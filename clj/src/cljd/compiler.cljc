@@ -566,8 +566,12 @@
         invoke-more-vararg-dispatch
         (when vararg-params
           `(if (.< ~(- base-vararg-arity *threshold*) (count ~more-param))
-             (let [~(subvec vararg-params (dec (min *threshold* (count vararg-params)))) ~more-param]
-               (. ~this ~vararg-mname ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min *threshold* (count vararg-params)))))))
+             ~(if (< base-vararg-arity *threshold*)
+                `(. ~this ~vararg-mname
+                    ~@(subvec more-params 0 base-vararg-arity)
+                    (vec (list* ~@(subvec more-params base-vararg-arity) ~more-param)))
+                `(let [~(subvec vararg-params (dec (min *threshold* (count vararg-params)))) ~more-param]
+                   (. ~this ~vararg-mname ~@more-params ~@(remove #{'&} (subvec vararg-params (dec (min *threshold* (count vararg-params))))))))
              (/ 0) #_TODO))
         invoke-exts-dispatch
         (->> (mapcat (fn [[meth params]]
