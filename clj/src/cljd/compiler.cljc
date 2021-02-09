@@ -287,7 +287,6 @@
                                         #_TODO_EXTENSIONS)))))
                  (list class-name)))))
 
-
      (defn- expand-case [expr & clauses]
        (if (or (symbol? expr) (odd? (count clauses)))
          (let [clauses (vec (partition-all 2 clauses))
@@ -410,7 +409,15 @@
             [(concat [[tmp dart-f]] bindings) tmp dart-args]))
         dart-f (cond-> dart-f has-nameds (vary-meta assoc :dart/fn-type :native))
         native-call (cons dart-f dart-args)
-        ifn-call (list* 'dart/. (list 'dart/as dart-f (emit 'cljd.core/IFn env)) (str "$_invoke$" (count dart-args)) dart-args)
+        ifn-call (let [ifn-cast (list 'dart/. (list 'dart/as dart-f (emit 'cljd.core/IFn env)))]
+                   (if (< (count dart-args) *threshold*)
+                     (concat ifn-cast
+                             [(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count dart-args)))]
+                             dart-args)
+                     (concat ifn-cast
+                             [(resolve-dart-mname 'cljd.core/IFn '-invoke-more (inc *threshold*))]
+                             (subvec (vec dart-args) 0 (dec *threshold*))
+                             [(subvec (vec dart-args) (dec *threshold*))])))
         dart-fn-call
         (case (:dart/fn-type (meta dart-f))
           :native native-call
