@@ -3,6 +3,8 @@
 
 (def ^:dart into-map nil)
 
+(def ^:dart vec nil)
+
 (defn count [x] (.-length x))
 
 (defn ex-info [msg m])
@@ -14,22 +16,24 @@
     (. x "[]" i)
     default))
 
+(defn = [a b] (.== a b))
+
 (defprotocol IFn
-      "Protocol for adding the ability to invoke an object as a function.
+  "Protocol for adding the ability to invoke an object as a function.
   For example, a vecttor can also be used to look up a value:
   ([1 2 3 4] 1) => 2"
-      (-invoke
-        [this]
-        [this a]
-        [this a b]
-        [this a b c]
-        [this a b c d]
-        [this a b c d e]
-        [this a b c d e f]
-        [this a b c d e f g]
-        [this a b c d e f g h]
-        [this a b c d e f g h i])
-      (-invoke-more [this a b c d e f g h i rest]))
+  (-invoke
+    [this]
+    [this a]
+    [this a b]
+    [this a b c]
+    [this a b c d]
+    [this a b c d e]
+    [this a b c d e f]
+    [this a b c d e f g]
+    [this a b c d e f g h]
+    [this a b c d e f g h i])
+  (-invoke-more [this a b c d e f g h i rest]))
 
 (defn < [a b] (.< a b))
 
@@ -45,6 +49,16 @@
   (if (< n 2)
     1
     (+ (fib (- n 1)) (fib (- n 2)))))
+
+(def toto (fn ([one two] one) ([one two & args] args)))
+
+
+#_(def toto (fn ([a b c d e f g h i j k l] l) ([a b c d e f g h i j k l m n o & more] more)))
+
+
+#_(def tata (fn ([one two] one) ([one two args] args)))
+
+#_(def titi (fn ([& args] args)))
 
 (defn main []
   (print (fib 5)))

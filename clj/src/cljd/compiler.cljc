@@ -214,16 +214,29 @@
            (recur more (assoc opts k v))
            [opts body])))
 
+     (defn resolve-dart-mname
+       "Takes two symbols (a protocol and one of its method) and the number
+  of arguments passed to this method.
+  Returns the name (as symbol) of the dart method backing this clojure method."
+       [pname mname args-count]
+       (let [nses @nses
+             {:keys [imports aliases] :as current-ns} (nses (:current-ns nses))
+             pns (namespace pname)
+             pns (or (some-> pns aliases imports :ns) (some-> pns symbol))
+             ns-map (if pns (nses pns) current-ns)
+             protocol (ns-map (symbol (name pname)))]
+         (get-in protocol [:meta :protocol :sigs mname args-count :dart/name])))
+
      (defn- expand-opts+specs [opts+specs]
        (let [[opts specs] (roll-leading-opts opts+specs)
-             current-ns (@nses (:current-ns @nses))
              last-seen-type (atom nil)]
          (cons opts
                (map
                 (fn [spec]
                   (if (seq? spec)
                     (let [[mname arglist & body] spec
-                          mname (get-in current-ns [@last-seen-type :meta :protocol :sigs mname (count arglist) :dart/name] mname)]
+                          mname (or (some-> @last-seen-type (resolve-dart-mname mname (count arglist)))
+                                    mname)]
                       ;; TODO: mname resolution against protocol ifaces
                       (list* mname (parse-dart-params arglist) body))
                     (reset! last-seen-type spec)))
@@ -274,18 +287,6 @@
                                         #_TODO_EXTENSIONS)))))
                  (list class-name)))))
 
-     (defn resolve-dart-mname
-       "Takes two symbols (a protocol and one of its method) and the number
-  of arguments passed to this method.
-  Returns the name (as symbol) of the dart method backing this clojure method."
-       [pname mname args-count]
-       (let [nses @nses
-             {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))
-             pns (namespace pname)
-             pns (or (some-> pns :aliases :ns) (some-> pns symbol))
-             ns-map (if pns (nses pns) current-ns)
-             protocol (ns-map (symbol (name pname)))]
-         (get-in protocol [:meta :protocol :sigs mname args-count :dart/name])))
 
      (defn- expand-case [expr & clauses]
        (if (or (symbol? expr) (odd? (count clauses)))
@@ -293,7 +294,7 @@
                last-clause (peek clauses)
                clauses (cond-> clauses (nil? (next last-clause)) pop)
                default (if (next last-clause)
-                         `(throw (.value ~'dc/ArgumentError ~expr nil "No matching clause."))
+                         `(throw (.value ~'ArgumentError ~expr nil "No matching clause."))
                          (first last-clause))]
            (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
          `(let [test# ~expr] (~'case test# ~@clauses))))))
@@ -617,7 +618,9 @@
                args req-call-params
                res []]
           (let [n-arities (if (= (count args) arity) (next arities) arities)
-                body (if (= (count args) arity) (list* '. this (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count args))) args) (list 'throw (list 'new 'dc/ArgumentError "No arity matching")))]
+                body (if (= (count args) arity)
+                       (list* '. this (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count args))) args)
+                       (list 'throw (list 'new 'dc/ArgumentError "No arity matching")))]
             (if opt
               (recur (next in)
                      n-arities
