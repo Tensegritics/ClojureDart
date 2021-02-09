@@ -1,15 +1,13 @@
 (ns cljd.core
   (:require ["dart:core" :refer [print]]))
 
-(def ^:dart into-map nil)
-
-(def ^:dart vec nil)
-
 (defn count [x] (.-length x))
 
-(defn ex-info [msg m])
+(defn seq [coll] coll)
 
-(def ^:clj str nil)
+(defn next [coll] (.sublist coll 1))
+
+(defn first [coll] (.-first coll))
 
 (defn nth [x i default]
   (if (.< i (.-length x))
@@ -61,8 +59,8 @@
 #_(def titi (fn ([& args] args)))
 
 (defn main []
-  (print (toto 1 2))
-  (print (toto 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15))
+  (print (toto 1 1))
+  (print (toto 1 1 2 2))
   (print (fib 5)))
 
 #_

@@ -577,7 +577,7 @@
                              (count rest-params))
                     :let [rest-params (subvec rest-params 0 n)]]
                 (list '-invoke (into base-params rest-params)
-                      `(. ~(first base-params) ~vararg-mname ~@(next base-params) ~rest-params)))))))
+                      `(. ~(first base-params) ~vararg-mname ~@(next base-params) ~(tagged-literal 'dart rest-params))))))))
         more-params (vec (repeatedly (dec *threshold*) #(gensym "p")))
         more-param (gensym "more")
         ;; TODO : not finished :'(
@@ -594,7 +594,7 @@
                 `(if (.< ~above-threshold (count ~more-param))
                    (let [~more-destructuring ~more-param]
                      (. ~this ~vararg-mname ~@more-params ~@bound-vars))
-                   (throw (dc/ArgumentError. "No matching arity")))))))
+                   (throw (~'ArgumentError. "No matching arity")))))))
         invoke-exts-dispatch
         (->> (mapcat (fn [[meth params]]
                        [(- (count params) *threshold*)
