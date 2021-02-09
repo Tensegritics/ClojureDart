@@ -284,7 +284,7 @@
              pns (namespace pname)
              pns (or (some-> pns :aliases :ns) (some-> pns symbol))
              ns-map (if pns (nses pns) current-ns)
-             protocol (ns-map pname)]
+             protocol (ns-map (symbol (name pname)))]
          (get-in protocol [:meta :protocol :sigs mname args-count :dart/name])))
 
      (defn- expand-case [expr & clauses]
@@ -603,15 +603,15 @@
                args req-call-params
                res []]
           (let [n-arities (if (= (count args) arity) (next arities) arities)
-                body (if (= (count args) arity) (list* '. this (resolve-dart-mname 'IFn '-invoke (inc (count args))) args) (list 'throw (list 'new 'ArgumentError "No arrity matching")))]
+                body (if (= (count args) arity) (list* '. this (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count args))) args) (list 'throw (list 'new 'ArgumentError "No arrity matching")))]
             (if opt
               (recur (next in)
                      n-arities
                      (concat args (list opt))
                      (conj res [(list '= opt call-default) body]))
-              (conj res [true (if (seq invoke-more) (list* '. this (resolve-dart-mname 'IFn '-invoke-more (inc (count args))) args) body)]))))
+              (conj res [true (if (seq invoke-more) (list* '. this (resolve-dart-mname 'cljd.core/IFn '-invoke-more (inc (count args))) args) body)]))))
         call (list 'call call-params (list* 'cond (apply concat call-body)))]
-    (emit (list* 'reify 'IFn #_TODO'cljd.core/IFn (concat invoke-more invokes invoke-exts (list 'Object call))) {})))
+    (emit (list* 'reify 'cljd.core/IFn (concat invoke-more invokes invoke-exts (list 'Object call))) {})))
 
 (defn- emit-dart-fn [dart-fn-name [params & body] env]
   (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
