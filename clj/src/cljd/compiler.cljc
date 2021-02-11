@@ -524,15 +524,21 @@
   (cons 'dart/recur (map #(emit % env) exprs)))
 
 (defn emit-if [[_ test then else] env]
-  (let [dart-test (emit test env)
-        {:keys [dart/truth]} (infer-type dart-test)
-        [bindings test] (lift-arg (nil? truth) dart-test "test")
-        test (case truth
-               :bool test
-               :some (list 'dart/. test "!=" nil)
-               (list 'dart/. (list 'dart/. test "!=" false) "&" (list 'dart/. test "!=" nil)))]
-    (cond->> (list 'dart/if test (emit then env) (emit else env))
-      (seq bindings) (list 'dart/let bindings))))
+  (cond
+    (or (coll? test) (symbol? test))
+    (let [dart-test (emit test env)
+          {:keys [dart/truth]} (infer-type dart-test)
+          [bindings test] (lift-arg (nil? truth) dart-test "test")
+          test (case truth
+                 :boolean test
+                 :some (list 'dart/. test "!=" nil)
+                 (list 'dart/. (list 'dart/. test "!=" false) "&" (list 'dart/. test "!=" nil)))]
+      (cond->> (list 'dart/if test (emit then env) (emit else env))
+        (seq bindings) (list 'dart/let bindings)))
+    test
+    (emit then env)
+    :else
+    (emit else env)))
 
 (defn emit-case* [[op expr clauses default] env]
   (if (seq clauses)
@@ -551,91 +557,86 @@
     (with-meta sym {:dart/name sym})))
 
 (defn- emit-ifn [name bodies env]
-  (let [fixed-bodies (remove variadic? bodies)
+  (let [synth-params (into [] (map (fn [_] (gensym "arg"))) (range *threshold*)) ; param names used when no user-specified
+        more-param (gensym 'more)
+        fixed-bodies (remove variadic? bodies)
         max-fixed-arity (some->> fixed-bodies seq (map first) (map count) (reduce max))
+        min-fixed-arity (some->> fixed-bodies seq (map first) (map count) (reduce min))
         [vararg-params & vararg-body] (some #(when (variadic? %) %) bodies)
         base-vararg-arity (some->> vararg-params (take-while (complement #{'&})) count)
         this (or name (gensym "this"))
-        invoke-exts
-        (for [[params & body] fixed-bodies
-              :let [n (count params)]
-              :when (>= n *threshold*)]
-          (list* (dont-munge "_invoke$ext" n) (into [this] params) body))
+        invoke-exts (for [[params & body] fixed-bodies
+                          :let [n (count params)]
+                          :when (>= n *threshold*)]
+                      `(~(dont-munge "_invoke$ext" n) [~this ~@params] ~@body))
+        fixed-invokes (for [[params & body] fixed-bodies
+                            :when (< (count params) *threshold*)]
+                        `(~'-invoke [~this ~@params] ~@body))
         vararg-mname (dont-munge "_invoke$vararg")
-        invokes
-        (concat
-         (for [[params & body] fixed-bodies
-               :when (< (count params) *threshold*)]
-           (list* '-invoke (into [this] params) body))
-         (when vararg-params
-           (let [rest-arg (nth vararg-params (inc base-vararg-arity))
-                 base-params (into [this] (subvec vararg-params 0 base-vararg-arity))
-                 rest-params (vec (repeatedly (- *threshold* base-vararg-arity) #(gensym "arg")))]
-             (cons
-              (list* vararg-mname (conj base-params rest-arg) vararg-body)
-              (for [n (range (if (= base-vararg-arity max-fixed-arity) 1 0)
-                             (count rest-params))
-                    :let [rest-params (subvec rest-params 0 n)]]
-                (list '-invoke (into base-params rest-params)
-                      `(. ~(first base-params) ~vararg-mname ~@(next base-params) ~(tagged-literal 'dart rest-params))))))))
-        more-params (vec (repeatedly (dec *threshold*) #(gensym "p")))
-        more-param (gensym "more")
-        ;; TODO : not finished :'(
-        invoke-more-vararg-dispatch
+        vararg-invokes
         (when vararg-params
-          (let [above-threshold (- base-vararg-arity *threshold*)]
-            (if (neg? above-threshold)
-              `(. ~this ~vararg-mname
-                  ~@(subvec more-params 0 base-vararg-arity)
-                  (.+ ~(tagged-literal 'dart (subvec more-params base-vararg-arity))
-                      ~more-param))
-              (let [more-destructuring (subvec vararg-params (dec *threshold*))
-                    bound-vars (remove #{'&} more-destructuring)]
-                `(if (.< ~above-threshold (count ~more-param))
-                   (let [~more-destructuring ~more-param]
-                     (. ~this ~vararg-mname ~@more-params ~@bound-vars))
-                   (throw (~'ArgumentError. "No matching arity")))))))
-        invoke-exts-dispatch
-        (->> (mapcat (fn [[meth params]]
-                       [(- (count params) *threshold*)
-                        (list 'let [(subvec params *threshold*) more-param]
-                              (list* '. this meth (concat more-params (subvec params *threshold*))))]) invoke-exts)
-             (list* 'case (list 'count more-param)))
+          (cons
+           `(~vararg-mname [~this ~@(drop-last 2 vararg-params) ~(peek vararg-params)] ~@vararg-body)
+           (let [[this & base-args] (subvec synth-params 0 (inc base-vararg-arity))]
+             (for [n (range (cond-> base-vararg-arity max-fixed-arity (max (inc max-fixed-arity))) *threshold*)
+                   :let [rest-args (subvec synth-params (inc base-vararg-arity) (inc n))]]
+               `(~'-invoke [~this ~@base-args ~@rest-args]
+                 (. ~this ~vararg-mname ~@base-args ~(tagged-literal 'dart rest-args)))))))
         invoke-more
         (when (or vararg-params (seq invoke-exts))
-          (list (list '-invoke-more (into [this] (conj more-params more-param))
-                      (concat invoke-exts-dispatch (some-> invoke-more-vararg-dispatch list)))))
-        ;; Call handling
-        call-arities (concat (->> invokes (remove #(= (str (first %)) "_invoke$vararg")) (map #(dec (count (second %)))) sort)
-                             (when (seq invoke-more) [(dec (count (second (first invoke-more))))]))
-        call-default (str (gensym "default")) #_(list 'new 'Symbol (str (dart-local 'default)))
-        call-params
-        (into [this] (comp (map-indexed (fn [idx x]
-                                          (let [i (first call-arities)]
-                                            (cond
-                                              (= idx i) ['...]
-                                              (< idx i) [x]
-                                              (> idx i) [x call-default])))) cat)
-              (repeatedly (inc (last call-arities)) #(gensym "p")))
-        [[this & req-call-params] [_ & opt-call-params]]
-        (split-with (complement #{'...}) call-params)
-        call-body
-        (loop [[[opt] :as in] (partition 2 opt-call-params)
-               [arity :as arities] call-arities
-               args req-call-params
-               res []]
-          (let [n-arities (if (= (count args) arity) (next arities) arities)
-                body (if (= (count args) arity)
-                       (list* '. this (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count args))) args)
-                       (list 'throw (list 'new 'dc/ArgumentError "No arity matching")))]
-            (if opt
-              (recur (next in)
-                     n-arities
-                     (concat args (list opt))
-                     (conj res [(list '= opt call-default) body]))
-              (conj res [true (if (seq invoke-more) (list* '. this (resolve-dart-mname 'cljd.core/IFn '-invoke-more (inc (count args))) args) body)]))))
-        call (list 'call call-params (list* 'cond (apply concat call-body)))]
-    (emit (list* 'reify 'cljd.core/IFn (concat invoke-more invokes invoke-exts (list 'Object call))) {})))
+          (let [[this & more-params] synth-params
+                vararg-call
+                (when vararg-params
+                  (let [above-threshold (- base-vararg-arity *threshold*)]
+                    (if (neg? above-threshold)
+                      `(. ~this ~vararg-mname
+                          ~@(take base-vararg-arity more-params)
+                          (.+ ~(tagged-literal 'dart (vec (drop base-vararg-arity more-params)))
+                              ~more-param))
+                      (let [more-destructuring (subvec vararg-params (dec *threshold*))
+                            bound-vars (remove #{'&} more-destructuring)]
+                        `(if (.< ~above-threshold (count ~more-param))
+                           (let [~more-destructuring ~more-param]
+                             (. ~this ~vararg-mname ~@more-params ~@bound-vars))
+                           (throw (~'ArgumentError. "No matching arity")))))))]
+            `(~'-invoke-more [~@synth-params ~more-param]
+              ~(if (seq invoke-exts)
+                 `(~'case #_<-TOFIX (count ~more-param)
+                    ~@(mapcat (fn [[meth params]]
+                                (let [ext-params (subvec params *threshold*)]
+                                  [(count ext-params)
+                                   `(let [~ext-params ~more-param]
+                                      (. ~this ~meth ~@more-params ~@ext-params))])) invoke-exts)
+                    ~@(some-> vararg-call list)) ; if present vararg is the default
+                 vararg-call))))
+        dart-call
+        (let [[this & call-args] (cond->> synth-params (not vararg-params) (take (inc max-fixed-arity)))
+              base-arity (or min-fixed-arity base-vararg-arity)
+              base-args (take base-arity call-args)
+              opt-args (drop base-arity call-args)
+              default-value (str (gensym "default"))]
+          `(~'call [~this ~@base-args ... ~@(interleave opt-args (repeat default-value))]
+            (cond
+              ~@(mapcat
+                 (fn [args]
+                   `((.== ~(peek args) ~default-value)
+                     (. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (count args)) ~@(pop args))))
+                 (next (reductions conj (vec base-args)
+                                   (cond->> opt-args vararg-params (take (- base-vararg-arity base-arity))))))
+              true ~(if vararg-params
+                      `(. ~this ~vararg-mname ~@(take base-vararg-arity call-args)
+                          (.toList
+                           (.takeWhile ~(tagged-literal 'dart (vec (drop base-vararg-arity call-args)))
+                                       (fn [e#] (.== e# ~default-value)))))
+                      `(. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count call-args))) ~@call-args)))))]
+    (emit
+     `(~'reify cljd.core/IFn #_<-TOFIX
+        ~@fixed-invokes
+        ~@invoke-exts
+        ~@vararg-invokes
+        ~@(some-> invoke-more list)
+        ~dart-call)
+     env)))
 
 (defn- emit-dart-fn [dart-fn-name [params & body] env]
   (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
@@ -1150,7 +1151,7 @@
        (case (first x)
          dart/.
          (let [[_ a meth b] x]
-           (case meth
+           (case (name meth)
              ("!" "<" ">" "<=" ">=" "==" "!=" "&" "|" "^")
              {:dart/type "dc.bool" :dart/truth :boolean}
              nil))
@@ -1473,6 +1474,7 @@
 (comment
 
   (emit-ns '(ns cljd.user
+
               (:require [cljd.bordeaux :refer [reviews] :as awesome]
                         [cljd.ste :as ste]
                         ["package:flutter/material.dart"]
