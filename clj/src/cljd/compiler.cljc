@@ -627,7 +627,7 @@
                       `(. ~this ~vararg-mname ~@(take base-vararg-arity call-args)
                           (.toList
                            (.takeWhile ~(tagged-literal 'dart (vec (drop base-vararg-arity call-args)))
-                                       (fn [e#] (.== e# ~default-value)))))
+                                       (fn [e#] (.!= e# ~default-value)))))
                       `(. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count call-args))) ~@call-args)))))]
     (emit
      `(~'reify cljd.core/IFn #_<-TOFIX
