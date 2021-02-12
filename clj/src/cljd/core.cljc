@@ -1,13 +1,16 @@
 (ns cljd.core
   (:require ["dart:core" :refer [print]]))
 
-(defn count [x] (.-length x))
+(defn count [x] (if (.== nil x) 0 (.-length x)))
 
 (defn seq [coll] coll)
 
-(defn next [coll] (.sublist coll 1))
+(defn next [coll]
+  (let [s (.sublist coll 1)]
+    (when (.< 0 (.-length s))
+      s)))
 
-(defn first [coll] (.-first coll))
+(defn first [coll] (if (.== coll nil) nil (.-first coll)))
 
 (defn nth [x i default]
   (if (.< i (.-length x))
@@ -31,7 +34,8 @@
     [this a b c d e f g]
     [this a b c d e f g h]
     [this a b c d e f g h i])
-  (-invoke-more [this a b c d e f g h i rest]))
+  (-invoke-more [this a b c d e f g h i rest])
+  (-apply [this more]))
 
 (defn < [a b] (.< a b))
 
@@ -41,7 +45,7 @@
 
 (defn - [a b] (.- a b))
 
-(defn nil? [x] (.== nil x))
+(defn ^bool nil? [x] (.== nil x))
 
 (defn ^:dart fib [n]
   (if (< n 2)
@@ -61,6 +65,10 @@
 (defn main []
   (print (toto 1 1))
   (print (toto 1 1 2 2))
+  (print (^:dart toto 1 2 3 4))
+  (print (^:dart toto 1 2))
+  (print (-apply toto #dart [4 5 6 7]))
+  (print (-apply toto #dart [8 9]))
   (print (fib 5)))
 
 #_

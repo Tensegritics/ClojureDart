@@ -24,7 +24,7 @@
 
 (def ns-prototype
   {:imports {"dc" {:lib "dart:core"}} ; dc can't clash with user aliases because they go through dart-global
-   :aliases {}
+   :aliases {"dc" "dc"}
    :mappings
    '{Type dc.Type,
      BidirectionalIterator dc.BidirectionalIterator,
@@ -114,14 +114,22 @@
                                           {:type type :tag tag}))))
                      identifier (str identifier))))))
 
+(defn dart-type-truthiness [type]
+  (case type
+    (nil "dc.Object") nil
+    "dc.bool" :boolean
+    :some))
+
 (defn dart-meta
   "Takes a clojure symbol and returns its dart metadata."
   [sym]
-  (let [m (meta sym)]
+  (let [m (meta sym)
+        type (some-> m :tag emit-type)]
     (cond-> {}
       (:dart m) (assoc :dart/fn-type :native)
       (:clj m) (assoc :dart/fn-type :ifn)
-      (:tag m) (assoc :dart/type (emit-type (:tag m))))))
+      (:tag m)
+      (assoc :dart/type type :dart/truth (dart-type-truthiness type)))))
 
 (def reserved-words ; and built-in identifiers for good measure
   #{"Function" "abstract" "as" "assert" "async" "await" "break" "case" "catch"
@@ -293,7 +301,7 @@
                last-clause (peek clauses)
                clauses (cond-> clauses (nil? (next last-clause)) pop)
                default (if (next last-clause)
-                         `(throw (.value ~'ArgumentError ~expr nil "No matching clause."))
+                         `(throw (.value dc/ArgumentError ~expr nil "No matching clause."))
                          (first last-clause))]
            (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
          `(let [test# ~expr] (~'case test# ~@clauses))))))
@@ -582,6 +590,7 @@
                    :let [rest-args (subvec synth-params (inc base-vararg-arity) (inc n))]]
                `(~'-invoke [~this ~@base-args ~@rest-args]
                  (. ~this ~vararg-mname ~@base-args ~(tagged-literal 'dart rest-args)))))))
+        max-fixed-arity (or base-vararg-arity max-fixed-arity)
         invoke-more
         (when (or vararg-params (seq invoke-exts))
           (let [[this & more-params] synth-params
@@ -598,7 +607,7 @@
                         `(if (.< ~above-threshold (count ~more-param))
                            (let [~more-destructuring ~more-param]
                              (. ~this ~vararg-mname ~@more-params ~@bound-vars))
-                           (throw (~'ArgumentError. "No matching arity")))))))]
+                           (throw (dc/ArgumentError. "No matching arity")))))))]
             `(~'-invoke-more [~@synth-params ~more-param]
               ~(if (seq invoke-exts)
                  `(~'case #_<-TOFIX (count ~more-param)
@@ -609,33 +618,58 @@
                                       (. ~this ~meth ~@more-params ~@ext-params))])) invoke-exts)
                     ~@(some-> vararg-call list)) ; if present vararg is the default
                  vararg-call))))
-        dart-call
+        call+apply
         (let [[this & call-args] (cond->> synth-params (not vararg-params) (take (inc max-fixed-arity)))
+              fixed-args (if vararg-params (take base-vararg-arity call-args) call-args)
               base-arity (or min-fixed-arity base-vararg-arity)
               base-args (take base-arity call-args)
               opt-args (drop base-arity call-args)
-              default-value (str (gensym "default"))]
-          `(~'call [~this ~@base-args ... ~@(interleave opt-args (repeat default-value))]
-            (cond
-              ~@(mapcat
-                 (fn [args]
-                   `((.== ~(peek args) ~default-value)
-                     (. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (count args)) ~@(pop args))))
-                 (next (reductions conj (vec base-args)
-                                   (cond->> opt-args vararg-params (take (- base-vararg-arity base-arity))))))
-              true ~(if vararg-params
-                      `(. ~this ~vararg-mname ~@(take base-vararg-arity call-args)
-                          (.toList
-                           (.takeWhile ~(tagged-literal 'dart (vec (drop base-vararg-arity call-args)))
-                                       (fn [e#] (.!= e# ~default-value)))))
-                      `(. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count call-args))) ~@call-args)))))]
+              default-value (str (gensym "default"))
+              fixed-arities-expr
+              (for [args+1 (next (reductions conj (vec base-args)
+                                             (cond->> opt-args vararg-params (take (- base-vararg-arity base-arity)))))]
+                [args+1 `(. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (count args+1)) ~@(pop args+1))])]
+          `((~'call [~this ~@base-args ... ~@(interleave opt-args (repeat default-value))]
+             (cond
+               ~@(mapcat (fn [[args+1 expr]] `((.== ~(peek args+1) ~default-value) ~expr)) fixed-arities-expr)
+               true ~(if vararg-params
+                       (if-some [[first-rest-arg :as rest-args] (seq (drop base-vararg-arity call-args))]
+                         `(if (.== ~first-rest-arg ~default-value)
+                            (. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
+                               ~@fixed-args)
+                            (. ~this ~vararg-mname ~@fixed-args
+                               (.toList
+                                (.takeWhile ~(tagged-literal 'dart (vec rest-args))
+                                            (fn [e#] (.!= e# ~default-value))))))
+                         `(. ~this ~vararg-mname ~@fixed-args nil))
+                       `(. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
+                               ~@fixed-args))))
+            (~'-apply [~this ~more-param]
+             (let [~more-param (seq ~more-param)]
+               ~(reduce (fn [body [args+1 expr]]
+                          `(if (nil? ~more-param)
+                             ~expr
+                             (let [~(peek args+1) (first ~more-param)
+                                   ~more-param (next ~more-param)]
+                               ~body)))
+                        `(if (nil? ~more-param)
+                           (. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
+                              ~@fixed-args)
+                           ~(if vararg-params
+                              `(. ~this ~vararg-mname ~@fixed-args ~more-param)
+                              `(throw (dc/ArgumentError. "No matching arity"))))
+                        (reverse
+                         (concat
+                          (for [args+1 (next (reductions conj [] base-args))]
+                            [args+1 `(throw (dc/ArgumentError. "No matching arity"))])
+                          fixed-arities-expr)))))))]
     (emit
      `(~'reify cljd.core/IFn #_<-TOFIX
         ~@fixed-invokes
         ~@invoke-exts
         ~@vararg-invokes
         ~@(some-> invoke-more list)
-        ~dart-call)
+        ~@call+apply)
      env)))
 
 (defn- emit-dart-fn [dart-fn-name [params & body] env]
@@ -1157,12 +1191,10 @@
              nil))
          dart/is {:dart/type "dc.bool" :dart/truth :boolean}
          dart/as (let [[_ _ type] x] {:dart/type type
-                                      :dart/truth
-                                      (case type
-                                        "dc.Object" nil
-                                        "dc.bool" :boolean
-                                        :some)})
-         nil)
+                                      :dart/truth (dart-type-truthiness type)})
+         (when-some [{:keys [dart/type dart/truth]} (infer-type (first x))]
+           {:dart/type type
+            :dart/truth (or truth (dart-type-truthiness type))}))
        :else nil)
      (merge m)
      (assoc :dart/inferred true))))
@@ -1404,7 +1436,7 @@
 
 (defn load-input [in]
   #?(:clj
-     (binding [*data-readers* (assoc *data-readers* 'dart tagged-literal)]
+     (binding [*data-readers* (assoc *data-readers* 'dart #(tagged-literal 'dart %))]
          (let [in (clojure.lang.LineNumberingPushbackReader. in)]
            (loop []
              (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
@@ -1472,7 +1504,6 @@
 
 
 (comment
-
   (emit-ns '(ns cljd.user
 
               (:require [cljd.bordeaux :refer [reviews] :as awesome]
