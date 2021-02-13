@@ -407,6 +407,8 @@
                   acc (reverse positionals)))]
     [bindings dart-args (some? (seq nameds))]))
 
+(def ^:dynamic *threshold* 10)
+
 (defn emit-fn-call [fn-call env]
   (let [[bindings [dart-f & dart-args] has-nameds] (emit-args fn-call env)
         [bindings dart-f dart-args]
@@ -557,8 +559,6 @@
     (emit default env)))
 
 (defn- variadic? [[params]] (some #{'&} params))
-
-(def ^:dynamic *threshold* 10)
 
 (defn- dont-munge [& args]
   (let [sym (symbol (apply str args))]
