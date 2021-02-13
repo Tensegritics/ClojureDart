@@ -37,59 +37,155 @@
   (-invoke-more [this a b c d e f g h i rest])
   (-apply [this more]))
 
+(defprotocol ISeq
+  "Protocol for collections to provide access to their items as sequences."
+  (-first [coll]
+    "Returns the first item in the collection coll. Used by cljs.core/first.")
+  (-rest [coll]
+    "Returns a new collection of coll without the first item. It should
+     always return a seq, e.g.
+     (rest []) => ()
+     (rest nil) => ()"))
+
+(defprotocol ASeq
+  "Marker protocol indicating an array sequence.")
+
+(defprotocol INext
+  "Protocol for accessing the next items of a collection."
+  (-next [coll]
+    "Returns a new collection of coll without the first item. In contrast to
+     rest, it should return nil if there are no more items, e.g.
+     (next []) => nil
+     (next nil) => nil"))
+
+(defprotocol ISequential
+  "Marker interface indicating a persistent collection of sequential items")
+
+(defprotocol ISeqable
+  "Protocol for adding the ability to a type to be transformed into a sequence."
+  (-seq [o]
+    "Returns a seq of o, or nil if o is empty."))
+
 (defn < [a b] (.< a b))
 
 (defn pos? [a] (.< 0 a))
 
 (defn + [a b] (.+ a b))
 
+(defn inc
+  "Returns a number one greater than num."
+  [x] (+ x 1))
+
 (defn - [a b] (.- a b))
 
 (defn ^bool nil? [x] (.== nil x))
 
-(defn ^:dart fib [n]
+(defn ^bool not
+  "Returns true if x is logical false, false otherwise."
+  [x] (if x false true))
+
+(defn ^num alength [array] (.-length array))
+
+(defn aget [array idx] (. array "[]" idx))
+
+(deftype IndexedSeq [arr i meta]
+  #_Object
+  #_(toString [coll]
+    (pr-str* coll))
+  #_(equiv [this other]
+    (-equiv this other))
+  #_(indexOf [coll x]
+    (-indexOf coll x 0))
+  #_(indexOf [coll x start]
+    (-indexOf coll x start))
+  #_(lastIndexOf [coll x]
+    (-lastIndexOf coll x (count coll)))
+  #_(lastIndexOf [coll x start]
+    (-lastIndexOf coll x start))
+
+  #_#_ICloneable
+  (-clone [_] (IndexedSeq. arr i meta))
+
+  ISeqable
+  (-seq [this]
+    (when (< i (alength arr))
+      this))
+
+  #_#_IMeta
+  (-meta [coll] meta)
+  #_#_IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (IndexedSeq. arr i new-meta)))
+
+  ASeq
+  ISeq
+  (-first [this] (aget arr i))
+  (-rest [_] (if (< (inc i) (alength arr))
+               (IndexedSeq. arr (inc i) nil)
+               #_(list)))
+
+  INext
+  (-next [_] (if (< (inc i) (alength arr))
+               (IndexedSeq. arr (inc i) nil)
+               nil))
+
+  #_#_ICounted
+  (-count [_]
+    (max 0 (- (alength arr) i)))
+
+  #_#_#_IIndexed
+  (-nth [coll n]
+    (let [i (+ n i)]
+      (if (and (<= 0 i) (< i (alength arr)))
+        (aget arr i)
+        #_(throw (js/Error. "Index out of bounds")))))
+  (-nth [coll n not-found]
+    (let [i (+ n i)]
+      (if (and (<= 0 i) (< i (alength arr)))
+        (aget arr i)
+        not-found)))
+
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+
+  #_#_IIterable
+  (-iterator [coll]
+    (IndexedSeqIterator. arr i))
+
+  #_#_ICollection
+  (-conj [coll o] (cons o coll))
+
+  #_#_IEmptyableCollection
+  (-empty [coll] (.-EMPTY List))
+
+  #_#_#_IReduce
+  (-reduce [coll f]
+    (array-reduce arr f (aget arr i) (inc i)))
+  (-reduce [coll f start]
+    (array-reduce arr f start i))
+
+  #_#_IHash
+  (-hash [coll] (hash-ordered-coll coll))
+
+  #_#_IReversible
+  (-rseq [coll]
+    (let [c (-count coll)]
+      (if (pos? c)
+        (RSeq. coll (dec c) nil)))))
+
+
+
+#_(defn ^:dart fib [n]
   (if (< n 2)
     1
     (+ (fib (- n 1)) (fib (- n 2)))))
 
-(def toto (fn ([one two] one) ([one two & args] args)))
 
-
-#_(def toto (fn ([a b c d e f g h i j k l] l) ([a b c d e f g h i j k l m n o & more] more)))
-
-
-#_(def tata (fn ([one two] one) ([one two args] args)))
-
-#_(def titi (fn ([& args] args)))
 
 (defn main []
-  (print (toto 1 1))
-  (print (toto 1 1 2 2))
-  (print (^:dart toto 1 2 3 4))
-  (print (^:dart toto 1 2))
-  (print (-apply toto #dart [4 5 6 7]))
-  (print (-apply toto #dart [8 9]))
-  (print (fib 5)))
-
-#_
-(defprotocol ISeqable
-  "Protocol for adding the ability to a type to be transformed into a sequence."
-  (-seq [o] ; TODO metadata for nil?
-   "Returns a seq of o, or nil if o is empty."))
-
-#_
-(deftype LazySeq [^:mutable f ^:mutable s]
-  ISeqable
-  (-seq [_]
-    (if (nil? f)
-      s
-      (loop [sv (f)]
-        (if (dart-is? LazySeq sv)
-          )
-        )
-      )))
-
-#_
-(defn my-range [from to step]
-  (when (if (pos? step) (< from to) (< to from))
-    (cons step (lazy-seq (my-range (+ from to) to step)))))
+  (let [a (IndexedSeq. #dart [1 2 3] 0 nil)]
+    (print (-first a)))
+  )

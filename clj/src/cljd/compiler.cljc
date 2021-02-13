@@ -275,9 +275,10 @@
              (into {} (map (fn [[m & arglists]]
                              (let [dart-m (munge m)
                                    [doc-string & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
-                               [(with-meta m {:doc doc-string}) (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" (dec l)))
-                                                                                                      :args %}]))
-                                                                      arglists)]))) methods)
+                               [(with-meta m {:doc doc-string})
+                                (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" (dec l)))
+                                                                      :args %}]))
+                                      arglists)]))) methods)
              protocol-meta {:sigs method-mapping}
              class-name (vary-meta proto assoc :protocol protocol-meta)]
          (list* 'do
@@ -801,10 +802,11 @@
     dart-expr)))
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
-  (let [env (into {} (for [f fields
+  (let [mclass-name (munge class-name)
+        env (into {} (for [f fields
                            :let [{:keys [mutable]} (meta f)]]
                        [f (vary-meta (munge f) assoc :dart/mutable mutable)]))
-        class (emit-class-specs opts specs env)
+        class (emit-class-specs opts specs (assoc env class-name mclass-name))
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         class (-> class
                   (assoc :name class-name
@@ -1206,7 +1208,11 @@
   [x locus]
   (cond
     (vector? x)
-    (do (print "[") (run! #(write % arg-locus) x) (print "]"))
+    (do (print (:pre locus))
+        (print "[")
+        (run! #(write % arg-locus) x)
+        (print "]")
+        (print (:post locus)))
     (seq? x)
     (case (first x)
       dart/fn
