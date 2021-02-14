@@ -806,7 +806,8 @@
         env (into {} (for [f fields
                            :let [{:keys [mutable]} (meta f)]]
                        [f (vary-meta (munge f) assoc :dart/mutable mutable)]))
-        class (emit-class-specs opts specs (assoc env class-name mclass-name))
+        _ (swap! nses do-def class-name {:dart/name mclass-name :type :class})
+        class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         class (-> class
                   (assoc :name class-name
@@ -817,9 +818,9 @@
                                     (->> named-ctor-args (partition 2)
                                          (mapcat (fn [[name arg]] [name (emit-strict-expr arg env)]))))))]
     (swap! nses do-def class-name
-             {:dart/name (munge class-name)
-              :type :class
-              :dart/code (with-out-str (write-class class))})
+           {:dart/name mclass-name
+            :type :class
+            :dart/code (with-out-str (write-class class))})
     (emit class-name env)))
 
 (declare write-top-dartfn write-top-field)
