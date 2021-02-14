@@ -1,5 +1,5 @@
 (ns cljd.core
-  (:require ["dart:core" :refer [print]]))
+  (:require ["dart:core" :as dc :refer [print]]))
 
 (defn count [x] (if (.== nil x) 0 (.-length x)))
 
@@ -66,17 +66,32 @@
   (-seq [o]
     "Returns a seq of o, or nil if o is empty."))
 
-(defn < [a b] (.< a b))
+(defprotocol IList
+  "Marker interface indicating a persistent list")
 
-(defn pos? [a] (.< 0 a))
+(defprotocol ICollection
+  "Protocol for adding to a collection."
+  (-conj [coll o]
+    "Returns a new collection of coll with o added to it. The new item
+     should be added to the most efficient place, e.g.
+     (conj [1 2 3 4] 5) => [1 2 3 4 5]
+     (conj '(2 3 4 5) 1) => '(1 2 3 4 5)"))
+
+(defn ^bool < [a b] (.< a b))
+
+(defn ^bool > [a b] (.> a b))
+
+(defn ^bool pos? [a] (.< 0 a))
 
 (defn + [a b] (.+ a b))
+
+(defn - [a b] (.- a b))
 
 (defn inc
   "Returns a number one greater than num."
   [x] (+ x 1))
 
-(defn - [a b] (.- a b))
+(defn dec [x] (- x 1))
 
 (defn ^bool nil? [x] (.== nil x))
 
@@ -186,7 +201,7 @@
       (dart-is? coll ISeqable)
       (-seq coll)
 
-      (dart-is? coll List)
+      (dart-is? coll dc/List)
       (when-not (zero? (alength coll))
         (IndexedSeq. coll 0 nil))
 
@@ -349,6 +364,167 @@
   (-reduce [coll f] (seq-reduce f coll))
   (-reduce [coll f start] (seq-reduce f start coll)))
 
+(def empty-list nil)
+
+(deftype List [meta first rest count ^:mutable __hash]
+  #_#_#_#_#_#_#_Object
+  (toString [coll]
+    (pr-str* coll))
+  (equiv [this other]
+    (-equiv this other))
+  (indexOf [coll x]
+    (-indexOf coll x 0))
+  (indexOf [coll x start]
+    (-indexOf coll x start))
+  (lastIndexOf [coll x]
+    (-lastIndexOf coll x count))
+  (lastIndexOf [coll x start]
+    (-lastIndexOf coll x start))
+
+  IList
+
+  #_#_ICloneable
+  (-clone [_] (List. meta first rest count __hash))
+
+  #_#_IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (List. new-meta first rest count __hash)))
+
+  #_#_IMeta
+  (-meta [coll] meta)
+
+  ASeq
+  ISeq
+  (-first [coll] first)
+  (-rest [coll]
+    (if (= count 1)
+      empty-list #_()
+      rest))
+
+  INext
+  (-next [coll]
+    (if (= count 1)
+      nil
+      rest))
+
+  #_#_#_IStack
+  (-peek [coll] first)
+  (-pop [coll] (-rest coll))
+
+  ICollection
+  (-conj [coll o] (List. meta o coll (inc count) nil))
+
+  #_#_IEmptyableCollection
+  (-empty [coll] (-with-meta (.-EMPTY List) meta))
+
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+
+  ISeqable
+  (-seq [coll] coll)
+
+  #_#_ICounted
+  (-count [coll] count)
+
+  #_#_#_IReduce
+  (-reduce [coll f] (seq-reduce f coll))
+  (-reduce [coll f start] (seq-reduce f start coll)))
+
+(deftype EmptyList [meta]
+  #_#_#_#_#_#_#_Object
+  (toString [coll]
+    (pr-str* coll))
+  (equiv [this other]
+    (-equiv this other))
+  (indexOf [coll x]
+    (-indexOf coll x 0))
+  (indexOf [coll x start]
+    (-indexOf coll x start))
+  (lastIndexOf [coll x]
+    (-lastIndexOf coll x (count coll)))
+  (lastIndexOf [coll x start]
+    (-lastIndexOf coll x start))
+
+  IList
+
+  #_#_ICloneable
+  (-clone [_] (EmptyList. meta))
+
+  #_#_IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (EmptyList. new-meta)))
+
+  #_#_IMeta
+  (-meta [coll] meta)
+
+  ISeq
+  (-first [coll] nil)
+  (-rest [coll] empty-list #_(throw (UnimplementedError. "not implemented yet.")) #_())
+
+  INext
+  (-next [coll] nil)
+
+  #_#_#_IStack
+  (-peek [coll] nil)
+  (-pop [coll] (throw (js/Error. "Can't pop empty list")))
+
+  ICollection
+  (-conj [coll o] (List. meta o nil 1 nil))
+
+  #_#_IEmptyableCollection
+  (-empty [coll] coll)
+
+  ISequential
+
+  #_#_IEquiv
+  (-equiv [coll other]
+    (if (or (list? other)
+            (sequential? other))
+      (nil? (seq other))
+      false))
+
+  #_#_IHash
+  (-hash [coll] empty-ordered-hash)
+
+  ISeqable
+  (-seq [coll] nil)
+
+  #_#_ICounted
+  (-count [coll] 0)
+
+  #_#_#_IReduce
+  (-reduce [coll f] (seq-reduce f coll))
+  (-reduce [coll f start] (seq-reduce f start coll)))
+
+(def empty-list (EmptyList. nil))
+
+(defn list
+  "Creates a new list containing the items."
+  [& xs]
+  (let [arr (if (and (dart-is? xs IndexedSeq) (zero? (.-i xs)))
+              (.-arr xs)
+              xs
+              ;; TODO : for now, xs is a pure dart array, change when it will be a seq
+              #_(let [arr #dart []]
+                (loop [xs xs]
+                  (if-not (nil? xs)
+                    (do
+                      (.push arr (-first xs))
+                      (recur (-next xs)))
+                    arr))))]
+    (loop [i (alength arr) r empty-list]
+      (if (> i 0)
+        (recur (dec i) (-conj r (aget arr (dec i))))
+        r))))
+
 #_(defmacro lazy-seq
   "Takes a body of expressions that returns an ISeq or nil, and yields
   a ISeqable object that will invoke the body only the first time seq
@@ -358,9 +534,12 @@
   `(new cljd.core/LazySeq nil (fn [] ~@body) nil nil))
 
 (defn main []
-  (let [a (LazySeq. nil (fn [] #dart [1 2 3 4]) nil nil)]
+  #_(let [a (LazySeq. nil (fn [] #dart [1 2 3 4]) nil nil)]
     (print (first (seq a)))
     (print (rest (seq a)))
     (print (last "coucou ma copine")))
+  (print (last (list 1 2 3 4 5)))
+  (print (first (list)))
+  (print (fnext (list 1 2 3 4 5 6 7 8 9 10 11)))
 
   )
