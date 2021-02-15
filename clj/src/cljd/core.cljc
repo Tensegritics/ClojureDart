@@ -110,10 +110,8 @@
   ([] "")
   ([x] (if (nil? x)
          ""
-         #_(.join js [x] "")
          (.toString x)))
   ([x & ys]
-   ;; TODO : replace by doto
    ;; TODO : maybe use writeAll ?
    (loop [sb (dc/StringBuffer. (str x)) more ys]
      (if more
@@ -174,7 +172,7 @@
   (-first [this] (aget arr i))
   (-rest [_] (if (< (inc i) (alength arr))
                (IndexedSeq. arr (inc i) nil)
-               #_(list)))
+               ()))
 
   INext
   (-next [_] (if (< (inc i) (alength arr))
@@ -251,7 +249,7 @@
       #_#_(native-satisfies? ISeqable coll)
       (-seq coll)
 
-      :else (throw (UnimplementedError. "not implemented yet.")))))
+      true (throw (UnimplementedError. "not implemented yet.")))))
 
 (defn first
   "Returns the first item in the collection. Calls seq on its
@@ -322,7 +320,7 @@
 (deftype LazySeq [meta ^:mutable ^:dart fn ^:mutable s ^:mutable __hash]
   Object
   #_#_(toString [coll]
-    (pr-str* coll))
+        (pr-str* coll))
   (equiv [this other]
     (-equiv this other))
   (sval [coll]
@@ -333,7 +331,7 @@
         (set! fn nil)
         s)))
   #_#_#_#_(indexOf [coll x]
-    (-indexOf coll x 0))
+            (-indexOf coll x 0))
   (indexOf [coll x start]
     (-indexOf coll x start))
   (lastIndexOf [coll x]
@@ -363,8 +361,7 @@
     (-seq coll)
     (if-not (nil? s)
       (rest s)
-      #_()
-      (throw (UnimplementedError. "not implemented yet."))))
+      ()))
 
   INext
   (-next [coll]
@@ -651,7 +648,6 @@
     `(new cljd.core/LazySeq nil (fn [] ~@body) nil nil))
 
 (defn to-array
-  "Returns an array containing the contents of coll."
   [coll]
   (let [ary #dart []]
     (loop [s (seq coll)]
@@ -663,7 +659,7 @@
 (defn apply
   ([f args]
    (if (dart-is? f IFn)
-     (-apply f args)
+     (-apply f (seq args))
      (.apply Function f (to-array args))))
   ([f x args]
    (let [args (list* x args)]
