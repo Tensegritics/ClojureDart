@@ -3,6 +3,9 @@
 
 (defn count [x] (if (.== nil x) 0 (.-length x)))
 
+;; used by writer when encounter ()
+(def empty-list nil)
+
 #_(defn next [coll]
   (let [s (.sublist coll 1)]
     (when (.< 0 (.-length s))
@@ -99,9 +102,41 @@
   "Returns true if x is logical false, false otherwise."
   [x] (if x false true))
 
+(def ^:dart first nil)
+
+(def ^:dart next nil)
+
+(defn ^:clj str
+  ([] "")
+  ([x] (if (nil? x)
+         ""
+         #_(.join js [x] "")
+         (.toString x)))
+  ([x & ys]
+   ;; TODO : replace by doto
+   ;; TODO : maybe use writeAll ?
+   (loop [sb (dc/StringBuffer. (str x)) more ys]
+     (if more
+       (recur (doto sb (.write (str (first more)))) (next more))
+       (.toString sb)))))
+
 (defn ^num alength [array] (.-length array))
 
-(defn aget [array idx] (. array "[]" idx))
+(defn ^:clj aget
+  ([array idx]
+   (. array "[]" idx))
+  ([array idx & idxs]
+   (throw (UnimplementedError. "not implemented yet."))
+   #_(apply aget (aget array idx) idxs)))
+
+(defn aset
+  ([array idx val]
+   (. array "[]=" idx val))
+  ([array idx idx2 & idxv]
+   (throw (UnimplementedError. "not implemented yet."))
+   #_(apply aset (aget array idx) idx2 idxv)))
+
+(def cons nil)
 
 (deftype IndexedSeq [arr i meta]
   #_Object
@@ -170,7 +205,7 @@
   (-iterator [coll]
     (IndexedSeqIterator. arr i))
 
-  #_#_ICollection
+  ICollection
   (-conj [coll o] (cons o coll))
 
   #_#_IEmptyableCollection
@@ -239,8 +274,8 @@
       (let [s (seq coll)]
         (if s
           (-rest s)
-          (throw (UnimplementedError. "not implemented yet.")) #_())))
-    (throw (UnimplementedError. "not implemented yet.")) #_()))
+          ())))
+    ()))
 
 (defn next
   "Returns a seq of the items after the first. Calls seq on its
@@ -337,7 +372,7 @@
     (when-not (nil? s)
       (next s)))
 
-  #_#_ICollection
+  ICollection
   (-conj [coll o] (cons o coll))
 
   #_#_IEmptyableCollection
@@ -363,8 +398,6 @@
   #_#_#_IReduce
   (-reduce [coll f] (seq-reduce f coll))
   (-reduce [coll f start] (seq-reduce f start coll)))
-
-(def empty-list nil)
 
 (deftype List [meta first rest count ^:mutable __hash]
   #_#_#_#_#_#_#_Object
@@ -400,7 +433,7 @@
   (-first [coll] first)
   (-rest [coll]
     (if (= count 1)
-      empty-list #_()
+      ()
       rest))
 
   INext
@@ -467,7 +500,7 @@
 
   ISeq
   (-first [coll] nil)
-  (-rest [coll] empty-list #_(throw (UnimplementedError. "not implemented yet.")) #_())
+  (-rest [coll] ())
 
   INext
   (-next [coll] nil)
@@ -520,10 +553,94 @@
                       (.push arr (-first xs))
                       (recur (-next xs)))
                     arr))))]
-    (loop [i (alength arr) r empty-list]
+    (loop [i (alength arr) r ()]
       (if (> i 0)
         (recur (dec i) (-conj r (aget arr (dec i))))
         r))))
+
+(deftype Cons [meta first rest ^:mutable __hash]
+  #_#_#_#_#_#_#_Object
+  (toString [coll]
+    (pr-str* coll))
+  (equiv [this other]
+    (-equiv this other))
+  (indexOf [coll x]
+    (-indexOf coll x 0))
+  (indexOf [coll x start]
+    (-indexOf coll x start))
+  (lastIndexOf [coll x]
+    (-lastIndexOf coll x (count coll)))
+  (lastIndexOf [coll x start]
+    (-lastIndexOf coll x start))
+
+  IList
+
+  #_#_ICloneable
+  (-clone [_] (Cons. meta first rest __hash))
+
+  #_#_IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (Cons. new-meta first rest __hash)))
+
+  #_#_IMeta
+  (-meta [coll] meta)
+
+  ASeq
+  ISeq
+  (-first [coll] first)
+  (-rest [coll] (if (nil? rest) () rest))
+
+  INext
+  (-next [coll]
+    (if (nil? rest) nil (seq rest)))
+
+  ICollection
+  (-conj [coll o] (Cons. nil o coll nil))
+
+  #_#_IEmptyableCollection
+  (-empty [coll] (.-EMPTY List))
+
+  ISequential
+
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+
+  ISeqable
+  (-seq [coll] coll)
+
+  #_#_#_IReduce
+  (-reduce [coll f] (seq-reduce f coll))
+  (-reduce [coll f start] (seq-reduce f start coll)))
+
+(defn cons
+  "Returns a new seq where x is the first element and coll is the rest."
+  [x coll]
+  (cond
+    (nil? coll)          (List. nil x nil 1 nil)
+    (dart-is? coll ISeq) (Cons. nil x coll nil)
+    true                 (Cons. nil x (seq coll) nil)))
+
+(defn spread
+  [arglist]
+  (when-not (nil? arglist)
+    (let [n (next arglist)]
+      (if (nil? n)
+        (seq (first arglist))
+        (cons (first arglist)
+              (spread n))))))
+
+(defn list*
+  ([args] (seq args))
+  ([a args] (cons a args))
+  ([a b args] (cons a (cons b args)))
+  ([a b c args] (cons a (cons b (cons c args))))
+  ([a b c d & more]
+   (cons a (cons b (cons c (cons d (spread more)))))))
 
 #_(defmacro lazy-seq
   "Takes a body of expressions that returns an ISeq or nil, and yields
@@ -531,15 +648,55 @@
   is called, and will cache the result and return it on all subsequent
   seq calls."
   [& body]
-  `(new cljd.core/LazySeq nil (fn [] ~@body) nil nil))
+    `(new cljd.core/LazySeq nil (fn [] ~@body) nil nil))
+
+(defn to-array
+  "Returns an array containing the contents of coll."
+  [coll]
+  (let [ary #dart []]
+    (loop [s (seq coll)]
+      (if-not (nil? s)
+        (do (.add ary (first s))
+            (recur (next s)))
+        ary))))
+
+(defn apply
+  ([f args]
+   (if (dart-is? f IFn)
+     (-apply f args)
+     (.apply Function f (to-array args))))
+  ([f x args]
+   (let [args (list* x args)]
+     (if (dart-is? f IFn)
+       (-apply f args)
+       (.apply Function f (to-array args)))))
+  ([f x y args]
+   (let [args (list* x y args)]
+     (if (dart-is? f IFn)
+       (-apply f args)
+       (.apply Function f (to-array args)))))
+  ([f x y z args]
+   (let [args (list* x y z args)]
+     (if (dart-is? f IFn)
+       (-apply f args)
+       (.apply Function f (to-array args)))))
+  ([f a b c d & args]
+   (let [args (cons a (cons b (cons c (cons d (spread args)))))]
+     (if (dart-is? f IFn)
+       (-apply f args)
+       (.apply Function f (to-array args))))))
 
 (defn main []
   #_(let [a (LazySeq. nil (fn [] #dart [1 2 3 4]) nil nil)]
     (print (first (seq a)))
     (print (rest (seq a)))
     (print (last "coucou ma copine")))
-  (print (last (list 1 2 3 4 5)))
-  (print (first (list)))
-  (print (fnext (list 1 2 3 4 5 6 7 8 9 10 11)))
+
+  (print (apply str (list 1 2 3 4 5 "a")))
+  (print (apply str 1 (list 1 2 3 4 5 "a")))
+  (print (apply str 1 2 (list 1 2 3 4 5 "a")))
+  (print (apply str 1 2 3 (list 1 2 3 4 5 "a")))
+  (print (apply str 1 2 3 4 (list 1 2 3 4 5 "a")))
+
 
   )
