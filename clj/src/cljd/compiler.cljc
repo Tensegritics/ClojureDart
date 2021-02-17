@@ -1388,8 +1388,8 @@
                   (print "]=")
                   (write (second args) expr-locus))
           ("~" "!") (do
-                (print meth)
-                (write obj paren-locus))
+                      (print meth)
+                      (write obj paren-locus))
           "-" (if args
                 (do
                   (write obj paren-locus)

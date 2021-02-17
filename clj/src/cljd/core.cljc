@@ -120,19 +120,20 @@
 
 (defn ^num alength [array] (.-length array))
 
+(def ^:dart apply nil)
+
 (defn ^:clj aget
   ([array idx]
    (. array "[]" idx))
   ([array idx & idxs]
-   (throw (UnimplementedError. "not implemented yet."))
-   #_(apply aget (aget array idx) idxs)))
+   (apply aget (aget array idx) idxs)))
 
 (defn aset
   ([array idx val]
-   (. array "[]=" idx val))
+   (. array "[]=" idx val)
+   val)
   ([array idx idx2 & idxv]
-   (throw (UnimplementedError. "not implemented yet."))
-   #_(apply aset (aget array idx) idx2 idxv)))
+   (apply aset (aget array idx) idx2 idxv)))
 
 (def cons nil)
 
@@ -649,6 +650,8 @@
 
 (defn to-array
   [coll]
+  ;; TODO : reconsider #dart[] as it can only be used for one type
+  ;; TODO : use count?
   (let [ary #dart []]
     (loop [s (seq coll)]
       (if-not (nil? s)
