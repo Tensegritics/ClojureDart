@@ -43,7 +43,7 @@
 (defprotocol ISeq
   "Protocol for collections to provide access to their items as sequences."
   (-first [coll]
-    "Returns the first item in the collection coll. Used by cljs.core/first.")
+    "Returns the first item in the collection coll.")
   (-rest [coll]
     "Returns a new collection of coll without the first item. It should
      always return a seq, e.g.
@@ -84,6 +84,11 @@
   "Protocol for cloning a value."
   (-clone [value]
     "Creates a clone of value."))
+
+(defprotocol ICounted
+  "Protocol for adding the ability to count a collection in constant time."
+  (-count [coll]
+   "Calculates the count of coll in constant time."))
 
 (defn ^bool < [a b] (.< a b))
 
@@ -189,9 +194,12 @@
                (IndexedSeq. arr (inc i) nil)
                nil))
 
-  #_#_ICounted
+  ICounted
   (-count [_]
-    (max 0 (- (alength arr) i)))
+    ; TODO : use max
+    (let [l (- (alength arr) i)]
+      (if (< 0 l) l 0))
+    #_(max 0 (- (alength arr) i)))
 
   #_#_#_IIndexed
   (-nth [coll n]
@@ -284,6 +292,26 @@
           (-rest s)
           ())))
     ()))
+
+(defn ^int count
+  [coll]
+  (if-not (nil? coll)
+    (cond
+      (dart-is? coll ICounted)
+      (-count coll)
+
+      (dart-is? coll dc/List)
+      (alength coll)
+
+      (dart-is? coll dc/String)
+      ^number (.-length coll)
+
+      true (throw (UnimplementedError. "not implemented yet."))
+      #_#_(implements? ISeqable coll)
+      (accumulating-seq-count coll)
+
+      #_#_:else (-count coll))
+    0))
 
 (defn next
   "Returns a seq of the items after the first. Calls seq on its
@@ -469,7 +497,7 @@
   ISeqable
   (-seq [coll] coll)
 
-  #_#_ICounted
+  ICounted
   (-count [coll] count)
 
   #_#_#_IReduce
@@ -537,7 +565,7 @@
   ISeqable
   (-seq [coll] nil)
 
-  #_#_ICounted
+  ICounted
   (-count [coll] 0)
 
   #_#_#_IReduce
