@@ -1,7 +1,7 @@
 (ns cljd.core
   (:require ["dart:core" :as dc :refer [print]]))
 
-(defn count [x] (if (.== nil x) 0 (.-length x)))
+(defn ^num count [x] (if (.== nil x) 0 (.-length x)))
 
 ;; used by writer when encounter ()
 (def empty-list nil)
@@ -18,7 +18,7 @@
     (. x "[]" i)
     default))
 
-(defn = [a b] (.== a b))
+(defn ^bool = [a b] (.== a b))
 
 (defn ^bool zero? [num] (= 0 num))
 
@@ -80,21 +80,26 @@
      (conj [1 2 3 4] 5) => [1 2 3 4 5]
      (conj '(2 3 4 5) 1) => '(1 2 3 4 5)"))
 
+(defprotocol ICloneable
+  "Protocol for cloning a value."
+  (-clone [value]
+    "Creates a clone of value."))
+
 (defn ^bool < [a b] (.< a b))
 
 (defn ^bool > [a b] (.> a b))
 
 (defn ^bool pos? [a] (.< 0 a))
 
-(defn + [a b] (.+ a b))
+(defn ^num + [a b] (.+ a b))
 
-(defn - [a b] (.- a b))
+(defn ^num - [a b] (.- a b))
 
-(defn inc
+(defn ^num inc
   "Returns a number one greater than num."
   [x] (+ x 1))
 
-(defn dec [x] (- x 1))
+(defn ^num dec [x] (- x 1))
 
 (defn ^bool nil? [x] (.== nil x))
 
@@ -128,6 +133,10 @@
   ([array idx & idxs]
    (apply aget (aget array idx) idxs)))
 
+(defn ^List aclone
+  [arr]
+  (.from dc/List arr))
+
 (defn aset
   ([array idx val]
    (. array "[]=" idx val)
@@ -152,7 +161,7 @@
   #_(lastIndexOf [coll x start]
     (-lastIndexOf coll x start))
 
-  #_#_ICloneable
+  ICloneable
   (-clone [_] (IndexedSeq. arr i meta))
 
   ISeqable
@@ -225,7 +234,7 @@
       (if (pos? c)
         (RSeq. coll (dec c) nil)))))
 
-(defn seq
+(defn ^ISeq seq
   "Returns a seq on the collection. If the collection is
   empty, returns nil.  (seq nil) returns nil. seq also works on
   Strings."
@@ -263,7 +272,7 @@
         (when-not (nil? s)
           (-first s))))))
 
-(defn rest
+(defn ^ISeq rest
   "Returns a possibly empty seq of the items after the first. Calls seq on its
   argument."
   [coll]
@@ -414,7 +423,7 @@
 
   IList
 
-  #_#_ICloneable
+  ICloneable
   (-clone [_] (List. meta first rest count __hash))
 
   #_#_IWithMeta
@@ -484,7 +493,7 @@
 
   IList
 
-  #_#_ICloneable
+  ICloneable
   (-clone [_] (EmptyList. meta))
 
   #_#_IWithMeta
@@ -535,7 +544,7 @@
   (-reduce [coll f] (seq-reduce f coll))
   (-reduce [coll f start] (seq-reduce f start coll)))
 
-(def empty-list (EmptyList. nil))
+(def ^IList empty-list (EmptyList. nil))
 
 (defn list
   "Creates a new list containing the items."
@@ -573,7 +582,7 @@
 
   IList
 
-  #_#_ICloneable
+  ICloneable
   (-clone [_] (Cons. meta first rest __hash))
 
   #_#_IWithMeta
@@ -648,7 +657,7 @@
   [& body]
     `(new cljd.core/LazySeq nil (fn [] ~@body) nil nil))
 
-(defn to-array
+(defn ^{:tag "dc.List"} to-array
   [coll]
   ;; TODO : reconsider #dart[] as it can only be used for one type
   ;; TODO : use count?
@@ -685,17 +694,79 @@
        (-apply f args)
        (.apply Function f (to-array args))))))
 
+#_(defn ^macro defmacro [&form &env name args body] `(defn ~(vary-meta name assoc :macro true) args ~@body))
+
+#_(defn make-array
+  ([size]
+     (dc/List. size))
+  ([type size]
+   (make-array size))
+  ([type size & more-sizes]
+    (let [dims more-sizes
+          dimarray (make-array size)]
+      (dotimes [i (alength dimarray)]
+        (aset dimarray i (apply make-array nil dims)))
+      dimarray)))
+
 (defn main []
   #_(let [a (LazySeq. nil (fn [] #dart [1 2 3 4]) nil nil)]
     (print (first (seq a)))
     (print (rest (seq a)))
     (print (last "coucou ma copine")))
 
-  (print (apply str (list 1 2 3 4 5 "a")))
-  (print (apply str 1 (list 1 2 3 4 5 "a")))
-  (print (apply str 1 2 (list 1 2 3 4 5 "a")))
-  (print (apply str 1 2 3 (list 1 2 3 4 5 "a")))
-  (print (apply str 1 2 3 4 (list 1 2 3 4 5 "a")))
+  #_(let [sw (dc/Stopwatch.)
+        v #dart []]
+    (.start sw)
+    (loop [i 0]
+      (when (< i 10000000)
+        (do (.add v i)
+            (recur (inc i)))))
+    (.stop sw)
+    (print (.-elapsedMilliseconds sw))
+
+
+    (.reset sw)
+    (.start sw)
+    (loop [i 0]
+      (when (< i 10000000)
+        (do (.elementAt v i)
+            (recur (inc i)))))
+    (.stop sw)
+    (print (.-elapsedMilliseconds sw))
+    )
+
+  #_(let [a #dart [1 2 3 4 5]
+        b (.from dc/List a)]
+    (aset b 0 10)
+    (print a)
+    (print b))
+
+  #_(let [sw (dc/Stopwatch.)
+        v #dart []]
+    (.start sw)
+    (loop [i 0
+           j 1000000]
+      (when (< i 10000000)
+        (< i j)
+        (recur (inc i) j)))
+    (.stop sw)
+    (print (.-elapsedMilliseconds sw)))
+
+  (let [a #dart [1 "ohoh"]
+        b (aclone a)]
+    (aset b 0 "ohoh")
+    (print a)
+    (print b))
+
+  (let [a (seq #dart [1 2 3])
+        b (-clone a)]
+
+    (print (dc/identical a b))
+    (print (dc/identical a a))
+    (print (dc/identical b b)))
+
+
+
 
 
   )
