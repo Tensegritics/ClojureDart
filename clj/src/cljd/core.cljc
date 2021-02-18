@@ -313,6 +313,10 @@
       #_#_:else (-count coll))
     0))
 
+(defn clone
+  [value]
+  (-clone value))
+
 (defn next
   "Returns a seq of the items after the first. Calls seq on its
   argument.  If there are no more items, returns nil"
