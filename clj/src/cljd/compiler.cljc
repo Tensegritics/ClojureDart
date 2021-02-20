@@ -1073,7 +1073,7 @@
 (defn write-top-dartfn [sym x]
   (case (first x)
     dart/fn (do
-              (print (name sym))
+              (print (str (some-> sym meta :dart/type (str " ")) (name sym)))
               (write x expr-locus)
               (print "\n"))
     (write x (var-locus (name sym)))))
