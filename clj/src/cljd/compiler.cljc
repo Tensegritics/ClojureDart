@@ -543,7 +543,7 @@
           test (case truth
                  :boolean test
                  :some (list 'dart/. test "!=" nil)
-                 (list 'dart/. (list 'dart/. test "!=" false) "&" (list 'dart/. test "!=" nil)))]
+                 (list 'dart/. (list 'dart/. test "!=" false) "&&" (list 'dart/. test "!=" nil)))]
       (cond->> (list 'dart/if test (emit then env) (emit else env))
         (seq bindings) (list 'dart/let bindings)))
     test
@@ -1191,7 +1191,7 @@
          dart/.
          (let [[_ a meth b] x]
            (case (name meth)
-             ("!" "<" ">" "<=" ">=" "==" "!=" "&" "|" "^")
+             ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "|" "^")
              {:dart/type "dc.bool" :dart/truth :boolean}
              nil))
          dart/is {:dart/type "dc.bool" :dart/truth :boolean}
@@ -1398,12 +1398,12 @@
                 (do
                   (print meth)
                   (write obj paren-locus)))
-          ("<" ">" "<=" ">=" "==" "!=" "+" "~/" "/" "*" "%" "<<" ">>" ">>>")
+          ("<" ">" "&" "&&" "<=" ">=" "==" "!=" "+" "~/" "/" "*" "%" "<<" ">>" ">>>")
           (do
             (write obj paren-locus)
             (print meth)
             (write (first args) paren-locus))
-          ("|" "^" "&")
+          ("|" "^" #_"&")
           (do
             (write obj paren-locus)
             (print (str meth meth))

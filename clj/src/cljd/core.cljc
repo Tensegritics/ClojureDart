@@ -88,11 +88,40 @@
 (defprotocol ICounted
   "Protocol for adding the ability to count a collection in constant time."
   (-count [coll]
-   "Calculates the count of coll in constant time."))
+    "Calculates the count of coll in constant time."))
+
+(defprotocol IVector
+  "Protocol for adding vector functionality to collections."
+  (-assoc-n [coll n val]
+    "Returns a new vector with value val added at position n."))
+
+(defprotocol IAssociative
+  "Protocol for adding associativity to collections."
+  (-contains-key? [coll k]
+    "Returns true if k is a key in coll.")
+  (-assoc [coll k v]
+    "Returns a new collection of coll with a mapping from key k to
+     value v added to it."))
+
+(defprotocol IIndexed
+  "Protocol for collections to provide indexed-based access to their items."
+  (-nth [coll n] [coll n not-found]
+    "Returns the value at the index n in the collection coll.
+     Returns not-found if index n is out of bounds and not-found is supplied."))
+
+(defprotocol ILookup
+  "Protocol for looking up a value in a data structure."
+  (-lookup [o k] [o k not-found]
+    "Use k to look up a value in o. If not-found is supplied and k is not
+     a valid value that can be used for look up, not-found is returned."))
 
 (defn ^bool < [a b] (.< a b))
 
+(defn ^bool <= [a b] (.<= a b))
+
 (defn ^bool > [a b] (.> a b))
+
+(defn ^bool >= [a b] (.>= a b))
 
 (defn ^bool pos? [a] (.< 0 a))
 
@@ -201,12 +230,12 @@
       (if (< 0 l) l 0))
     #_(max 0 (- (alength arr) i)))
 
-  #_#_#_IIndexed
+  IIndexed
   (-nth [coll n]
     (let [i (+ n i)]
       (if (and (<= 0 i) (< i (alength arr)))
         (aget arr i)
-        #_(throw (js/Error. "Index out of bounds")))))
+        (throw (UnimplementedError. "Index out of bounds")))))
   (-nth [coll n not-found]
     (let [i (+ n i)]
       (if (and (<= 0 i) (< i (alength arr)))
@@ -781,6 +810,21 @@
         (pv-aset r 0 ret)
         (recur (- ll 5) r)))))
 
+(defn unchecked-array-for [pv i]
+  (if (>= i (tail-off pv))
+    (.-tail pv)
+    (loop [node (.-root pv)
+           level (.-shift pv)]
+      (if (pos? level)
+        (recur (pv-aget node (bit-and (unsigned-bit-shift-right i level) 0x01f))
+               (- level 5))
+        (.-arr node)))))
+
+(defn- array-for [pv i]
+  (if (and (<= 0 i) (< i (.-cnt pv)))
+    (unchecked-array-for pv i)
+    (throw (UnimplementedError. (str "No item " i " in vector of length " (.-cnt pv))))))
+
 (defn- push-tail [pv level parent tailnode]
   (let [ret (pv-clone-node parent)
         subdix (bit-and (unsigned-bit-shift-right (dec (.-cnt pv)) level) 0x01f)]
@@ -796,6 +840,78 @@
           (let [node-to-insert (new-path nil (- level 5) tailnode)]
             (pv-aset ret subdix node-to-insert)
             ret))))))
+
+(defn- do-assoc [pv level node i val]
+  (let [ret (pv-clone-node node)]
+    (if (zero? level)
+      (do
+        (pv-aset ret (bit-and i 0x01f) val)
+        ret)
+      (let [subidx (bit-and (unsigned-bit-shift-right i level) 0x01f)]
+        (pv-aset ret subidx (do-assoc pv (- level 5) (pv-aget node subidx) i val))
+        ret))))
+
+(defn nth
+  ([coll n]
+   (cond
+     (not (dart-is? n int))
+     (throw (UnimplementedError. "Index argument to nth must be a number"))
+
+     (nil? coll)
+     coll
+
+     (dart-is? coll IIndexed)
+     (-nth coll n)
+
+     (or (dart-is? coll dc/List) (dart-is? coll dc/String))
+     (if (and (< -1 n) (< n (.-length coll)))
+       (aget coll n)
+       (throw (UnimplementedError. "Index out of bounds")))
+
+     true (throw (UnimplementedError. "UnimplementedError nth"))
+
+     #_#_#_#_#_#_(or (implements? ISeq coll)
+         (implements? ISequential coll))
+     (if (neg? n)
+       (throw (UnimplementedError. "Index out of bounds"))
+       (linear-traversal-nth coll n))
+
+     (native-satisfies? IIndexed coll)
+     (-nth coll n)
+
+     :else
+     (throw (js/Error. (str "nth not supported on this type "
+                            (type->str (type coll)))))))
+  ([coll n not-found]
+   (cond
+     (not (dart-is? n int))
+     (throw (UnimplementedError. "Index argument to nth must be a number"))
+
+     (nil? coll)
+     not-found
+
+     (dart-is? coll IIndexed)
+     (-nth coll n not-found)
+
+     (or (dart-is? coll dc/List) (dart-is? coll dc/String))
+     (if (and (< -1 n) (< n (.-length coll)))
+       (aget coll n)
+       not-found)
+
+     true (throw (UnimplementedError. "UnimplementedError nth"))
+
+     #_#_#_#_#_#_(or (implements? ISeq coll)
+         (implements? ISequential coll))
+     (if (neg? n)
+       not-found
+       (linear-traversal-nth coll n not-found))
+
+     (native-satisfies? IIndexed coll)
+     (-nth coll n not-found)
+
+     :else
+     (throw (js/Error. (str "nth not supported on this type "
+                            (type->str (type coll))))))))
 
 (defprotocol APersistentVector
   "Marker protocol")
@@ -897,7 +1013,7 @@
   ICounted
   (-count [coll] cnt)
 
-  #_#_#_IIndexed
+  IIndexed
   (-nth [coll n]
     (aget (array-for coll n) (bit-and n 0x01f)))
   (-nth [coll n not-found]
@@ -905,19 +1021,19 @@
       (aget (unchecked-array-for coll n) (bit-and n 0x01f))
       not-found))
 
-  #_#_#_ILookup
+  ILookup
   (-lookup [coll k] (-lookup coll k nil))
-  (-lookup [coll k not-found] (if (number? k)
+  (-lookup [coll k not-found] (if (dart-is? k dc/int)
                                 (-nth coll k not-found)
                                 not-found))
 
-  #_#_#_IAssociative
+  IAssociative
   (-assoc [coll k v]
-    (if (number? k)
+    (if (dart-is? k int)
       (-assoc-n coll k v)
-      (throw (js/Error. "Vector's key for assoc must be a number."))))
+      (throw (UnimplementedError. "Vector's key for assoc must be a number."))))
   (-contains-key? [coll k]
-    (if (integer? k)
+    (if (dart-is? k int)
       (and (<= 0 k) (< k cnt))
       false))
 
@@ -927,7 +1043,7 @@
       (MapEntry. n (aget (unchecked-array-for coll n) (bit-and n 0x01f)) nil)))
 
   APersistentVector
-  #_#_IVector
+  IVector
   (-assoc-n [coll n val]
     (cond
        (and (<= 0 n) (< n cnt))
@@ -936,8 +1052,8 @@
            (aset new-tail (bit-and n 0x01f) val)
            (PersistentVector. meta cnt shift root new-tail nil))
          (PersistentVector. meta cnt shift (do-assoc coll shift root n val) tail nil))
-       (== n cnt) (-conj coll val)
-       :else (throw (js/Error. (str "Index " n " out of bounds  [0," cnt "]")))))
+       (= n cnt) (-conj coll val)
+       true (throw (UnimplementedError. "Message that do no suck."))))
 
   #_#_#_IReduce
   (-reduce [v f]
@@ -977,7 +1093,7 @@
             (recur (+ i len) init)))
         init)))
 
-  #_#_#_IFn
+  IFn
   (-invoke [coll k]
     (-nth coll k))
   (-invoke [coll k not-found]
@@ -1002,8 +1118,14 @@
     (print (rest (seq a)))
     (print (last "coucou ma copine")))
 
-  (let [a (PersistentVector. nil 5 5 (VectorNode. nil (dc/List. 32)) #dart [1 2 3 4 5] nil)]
-    (print (.-tail (-conj a 110)))
-    (print (.-tail a)))
+  (let [a (PersistentVector. nil 0 5 (VectorNode. nil (dc/List. 32)) #dart [] nil)]
+    (let [v (loop [v a
+                   idx 0]
+              (if (< idx 1500)
+                (recur (-conj v idx) (inc idx))
+                v))]
+      (print (nth v 1300))
+      (print (nth v 1600 10))
+      (print (v 10))))
 
   )
