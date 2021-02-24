@@ -916,6 +916,15 @@
 (defprotocol APersistentVector
   "Marker protocol")
 
+(defn- first-array-for-longvec [pv]
+  (loop [node (.-root pv)
+         level (.-shift pv)]
+    (if (pos? level)
+      (recur (pv-aget node 0) (- level 5))
+      (.-arr node))))
+
+(def ^:clj chunked-seq nil)
+
 (deftype PersistentVector [meta cnt shift root tail ^:mutable __hash]
   #_#_#_#_#_#_#_Object
   (toString [coll]
@@ -1003,12 +1012,12 @@
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
 
-  #_#_ISeqable
+  ISeqable
   (-seq [coll]
     (cond
       (zero? cnt) nil
       (<= cnt 32) (IndexedSeq. tail 0 nil)
-      :else (chunked-seq coll (first-array-for-longvec coll) 0 0)))
+      true (chunked-seq coll (first-array-for-longvec coll) 0 0)))
 
   ICounted
   (-count [coll] cnt)
@@ -1121,11 +1130,9 @@
   (let [a (PersistentVector. nil 0 5 (VectorNode. nil (dc/List. 32)) #dart [] nil)]
     (let [v (loop [v a
                    idx 0]
-              (if (< idx 1500)
+              (if (< idx 30)
                 (recur (-conj v idx) (inc idx))
                 v))]
-      (print (nth v 1300))
-      (print (nth v 1600 10))
-      (print (v 10))))
+      (print (first (next (seq v))))))
 
   )
