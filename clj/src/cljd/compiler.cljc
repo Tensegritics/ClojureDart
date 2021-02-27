@@ -850,8 +850,12 @@
       (swap! nses do-def sym
              {:dart/name dartname
               :type :field
-              :dart/code (with-out-str (write-top-field dartname (emit (if (seq? expr) `(let [^:dart f# (fn [] ~expr)]
-                                                                                          (f#)) #_(list (list 'fn* [] expr)) expr) env)))}))
+              ;; TODO : iife smell
+              :dart/code (with-out-str (write-top-field dartname (emit (if (seq? expr)
+                                                                         (let [f (with-meta (gensym) {:dart true})]
+                                                                           `(let [~f (fn [] ~expr)]
+                                                                              (~f)))
+                                                                         expr) env)))}))
     (emit sym env)))
 
 (defn ensure-import [the-ns]
@@ -988,7 +992,8 @@
           (or (number? x) (boolean? x) (string? x)) x
           (keyword? x) (emit (list 'cljd.Keyword/intern (namespace x) (name x)) env)
           (nil? x) nil
-          (and (seq? x) (nil? (seq x))) (emit 'cljd.core/empty-list env)
+          (and (list? x) (nil? (seq x))) (emit 'cljd.core/empty-list env)
+          (and (vector? x) (nil? (seq x))) (emit 'cljd.core/empty-persistent-vector env)
           (seq? x)
           (let [emit (case (-> (first x) ensure-new-special)
                        . emit-dot

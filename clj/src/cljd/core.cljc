@@ -115,6 +115,16 @@
     "Use k to look up a value in o. If not-found is supplied and k is not
      a valid value that can be used for look up, not-found is returned."))
 
+(defprotocol IStack
+  "Protocol for collections to provide access to their items as stacks. The top
+  of the stack should be accessed in the most efficient way for the different
+  data structures."
+  (-peek [coll]
+    "Returns the item from the top of the stack. Is used by cljs.core/peek.")
+  (-pop [coll]
+    "Returns a new stack without the item on top of the stack. Is used
+     by cljs.core/pop."))
+
 (defn ^bool < [a b] (.< a b))
 
 (defn ^bool <= [a b] (.<= a b))
@@ -510,7 +520,7 @@
       nil
       rest))
 
-  #_#_#_IStack
+  IStack
   (-peek [coll] first)
   (-pop [coll] (-rest coll))
 
@@ -573,9 +583,9 @@
   INext
   (-next [coll] nil)
 
-  #_#_#_IStack
+  IStack
   (-peek [coll] nil)
-  (-pop [coll] (throw (js/Error. "Can't pop empty list")))
+  (-pop [coll] (throw (UnimplementedError. "Can't pop empty list")))
 
   ICollection
   (-conj [coll o] (List. meta o nil 1 nil))
@@ -925,6 +935,23 @@
 
 (def ^:clj chunked-seq nil)
 
+(defn- pop-tail [pv level node]
+  (let [subidx (bit-and (unsigned-bit-shift-right (- (.-cnt pv) 2) level) 0x01f)]
+    (cond
+      (> level 5) (let [new-child (pop-tail pv (- level 5) (pv-aget node subidx))]
+                    (if (and (nil? new-child) (zero? subidx))
+                      nil
+                      (let [ret (pv-clone-node node)]
+                        (pv-aset ret subidx new-child)
+                        ret)))
+      (zero? subidx) nil
+      true (let [ret (pv-clone-node node)]
+             (pv-aset ret subidx nil)
+             ret))))
+
+(def ^VectorNode empty-vector-node (VectorNode. nil (dc/List. 32)))
+(def empty-persistent-vector nil)
+
 (deftype PersistentVector [meta cnt shift root tail ^:mutable __hash]
   #_#_#_#_#_#_#_Object
   (toString [coll]
@@ -952,19 +979,20 @@
   #_#_IMeta
   (-meta [coll] meta)
 
-  #_#_#_IStack
+  IStack
   (-peek [coll]
     (when (> cnt 0)
       (-nth coll (dec cnt))))
   (-pop [coll]
     (cond
-     (zero? cnt) (throw (js/Error. "Can't pop empty vector"))
-     (== 1 cnt) (-with-meta (.-EMPTY PersistentVector) meta)
-     (< 1 (- cnt (tail-off coll)))
-      (PersistentVector. meta (dec cnt) shift root (.slice tail 0 -1) nil)
+      (zero? cnt) (throw (UnimplementedError. "Can't pop empty vector"))
+      (= 1 cnt) empty-persistent-vector ;; TODO : with-meta...
+      (< 1 (- cnt (tail-off coll)))
+      (PersistentVector. meta (dec cnt) shift root (doto #dart []
+                                                     (.addAll (.sublist tail 0 (dec (alength tail))))) nil)
       :else (let [new-tail (unchecked-array-for coll (- cnt 2))
                   nr (pop-tail coll shift root)
-                  new-root (if (nil? nr) (.-EMPTY-NODE PersistentVector) nr)
+                  new-root (if (nil? nr) empty-vector-node nr)
                   cnt-1 (dec cnt)]
               (if (and (< 5 shift) (nil? (pv-aget new-root 1)))
                 (PersistentVector. meta cnt-1 (- shift 5) (pv-aget new-root 0) new-tail nil)
@@ -1121,6 +1149,154 @@
   (-iterator [this]
     (ranged-iterator this 0 cnt)))
 
+(def ^PersistentVector empty-persistent-vector (PersistentVector. nil 0 5 empty-vector-node #dart[] nil))
+
+;; Transient should go here
+
+
+;; PersistentQueue
+
+(defn ^bool some? [x] (not (nil? x)))
+
+(defn conj
+  ([] [])
+  ([coll] coll)
+  ([coll x]
+   (if-not (nil? coll)
+     (-conj coll x)
+     (list x)))
+  ([coll x & xs]
+   (if xs
+     (recur (conj coll x) (first xs) (next xs))
+     (conj coll x))))
+
+(deftype PersistentQueueSeq [meta front rear ^:mutable __hash]
+  #_#_#_#_#_#_#_Object
+  (toString [coll]
+    (pr-str* coll))
+  (equiv [this other]
+    (-equiv this other))
+  (indexOf [coll x]
+    (-indexOf coll x 0))
+  (indexOf [coll x start]
+    (-indexOf coll x start))
+  (lastIndexOf [coll x]
+    (-lastIndexOf coll x (count coll)))
+  (lastIndexOf [coll x start]
+    (-lastIndexOf coll x start))
+
+  #_#_IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (PersistentQueueSeq. new-meta front rear __hash)))
+
+  #_#_IMeta
+  (-meta [coll] meta)
+
+  ISeq
+  (-first [coll] (first front))
+  (-rest  [coll]
+    (if-let [f1 (next front)]
+      (PersistentQueueSeq. meta f1 rear nil)
+      (if (nil? rear)
+        (throw (UnimplementedError. "Need to implement -empty"))#_(-empty coll)
+        (PersistentQueueSeq. meta rear nil nil))))
+
+  INext
+  (-next [coll]
+    (if-let [f1 (next front)]
+      (PersistentQueueSeq. meta f1 rear nil)
+      (when (some? rear)
+        (PersistentQueueSeq. meta rear nil nil))))
+
+  ICollection
+  (-conj [coll o] (cons o coll))
+
+  #_#_IEmptyableCollection
+  (-empty [coll] (-with-meta (.-EMPTY List) meta))
+
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+
+  ISeqable
+  (-seq [coll] coll))
+
+(deftype PersistentQueue [meta count front rear ^:mutable __hash]
+  #_#_#_#_#_#_#_Object
+  (toString [coll]
+    (pr-str* coll))
+  (equiv [this other]
+    (-equiv this other))
+  (indexOf [coll x]
+    (-indexOf coll x 0))
+  (indexOf [coll x start]
+    (-indexOf coll x start))
+  (lastIndexOf [coll x]
+    (-lastIndexOf coll x (count coll)))
+  (lastIndexOf [coll x start]
+    (-lastIndexOf coll x start))
+
+  ICloneable
+  (-clone [coll] (PersistentQueue. meta count front rear __hash))
+
+  #_#_IIterable
+  (-iterator [coll]
+    (PersistentQueueIter. front (-iterator rear)))
+
+  #_#_IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (PersistentQueue. new-meta count front rear __hash)))
+
+  #_#_IMeta
+  (-meta [coll] meta)
+
+  ISeq
+  (-first [coll] (first front))
+  (-rest [coll] (rest (seq coll)))
+
+  IStack
+  (-peek [coll] (first front))
+  (-pop [coll]
+    (if front
+      (if-let [f1 (next front)]
+        (PersistentQueue. meta (dec count) f1 rear nil)
+        (PersistentQueue. meta (dec count) (seq rear) [] nil))
+      coll))
+
+  ICollection
+  (-conj [coll o]
+    (if front
+      (PersistentQueue. meta (inc count) front (conj (or rear []) o) nil)
+      (PersistentQueue. meta (inc count) (conj front o) [] nil)))
+
+  #_#_IEmptyableCollection
+  (-empty [coll] (-with-meta (.-EMPTY PersistentQueue) meta))
+
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+
+  ISeqable
+  (-seq [coll]
+    (let [rear (seq rear)]
+      (if (or front rear)
+        (PersistentQueueSeq. nil front (seq rear) nil))))
+
+  ICounted
+  (-count [coll] count))
+
+
+
 (defn main []
   #_(let [a (LazySeq. nil (fn [] #dart [1 2 3 4]) nil nil)]
     (print (first (seq a)))
@@ -1133,6 +1309,21 @@
               (if (< idx 30)
                 (recur (-conj v idx) (inc idx))
                 v))]
-      (print (first (next (seq v))))))
+      (print (-pop v))
+      (print (-peek v))))
+
+  (let [l (list 1 2 3 4 5)]
+    (print (-pop l))
+    (print (-peek l)))
+
+  (let [queue (PersistentQueue.  nil 0 nil #dart [] nil)
+        queue'
+        (loop [v queue
+               idx 0]
+          (if (< idx 30)
+            (recur (-conj v idx) (inc idx))
+            v))]
+    (print (first (-pop (-pop (-pop queue')))))
+    (print (-peek queue')))
 
   )
