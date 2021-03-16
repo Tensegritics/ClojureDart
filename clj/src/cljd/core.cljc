@@ -132,6 +132,10 @@
            (seq ret)))
        (list (resolve-tag (asig fdecl)))))))
 
+(def ^:bootstrap ^:private ^:dart argument-error
+  (fn [msg]
+    (new #?(:cljd ArgumentError :clj IllegalArgumentException) msg)))
+
 (def
   ^{:macro true
     :doc "Same as (def name (fn [params* ] exprs*)) or (def
@@ -145,8 +149,7 @@
         ;; Note: Cannot delegate this check to def because of the call to (with-meta name ..)
         (if (symbol? fname)
           nil
-          (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
-                   "First argument to defn must be a symbol")))
+          (throw (argument-error "First argument to defn must be a symbol")))
         (let [m (if (string? (first fdecl))
                   {:doc (first fdecl)}
                   {})
@@ -272,10 +275,9 @@
                    pmap
                    (fn [bvec b v]
                      (let [gmap (gensym "map__")
-                           gmapseq (with-meta gmap {:tag 'clojure.lang.ISeq})
                            defaults (:or b)]
                        (loop [ret (-> bvec (conj gmap) (conj v)
-                                      (conj gmap) (conj `(if (seq? ~gmap) (clojure.lang.PersistentHashMap/create (seq ~gmapseq)) ~gmap))
+                                      (conj gmap) (conj `(if (seq? ~gmap) (to-map (seq ~gmap)) ~gmap))
                                       ((fn [ret]
                                          (if (:as b)
                                            (conj ret (:as b) gmap)
@@ -369,7 +371,7 @@
                  (if (seq? (first sigs))
                    sigs
                    ;; Assume single arity syntax
-                   (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
+                   (throw (argument-error
                             (if (seq sigs)
                               (str "Parameter declaration "
                                    (first sigs)
@@ -378,12 +380,12 @@
           psig (fn* [sig]
                  ;; Ensure correct type before destructuring sig
                  (when (not (seq? sig))
-                   (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
+                   (throw (argument-error
                             (str "Invalid signature " sig
                                  " should be a list"))))
                  (let [[params & body] sig
                        _ (when (not (vector? params))
-                           (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
+                           (throw (argument-error
                                     (if (seq? (first sigs))
                                       (str "Parameter declaration " params
                                            " should be a vector")
@@ -449,7 +451,7 @@
       (list 'if (first clauses)
             (if (next clauses)
                 (second clauses)
-                (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
+                (throw (argument-error
                          "cond requires an even number of forms")))
             (cons 'cljd.core/cond (next (next clauses))))))
 
