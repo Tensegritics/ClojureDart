@@ -1,6 +1,460 @@
 (ns cljd.core
   (:require ["dart:core" :as dc :refer [print]]))
 
+(def ^:dart to-map)
+(def ^:dart to-list)
+
+(def ^{:clj true} =)
+(def ^{:clj true} apply)
+(def ^{:clj true} assoc)
+(def ^{:dart true} butlast)
+(def ^{:clj true} concat)
+(def ^{:clj true} conj)
+(def ^{:dart true} cons)
+(def ^{:dart true} contains?)
+(def ^{:dart true} count)
+(def ^{:clj true} dissoc)
+(def ^{:dart true} every?)
+(def ^{:dart true} first)
+(def ^{:clj true} gensym)
+(def ^{:dart true} ident?)
+(def ^{:dart true} inc)
+(def ^{:dart true} key)
+(def ^{:dart true} keys)
+(def ^{:clj true} keyword)
+(def ^{:dart true} keyword?)
+(def ^{:dart true} last)
+(def ^{:clj true} list)
+(def ^{:clj true} list*)
+(def ^{:clj true} map)
+(def ^{:dart true} map?)
+(def ^{:dart true} meta)
+(def ^{:dart true} name)
+(def ^{:dart true} namespace)
+(def ^{:dart true} not)
+(def ^{:dart true} next)
+(def ^{:dart true} nil?)
+(def ^{:dart true} nnext)
+(def ^{:clj true} nth)
+(def ^{:clj true} partition)
+(def ^{:clj true} reduce)
+(def ^{:dart true} second)
+(def ^{:dart true} seq)
+(def ^{:dart true} seq?)
+(def ^{:dart true} set)
+(def ^{:dart true} some)
+(def ^{:clj true} str)
+(def ^{:dart true} string?)
+(def ^{:clj true} subvec)
+(def ^{:clj true} symbol)
+(def ^{:dart true} symbol?)
+(def ^{:dart true} val)
+(def ^{:clj true} vary-meta)
+(def ^{:dart true} vec)
+(def ^{:clj true} vector)
+(def ^{:dart true} vector?)
+(def ^{:dart true} with-meta)
+
+;; syntax quote support at bootstrap
+;; the :cljd nil is most certainly going to bite us once we run the compiler on dart vm
+(def ^:dart ^:bootstrap seq #?(:cljd nil :clj clojure.core/seq))
+(def ^:dart ^:bootstrap first #?(:cljd nil :clj clojure.core/first))
+(def ^:dart ^:bootstrap next #?(:cljd nil :clj clojure.core/next))
+(def ^:clj ^:bootstrap concat #?(:cljd nil :clj clojure.core/concat))
+(def ^:clj ^:bootstrap list #?(:cljd nil :clj clojure.core/list))
+(def ^:clj ^:bootstrap vector #?(:cljd nil :clj clojure.core/vector))
+(def ^:clj ^:bootstrap hash-set #?(:cljd nil :clj clojure.core/hash-set))
+(def ^:clj ^:bootstrap hash-map #?(:cljd nil :clj clojure.core/hash-map))
+(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
+
+(defprotocol IFn
+  "Protocol for adding the ability to invoke an object as a function.
+  For example, a vector can also be used to look up a value:
+  ([1 2 3 4] 1) => 2"
+  (-invoke
+    [this]
+    [this a]
+    [this a b]
+    [this a b c]
+    [this a b c d]
+    [this a b c d e]
+    [this a b c d e f]
+    [this a b c d e f g]
+    [this a b c d e f g h]
+    [this a b c d e f g h i])
+  (-invoke-more [this a b c d e f g h i rest])
+  (-apply [this more]))
+
+(defn foobar [x] (let [[a b] x] (.+ a b)))
+
+(def ^:macro fn
+  (fn* [&form &env & decl]
+    (cons 'fn* decl)))
+
+(def
+  ^{:private true
+    :bootstrap true}
+ sigs
+ (fn [fdecl]
+   #_(assert-valid-fdecl fdecl)
+   (let [asig
+         (fn [fdecl]
+           (let [arglist (first fdecl)
+                 ;elide implicit macro args
+                 arglist (if (= '&form (first arglist))
+                           (subvec arglist 2 (count arglist))
+                           arglist)
+                 body (next fdecl)]
+             (if (map? (first body))
+               (if (next body)
+                 (with-meta arglist (conj (if (meta arglist) (meta arglist) {}) (first body)))
+                 arglist)
+               arglist)))
+         resolve-tag (fn [argvec]
+                        (let [m (meta argvec)
+                              tag (:tag m)]
+                          argvec
+                          ; TODO how to port to CLJD?
+                          #_(if (symbol? tag)
+                            (if (= (.indexOf ^String (name tag) ".") -1)
+                              (if (nil? (clojure.lang.Compiler$HostExpr/maybeSpecialTag tag))
+                                (let [c (clojure.lang.Compiler$HostExpr/maybeClass tag false)]
+                                  (if c
+                                    (with-meta argvec (assoc m :tag (symbol (name c))))
+                                    argvec))
+                                argvec)
+                              argvec)
+                            argvec)))]
+     (if (seq? (first fdecl))
+       (loop [ret [] fdecls fdecl]
+         (if fdecls
+           (recur (conj ret (resolve-tag (asig (first fdecls)))) (next fdecls))
+           (seq ret)))
+       (list (resolve-tag (asig fdecl)))))))
+
+(def
+  ^{:macro true
+    :doc "Same as (def name (fn [params* ] exprs*)) or (def
+    name (fn ([params* ] exprs*)+)) with any doc-string or attrs added
+    to the var metadata. prepost-map defines a map with optional keys
+    :pre and :post that contain collections of pre or post conditions."
+   :arglists '([name doc-string? attr-map? [params*] prepost-map? body]
+                [name doc-string? attr-map? ([params*] prepost-map? body)+ attr-map?])
+   :added "1.0"}
+ defn (fn defn [&form &env fname & fdecl]
+        ;; Note: Cannot delegate this check to def because of the call to (with-meta name ..)
+        (if (symbol? fname)
+          nil
+          (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
+                   "First argument to defn must be a symbol")))
+        (let [m (if (string? (first fdecl))
+                  {:doc (first fdecl)}
+                  {})
+              fdecl (if (string? (first fdecl))
+                      (next fdecl)
+                      fdecl)
+              m (if (map? (first fdecl))
+                  (conj m (first fdecl))
+                  m)
+              fdecl (if (map? (first fdecl))
+                      (next fdecl)
+                      fdecl)
+              fdecl (if (vector? (first fdecl))
+                      (list fdecl)
+                      fdecl)
+              m (if (map? (last fdecl))
+                  (conj m (last fdecl))
+                  m)
+              fdecl (if (map? (last fdecl))
+                      (butlast fdecl)
+                      fdecl)
+              m (conj {:arglists (list 'quote (sigs fdecl))} m)
+              m (let [inline (:inline m)
+                      ifn (first inline)
+                      iname (second inline)]
+                  ;; same as: (if (and (= 'fn ifn) (not (symbol? iname))) ...)
+                  (if (if (= 'fn ifn)
+                        (if (symbol? iname) false true))
+                    ;; inserts the same fn name to the inline fn if it does not have one
+                    (assoc m :inline (cons ifn (cons (symbol (str (name fname) "__inliner"))
+                                                     (next inline))))
+                    m))
+              m (conj (if (meta fname) (meta fname) {}) m)]
+          (list 'def (with-meta fname m)
+                ;;todo - restore propagation of fn name
+                ;;must figure out how to convey primitive hints to self calls first
+								;;(cons `fn fdecl)
+								(with-meta (cons `fn fdecl) {:rettag (:tag m)})))))
+
+(def
+ ^{:macro true
+   :doc "Like defn, but the resulting function name is declared as a
+  macro and will be used as a macro by the compiler when it is
+  called."
+   :arglists '([name doc-string? attr-map? [params*] body]
+               [name doc-string? attr-map? ([params*] body)+ attr-map?])
+   :added "1.0"}
+  defmacro (fn [&form &env
+                name & args]
+             (let [name (vary-meta name assoc :macro true)
+                   prefix (loop [p (list name) args args]
+                            (let [f (first args)]
+                              (if (string? f)
+                                (recur (cons f p) (next args))
+                                (if (map? f)
+                                  (recur (cons f p) (next args))
+                                  p))))
+                   fdecl (loop [fd args]
+                           (if (string? (first fd))
+                             (recur (next fd))
+                             (if (map? (first fd))
+                               (recur (next fd))
+                               fd)))
+                   fdecl (if (vector? (first fdecl))
+                           (list fdecl)
+                           fdecl)
+                   add-implicit-args (fn [fd]
+                             (let [args (first fd)]
+                               (cons (vec (cons '&form (cons '&env args))) (next fd))))
+                   add-args (fn [acc ds]
+                              (if (nil? ds)
+                                acc
+                                (let [d (first ds)]
+                                  (if (map? d)
+                                    (conj acc d)
+                                    (recur (conj acc (add-implicit-args d)) (next ds))))))
+                   fdecl (seq (add-args [] fdecl))
+                   decl (loop [p prefix d fdecl]
+                          (if p
+                            (recur (next p) (cons (first p) d))
+                            d))]
+               (cons `defn decl))))
+
+(defn ^:bootstrap destructure [bindings]
+  (let [bents (partition 2 bindings)
+        pb (fn pb [bvec b v]
+             (let [pvec
+                   (fn [bvec b val]
+                     (let [gvec (gensym "vec__")
+                           gseq (gensym "seq__")
+                           gfirst (gensym "first__")
+                           has-rest (some #{'&} b)]
+                       (loop [ret (let [ret (conj bvec gvec val)]
+                                    (if has-rest
+                                      (conj ret gseq (list `seq gvec))
+                                      ret))
+                              n 0
+                              bs b
+                              seen-rest? false]
+                         (if (seq bs)
+                           (let [firstb (first bs)]
+                             (cond
+                              (= firstb '&) (recur (pb ret (second bs) gseq)
+                                                   n
+                                                   (nnext bs)
+                                                   true)
+                              (= firstb :as) (pb ret (second bs) gvec)
+                              :else (if seen-rest?
+                                      (throw (new Exception "Unsupported binding form, only :as can follow & parameter"))
+                                      (recur (pb (if has-rest
+                                                   (conj ret
+                                                         gfirst `(first ~gseq)
+                                                         gseq `(next ~gseq))
+                                                   ret)
+                                                 firstb
+                                                 (if has-rest
+                                                   gfirst
+                                                   (list `nth gvec n nil)))
+                                             (inc n)
+                                             (next bs)
+                                             seen-rest?))))
+                           ret))))
+                   pmap
+                   (fn [bvec b v]
+                     (let [gmap (gensym "map__")
+                           gmapseq (with-meta gmap {:tag 'clojure.lang.ISeq})
+                           defaults (:or b)]
+                       (loop [ret (-> bvec (conj gmap) (conj v)
+                                      (conj gmap) (conj `(if (seq? ~gmap) (clojure.lang.PersistentHashMap/create (seq ~gmapseq)) ~gmap))
+                                      ((fn [ret]
+                                         (if (:as b)
+                                           (conj ret (:as b) gmap)
+                                           ret))))
+                              bes (let [transforms
+                                          (reduce
+                                            (fn [transforms mk]
+                                              (if (keyword? mk)
+                                                (let [mkns (namespace mk)
+                                                      mkn (name mk)]
+                                                  (cond (= mkn "keys") (assoc transforms mk #(keyword (or mkns (namespace %)) (name %)))
+                                                        (= mkn "syms") (assoc transforms mk #(list `quote (symbol (or mkns (namespace %)) (name %))))
+                                                        (= mkn "strs") (assoc transforms mk str)
+                                                        :else transforms))
+                                                transforms))
+                                            {}
+                                            (keys b))]
+                                    (reduce
+                                        (fn [bes entry]
+                                          (reduce #(assoc %1 %2 ((val entry) %2))
+                                                   (dissoc bes (key entry))
+                                                   ((key entry) bes)))
+                                        (dissoc b :as :or)
+                                        transforms))]
+                         (if (seq bes)
+                           (let [bb (key (first bes))
+                                 bk (val (first bes))
+                                 local (if (ident? bb) (with-meta (symbol nil (name bb)) (meta bb)) bb)
+                                 bv (if (contains? defaults local)
+                                      (list `get gmap bk (defaults local))
+                                      (list `get gmap bk))]
+                             (recur (if (ident? bb)
+                                      (-> ret (conj local bv))
+                                      (pb ret bb bv))
+                                    (next bes)))
+                           ret))))]
+               (cond
+                (symbol? b) (-> bvec (conj b) (conj v))
+                (vector? b) (pvec bvec b v)
+                (map? b) (pmap bvec b v)
+                :else (throw (new Exception (str "Unsupported binding form: " b))))))
+        process-entry (fn [bvec b] (pb bvec (first b) (second b)))]
+    (if (every? symbol? (map first bents))
+      bindings
+      (reduce process-entry [] bents))))
+
+(defmacro let
+  "binding => binding-form init-expr
+  Evaluates the exprs in a lexical context in which the symbols in
+  the binding-forms are bound to their respective init-exprs or parts
+  therein."
+  {:added "1.0", :special-form true, :forms '[(let [bindings*] exprs*)]}
+  [bindings & body]
+  #_(assert-args
+      (vector? bindings) "a vector for its binding"
+      (even? (count bindings)) "an even number of forms in binding vector")
+  `(let* ~(destructure bindings) ~@body))
+
+(defn ^{:private true :bootstrap true}
+  maybe-destructured
+  [params body]
+  (if (every? symbol? params)
+    (cons params body)
+    (loop [params params
+           new-params (with-meta [] (meta params))
+           lets []]
+      (if params
+        (if (symbol? (first params))
+          (recur (next params) (conj new-params (first params)) lets)
+          (let [gparam (gensym "p__")]
+            (recur (next params) (conj new-params gparam)
+                   (-> lets (conj (first params)) (conj gparam)))))
+        `(~new-params
+          (let ~lets
+            ~@body))))))
+
+;redefine fn with destructuring and pre/post conditions
+(defmacro fn
+  "params => positional-params* , or positional-params* & next-param
+  positional-param => binding-form
+  next-param => binding-form
+  name => symbol
+  Defines a function"
+  {:added "1.0", :special-form true,
+   :forms '[(fn name? [params* ] exprs*) (fn name? ([params* ] exprs*)+)]}
+  [& sigs]
+    (let [name (if (symbol? (first sigs)) (first sigs) nil)
+          sigs (if name (next sigs) sigs)
+          sigs (if (vector? (first sigs))
+                 (list sigs)
+                 (if (seq? (first sigs))
+                   sigs
+                   ;; Assume single arity syntax
+                   (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
+                            (if (seq sigs)
+                              (str "Parameter declaration "
+                                   (first sigs)
+                                   " should be a vector")
+                              (str "Parameter declaration missing"))))))
+          psig (fn* [sig]
+                 ;; Ensure correct type before destructuring sig
+                 (when (not (seq? sig))
+                   (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
+                            (str "Invalid signature " sig
+                                 " should be a list"))))
+                 (let [[params & body] sig
+                       _ (when (not (vector? params))
+                           (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
+                                    (if (seq? (first sigs))
+                                      (str "Parameter declaration " params
+                                           " should be a vector")
+                                      (str "Invalid signature " sig
+                                           " should be a list")))))
+                       conds (when (and (next body) (map? (first body)))
+                                           (first body))
+                       body (if conds (next body) body)
+                       conds (or conds (meta params))
+                       pre (:pre conds)
+                       post (:post conds)
+                       body (if post
+                              `((let [~'% ~(if (.< 1 (count body))
+                                            `(do ~@body)
+                                            (first body))]
+                                 ~@(map (fn* [c] `(assert ~c)) post)
+                                 ~'%))
+                              body)
+                       body (if pre
+                              (concat (map (fn* [c] `(assert ~c)) pre)
+                                      body)
+                              body)]
+                   (maybe-destructured params body)))
+          new-sigs (map psig sigs)]
+      (with-meta
+        (if name
+          (list* 'fn* name new-sigs)
+          (cons 'fn* new-sigs))
+        (meta &form))))
+
+(defmacro and
+  "Evaluates exprs one at a time, from left to right. If a form
+  returns logical false (nil or false), and returns that value and
+  doesn't evaluate any of the other expressions, otherwise it returns
+  the value of the last expr. (and) returns true."
+  {:added "1.0"}
+  ([] true)
+  ([x] x)
+  ([x & next]
+   `(let [and# ~x]
+      (if and# (and ~@next) and#))))
+
+(defmacro or
+  "Evaluates exprs one at a time, from left to right. If a form
+  returns a logical true value, or returns that value and doesn't
+  evaluate any of the other expressions, otherwise it returns the
+  value of the last expression. (or) returns nil."
+  {:added "1.0"}
+  ([] nil)
+  ([x] x)
+  ([x & next]
+      `(let [or# ~x]
+         (if or# or# (or ~@next)))))
+
+(defmacro cond
+  "Takes a set of test/expr pairs. It evaluates each test one at a
+  time.  If a test returns logical true, cond evaluates and returns
+  the value of the corresponding expr and doesn't evaluate any of the
+  other tests or exprs. (cond) returns nil."
+  {:added "1.0"}
+  [& clauses]
+    (when clauses
+      (list 'if (first clauses)
+            (if (next clauses)
+                (second clauses)
+                (throw (new #?(:cljd ArgumentError :clj IllegalArgumentException)
+                         "cond requires an even number of forms")))
+            (cons 'cljd.core/cond (next (next clauses))))))
+
+;;; NOT THE REAL THING BELOW
+
 (defn ^num count [x] (if (.== nil x) 0 (.-length x)))
 
 ;; used by writer when encounter ()
@@ -21,24 +475,6 @@
 (defn ^bool = [a b] (.== a b))
 
 (defn ^bool zero? [num] (= 0 num))
-
-(defprotocol IFn
-  "Protocol for adding the ability to invoke an object as a function.
-  For example, a vecttor can also be used to look up a value:
-  ([1 2 3 4] 1) => 2"
-  (-invoke
-    [this]
-    [this a]
-    [this a b]
-    [this a b c]
-    [this a b c d]
-    [this a b c d e]
-    [this a b c d e f]
-    [this a b c d e f g]
-    [this a b c d e f g h]
-    [this a b c d e f g h i])
-  (-invoke-more [this a b c d e f g h i rest])
-  (-apply [this more]))
 
 (defprotocol ISeq
   "Protocol for collections to provide access to their items as sequences."
@@ -145,15 +581,39 @@
 
 (defn ^num dec [x] (- x 1))
 
-(defn ^bool nil? [x] (.== nil x))
+#_(
+
+  (defn count [x] (if (.== nil x) 0 (.-length x)))
+
+   (defn seq [coll] coll)
+
+   (defn next [coll]
+     (let [s (.sublist coll 1)]
+       (when (.< 0 (.-length s))
+         s)))
+
+   (defn first [coll] (if (.== coll nil) nil (.-first coll)))
+
+   (defn nth [x i default]
+     (if (.< i (.-length x))
+       (. x "[]" i)
+       default))
+
+   (defn = [a b] (.== a b))
+
+   (defn < [a b] (.< a b))
+
+   (defn pos? [a] (.< 0 a))
+
+   (defn + [a b] (.+ a b))
+
+   (defn - [a b] (.- a b))
+
+   (defn ^bool nil? [x] (.== nil x))
 
 (defn ^bool not
   "Returns true if x is logical false, false otherwise."
   [x] (if x false true))
-
-(def ^:dart first nil)
-
-(def ^:dart next nil)
 
 (defn ^:clj str
   ([] "")
@@ -168,8 +628,6 @@
        (.toString sb)))))
 
 (defn ^num alength [array] (.-length array))
-
-(def ^:dart apply nil)
 
 (defn ^:clj aget
   ([array idx]
@@ -1327,3 +1785,4 @@
     (print (-peek queue')))
 
   )
+ )

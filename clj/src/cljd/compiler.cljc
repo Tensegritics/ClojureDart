@@ -1,6 +1,10 @@
 (ns cljd.compiler
-  (:refer-clojure :exclude [macroexpand macroexpand-1 munge load-file])
+  (:refer-clojure :exclude [macroexpand macroexpand-1 munge])
   (:require [clojure.string :as str]))
+
+(def bootstrap-nses '#{cljd.compiler cljd.core})
+
+(def ^:dynamic *bootstrap* false)
 
 (def ^:dynamic *clj-path*
   "Sequential collection of directories to search for clj files."
@@ -142,6 +146,7 @@
 
 (def char-map
   {"-"    "_"
+   "."    "$DOT_"
    "_"    "$UNDERSCORE_"
    "$"    "$DOLLAR_"
    ":"    "$COLON_"
@@ -233,7 +238,7 @@
              pns (or (some-> pns aliases imports :ns) (some-> pns symbol))
              ns-map (if pns (nses pns) current-ns)
              protocol (ns-map (symbol (name pname)))]
-         (get-in protocol [:meta :protocol :sigs mname args-count :dart/name])))
+         (get-in protocol [:meta :protocol :sigs mname args-count :dart/name] mname)))
 
      (defn- expand-opts+specs [opts+specs]
        (let [[opts specs] (roll-leading-opts opts+specs)
@@ -305,19 +310,45 @@
                          `(throw (.value dc/ArgumentError ~expr nil "No matching clause."))
                          (first last-clause))]
            (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
-         `(let [test# ~expr] (~'case test# ~@clauses))))))
+         `(let* [test# ~expr] (~'case test# ~@clauses))))))
+
+(defn resolve-symbol
+  "Returns either a pair [tag value] or nil when the symbol can't be resolved.
+   tag can be :local, :def or :dart respectively indicating the symbol refers
+   to a local, a global def (var-like) or a Dart global.
+   The value depends on the tag:
+   - for :local it's whatever is in the env,
+   - for :def it's what's is in nses,
+   - for :dart it's the aliased dart symbol."
+  [sym env]
+  (let [nses @nses
+        {:keys [mappings aliases imports] :as current-ns} (nses (:current-ns nses))]
+    (else->>
+     (if-some [v (env sym)] [:local v])
+     (if-some [v (-> sym current-ns)] [:def v])
+     (if-some [alias (get aliases (namespace sym))]
+       (let [{:keys [ns lib]} (imports alias)]
+         (if ns
+           (recur (with-meta (symbol (name ns) (name sym)) (meta sym)) env)
+           [:dart (symbol (str alias "." (munge sym)))])))
+     (if-some [info (some-> sym namespace symbol nses (get (symbol (name sym))))]
+       [:def info])
+     nil)))
+
+(defn ghost-ns []
+  (create-ns (symbol (str (:current-ns @nses) ".ghost"))))
 
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
     (let [f-name (name f)
-          ;; TODO symbol resolution and macro lookup in cljd
-          #?@(:clj [clj-var (ns-resolve (find-ns (:current-ns @nses)) f)
-                    #_#_clj-ns (find-ns (:current-ns @nses))
-                    #_#_clj-var (ns-resolve clj-ns f)
-                    #_#_clj-var (or
-                                 (when (some-> clj-var meta :ns ns-name (= 'clojure.core))
-                                   (ns-resolve clj-ns (symbol "cljd.core" (-> clj-var meta :name name))))
-                                 clj-var)])]
+          f (if (= "clojure.core" (namespace f)) (symbol "cljd.core" f-name) f)
+          [f-type f-v] (resolve-symbol f env)
+          macro-fn (or
+                     (when-some [v (when *bootstrap* (ns-resolve (ghost-ns) f))]
+                       (when (-> v meta :macro) @v))
+                     (case f-type ; wishful coding for the compiler running on dart
+                       :def (when (-> f-v :meta :macro) (-> f-v :runtime-value))
+                       nil))]
       ;; TODO add proper expansion here, before defaults
       (cond
         (env f) form
@@ -329,12 +360,8 @@
              (= 'defprotocol f) (apply expand-defprotocol args)
              (= 'case f) (apply expand-case args)])
         (= '. f) form
-        #?@(:clj
-            [(-> clj-var meta :macro)
-             ;; force &env to nil when cross-compiling, should be ok
-             (apply @clj-var form nil (next form))]
-            :cljd
-            [TODO TODO])
+        macro-fn
+        (apply macro-fn form env (next form))
         (.endsWith f-name ".")
         (list* 'new
                (symbol (namespace f) (subs f-name 0 (dec (count f-name))))
@@ -448,10 +475,10 @@
                      [(concat bindings' bindings) (cons x' fn-call)]))
                  [nil ()] (rseq items))
          fn-sym (cond
-                  (map? coll) 'cljd.core/into-map ; is there a cljs equivalent?
+                  (map? coll) 'cljd.core/to-map ; is there a cljs equivalent?
                   (vector? coll) 'cljd.core/vec
                   (set? coll) 'cljd.core/set
-                  (seq? coll) 'cljd.core/into-list ; should we use apply list?
+                  (seq? coll) 'cljd.core/to-list ; should we use apply list?
                   :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
          fn-call (list (emit fn-sym env) (vec items))]
      (cond->> fn-call (seq bindings) (list 'dart/let bindings)))))
@@ -470,13 +497,15 @@
   (emit-fn-call (cons (vary-meta class assoc :dart true) args) env))
 
 (defn emit-dot [[_ obj member & args] env]
-  (let [member (name member)
-        [_ prop name] (re-matches #"(-)?(.+)" member)
-        prop (and prop (nil? args))
-        op (if prop 'dart/.- 'dart/.)
-        [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)]
-    (cond->> (list* op dart-obj name dart-args)
-      (seq bindings) (list 'dart/let bindings))))
+  (if (seq? member)
+    (recur (list* '. obj member) env)
+    (let [member (name member)
+          [_ prop name] (re-matches #"(-)?(.+)" member)
+          prop (and prop (nil? args))
+          op (if prop 'dart/.- 'dart/.)
+          [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)]
+      (cond->> (list* op dart-obj name dart-args)
+        (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
@@ -615,7 +644,7 @@
                     ~@(mapcat (fn [[meth params]]
                                 (let [ext-params (subvec params *threshold*)]
                                   [(count ext-params)
-                                   `(let [~ext-params ~more-param]
+                                   nil #_TODO #_`(let [~ext-params ~more-param]
                                       (. ~this ~meth ~@more-params ~@ext-params))])) invoke-exts)
                     ~@(some-> vararg-call list)) ; if present vararg is the default
                  vararg-call))))
@@ -650,8 +679,8 @@
                ~(reduce (fn [body [args+1 expr]]
                           `(if (nil? ~more-param)
                              ~expr
-                             (let [~(peek args+1) (first ~more-param)
-                                   ~more-param (next ~more-param)]
+                             (let* [~(peek args+1) (first ~more-param)
+                                    ~more-param (next ~more-param)]
                                ~body)))
                         `(if (nil? ~more-param)
                            (. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
@@ -699,8 +728,9 @@
 
 (defn emit-fn* [[_ & bodies] env]
   (let [name (when (symbol? (first bodies)) (first bodies))
+        bodies (cond-> bodies name next)
         env (cond-> env name (assoc name (dart-local name)))
-        [body & more-bodies :as bodies] (cond->> bodies (vector? (first bodies)) list name next)]
+        [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)]
     (if (or more-bodies (variadic? body))
       (emit-ifn name bodies env)
       (emit-dart-fn name body env))))
@@ -737,7 +767,9 @@
 (declare write-class)
 
 (defn do-def [nses sym m]
-  (assoc-in nses [(:current-ns nses) sym] (assoc m :meta (merge (meta sym) (:meta m)))))
+  (let [the-ns (:current-ns nses)
+        m (assoc m :ns the-ns :meta (merge (meta sym) (:meta m)))]
+    (assoc-in nses [the-ns sym] m)))
 
 (defn- emit-class-specs [opts specs env]
   (let [{:keys [extends] :or {extends 'Object}} opts
@@ -827,11 +859,13 @@
 
 (defn emit-def [[_ sym & doc-string?+expr] env]
   (let [[doc-string expr]
-        (else->> (let [l (count doc-string?+expr)])
-                 (if (= 1 l) (cons (:doc (meta sym)) doc-string?+expr))
-                 (if (and (= 2 l) (string? (first doc-string?+expr))) doc-string?+expr)
-                 (if  (= 2 l) (throw (ex-info "doc-string must be a string" {})))
-                 (throw (ex-info "Too many arguments to def" {})))
+        (case (count doc-string?+expr)
+          0 nil
+          1 (cons (:doc (meta sym)) doc-string?+expr)
+          2 (if (string? (first doc-string?+expr))
+              doc-string?+expr
+              (throw (ex-info "doc-string must be a string" {})))
+          (throw (ex-info "Too many arguments to def" {})))
         sym (vary-meta sym assoc :doc doc-string)
         expr (macroexpand env expr)
         dartname (munge sym)]
@@ -839,23 +873,23 @@
     (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
       (let [dart-fn (emit expr env)]
         (swap! nses do-def sym
-               {:dart/name (with-meta dartname
-                             (into {:dart/fn-type
-                                    (case (first dart-fn)
-                                      dart/fn :native
-                                      :ifn)}
-                                   (meta dartname)))
-                :type :dartfn
-                :dart/code (with-out-str (write-top-dartfn dartname dart-fn))}))
+          {:dart/name (with-meta dartname
+                        (into {:dart/fn-type
+                               (case (first dart-fn)
+                                 dart/fn :native
+                                 :ifn)}
+                          (meta dartname)))
+           :type :dartfn
+           :dart/code (with-out-str (write-top-dartfn dartname dart-fn))}))
       (swap! nses do-def sym
-             {:dart/name dartname
-              :type :field
-              ;; TODO : iife smell
-              :dart/code (with-out-str (write-top-field dartname (emit (if (seq? expr)
-                                                                         (let [f (with-meta (gensym) {:dart true})]
-                                                                           `(let [~f (fn [] ~expr)]
-                                                                              (~f)))
-                                                                         expr) env)))}))
+        {:dart/name dartname
+         :type :field
+         ;; TODO : iife smell
+         :dart/code (with-out-str (write-top-field dartname (emit (if (seq? expr)
+                                                                    (let [f (with-meta (gensym) {:dart true})]
+                                                                      `(let [~f (fn [] ~expr)]
+                                                                         (~f)))
+                                                                    expr) env)))}))
     (emit sym env)))
 
 (defn ensure-import [the-ns]
@@ -889,7 +923,7 @@
          (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (munge x))))
          (emit-fully-qualified-symbol x)
          #_"TODO next form should throw"
-         (munge (symbol (str "GLOBAL_" x))))]
+         (munge (symbol nil (str "GLOBAL_" x))))]
     (vary-meta dart-sym merge (dart-meta x))))
 
 (defn emit-quoted [[_ x] env]
@@ -941,7 +975,8 @@
                      to-dart-sym (if clj-ns munge identity)]]
            (cond-> {:imports {alias {:lib dartlib :ns clj-ns}}
                     :mappings (into {} (for [[from to] (concat (zipmap refer refer) rename)]
-                                         [from (with-meta (symbol (str alias "." (to-dart-sym to))) {:dart/fn-type (when (nil? clj-ns) :native)})]))}
+                                         [from (with-meta (symbol (str alias "." (to-dart-sym to)))
+                                                 {:dart/fn-type (when (nil? clj-ns) :native)})]))}
              as (assoc :aliases {(name as) alias}))))]
     (swap! nses assoc ns-sym ns-map :current-ns ns-sym)))
 
@@ -990,7 +1025,7 @@
           (symbol? x) (emit-symbol x env)
           #?@(:clj [(char? x) (str x)])
           (or (number? x) (boolean? x) (string? x)) x
-          (keyword? x) (emit (list 'cljd.Keyword/intern (namespace x) (name x)) env)
+          (keyword? x) (emit (list 'cljd.core/keyword (namespace x) (name x)) env)
           (nil? x) nil
           (and (list? x) (nil? (seq x))) (emit 'cljd.core/empty-list env)
           (and (vector? x) (nil? (seq x))) (emit 'cljd.core/empty-persistent-vector env)
@@ -1022,6 +1057,24 @@
           :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
     (cond-> dart-x
       (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type dart-x)))))
+
+(defn bootstrap-eval
+  [x]
+  (let [x (macroexpand {} x)]
+    (when (seq? x)
+      (case (first x)
+        ns (let [the-ns (second x)]
+             (emit-ns x {})
+             (remove-ns (ns-name (ghost-ns))) ; ensure we don't have a dirty ns
+             (binding [*ns* (ghost-ns)]
+               (refer-clojure)
+               (alias the-ns (ns-name *ns*))))
+        def (let [sym (second x)
+                  {:keys [macro bootstrap inline]} (meta sym)]
+              (cond
+                (or macro bootstrap) (binding [*ns* (ghost-ns)] (eval x))
+                inline (binding [*ns* (ghost-ns)] (eval (list 'def sym nil)))))
+        nil))))
 
 (defn emit-test [expr env]
   (binding [*locals-gen* {}]
@@ -1445,17 +1498,46 @@
   (print "\n")
   (doseq [[sym v] ns-map
           :when (symbol? sym)
-          :let [{:keys [type dart/code]} v]]
+          :let [{:keys [dart/code]} v]
+          :when code]
     (print code)))
 
 (defn load-input [in]
   #?(:clj
-     (binding [*data-readers* (assoc *data-readers* 'dart #(tagged-literal 'dart %))]
+     (binding [*data-readers* (assoc *data-readers* 'dart #(tagged-literal 'dart %))
+               *reader-resolver*
+               (reify clojure.lang.LispReader$Resolver
+                 (currentNS [_] (:current-ns @nses))
+                 (resolveClass [_ sym] nil) ; should check for imported classes
+                 (resolveAlias [_ sym]
+                   (let [{:keys [current-ns] :as nses} @nses
+                         aliases (:aliases (nses current-ns))]
+                     (some-> (aliases (name sym)) symbol)))
+                 (resolveVar [_ sym] nil))]
          (let [in (clojure.lang.LineNumberingPushbackReader. in)]
            (loop []
              (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
                (when-not (identical? form in)
                  (binding [*locals-gen* {}] (emit form {}))
+                 (recur))))))))
+
+(defn bootstrap-load-input [in]
+  #?(:clj
+     (binding [*data-readers* (assoc *data-readers* 'dart #(tagged-literal 'dart %))
+               *reader-resolver*
+               (reify clojure.lang.LispReader$Resolver
+                 (currentNS [_] (:current-ns @nses))
+                 (resolveClass [_ sym] nil) ; should check for imported classes
+                 (resolveAlias [_ sym]
+                   (let [{:keys [current-ns] :as nses} @nses
+                         aliases (:aliases (nses current-ns))]
+                     (some-> (aliases (name sym)) symbol)))
+                 (resolveVar [_ sym] nil))]
+         (let [in (clojure.lang.LineNumberingPushbackReader. in)]
+           (loop []
+             (let [form (read {:eof in :read-cond :allow} in)]
+               (when-not (identical? form in)
+                 (binding [*locals-gen* {}] (bootstrap-eval form))
                  (recur))))))))
 
 (defn compile-input [in]
@@ -1483,39 +1565,40 @@
          :when (.exists file)]
      file)))
 
-(defn load-file
-  [filename]
-  (with-open [in (java.io.FileInputStream. (find-file filename))]
-    (load-input in)))
-
 (defn compile-namespace [ns-name]
   ;; iterate first on file variants then on paths, not the other way!
-  (let [file-paths (ns-to-paths ns-name)]
-    (if-some [file (some find-file file-paths)]
-      (with-open [in (java.io.FileInputStream. file)]
-        (compile-input (java.io.InputStreamReader. in "UTF-8")))
-      (throw (ex-info (str "Could not locate "
-                           (str/join " or " file-paths)
-                           " on *clj-path*.")
-                      {:ns ns-name})))))
+  (binding [*bootstrap* (bootstrap-nses ns-name)]
+    (let [file-paths (ns-to-paths ns-name)]
+      (if-some [file (some find-file file-paths)]
+        (do
+          (when *bootstrap*
+            (with-open [in (java.io.FileInputStream. file)]
+              (bootstrap-load-input (java.io.InputStreamReader. in "UTF-8"))))
+          (with-open [in (java.io.FileInputStream. file)]
+            (compile-input (java.io.InputStreamReader. in "UTF-8"))))
+        (throw (ex-info (str "Could not locate "
+                          (str/join " or " file-paths)
+                          " on *clj-path*.")
+                 {:ns ns-name}))))))
 
 (comment
-  (binding [*ns* *ns*] (ns cljd.core) #_(ns hello-flutter.core))
   (binding [*clj-path* ["examples/hello-flutter/src"]
             *lib-path* "examples/hello-flutter/lib"]
     (compile-namespace 'hello-flutter.core))
 
-  (ns 'cljd.core)
   (time
    (binding [*clj-path* ["clj/src"]
              *lib-path* "lib"]
      (compile-namespace 'cljd.core)))
 
-  nses
+  (get-in @nses '[cljd.core defmacro])
+
+  ;; 1/ compiler.clj JAVA compiles core.cljd -> core.dart
+  ;; 2/ compiler.clj JAVA compiles compiler.clj (with core.dart deps) ->  compilier.dart
+  ;; 3/ compilier.dart DART compiles core.cljd (with "old" core.dart as deps)
+  ;; -> core'.dart
+  ;; somehow it produces an executable cljd compiler
   )
-
-
-
 
 (comment
   (emit-ns '(ns cljd.user
