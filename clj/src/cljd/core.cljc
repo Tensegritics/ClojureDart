@@ -1,6 +1,10 @@
 (ns cljd.core
   (:require ["dart:core" :as dc :refer [print]]))
 
+(definterface IProtocol
+  (extension [x])
+  (satisfies [x]))
+
 (def ^:dart to-map)
 (def ^:dart to-list)
 

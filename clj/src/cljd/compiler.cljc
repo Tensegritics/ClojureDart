@@ -98,6 +98,29 @@
 (def nses (atom {:current-ns 'user
                  'user ns-prototype}))
 
+(defn resolve-symbol
+  "Returns either a pair [tag value] or nil when the symbol can't be resolved.
+   tag can be :local, :def or :dart respectively indicating the symbol refers
+   to a local, a global def (var-like) or a Dart global.
+   The value depends on the tag:
+   - for :local it's whatever is in the env,
+   - for :def it's what's is in nses,
+   - for :dart it's the aliased dart symbol."
+  [sym env]
+  (let [nses @nses
+        {:keys [mappings aliases imports] :as current-ns} (nses (:current-ns nses))]
+    (else->>
+     (if-some [v (env sym)] [:local v])
+     (if-some [v (-> sym current-ns)] [:def v])
+     (if-some [alias (get aliases (namespace sym))]
+       (let [{:keys [ns lib]} (imports alias)]
+         (if ns
+           (recur (with-meta (symbol (name ns) (name sym)) (meta sym)) env)
+           [:dart (symbol (str alias "." (munge sym)))])))
+     (if-some [info (some-> sym namespace symbol nses (get (symbol (name sym))))]
+       [:def info])
+     nil)))
+
 (defn emit-type [tag]
   (let [nses @nses
         {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
@@ -219,6 +242,13 @@
            :when (symbol? p)]
        [p (when-not (symbol? d) d)])}))
 
+(defn expand-protocol-impl [{:keys [impl iface iext extensions]}]
+  (list 'deftype impl []
+    'cljd.core/IProtocol
+    (list 'satisfies '[_ x]
+      (list* 'or (list 'dart-is? 'x iface)
+        (concat (for [t (keys extensions)] (list 'dart-is? 'x t)) [false])))))
+
 #?(:clj
    (do
      (defn- roll-leading-opts [body]
@@ -232,13 +262,11 @@
   of arguments passed to this method.
   Returns the name (as symbol) of the dart method backing this clojure method."
        [pname mname args-count]
-       (let [nses @nses
-             {:keys [imports aliases] :as current-ns} (nses (:current-ns nses))
-             pns (namespace pname)
-             pns (or (some-> pns aliases imports :ns) (some-> pns symbol))
-             ns-map (if pns (nses pns) current-ns)
-             protocol (ns-map (symbol (name pname)))]
-         (get-in protocol [:meta :protocol :sigs mname args-count :dart/name] mname)))
+       (let [[tag protocol] (resolve-symbol pname {})]
+         (when (and (= :def tag) (= :protocol (:type protocol)))
+           (or
+             (get-in protocol [:sigs mname args-count :dart/name] mname)
+             (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " pname ".")))))))
 
      (defn- expand-opts+specs [opts+specs]
        (let [[opts specs] (roll-leading-opts opts+specs)
@@ -284,22 +312,39 @@
                                 (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" (dec l)))
                                                                       :args %}]))
                                       arglists)]))) methods)
-             protocol-meta {:sigs method-mapping}
-             class-name (vary-meta proto assoc :protocol protocol-meta)]
+             ; TODO check munging below
+             iface (symbol (str (munge proto) "$iface"))
+             iface (with-meta iface {:dart/name iface})
+             iext (symbol (str (munge proto) "$extension"))
+             iext (with-meta iext {:dart/name iext})
+             impl (symbol (str (munge proto) "$impl"))
+             impl (with-meta impl {:dart/name impl})
+             proto-map
+             {:iface iface
+              :iext iext
+              :impl impl
+              :sigs method-mapping}]
+         ; TODO swap! nses to put protocol data outside of meta
          (list* 'do
-                (list* 'definterface class-name
-                       (for [[method arity-mapping] method-mapping
-                             {:keys [dart/name args]} (vals arity-mapping)]
-                         (list name (subvec args 1))))
-                (concat
-                 (for [[method arity-mapping] method-mapping]
-                   (list* 'defn method
-                          (for [{:keys [dart/name args]} (vals arity-mapping)]
-                            (list args
-                                  (list 'if (list 'dart-is? (first args) class-name)
-                                        (list* '. (first args) name (next args))
+           (list* 'definterface iface
+             (for [[method arity-mapping] method-mapping
+                   {:keys [dart/name args]} (vals arity-mapping)]
+               (list name (subvec args 1))))
+           (list* 'definterface iext
+             (for [[method arity-mapping] method-mapping
+                   {:keys [dart/name args]} (vals arity-mapping)]
+               (list name args)))
+           (expand-protocol-impl proto-map)
+           (list 'defprotocol* proto proto-map)
+           (concat
+             (for [[method arity-mapping] method-mapping]
+               (list* 'defn method
+                 (for [{:keys [dart/name args]} (vals arity-mapping)]
+                   (list args
+                     (list 'if (list 'dart-is? (first args) iface)
+                       (list* '. (first args) name (next args)) ; TODO cast to iface
                                         #_TODO_EXTENSIONS)))))
-                 (list class-name)))))
+             (list proto)))))
 
      (defn- expand-case [expr & clauses]
        (if (or (symbol? expr) (odd? (count clauses)))
@@ -311,29 +356,6 @@
                          (first last-clause))]
            (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
          `(let* [test# ~expr] (~'case test# ~@clauses))))))
-
-(defn resolve-symbol
-  "Returns either a pair [tag value] or nil when the symbol can't be resolved.
-   tag can be :local, :def or :dart respectively indicating the symbol refers
-   to a local, a global def (var-like) or a Dart global.
-   The value depends on the tag:
-   - for :local it's whatever is in the env,
-   - for :def it's what's is in nses,
-   - for :dart it's the aliased dart symbol."
-  [sym env]
-  (let [nses @nses
-        {:keys [mappings aliases imports] :as current-ns} (nses (:current-ns nses))]
-    (else->>
-     (if-some [v (env sym)] [:local v])
-     (if-some [v (-> sym current-ns)] [:def v])
-     (if-some [alias (get aliases (namespace sym))]
-       (let [{:keys [ns lib]} (imports alias)]
-         (if ns
-           (recur (with-meta (symbol (name ns) (name sym)) (meta sym)) env)
-           [:dart (symbol (str alias "." (munge sym)))])))
-     (if-some [info (some-> sym namespace symbol nses (get (symbol (name sym))))]
-       [:def info])
-     nil)))
 
 (defn ghost-ns []
   (create-ns (symbol (str (:current-ns @nses) ".ghost"))))
@@ -447,7 +469,7 @@
             [(concat [[tmp dart-f]] bindings) tmp dart-args]))
         dart-f (cond-> dart-f has-nameds (vary-meta assoc :dart/fn-type :native))
         native-call (cons dart-f dart-args)
-        ifn-call (let [ifn-cast (list 'dart/. (list 'dart/as dart-f (emit 'cljd.core/IFn env)))]
+        ifn-call (let [ifn-cast (list 'dart/. (list 'dart/as dart-f (emit 'cljd.core/IFn$iface env)))]
                    (if (< (count dart-args) *threshold*)
                      (concat ifn-cast
                              [(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count dart-args)))]
@@ -460,7 +482,7 @@
         (case (:dart/fn-type (meta dart-f))
           :native native-call
           :ifn ifn-call
-          (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn env))
+          (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn$iface env))
                 ifn-call native-call))]
     (cond->> dart-fn-call
       (seq bindings) (list 'dart/let bindings))))
@@ -694,7 +716,7 @@
                             [args+1 `(throw (dc/ArgumentError. "No matching arity"))])
                           fixed-arities-expr)))))))]
     (emit
-     `(~'reify cljd.core/IFn #_<-TOFIX
+     `(~'reify cljd.core/IFn
         ~@fixed-invokes
         ~@invoke-exts
         ~@vararg-invokes
@@ -768,7 +790,7 @@
 
 (defn do-def [nses sym m]
   (let [the-ns (:current-ns nses)
-        m (assoc m :ns the-ns :meta (merge (meta sym) (:meta m)))]
+        m (assoc m :ns the-ns :name sym :meta (merge (meta sym) (:meta m)))]
     (assoc-in nses [the-ns sym] m)))
 
 (defn- emit-class-specs [opts specs env]
@@ -780,7 +802,13 @@
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
         methods (remove symbol? specs)  ; crude
         mixins(filter (comp :mixin meta) classes)
-        ifaces (remove (comp :mixin meta) classes)
+        ifaces-or-protocols (remove (comp :mixin meta) classes) ; TODO resolve protocol ifaces
+        ifaces (map #(let [[tag x] (resolve-symbol % env)]
+                       (case tag
+                         :def (case (:type x)
+                                :class %
+                                :protocol (symbol (name (:ns x)) (name (:iface x)))) ; should be qualified?
+                         :dart %)) ifaces-or-protocols)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
         dart-methods (map #(emit-method % env) methods)]
     {:extends (emit base env)
@@ -833,8 +861,16 @@
     (list (list 'dart/fn nil () :positional () (list 'dart/let bindings dart-expr)))
     dart-expr)))
 
+(defn emit-defprotocol* [[_ pname spec] env]
+  (let [dartname (munge pname)]
+    (swap! nses do-def pname
+      (assoc spec
+        :dart/name dartname
+        :dart/code (with-out-str (write-top-field dartname (emit (list 'new (:impl spec)) {})))
+        :type :protocol))))
+
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
-  (let [mclass-name (munge class-name)
+  (let [mclass-name (or (:dart/name (meta class-name)) (munge class-name)) ; TODO shouldn't it be dne by munge?
         env (into {} (for [f fields
                            :let [{:keys [mutable]} (meta f)]]
                        [f (vary-meta (munge f) assoc :dart/mutable mutable)]))
@@ -854,6 +890,69 @@
             :type :class
             :dart/code (with-out-str (write-class class))})
     (emit class-name env)))
+
+;; ns A defines a protocol P
+;; lib B defines a type T
+;; ns C extends P to T
+;; for visibility & aliases reasons the extension class should be in C.dart
+;; but it also creates a circular dep between A and C
+(comment
+  ;; (extend-type-protocol* String IFn
+  ;;   (-invoke [s] (.toUpperCase s)))
+
+  ;; :extensions {String ; <- qualified dart type
+  ;;              {:extension
+  ;;               (emit/write
+  ;;                 (reify IFn$extension
+  ;;                   (-invoke [_ s] (let [s (s as String)] (.toUpperCase s)))))}}
+
+  ;; ;; emit des extensions (class + globale)
+  ;; class reify34 implements IFn$extension {
+  ;;                                         }
+  ;; var P$extends$String = new reify34 ();
+
+  ;; class inc implements IFn$iface
+  ;; {
+  ;;  _invoke$1 (x) => x+1;
+  ;;  }
+
+  ;; class inc implements IFn$extension
+  ;; {
+  ;;  _invoke$1 (_, x) => x+1;
+  ;;  }
+
+  ;; IFn$extension IFn(dynamic x)
+  ;; {
+  ;;  if (x is IFn$extension) return x;
+  ;;  if (x is String) return P$extends$string;
+  ;;  ...
+  ;;  throw "pas bon";
+  ;;  }
+
+  ;; (reify34 ())
+  ;; (P x)
+
+  ;; ;; pseudo-code for protocol methods call sites:
+  ;; (if (dart-is? x P$iface)
+  ;;   (.-meth ^P$iface x a1 a2)
+  ;;   (.-meth ^P$extension (^:dart P x) x a1 a2))
+
+
+  ;; (fn* [x] (dart-is? x String))
+  ;; (reify X$extension
+  ;;   ;(applies_to [_ x] (dart-is? x String))
+  ;;   (meth ([_ s] ...) ([_ s x] ...)))
+
+  ;; ; these two go into nses protocol something
+
+  )
+
+(defn emit-extend-type-protocol* [[_ class-name protocol & meths] env]
+  (let [;; resolve protocol
+        ;; create type predicate
+        ;; add in protocol map the extension
+        ])
+  )
 
 (declare write-top-dartfn write-top-field)
 
@@ -1008,7 +1107,7 @@
     (throw (ex-info (str "The second argument to dart-is? must be a literal type. Got: " (pr-str type)) {:type type})))
   (let [x (emit x env)]
     (if-some [[bindings x] (liftable x)]
-      (list 'dart/let bindings (list 'dart/is x (emit type env)))
+      (list 'dart/let bindings (list 'dart/is x (emit type env))) ; TODO emit-type that doesn't munge, only resolve
       (list 'dart/is x (emit type env)))))
 
 (defn- ensure-new-special [x]
@@ -1050,6 +1149,8 @@
                        def emit-def
                        reify* emit-reify*
                        deftype* emit-deftype*
+                       defprotocol* emit-defprotocol*
+                       extend-type-protocol* emit-extend-type-protocol*
                        emit-fn-call)]
             (emit x env))
           (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
@@ -1587,11 +1688,11 @@
     (compile-namespace 'hello-flutter.core))
 
   (time
-   (binding [*clj-path* ["clj/src"]
-             *lib-path* "lib"]
-     (compile-namespace 'cljd.core)))
+    (binding [*clj-path* ["clj/src"]
+              *lib-path* "lib"]
+      (compile-namespace 'cljd.core)))
 
-  (get-in @nses '[cljd.core defmacro])
+  (get-in @nses '[cljd.core IProtocol])
 
   ;; 1/ compiler.clj JAVA compiles core.cljd -> core.dart
   ;; 2/ compiler.clj JAVA compiles compiler.clj (with core.dart deps) ->  compilier.dart
