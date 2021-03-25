@@ -98,6 +98,8 @@
 (def nses (atom {:current-ns 'user
                  'user ns-prototype}))
 
+(declare munge)
+
 (defn resolve-symbol
   "Returns either a pair [tag value] or nil when the symbol can't be resolved.
    tag can be :local, :def or :dart respectively indicating the symbol refers
@@ -754,8 +756,8 @@
         env (cond-> env name (assoc name (dart-local name)))
         [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)]
     (if (or more-bodies (variadic? body))
-      (emit-ifn name bodies env)
-      (emit-dart-fn name body env))))
+      (emit-ifn (some-> name env) bodies env)
+      (emit-dart-fn (some-> name env) body env))))
 
 (defn emit-method [[mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
   ;; params destructuring will be added by a macro
@@ -861,6 +863,8 @@
     (list (list 'dart/fn nil () :positional () (list 'dart/let bindings dart-expr)))
     dart-expr)))
 
+(declare write-top-dartfn write-top-field)
+
 (defn emit-defprotocol* [[_ pname spec] env]
   (let [dartname (munge pname)]
     (swap! nses do-def pname
@@ -953,8 +957,6 @@
         ;; add in protocol map the extension
         ])
   )
-
-(declare write-top-dartfn write-top-field)
 
 (defn emit-def [[_ sym & doc-string?+expr] env]
   (let [[doc-string expr]
