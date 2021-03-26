@@ -869,7 +869,7 @@
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param"))
         named-ctor-params (map dart-local (take-nth 2 named-ctor-args))
-        class-name (dart-global "reify")  ; TODO change this to a more telling name
+        class-name (dart-global "Reify")  ; TODO change this to a more telling name
         closed-overs (transduce (map #(method-closed-overs % env)) into #{}
                                 (:methods class))
         class (-> class
@@ -896,6 +896,14 @@
             :dart/code (with-out-str (write-class class))})
     (emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
 
+(defn- ensure-dart-expr
+  "If dart-expr is suitable as an expression (ie liftable returns nil),
+   its emission is returned as is, otherwise a IIFE (thunk invocation) is returned."
+  [dart-expr]
+  (if-some [[bindings dart-expr] (liftable dart-expr)]
+    (list (list 'dart/fn () :positional () (list 'dart/let bindings dart-expr)))
+    dart-expr))
+
 (defn- emit-strict-expr
   "If expr is suitable as an expression (ie liftable of its emission returns nil),
    its emission is returned as is, otherwise a IIFE (thunk invocation) is returned."
@@ -904,8 +912,6 @@
     (if-some [[bindings dart-expr] (liftable dart-expr)]
       (list (list 'dart/fn () :positional () (list 'dart/let bindings dart-expr)))
       dart-expr)))
-
-(declare write-top-dartfn write-top-field)
 
 (declare write-top-dartfn write-top-field)
 
@@ -930,9 +936,9 @@
                          :fields (vals env)
                          :ctor-params (map #(list '. %) (vals env)))
                   (assoc-in [:super-ctor :args]
-                            (concat (map #(emit-strict-expr % env) positional-ctor-args)
+                            (concat (map #(-> % (emit env) ensure-dart-expr) positional-ctor-args)
                                     (->> named-ctor-args (partition 2)
-                                         (mapcat (fn [[name arg]] [name (emit-strict-expr arg env)]))))))]
+                                         (mapcat (fn [[name arg]] [name (-> arg (emit env) ensure-dart-expr)]))))))]
     (swap! nses do-def class-name
            {:dart/name mclass-name
             :type :class
@@ -974,9 +980,7 @@
       (swap! nses do-def sym
         {:dart/name dartname
          :type :field
-         ;; TODO : iife smell
-         :dart/code (with-out-str (write-top-field dartname
-                                    (emit-strict-expr expr env)))}))
+         :dart/code (with-out-str (write-top-field dartname (emit expr env)))}))
     (emit sym env)))
 
 (defn ensure-import [the-ns]
@@ -1002,12 +1006,14 @@
 (defn emit-symbol [x env]
   (let [x (if (= "clojure.core" (namespace x)) (symbol "cljd.core" (name x)) x)
         [tag v] (resolve-symbol x env)]
-    (case tag
-      :local v
-      :def (:dart/name v) ; TODO qualify
-      :dart v
-      #_"TODO next form should throw"
-      (munge (symbol nil (str "GLOBAL_" x))))))
+    (->
+      (case tag
+        :local v
+        :def (:dart/name v) ; TODO qualify
+        :dart v
+        #_"TODO next form should throw"
+        (munge (symbol nil (str "GLOBAL_" x))))
+      (vary-meta merge (dart-meta x)))))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -1222,7 +1228,7 @@
     (write x (var-locus (name sym)))))
 
 (defn write-top-field [sym x]
-  (write x (var-locus (name sym))))
+  (write (ensure-dart-expr x) (var-locus (name sym))))
 
 (defn- write-args [args]
   (let [[positionals nameds] (split-with (complement keyword?) args)]
