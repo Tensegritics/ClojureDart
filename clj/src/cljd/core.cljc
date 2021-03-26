@@ -1,5 +1,4 @@
-(ns cljd.core
-  (:require ["dart:core" :as dc :refer [print]]))
+(ns cljd.core)
 
 (definterface IProtocol
   (extension [x])
@@ -496,6 +495,10 @@
   [& body])
 
 ;;; NOT THE REAL THING BELOW
+
+(extend-type String
+  IFn
+  (-invoke ([s] (str s "0 arg")) ([s x] (str s x "1 arg"))))
 
 (defn ^num count [x] (if (.== nil x) 0 (.-length x)))
 

@@ -5,6 +5,7 @@
 (def bootstrap-nses '#{cljd.compiler cljd.core})
 
 (def ^:dynamic *bootstrap* false)
+(def ^:dynamic *bootstrap-eval* false)
 
 (def ^:dynamic *clj-path*
   "Sequential collection of directories to search for clj files."
@@ -28,72 +29,72 @@
 
 (def ns-prototype
   {:imports {"dc" {:lib "dart:core"}} ; dc can't clash with user aliases because they go through dart-global
-   :aliases {"dc" "dc"}
+   :aliases {"dart:core" "dc"}
    :mappings
-   '{Type dc.Type,
-     BidirectionalIterator dc.BidirectionalIterator,
-     bool dc.bool,
-     UnimplementedError dc.UnimplementedError,
-     Match dc.Match,
-     Error dc.Error,
-     Uri dc.Uri,
-     Object dc.Object,
-     IndexError dc.IndexError,
-     MapEntry dc.MapEntry,
-     DateTime dc.DateTime,
-     StackTrace dc.StackTrace,
-     Symbol dc.Symbol,
-     String dc.String,
-     Future dc.Future,
-     StringSink dc.StringSink,
-     Expando dc.Expando,
-     BigInt dc.BigInt,
-     num dc.num,
-     Function dc.Function,
-     TypeError dc.TypeError,
-     StackOverflowError dc.StackOverflowError,
-     Comparator dc.Comparator,
-     double dc.double,
-     Iterable dc.Iterable,
-     UnsupportedError dc.UnsupportedError,
-     Iterator dc.Iterator,
-     Stopwatch dc.Stopwatch,
-     int dc.int,
-     Invocation dc.Invocation,
-     RuneIterator dc.RuneIterator,
-     RegExpMatch dc.RegExpMatch,
-     Deprecated dc.Deprecated,
-     StateError dc.StateError,
-     Map dc.Map,
-     pragma dc.pragma,
-     Sink dc.Sink,
-     NoSuchMethodError dc.NoSuchMethodError,
-     Set dc.Set,
-     FallThroughError dc.FallThroughError,
-     StringBuffer dc.StringBuffer,
-     RangeError dc.RangeError,
-     Comparable dc.Comparable,
-     CyclicInitializationError dc.CyclicInitializationError,
-     LateInitializationError dc.LateInitializationError,
-     FormatException dc.FormatException,
-     Null dc.Null,
-     NullThrownError dc.NullThrownError,
-     Exception dc.Exception,
-     RegExp dc.RegExp,
-     Stream dc.Stream,
-     Pattern dc.Pattern,
+   '{Type dart:core/Type,
+     BidirectionalIterator dart:core/BidirectionalIterator,
+     bool dart:core/bool,
+     UnimplementedError dart:core/UnimplementedError,
+     Match dart:core/Match,
+     Error dart:core/Error,
+     Uri dart:core/Uri,
+     Object dart:core/Object,
+     IndexError dart:core/IndexError,
+     MapEntry dart:core/MapEntry,
+     DateTime dart:core/DateTime,
+     StackTrace dart:core/StackTrace,
+     Symbol dart:core/Symbol,
+     String dart:core/String,
+     Future dart:core/Future,
+     StringSink dart:core/StringSink,
+     Expando dart:core/Expando,
+     BigInt dart:core/BigInt,
+     num dart:core/num,
+     Function dart:core/Function,
+     TypeError dart:core/TypeError,
+     StackOverflowError dart:core/StackOverflowError,
+     Comparator dart:core/Comparator,
+     double dart:core/double,
+     Iterable dart:core/Iterable,
+     UnsupportedError dart:core/UnsupportedError,
+     Iterator dart:core/Iterator,
+     Stopwatch dart:core/Stopwatch,
+     int dart:core/int,
+     Invocation dart:core/Invocation,
+     RuneIterator dart:core/RuneIterator,
+     RegExpMatch dart:core/RegExpMatch,
+     Deprecated dart:core/Deprecated,
+     StateError dart:core/StateError,
+     Map dart:core/Map,
+     pragma dart:core/pragma,
+     Sink dart:core/Sink,
+     NoSuchMethodError dart:core/NoSuchMethodError,
+     Set dart:core/Set,
+     FallThroughError dart:core/FallThroughError,
+     StringBuffer dart:core/StringBuffer,
+     RangeError dart:core/RangeError,
+     Comparable dart:core/Comparable,
+     CyclicInitializationError dart:core/CyclicInitializationError,
+     LateInitializationError dart:core/LateInitializationError,
+     FormatException dart:core/FormatException,
+     Null dart:core/Null,
+     NullThrownError dart:core/NullThrownError,
+     Exception dart:core/Exception,
+     RegExp dart:core/RegExp,
+     Stream dart:core/Stream,
+     Pattern dart:core/Pattern,
      AbstractClassInstantiationError
-     dc.AbstractClassInstantiationError,
-     OutOfMemoryError dc.OutOfMemoryError,
-     UriData dc.UriData,
-     Runes dc.Runes,
+     dart:core/AbstractClassInstantiationError,
+     OutOfMemoryError dart:core/OutOfMemoryError,
+     UriData dart:core/UriData,
+     Runes dart:core/Runes,
      IntegerDivisionByZeroException
-     dc.IntegerDivisionByZeroException,
-     ConcurrentModificationError dc.ConcurrentModificationError,
-     AssertionError dc.AssertionError,
-     Duration dc.Duration,
-     ArgumentError dc.ArgumentError,
-     List dc.List}})
+     dart:core/IntegerDivisionByZeroException,
+     ConcurrentModificationError dart:core/ConcurrentModificationError,
+     AssertionError dart:core/AssertionError,
+     Duration dart:core/Duration,
+     ArgumentError dart:core/ArgumentError,
+     List dart:core/List}})
 
 (def nses (atom {:current-ns 'user
                  'user ns-prototype}))
@@ -114,38 +115,37 @@
     (else->>
      (if-some [v (env sym)] [:local v])
      (if-some [v (-> sym current-ns)] [:def v])
+     (if-some [v (mappings sym)] (recur v env))
      (if-some [alias (get aliases (namespace sym))]
        (let [{:keys [ns lib]} (imports alias)]
          (if ns
            (recur (with-meta (symbol (name ns) (name sym)) (meta sym)) env)
-           [:dart (symbol (str alias "." (munge sym)))])))
+           [:dart (symbol (str alias "." (name sym)))])))
      (if-some [info (some-> sym namespace symbol nses (get (symbol (name sym))))]
        [:def info])
      nil)))
 
 (defn emit-type [tag]
-  (let [nses @nses
-        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
-    (replace-all (str tag) #"(?:([a-zA-Z0-9_$]+)\.)?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?"
-                 (fn [[_ alias type identifier]]
-                   (cond->
-                       (if alias
-                         (or
-                          (some-> (get aliases alias) (str "." type))
-                          (throw (ex-info (str "Unknown alias " alias " in type tag " tag)
-                                          {:alias alias :tag tag})))
-                         (or
-                          (#{"Function" "void" "dynamic"} type)
-                          (when (current-ns (symbol type)) type)
-                          (some-> mappings (get (symbol type)) str)
-                          (str "UNKNOWN_" type) ; TODO remove
-                          (throw (ex-info (str "Unknown type " type " in type tag " tag)
-                                          {:type type :tag tag}))))
-                     identifier (str identifier))))))
+  (if (string? tag)
+    (let [nses @nses
+          {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)\.)?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
+        (fn [[_ alias type identifier]]
+          (cond->
+              (if (and (nil? alias) (#{"Function" "void" "dynamic"} type))
+                type
+                (name (emit-type (symbol alias type))))
+            identifier (str identifier)))))
+    (let [[t info] (resolve-symbol tag {})]
+      (case t
+        :dart (name info)
+        :def (case (:type info)
+               ; TODO should be "namespaced" by dart alias if needed
+               :class (:dart/name info))))))
 
 (defn dart-type-truthiness [type]
   (case type
-    (nil "dc.Object") nil
+    (nil "dc.Object" "dc.dynamic") nil
     "dc.bool" :boolean
     :some))
 
@@ -155,10 +155,11 @@
   (let [m (meta sym)
         type (some-> m :tag emit-type)]
     (cond-> {}
+      (:getter m) (assoc :dart/getter true)
+      (:setter m) (assoc :dart/setter true)
       (:dart m) (assoc :dart/fn-type :native)
       (:clj m) (assoc :dart/fn-type :ifn)
-      (:tag m)
-      (assoc :dart/type type :dart/truth (dart-type-truthiness type)))))
+      type (assoc :dart/type type :dart/truth (dart-type-truthiness type)))))
 
 (def reserved-words ; and built-in identifiers for good measure
   #{"Function" "abstract" "as" "assert" "async" "await" "break" "case" "catch"
@@ -216,6 +217,10 @@
                                 "_"))))))
       (dart-meta sym))))
 
+(defn- dont-munge [& args]
+  (let [sym (symbol (apply str args))]
+    (with-meta sym {:dart/name sym})))
+
 (defonce ^:private gens (atom 1))
 (defn dart-global
   ([] (dart-global ""))
@@ -246,10 +251,14 @@
 
 (defn expand-protocol-impl [{:keys [impl iface iext extensions]}]
   (list 'deftype impl []
+    :type-only true
     'cljd.core/IProtocol
     (list 'satisfies '[_ x]
       (list* 'or (list 'dart-is? 'x iface)
-        (concat (for [t (keys extensions)] (list 'dart-is? 'x t)) [false])))))
+        (concat (for [t (keys extensions)] (list 'dart-is? 'x t)) [false])))
+    (list 'extensions '[_ x]
+      ;; TODO sort types
+      (cons 'cond (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) extensions)))))
 
 #?(:clj
    (do
@@ -289,19 +298,21 @@
        `(reify* ~@(expand-opts+specs args)))
 
      (defn-  expand-deftype [& args]
-       (let [[class-name fields & args] args]
+       (let [[class-name fields & args] args
+             [opts & specs](expand-opts+specs args)]
          (list 'do
-               (list* 'deftype* class-name fields
-                      (expand-opts+specs args))
-               (list 'defn
-                     (symbol (str "->" class-name))
-                     (vec fields)
-                     (list* 'new class-name fields)))))
+           (list* 'deftype* class-name fields opts specs)
+           (when-not (:type-only opts)
+             (list 'defn
+               (symbol (str "->" class-name))
+               (vec fields)
+               (list* 'new class-name fields))))))
 
      (defn- expand-definterface [iface & meths]
-       (list* 'deftype* (vary-meta iface assoc :abstract true) []
-              (expand-opts+specs (for [[meth args] meths]
-                                   (list meth (into '[_] args))))))
+       (list* 'deftype (vary-meta iface assoc :abstract true) []
+         :type-only true
+         (for [[meth args] meths]
+           (list meth (into '[_] args)))))
 
      (defn- expand-defprotocol [proto & methods]
        ;; TODO do something with docstrings
@@ -326,7 +337,6 @@
               :iext iext
               :impl impl
               :sigs method-mapping}]
-         ; TODO swap! nses to put protocol data outside of meta
          (list* 'do
            (list* 'definterface iface
              (for [[method arity-mapping] method-mapping
@@ -345,7 +355,8 @@
                    (list args
                      (list 'if (list 'dart-is? (first args) iface)
                        (list* '. (first args) name (next args)) ; TODO cast to iface
-                                        #_TODO_EXTENSIONS)))))
+                       `(. (.extensions ~proto ~(first args)) ~name ~@args)
+                       #_TODO_EXTENSIONS)))))
              (list proto)))))
 
      (defn- expand-case [expr & clauses]
@@ -354,10 +365,43 @@
                last-clause (peek clauses)
                clauses (cond-> clauses (nil? (next last-clause)) pop)
                default (if (next last-clause)
-                         `(throw (.value dc/ArgumentError ~expr nil "No matching clause."))
+                         `(throw (.value dart:core/ArgumentError ~expr nil "No matching clause."))
                          (first last-clause))]
            (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
          `(let* [test# ~expr] (~'case test# ~@clauses))))))
+
+
+(defn expand-extend-type [type & specs]
+  (let [proto+meths (reduce
+                      (fn [proto+meths x]
+                        (if (symbol? x)
+                          (conj proto+meths [x])
+                          (conj (pop proto+meths) (conj (peek proto+meths) x))))
+                      [] specs)]
+    (cons 'do
+      (when-not *bootstrap-eval*
+        (for [[protocol & meths] proto+meths
+              :let [[tag info] (resolve-symbol protocol {})
+                    _ (when-not (and (= tag :def) (= :protocol (:type info)))
+                        (throw (Exception. (str protocol " isn't a protocol."))))
+                    extension-name (dont-munge (symbol (str/join "$$" (for [x [type protocol]
+                                                                            f [namespace name]
+                                                                            :let [x (some-> x f munge)]
+                                                                            :when x]
+                                                                               x))))
+                    extension-instance (dont-munge (symbol (str extension-name "$instance")))]]
+          (list 'do
+            (list* 'deftype extension-name []
+              :type-only true
+              (:iext info)
+              (for [[mname & body-or-bodies] meths
+                    [args & body] (cond-> body-or-bodies (vector? (first body-or-bodies)) list)
+                    :let [mname (get-in info [:sigs mname (count args) :dart/name])]]
+                (list* mname (into '[_] args) body)))
+            (list 'def extension-instance (list 'new extension-name))
+            ;; TODO qualify class-name
+            (list 'extend-type-protocol* type (:ns info) (:name info)
+              (symbol (name (:current-ns @nses)) (name extension-instance)))))))))
 
 (defn ghost-ns []
   (create-ns (symbol (str (:current-ns @nses) ".ghost"))))
@@ -382,7 +426,8 @@
              (= 'deftype f) (apply expand-deftype args)
              (= 'definterface f) (apply expand-definterface args)
              (= 'defprotocol f) (apply expand-defprotocol args)
-             (= 'case f) (apply expand-case args)])
+             (= 'case f) (apply expand-case args)
+             (= 'extend-type f) (apply expand-extend-type args)])
         (= '. f) form
         macro-fn
         (apply macro-fn form env (next form))
@@ -614,10 +659,6 @@
 
 (defn- variadic? [[params]] (some #{'&} params))
 
-(defn- dont-munge [& args]
-  (let [sym (symbol (apply str args))]
-    (with-meta sym {:dart/name sym})))
-
 (defn- emit-ifn [name bodies env]
   (let [synth-params (into [] (map (fn [_] (gensym "arg"))) (range *threshold*)) ; param names used when no user-specified
         more-param (gensym 'more)
@@ -661,7 +702,7 @@
                         `(if (.< ~above-threshold (count ~more-param))
                            (let [~more-destructuring ~more-param]
                              (. ~this ~vararg-mname ~@more-params ~@bound-vars))
-                           (throw (dc/ArgumentError. "No matching arity")))))))]
+                           (throw (dart:core/ArgumentError. "No matching arity")))))))]
             `(~'-invoke-more [~@synth-params ~more-param]
               ~(if (seq invoke-exts)
                  `(~'case #_<-TOFIX (count ~more-param)
@@ -711,11 +752,11 @@
                               ~@fixed-args)
                            ~(if vararg-params
                               `(. ~this ~vararg-mname ~@fixed-args ~more-param)
-                              `(throw (dc/ArgumentError. "No matching arity"))))
+                              `(throw (dart:core/ArgumentError. "No matching arity"))))
                         (reverse
                          (concat
                           (for [args+1 (next (reductions conj [] base-args))]
-                            [args+1 `(throw (dc/ArgumentError. "No matching arity"))])
+                            [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
                           fixed-arities-expr)))))))]
     (emit
      `(~'reify cljd.core/IFn
@@ -779,7 +820,8 @@
                             dart-fixed-params)
         dart-body (cond->> dart-body
                     recur-params
-                    (list 'dart/loop (map vector recur-params dart-fixed-params)))]
+                    (list 'dart/loop (map vector recur-params dart-fixed-params)))
+        mname (with-meta mname (dart-meta mname))]
     [mname dart-fixed-params opt-kind dart-opt-params (nil? (seq body)) dart-body]))
 
 (defn closed-overs [emitted env]
@@ -859,9 +901,11 @@
    its emission is returned as is, otherwise a IIFE (thunk invocation) is returned."
   [expr env]
   (let [dart-expr (emit expr env)]
-  (if-some [[bindings dart-expr] (liftable dart-expr)]
-    (list (list 'dart/fn nil () :positional () (list 'dart/let bindings dart-expr)))
-    dart-expr)))
+    (if-some [[bindings dart-expr] (liftable dart-expr)]
+      (list (list 'dart/fn () :positional () (list 'dart/let bindings dart-expr)))
+      dart-expr)))
+
+(declare write-top-dartfn write-top-field)
 
 (declare write-top-dartfn write-top-field)
 
@@ -895,68 +939,13 @@
             :dart/code (with-out-str (write-class class))})
     (emit class-name env)))
 
-;; ns A defines a protocol P
-;; lib B defines a type T
-;; ns C extends P to T
-;; for visibility & aliases reasons the extension class should be in C.dart
-;; but it also creates a circular dep between A and C
-(comment
-  ;; (extend-type-protocol* String IFn
-  ;;   (-invoke [s] (.toUpperCase s)))
-
-  ;; :extensions {String ; <- qualified dart type
-  ;;              {:extension
-  ;;               (emit/write
-  ;;                 (reify IFn$extension
-  ;;                   (-invoke [_ s] (let [s (s as String)] (.toUpperCase s)))))}}
-
-  ;; ;; emit des extensions (class + globale)
-  ;; class reify34 implements IFn$extension {
-  ;;                                         }
-  ;; var P$extends$String = new reify34 ();
-
-  ;; class inc implements IFn$iface
-  ;; {
-  ;;  _invoke$1 (x) => x+1;
-  ;;  }
-
-  ;; class inc implements IFn$extension
-  ;; {
-  ;;  _invoke$1 (_, x) => x+1;
-  ;;  }
-
-  ;; IFn$extension IFn(dynamic x)
-  ;; {
-  ;;  if (x is IFn$extension) return x;
-  ;;  if (x is String) return P$extends$string;
-  ;;  ...
-  ;;  throw "pas bon";
-  ;;  }
-
-  ;; (reify34 ())
-  ;; (P x)
-
-  ;; ;; pseudo-code for protocol methods call sites:
-  ;; (if (dart-is? x P$iface)
-  ;;   (.-meth ^P$iface x a1 a2)
-  ;;   (.-meth ^P$extension (^:dart P x) x a1 a2))
-
-
-  ;; (fn* [x] (dart-is? x String))
-  ;; (reify X$extension
-  ;;   ;(applies_to [_ x] (dart-is? x String))
-  ;;   (meth ([_ s] ...) ([_ s x] ...)))
-
-  ;; ; these two go into nses protocol something
-
-  )
-
-(defn emit-extend-type-protocol* [[_ class-name protocol & meths] env]
-  (let [;; resolve protocol
-        ;; create type predicate
-        ;; add in protocol map the extension
-        ])
-  )
+(defn emit-extend-type-protocol* [[_ class-name protocol-ns protocol-name extension-instance] env]
+  ;; TODO qualify extension-instance
+  (let [{:keys [current-ns] {proto-map protocol-name} protocol-ns}
+        (swap! nses assoc-in [protocol-ns protocol-name :extensions class-name] extension-instance)]
+    (swap! nses assoc :current-ns protocol-ns)
+    (emit (expand-protocol-impl proto-map) env)
+    (swap! nses assoc :current-ns current-ns)))
 
 (defn emit-def [[_ sym & doc-string?+expr] env]
   (let [[doc-string expr]
@@ -986,11 +975,8 @@
         {:dart/name dartname
          :type :field
          ;; TODO : iife smell
-         :dart/code (with-out-str (write-top-field dartname (emit (if (seq? expr)
-                                                                    (let [f (with-meta (gensym) {:dart true})]
-                                                                      `(let [~f (fn [] ~expr)]
-                                                                         (~f)))
-                                                                    expr) env)))}))
+         :dart/code (with-out-str (write-top-field dartname
+                                    (emit-strict-expr expr env)))}))
     (emit sym env)))
 
 (defn ensure-import [the-ns]
@@ -1014,18 +1000,14 @@
         (symbol (str (ensure-import x-ns) "." dart-name))))))
 
 (defn emit-symbol [x env]
-  (let [nses @nses
-        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))
-        dart-sym
-        (or
-         (env x)
-         (-> x current-ns :dart/name)
-         (get mappings x)
-         (when-some [alias (get aliases (namespace x))] (symbol (str alias "." (munge x))))
-         (emit-fully-qualified-symbol x)
-         #_"TODO next form should throw"
-         (munge (symbol nil (str "GLOBAL_" x))))]
-    (vary-meta dart-sym merge (dart-meta x))))
+  (let [x (if (= "clojure.core" (namespace x)) (symbol "cljd.core" (name x)) x)
+        [tag v] (resolve-symbol x env)]
+    (case tag
+      :local v
+      :def (:dart/name v) ; TODO qualify
+      :dart v
+      #_"TODO next form should throw"
+      (munge (symbol nil (str "GLOBAL_" x))))))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -1163,7 +1145,7 @@
 
 (defn bootstrap-eval
   [x]
-  (let [x (macroexpand {} x)]
+  (let [x (binding [*bootstrap-eval* true] (macroexpand {} x))]
     (when (seq? x)
       (case (first x)
         ns (let [the-ns (second x)]
@@ -1194,7 +1176,7 @@
    :post ";\n"})
 
 (defn named-fn-locus [name]
-  {:pre name
+  {:pre (str (:dart/type (meta name) "dc.dynamic") " " name)
    :post "\n"})
 
 (def return-locus
@@ -1234,7 +1216,7 @@
 (defn write-top-dartfn [sym x]
   (case (first x)
     dart/fn (do
-              (print (str (some-> sym meta :dart/type (str " ")) (name sym)))
+              (print (-> sym meta (:dart/type "dc.dynamic")) (name sym))
               (write x expr-locus)
               (print "\n"))
     (write x (var-locus (name sym)))))
@@ -1286,6 +1268,7 @@
     :else (print (str x))))
 
 (defn write-params [fixed-params opt-kind opt-params]
+  (when-not (seqable? opt-params) (throw (ex-info "fail" {:k opt-params})))
   (print "(")
   (doseq [p fixed-params] (print p) (print ", "))
   (when (seq opt-params)
@@ -1319,8 +1302,11 @@
     (print ";\n")
 
     (doseq [[mname fixed-params opt-kind opt-params no-explicit-body body] methods
-            :let [{:keys [getter setter]} (meta mname)]]
+            :let [{:dart/keys [getter setter]} (meta mname)]]
       (newline)
+      (when-not setter
+        (print (:dart/type mname "dc.dynamic"))
+        (print " "))
       (cond
         getter (print "get ")
         setter (print "set "))
@@ -1335,7 +1321,7 @@
 
     (when nsm
       (newline)
-      (print "noSuchMethod(i)=>super.noSuchMethod(i);\n"))
+      (print "dc.dynamic noSuchMethod(i)=>super.noSuchMethod(i);\n"))
 
     (print "}\n")))
 
@@ -1594,7 +1580,7 @@
 (defn dump-ns [ns-map]
   (doseq [[alias {:keys [lib]}] (:imports ns-map)]
     (print "import ")
-    (write-string-literal lib)
+    (write-string-literal lib) ;; TODO: relativize local libs (nses)
     (print " as ")
     (print alias)
     (print ";\n"))
@@ -1694,7 +1680,8 @@
               *lib-path* "lib"]
       (compile-namespace 'cljd.core)))
 
-  (get-in @nses '[cljd.core IProtocol])
+  (-> @nses (get-in '[cljd.core]
+              ))
 
   ;; 1/ compiler.clj JAVA compiles core.cljd -> core.dart
   ;; 2/ compiler.clj JAVA compiles compiler.clj (with core.dart deps) ->  compilier.dart
@@ -1872,6 +1859,7 @@
            (meth [c d e] "oo")) {})
   (dart/let [[nil MyClass]] __$GT_MyClass)
 
+  (get-in @nses '[cljd.core IProtocol])
   nses
 
   (macroexpand-1 {} '(defn aaa "docstring2" [ooo] "content"))
@@ -1880,7 +1868,7 @@
   (emit '(def ooo "docstirng" 42) {})
 
   (emit '(dart-is? 0 num) {})
-  (dart/is 0 dc.num)
+  (dart/is 0 dart:core/num)
 
   (emit `(str (case x# 12 "hello" (13 14) "bye")) {})
 
