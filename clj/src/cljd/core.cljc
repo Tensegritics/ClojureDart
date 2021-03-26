@@ -8,6 +8,8 @@
 (def ^:dart to-map)
 (def ^:dart to-list)
 
+(def empty-persistent-vector nil)
+
 (def ^{:clj true} =)
 (def ^{:clj true} apply)
 (def ^{:clj true} assoc)
@@ -18,10 +20,13 @@
 (def ^{:dart true} contains?)
 (def ^{:dart true} count)
 (def ^{:clj true} dissoc)
+(def ^{:clj true} drop)
 (def ^{:dart true} every?)
 (def ^{:dart true} first)
 (def ^{:clj true} gensym)
+(def ^{:clj true} get)
 (def ^{:dart true} ident?)
+(def ^{:clj true} interleave)
 (def ^{:dart true} inc)
 (def ^{:dart true} key)
 (def ^{:dart true} keys)
@@ -39,7 +44,6 @@
 (def ^{:dart true} next)
 (def ^{:dart true} nil?)
 (def ^{:dart true} nnext)
-(def ^{:clj true} nth)
 (def ^{:clj true} partition)
 (def ^{:clj true} reduce)
 (def ^{:dart true} second)
@@ -52,6 +56,7 @@
 (def ^{:clj true} subvec)
 (def ^{:clj true} symbol)
 (def ^{:dart true} symbol?)
+(def ^{:dart true} take-nth)
 (def ^{:dart true} val)
 (def ^{:clj true} vary-meta)
 (def ^{:dart true} vec)
@@ -61,15 +66,16 @@
 
 ;; syntax quote support at bootstrap
 ;; the :cljd nil is most certainly going to bite us once we run the compiler on dart vm
-(def ^:dart ^:bootstrap seq #?(:cljd nil :clj clojure.core/seq))
-(def ^:dart ^:bootstrap first #?(:cljd nil :clj clojure.core/first))
-(def ^:dart ^:bootstrap next #?(:cljd nil :clj clojure.core/next))
-(def ^:clj ^:bootstrap concat #?(:cljd nil :clj clojure.core/concat))
-(def ^:clj ^:bootstrap list #?(:cljd nil :clj clojure.core/list))
-(def ^:clj ^:bootstrap vector #?(:cljd nil :clj clojure.core/vector))
-(def ^:clj ^:bootstrap hash-set #?(:cljd nil :clj clojure.core/hash-set))
-(def ^:clj ^:bootstrap hash-map #?(:cljd nil :clj clojure.core/hash-map))
 (def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
+(def ^:clj ^:bootstrap concat #?(:cljd nil :clj clojure.core/concat))
+(def ^:dart ^:bootstrap first #?(:cljd nil :clj clojure.core/first))
+(def ^:clj ^:bootstrap hash-map #?(:cljd nil :clj clojure.core/hash-map))
+(def ^:clj ^:bootstrap hash-set #?(:cljd nil :clj clojure.core/hash-set))
+(def ^:clj ^:bootstrap list #?(:cljd nil :clj clojure.core/list))
+(def ^:dart ^:bootstrap next #?(:cljd nil :clj clojure.core/next))
+(def ^:clj ^:bootstrap nth #?(:cljd nil :clj clojure.core/nth))
+(def ^:dart ^:bootstrap seq #?(:cljd nil :clj clojure.core/seq))
+(def ^:clj ^:bootstrap vector #?(:cljd nil :clj clojure.core/vector))
 
 (defprotocol IFn
   "Protocol for adding the ability to invoke an object as a function.
@@ -458,6 +464,36 @@
                 (throw (argument-error
                          "cond requires an even number of forms")))
             (cons 'cljd.core/cond (next (next clauses))))))
+
+(defmacro loop
+  "Evaluates the exprs in a lexical context in which the symbols in
+  the binding-forms are bound to their respective init-exprs or parts
+  therein. Acts as a recur target."
+  {:added "1.0", :special-form true, :forms '[(loop [bindings*] exprs*)]}
+  [bindings & body]
+  #_(assert-args
+     (vector? bindings) "a vector for its binding"
+     (even? (count bindings)) "an even number of forms in binding vector")
+  (let [db (destructure bindings)]
+    (if (= db bindings)
+      `(loop* ~bindings ~@body)
+      (let [vs (take-nth 2 (drop 1 bindings))
+            bs (take-nth 2 bindings)
+            gs (map (fn [b] (if (symbol? b) b (gensym))) bs)
+            bfs (reduce (fn [ret [b v g]]
+                          (if (symbol? b)
+                            (conj ret g v)
+                            (conj ret g v b g)))
+                        [] (map vector bs vs gs))]
+        `(let ~bfs
+           (loop* ~(vec (interleave gs gs))
+                  (let ~(vec (interleave bs gs))
+                    ~@body)))))))
+
+(defmacro comment
+  "Ignores body, yields nil"
+  {:added "1.0"}
+  [& body])
 
 ;;; NOT THE REAL THING BELOW
 

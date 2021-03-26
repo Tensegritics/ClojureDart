@@ -1479,7 +1479,7 @@
           (do
             (print "}else{\n")
             (write else locus)
-            (print "}"))))
+            (print "}\n"))))
       dart/loop
       (let [[_ bindings expr] x
             decl (declaration locus)
