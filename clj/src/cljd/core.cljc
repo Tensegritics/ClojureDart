@@ -498,7 +498,9 @@
 
 (extend-type String
   IFn
-  (-invoke ([s] (str s "0 arg")) ([s x] (str s x "1 arg"))))
+  (-invoke
+    ([s] "one arg" #_(str s ))
+    ([s x] (.+ x " coucou"))))
 
 (defn ^num count [x] (if (.== nil x) 0 (.-length x)))
 
@@ -1830,4 +1832,17 @@
     (print (-peek queue')))
 
   )
- )
+   )
+
+(deftype Person [name ^:mutable age]
+  Object
+  (changeage [_ agee] (set! age agee)))
+
+(extend-type Person
+  IFn
+  (-invoke ([person] (.+ "Je m'appelle " name))))
+
+(defn main []
+  #_(let [p (Person. "Baptiste" 33)]
+      (^:dart dart:core/print (p)))
+  (^:dart dart:core/print ("Coucou " "cc")))

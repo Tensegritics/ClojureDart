@@ -449,6 +449,10 @@
 (defn atomic?
   [x] (not (coll? x)))
 
+(def primitives?
+  ;; TODO : handles other primitives (bytes ?)
+  (some-fn string? float? int? boolean? char? double?))
+
 (defn has-recur?
   "Takes a dartsexp and returns true when it contains an open recur."
   [x]
@@ -530,7 +534,13 @@
           :native native-call
           :ifn ifn-call
           (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn$iface env))
-                ifn-call native-call))]
+                ifn-call
+                (let [if-env {'ext (dart-local 'ext)}
+                      if-ext (emit '(if ext) if-env)]
+                  (list 'dart/let [[ext (list 'dart/. (emit 'cljd.core/IFn env) 'extensions dart-f)]]
+                        (list (first if-ext) (second if-ext)
+                              (let [[meth & args] (nnext ifn-call)] (list* 'dart/. (if-env 'ext) meth (cons dart-f args)))
+                              (when-not (primitives? dart-f) native-call))))))]
     (cond->> dart-fn-call
       (seq bindings) (list 'dart/let bindings))))
 
@@ -932,7 +942,7 @@
         class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         class (-> class
-                  (assoc :name class-name
+                  (assoc :name mclass-name
                          :fields (vals env)
                          :ctor-params (map #(list '. %) (vals env)))
                   (assoc-in [:super-ctor :args]
