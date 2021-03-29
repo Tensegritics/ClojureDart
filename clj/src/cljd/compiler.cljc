@@ -518,7 +518,7 @@
 
 (defn emit-fn-call [[f & args] env]
   (let [dart-f (emit f env)
-        fn-type (if (some '#{.&} args) :native (:dart/fn-type dart-f))
+        fn-type (if (some '#{.&} args) :native (:dart/fn-type (meta dart-f)))
         [bindings dart-args] (emit-args (nil? fn-type) args env)
         [bindings' dart-f] (lift-arg (seq bindings) dart-f "f")
         bindings (concat bindings' bindings)
@@ -537,7 +537,7 @@
           :native native-call
           :ifn ifn-call
           (list 'dart/if (list 'dart/is dart-f 'dc.Function)
-            native-call
+            (cons (list 'dart/as dart-f 'dc.Function) dart-args)
             (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn$iface env))
               ifn-call
               (let [[meth & args] (nnext ifn-call)] ; "callables" must be handled by an extesion on dynamic or Object
