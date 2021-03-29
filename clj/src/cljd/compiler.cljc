@@ -213,7 +213,7 @@
                            (or (char-map x))
                            (str "$u"
                                 ;; TODO :cljd version
-                                (str/join "_$u" (map #(Long/toHexString (int %)) x))
+                                (str/join "_$u" (map #(-> % int Long/toHexString .toUpperCase) x))
                                 "_"))))))
       (dart-meta sym))))
 
@@ -258,7 +258,10 @@
         (concat (for [t (keys extensions)] (list 'dart-is? 'x t)) [false])))
     (list 'extensions '[_ x]
       ;; TODO sort types
-      (cons 'cond (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) extensions)))))
+      (list 'or
+        (cons 'cond
+          (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) extensions))
+        '(throw (dart:core/Exception. "No extension found."))))))
 
 #?(:clj
    (do
@@ -494,31 +497,31 @@
 
 (defn emit-args
   "[bindings dart-args has-nameds]"
-  [args env]
-  (let [[positionals nameds] (split-args args)
-        [bindings dart-args]
-        (as-> [nil ()] acc
-          (reduce (fn [[bindings dart-fn-args] [k x]]
-                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) k)]
-                      [(concat bindings' bindings) (list* k x' dart-fn-args)]))
-                  acc (reverse (partition 2 nameds)))
-          (reduce (fn [[bindings dart-fn-args] x]
-                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "arg")]
-                      [(concat bindings' bindings) (cons x' dart-fn-args)]))
-                  acc (reverse positionals)))]
-    [bindings dart-args (some? (seq nameds))]))
+  ([args env]
+   (emit-args false args env))
+  ([must-lift args env]
+   (let [[positionals nameds] (split-args args)
+         [bindings dart-args]
+         (as-> [(when must-lift (list 'sentinel)) ()] acc
+           (reduce (fn [[bindings dart-fn-args] [k x]]
+                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) k)]
+                       [(concat bindings' bindings) (list* k x' dart-fn-args)]))
+             acc (reverse (partition 2 nameds)))
+           (reduce (fn [[bindings dart-fn-args] x]
+                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "arg")]
+                       [(concat bindings' bindings) (cons x' dart-fn-args)]))
+             acc (reverse positionals)))
+         bindings (cond-> bindings must-lift butlast)]
+     [bindings dart-args])))
 
 (def ^:dynamic *threshold* 10)
 
-(defn emit-fn-call [fn-call env]
-  (let [[bindings [dart-f & dart-args] has-nameds] (emit-args fn-call env)
-        [bindings dart-f dart-args]
-        ;; always force lifting of non-atomic f to avoid multiple evaluation in fn call sites
-        (if (atomic? dart-f)
-          [bindings dart-f dart-args]
-          (let [tmp (dart-local "f")]
-            [(concat [[tmp dart-f]] bindings) tmp dart-args]))
-        dart-f (cond-> dart-f has-nameds (vary-meta assoc :dart/fn-type :native))
+(defn emit-fn-call [[f & args] env]
+  (let [dart-f (emit f env)
+        fn-type (if (some '#{.&} args) :native (:dart/fn-type dart-f))
+        [bindings dart-args] (emit-args (nil? fn-type) args env)
+        [bindings' dart-f] (lift-arg (seq bindings) dart-f "f")
+        bindings (concat bindings' bindings)
         native-call (cons dart-f dart-args)
         ifn-call (let [ifn-cast (list 'dart/. (list 'dart/as dart-f (emit 'cljd.core/IFn$iface env)))]
                    (if (< (count dart-args) *threshold*)
@@ -530,18 +533,23 @@
                              (subvec (vec dart-args) 0 (dec *threshold*))
                              [(subvec (vec dart-args) (dec *threshold*))])))
         dart-fn-call
-        (case (:dart/fn-type (meta dart-f))
+        (case fn-type
           :native native-call
           :ifn ifn-call
-          (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn$iface env))
-                ifn-call
-                (let [if-env {'ext (dart-local 'ext)}
+          (list 'dart/if (list 'dart/is dart-f 'dc.Function)
+            native-call
+            (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn$iface env))
+              ifn-call
+              (let [[meth & args] (nnext ifn-call)] ; "callables" must be handled by an extesion on dynamic or Object
+                (list* 'dart/. (list 'dart/. (emit 'cljd.core/IFn env) 'extensions dart-f) meth (cons dart-f args)))
+
+              #_(let [if-env {'ext (dart-local 'ext)}
                       ext (if-env 'ext)
                       [dart-if dart-test] (emit '(if ext) if-env)]
                   (list 'dart/let [[ext (list 'dart/. (emit 'cljd.core/IFn env) 'extensions dart-f)]]
-                        (list dart-if dart-test
-                              (let [[meth & args] (nnext ifn-call)] (list* 'dart/. ext meth (cons dart-f args)))
-                              (cons (list 'dart/as (first native-call) 'dc.dynamic) (next native-call)))))))]
+                    (list dart-if dart-test
+                      (let [[meth & args] (nnext ifn-call)] (list* 'dart/. ext meth (cons dart-f args)))
+                      (cons (list 'dart/as (first native-call) 'dc.dynamic) (next native-call))))))))]
     (cond->> dart-fn-call
       (seq bindings) (list 'dart/let bindings))))
 
@@ -935,7 +943,9 @@
         :type :protocol))))
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
-  (let [mclass-name (or (:dart/name (meta class-name)) (munge class-name)) ; TODO shouldn't it be dne by munge?
+  (let [mclass-name (with-meta
+                      (or (:dart/name (meta class-name)) (munge class-name))
+                      (select-keys (meta class-name) [:abstract])) ; TODO shouldn't it be dne by munge?
         env (into {} (for [f fields
                            :let [{:keys [mutable]} (meta f)]]
                        [f (vary-meta (munge f) assoc :dart/mutable mutable)]))

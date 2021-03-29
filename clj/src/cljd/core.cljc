@@ -1843,6 +1843,7 @@
   (-invoke ([person] (.+ "Je m'appelle " name))))
 
 (defn main []
-  #_(let [p (Person. "Baptiste" 33)]
-      (^:dart dart:core/print (p)))
-  (^:dart dart:core/print ("Coucou " "cc")))
+  (let [f "f"]
+    (f (.toString f))
+    )
+  )
