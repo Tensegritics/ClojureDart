@@ -536,11 +536,12 @@
           (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn$iface env))
                 ifn-call
                 (let [if-env {'ext (dart-local 'ext)}
-                      if-ext (emit '(if ext) if-env)]
+                      ext (if-env 'ext)
+                      [dart-if dart-test] (emit '(if ext) if-env)]
                   (list 'dart/let [[ext (list 'dart/. (emit 'cljd.core/IFn env) 'extensions dart-f)]]
-                        (list (first if-ext) (second if-ext)
-                              (let [[meth & args] (nnext ifn-call)] (list* 'dart/. (if-env 'ext) meth (cons dart-f args)))
-                              (when-not (primitives? dart-f) native-call))))))]
+                        (list dart-if dart-test
+                              (let [[meth & args] (nnext ifn-call)] (list* 'dart/. ext meth (cons dart-f args)))
+                              (cons (list 'dart/as (first native-call) 'dc.dynamic) (next native-call)))))))]
     (cond->> dart-fn-call
       (seq bindings) (list 'dart/let bindings))))
 
@@ -715,11 +716,11 @@
                            (throw (dart:core/ArgumentError. "No matching arity")))))))]
             `(~'-invoke-more [~@synth-params ~more-param]
               ~(if (seq invoke-exts)
-                 `(~'case #_<-TOFIX (count ~more-param)
+                 `(~'case (count ~more-param)
                     ~@(mapcat (fn [[meth params]]
                                 (let [ext-params (subvec params *threshold*)]
                                   [(count ext-params)
-                                   nil #_TODO #_`(let [~ext-params ~more-param]
+                                   `(let [~ext-params ~more-param]
                                       (. ~this ~meth ~@more-params ~@ext-params))])) invoke-exts)
                     ~@(some-> vararg-call list)) ; if present vararg is the default
                  vararg-call))))
