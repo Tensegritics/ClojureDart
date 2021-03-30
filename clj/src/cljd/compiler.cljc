@@ -1310,8 +1310,8 @@
     (some->> with seq (str/join ", ") (print " with"))
     (print " {\n")
     (doseq [field fields
-            :let [{:keys [dart/mutable]} (meta field)]]
-      (print (str (if mutable "" "final ") (-> field meta (:dart/type (if mutable "var" ""))) " " field ";")))
+            :let [{:dart/keys [mutable type]} (meta field)]]
+      (print (str (cond (not mutable) "final " (not type) "var ") type field ";\n")))
     (newline)
 
     (print (str class-name "("))
