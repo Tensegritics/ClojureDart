@@ -767,7 +767,7 @@
                           (for [args+1 (next (reductions conj [] base-args))]
                             [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
                           fixed-arities-expr)))))))
-        [tmp :as binding] (dart-binding '^:clj f
+        [tmp :as binding] (dart-binding (with-meta (or name 'f) {:clj true})
                             (emit `(~'reify cljd.core/IFn
                                     ~@fixed-invokes
                                     ~@invoke-exts
@@ -777,7 +777,7 @@
                               env))]
     (list 'dart/let [binding] tmp)))
 
-(defn- emit-dart-fn [dart-fn-name [params & body] env]
+(defn- emit-dart-fn [fn-name [params & body] env]
   (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
         dart-fixed-params (map dart-local fixed-params)
         dart-opt-params (for [[p d] opt-params]
@@ -797,7 +797,7 @@
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
         dart-fn
         (list 'dart/fn dart-fixed-params opt-kind dart-opt-params dart-body)]
-    (if dart-fn-name
+    (if-some [dart-fn-name (some-> fn-name env)]
       (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name)
       dart-fn)))
 
@@ -807,8 +807,8 @@
         env (cond-> env name (assoc name (dart-local name)))
         [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)]
     (if (or more-bodies (variadic? body))
-      (emit-ifn (some-> name env) bodies env)
-      (emit-dart-fn (some-> name env) body env))))
+      (emit-ifn name bodies env)
+      (emit-dart-fn name body env))))
 
 (defn emit-method [[mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
   ;; params destructuring will be added by a macro
@@ -1000,17 +1000,8 @@
            (:imports (all-nses current-ns)))
      (let [[_ last-segment] (re-matches #".*?([^.]+)$" (name the-ns))
            alias (str (dart-global last-segment))]
-       (swap! nses update-in [current-ns :imports] assoc alias {:lib the-lib :ns the-ns})
+       (swap! nses assoc-in [current-ns :imports alias] {:lib the-lib :ns the-ns})
        alias))))
-
-(defn emit-fully-qualified-symbol [x]
-  (let [x-ns (some-> x namespace symbol)
-        x-ns (case x-ns clojure.core 'cljd.core x-ns)
-        ns-map (@nses x-ns)]
-    (when-some [{dart-name :dart/name} (get ns-map (symbol (name x)))]
-      (if (= (:current-ns @nses) x-ns)
-        dart-name
-        (symbol (str (ensure-import x-ns) "." dart-name))))))
 
 (defn emit-symbol [x env]
   (let [x (if (= "clojure.core" (namespace x)) (symbol "cljd.core" (name x)) x)
@@ -1018,7 +1009,11 @@
     (->
       (case tag
         :local v
-        :def (:dart/name v) ; TODO XNS qualify
+        :def
+        (let [{dart-name :dart/name the-ns :ns} v]
+          (if (= (:current-ns @nses) the-ns)
+            dart-name
+            (symbol (str (ensure-import the-ns) "." dart-name))))
         :dart v
         #_"TODO next form should throw"
         (munge (symbol nil (str "GLOBAL_" x))))
