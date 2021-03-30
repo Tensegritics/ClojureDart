@@ -258,10 +258,11 @@
         (concat (for [t (keys extensions)] (list 'dart-is? 'x t)) [false])))
     (list 'extensions '[_ x]
       ;; TODO sort types
-      (list 'or
-        (cons 'cond
-          (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) extensions))
-        '(throw (dart:core/Exception. "No extension found."))))))
+      (list 'let
+        [(with-meta 'ext {:tag iext})
+         (cons 'cond
+           (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) extensions))]
+        (list 'if 'ext 'ext '(throw (dart:core/Exception. "No extension found.")))))))
 
 #?(:clj
    (do
@@ -462,7 +463,8 @@
   (some {'dart/recur true} (tree-seq seq? #(case (first %) (dart/loop dart/fn) nil %) x)))
 
 (defn- dart-binding [hint dart-expr]
-  (let [tmp (-> hint dart-local (vary-meta into (infer-type dart-expr)))]
+  (let [hint-hint (when (symbol? hint) (infer-type (with-meta 'SHOULD_NOT_APPEAR_IN_DART_CODE (dart-meta hint))))
+        tmp (-> hint dart-local (vary-meta merge (infer-type dart-expr) hint-hint))]
     [tmp dart-expr]))
 
 (defn liftable
@@ -770,15 +772,16 @@
                          (concat
                           (for [args+1 (next (reductions conj [] base-args))]
                             [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
-                          fixed-arities-expr)))))))]
-    (emit
-     `(~'reify cljd.core/IFn
-        ~@fixed-invokes
-        ~@invoke-exts
-        ~@vararg-invokes
-        ~@(some-> invoke-more list)
-        ~@call+apply)
-     env)))
+                          fixed-arities-expr)))))))
+        [tmp :as binding] (dart-binding '^:clj f
+                            (emit `(~'reify cljd.core/IFn
+                                    ~@fixed-invokes
+                                    ~@invoke-exts
+                                    ~@vararg-invokes
+                                    ~@(some-> invoke-more list)
+                                    ~@call+apply)
+                              env))]
+    (list 'dart/let [binding] tmp)))
 
 (defn- emit-dart-fn [dart-fn-name [params & body] env]
   (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
@@ -917,15 +920,6 @@
     (list (list 'dart/fn () :positional () (list 'dart/let bindings dart-expr)))
     dart-expr))
 
-(defn- emit-strict-expr
-  "If expr is suitable as an expression (ie liftable of its emission returns nil),
-   its emission is returned as is, otherwise a IIFE (thunk invocation) is returned."
-  [expr env]
-  (let [dart-expr (emit expr env)]
-    (if-some [[bindings dart-expr] (liftable dart-expr)]
-      (list (list 'dart/fn () :positional () (list 'dart/let bindings dart-expr)))
-      dart-expr)))
-
 (declare write-top-dartfn write-top-field)
 
 (defn emit-defprotocol* [[_ pname spec] env]
@@ -982,7 +976,14 @@
         dartname (munge sym)]
     (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
     (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
-      (let [dart-fn (emit expr env)]
+      (let [dart-fn (emit expr env)
+            dart-fn
+            (or
+              ; peephole optimization: unwrap single let
+              (and (seq? dart-fn) (= 'dart/let (first dart-fn))
+                (let [[_ [[x e] & more-bindings] x'] dart-fn]
+                  (and (nil? more-bindings) (= x x') e)))
+              (ensure-dart-expr dart-fn))]
         (swap! nses do-def sym
           {:dart/name (with-meta dartname
                         (into {:dart/fn-type
@@ -1197,7 +1198,7 @@
    :post ";\n"})
 
 (defn named-fn-locus [name]
-  {:pre (str (:dart/type (meta name) "dc.dynamic") " " name)
+  {:pre (str (-> name meta :dart/type (or  "dc.dynamic")) " " name)
    :post "\n"})
 
 (def return-locus
@@ -1356,6 +1357,8 @@
        (boolean? x) {:dart/type "dc.bool" :dart/truth :boolean}
        (seq? x)
        (case (first x)
+         dart/let (infer-type (last x))
+         dart/fn {:dart/fn-type :native}
          dart/.
          (let [[_ a meth b] x]
            (case (name meth)
@@ -1703,404 +1706,5 @@
 
   (-> @nses (get-in '[cljd.core]
               ))
-
-  ;; 1/ compiler.clj JAVA compiles core.cljd -> core.dart
-  ;; 2/ compiler.clj JAVA compiles compiler.clj (with core.dart deps) ->  compilier.dart
-  ;; 3/ compilier.dart DART compiles core.cljd (with "old" core.dart as deps)
-  ;; -> core'.dart
-  ;; somehow it produces an executable cljd compiler
-  )
-
-(comment
-  (emit-ns '(ns cljd.user
-
-              (:require [cljd.bordeaux :refer [reviews] :as awesome]
-                        [cljd.ste :as ste]
-                        ["package:flutter/material.dart"]
-                        clojure.string)) {})
-
-
-  (emit '((((fn* [] (fn* [] (fn* [] 42)))))) {})
-  ((((dart/fn () () (dart/let () (dart/fn () () (dart/let () (dart/fn () () (dart/let () 42)))))))))
-  (write *1 (var-locus "DDDD"))
-
-  (emit '(fn* [x] x) {})
-  (dart/fn nil (_$7_) () (dart/let ([x_$8_ _$7_]) x_$8_))
-  (write *1 return-locus)
-
-  (emit '(fn* fname [x] 42) {})
-  (dart/let [[nil (dart/fn _16623 (_16624) () (dart/let ([_16625 _16624]) 42))]] _16623)
-  (write *1 return-locus)
-
-  (emit '((fn* fname [x] 42)) {})
-  (dart/let ([nil (dart/fn _16631 (_16632) () (dart/let ([_16633 _16632]) 42))]) (_16631))
-  (write *1 return-locus)
-
-  ()
-
-  (emit '(def oo (fn* [x] 42)) {})
-  (write *1 return-locus)
-
-
-
-  (emit '(def oo1 42) {})
-
-
-  (emit '(def oo (fn* [x] (if (.-isOdd x) (recur (. x + 1)) x ))) {})
-  nses
-
-  (emit '(def oo "caca\n") {})
-
-  (emit '(def oo "docstring" (let [a "caca"] a)) {})
-
-  (write *1 return-locus)
-
-  (emit '(fn* aa [x] x) {})
-  (dart/let [[nil (dart/fn _16717 (_16718) () (dart/let ([_16719 _16718]) _16719))]] _16717)
-
-  (emit '(fn* [] (fn* aa [x] x)) {})
-  (dart/fn nil () () (dart/let [[nil (dart/fn aa_$9_ (_$10_) () (dart/let ([x_$11_ _$10_]) x_$11_))]] aa_$9_))
-  (dart/fn nil () () (dart/let ([nil (dart/fn _18396 (_18397) () (dart/let ([_18398 _18397]) (GLOBAL_do _18398)))]) (GLOBAL_do _18396)))
-
-  (emit '(reify Object (boo [self x & y 33] (.toString self))) {})
-  (GLOBAL__22982)
-
-  (emit '(reify Object (boo [self x ... y 33] (.toString self))) {})
-  (GLOBAL__22986)
-  (write *1 return-locus)
-
-  (emit '(let [x 42] (reify Object (boo [self] (str x "-" self)))) {})
-  (dart/let ([_22991 42]) (GLOBAL__22992 _22991))
-
-  (emit '(let [x 42] (reify Object (boo [self] (let [x 33] (str x "-" self))))) {})
-  (dart/let ([x_$4_ 42]) (_reify_$5_))
-
-  (emit '[1 2 3] {})
-  (GLOBAL_cljd.core/vec [1 2 3])
-  (write *1 expr-locus)
-
-  (emit '[1 (inc 1) [1 1 1]] {})
-  (GLOBAL_cljd.core/vec [1 (GLOBAL_inc 1) (GLOBAL_cljd.core/vec [1 1 1])])
-
-  (emit ''[1 (inc 1) [1 1 1]] {})
-
-  (GLOBAL_cljd.core/vec [1 (GLOBAL_inc 1) (GLOBAL_cljd.core/vec [1 1 1])])
-
-  (emit '[1 (inc 1) [(let [x 3] x)]] {})
-  (dart/let ([_24320 (GLOBAL_inc 1)] [_24318 3] [_24319 (GLOBAL_cljd.core/vec [_24318])]) (GLOBAL_cljd.core/vec [1 _24320 _24319]))
-  (write *1 expr-locus)
-
-  (emit '(let [x (try 1 2 3 4 (catch Exception e e1 (print e) 2 3))] x) {})
-  (dart/let ([_17563 (dart/try (dart/let ([nil 1] [nil 2] [nil 3]) 4) (catch Exception [_17564 _17565] (dart/let ([nil (GLOBAL_print _17564)] [nil 2]) 3)))]) _17563)
-  (write *1 return-locus)
-
-  (emit '(if (try 1 2 3 4 (catch Exception e "noooo") (finally "log me")) "yeahhh") {})
-  (write *1 return-locus)
-
-  (emit '(try (catch E e st)) {})
-  (dart/try nil ([E e_$19_ nil GLOBAL_st]) nil)
-  (write *1 return-locus)
-
-  (emit '(try 42 33 (catch E e st x) (finally (print "boo"))) {})
-  (dart/try (dart/let ([nil 42]) 33) ([E e_$24_ st_$25_ GLOBAL_x]) (GLOBAL_print "boo"))
-  (write *1 return-locus)
-
-  (emit '[1 (let [x 2] x) 3] {})
-  (dart/let ([__$3_ 2]) (GLOBAL_cljd.core/vec [1 __$3_ 3]))
-  (dart/let ([_25768 2]) (GLOBAL_cljd.core/vec [1 _25768 3]))
-
-  (emit '[(f) (let [x 2] x) 3] {})
-  (dart/let ([_25772 (GLOBAL_f)] [_25771 2]) (GLOBAL_cljd.core/vec [_25772 _25771 3]))
-
-
-  (emit '(try 1 2 3 4 (catch Exception e st 1 2)) {})
-  (dart/try (dart/let ([nil 1] [nil 2] [nil 3]) 4) (catch Exception [e_$4_ st_$5_] (dart/let ([nil 1]) 2)) (catch Exception [e_$6_] GLOBAL_st))
-  (write *1 return-locus)
-
-  (emit '(throw 1) {})
-  (dart/throw 1)
-  (write *1 (var-locus "prout"))
-
-  (emit '(throw (let [a 1] (. a + 3))) {})
-  (dart/let ([a_$28_ 1] [_$29_ (dart/. a_$28_ "+" 3)]) (dart/throw _$29_))
-  (write *1 return-locus)
-
-
-
-
-  (emit '(let [a (throw 1)] a) {})
-  (dart/let ([a_$50_ (dart/let [[nil (dart/throw 1)]] nil)]) a_$50_)
-  (write *1 return-locus)
-
-  (emit '(let [a (throw (if x y z))] a) {})
-  (dart/let ([a_$41_ (dart/let [[nil (dart/throw (dart/if GLOBAL_x GLOBAL_y GLOBAL_z))]] nil)]) a_$41_)
-  (write *1 return-locus)
-
-  (emit '(try (catch E e (throw e))) {})
-  (dart/try nil ([E e_$47_ nil (dart/let [[nil (dart/throw e_$47_)]] nil)]) nil)
-  (write *1 return-locus)
-
-  (emit '(loop [] (recur)) {})
-  (dart/loop [] (dart/recur))
-  (write *1 return-locus)
-
-  (emit '(loop [] (if x (recur))) {})
-  (dart/loop [] (dart/if GLOBAL_x (dart/recur) nil))
-  (write *1 return-locus)
-  (write *2 statement-locus)
-
-  (emit '(reify Object (^:getter hashCode [] 42)
-           (^:setter foo [this x] (println x))
-           (meth [a b] "regular method")) {})
-  (_reify_$8_)
-
-  (emit '(deftype MyClass [^:mutable ^List a b ^Map c]
-           :extends (ParentClass. (+ a b) (if 1 2 3))
-           Object
-           (meth [_ b] (set! a (if (rand-bool) 33 42)))
-           (meth2 [this b] (set! (.-a this) "yup"))
-           (^:getter hashCode [_] (let [^num n 42] n))) {})
-
-
-  (emit '(defprotocol IProtocol_ (meth [a] [a b] [a b c]) (-coucou [a])) {})
-  (dart/let [[nil IProtocol_$UNDERSCORE_] [nil meth] [nil _coucou]] IProtocol_$UNDERSCORE_)
-
-  (emit '(defprotocol IMarker "This protocol is only a marker") {})
-  (dart/let [[nil IMarker]] IMarker)
-
-  (emit '(defprotocol IMarker2 "Docstring" (meth [one] [one two] "Docstring") (ops [one] [one two]) (opa [one] "Coucou")) {})
-  (dart/let [[nil IMarker] [nil meth] [nil ops] [nil opa]] IMarker)
-
-  (emit '(deftype MyClass [^:mutable ^List a b ^Map c]
-           :extends (ParentClass. (+ a b) (if 1 2 3))
-           IMarker
-           IProtocol_
-           (meth [a] "a")
-           (meth [b c] "e")
-           (meth [c d e] "oo")) {})
-  (dart/let [[nil MyClass]] __$GT_MyClass)
-
-  (get-in @nses '[cljd.core IProtocol])
-  nses
-
-  (macroexpand-1 {} '(defn aaa "docstring2" [ooo] "content"))
-
-  (emit '(defn aaa "docstring2" [ooo] "content") {})
-  (emit '(def ooo "docstirng" 42) {})
-
-  (emit '(dart-is? 0 num) {})
-  (dart/is 0 dart:core/num)
-
-  (emit `(str (case x# 12 "hello" (13 14) "bye")) {})
-
-  (write *1 return-locus)
-
-  (emit `(case 12  12 "hello" (13 14) "bye") {})
-
-  (macroexpand-1 {} '(case 12 12 "hello"))
-
-  (clojure.core/let [test__6312__auto__ 12] (cljd.core/case test__6312__auto__ 12 "hello"))
-
-    )
-
-
-(comment
-
-
-  (let [env  {}
-        threshold 2 ; means up to (dec threshold) fn args incl
-        f '(fn* ([] "no")
-                ([a b c] "three")
-                ([a b d e f g & c] "ahah" "hihi")
-                #_([aa ab ac ad] "ohoh") )
-        #_#_f '(fn* ([& more] "hahhahaha" "ohohohoh" more))
-        #_f #_'(fn* ([a] body))
-        #_'(fn* [a] body)
-        #_'(fn* ([] "0") ([a] a))
-        #_'(fn*  ([a] body) ([a & more] body))
-        #_'(fn* ([] "oups" "coucou") ([a b c d e f & prefix] "e f g" prefix))
-        #_'(fn* ([] "oups" "coucou") ([a] "coucou") ([a b c prefix] "bebe " prefix) ([a b c d e f prefix] "e f g" prefix))])
-
-
-  (emit '(.add (List.) 1) {})
-  (write *1 statement-locus)
-
-
-  (emit-test '(defprotocol IFn
-                "Protocol for adding the ability to invoke an object as a function.
-  For example, a vecttor can also be used to look up a value:
-  ([1 2 3 4] 1) => 2"
-                (-invoke
-                  [this]
-                  [this a]
-                  [this a b]
-                  [this a b c]
-                  [this a b c d]
-                  [this a b c d e]
-                  [this a b c d e f]
-                  [this a b c d e f g]
-                  [this a b c d e f g h]
-                  [this a b c d e f g h i])
-                (-invoke-more [this a b c d e f g h i rest])) {})
-
-
-  (macroexpand-1 {} '(defprotocol IFn
-                       "Protocol for adding the ability to invoke an object as a function.
-  For example, a vector can also be used to look up a value:
-  ([1 2 3 4] 1) => 2"
-                       (-invoke
-                         [this]
-                         [this a]
-                         [this a b]
-                         [this a b c]
-                         [this a b c d]
-                         [this a b c d e]
-                         [this a b c d e f]
-                         [this a b c d e f g]
-                         [this a b c d e f g h]
-                         [this a b c d e f g h i]
-                         [this a b c d e f g h i j])
-                       (-invoke-more [this a b c d e f g h i j rest])))
-
-
-
-  nses
-
-
-
-
-
-
-
-  ;; S0 : sources du compilo qui interprète abstract et qui utilise abstract
-  ;; C0 compilo résultatnt de S0
-  ;; S1 : S0 sauf que le compilo a été modifié pour comprendre recondite et qui utilise abstract
-  ;; C0(S1) -> C1
-  ;; S2 : S1 sauf que les usages de asbtract ont ét traduits en recondite
-  ;; C1(S2) -> C2
-
-  ;; S0 : compilo c qui target x64
-  ;; S1 : compilo c qui target ARM
-  ;; C0(S1) -> C1 compilateur c (binaire x64) qui génère du ARM
-  ;; S2 : tweaks sur S1 pour accomoder le changementde plateforme ()
-  ;; C1(S2) -> C2 compilo c (binaire arm ) qui génère du arm
-
-
-  (emit '(deftype MyClass [^:mutable ^List a b ^Map c]
-           :extends (ParentClass. (+ a b) (if 1 2 3))
-           IMarker
-           IProtocol_
-           (meth [a] "a")
-           (meth [b c] "e")
-           (meth [c d e] "oo")) {})
-
-  (macroexpand-1 {} '(deftype MyClass [^:mutable ^List a b ^Map c]
-                       :extends (ParentClass. (+ a b) (if 1 2 3))
-                       IMarker
-                       IProtocol_
-                       (meth [a] "a")
-                       (meth [b c] "e")
-                       (meth [c d e] "oo")))
-
-  (emit '(deftype*
-           MyClass
-           [^{:tag List, :mutable true} a b ^Map c]
-           {:extends (ParentClass. (+ a b) (if 1 2 3))}
-           IMarker
-           IProtocol_
-           (meth (a) :positional () "a")
-           (meth (b c) :positional () "e")
-           (meth (c d e) :positional () "oo")) {})
-
-  (emit-test
-   '(defprotocol IFn
-      "Protocol for adding the ability to invoke an object as a function.
-  For example, a vecttor can also be used to look up a value:
-  ([1 2 3 4] 1) => 2"
-      (-invoke
-        [this]
-        [this a]
-        [this a b]
-        [this a b c]
-        [this a b c d]
-        [this a b c d e]
-        [this a b c d e f]
-        [this a b c d e f g]
-        [this a b c d e f g h]
-        [this a b c d e f g h i])
-      (-invoke-more [this a b c d e f g h i rest])))
-  (dart/let [[nil IFn] [nil _invoke] [nil _invoke_more]] IFn)
-
-
-  nses
-  (emit-test '(let [a 42 b 43 c (fn ([] "coucou") ([d] b))] (c)))
-  (dart/let [[a_$1_ 42] [b_$1_ 43] [c_$1_ (_reify_$35_ b_$1_)]] (c_$1_))
-  (macroexpand-1 {} '(defprotocol IFn
-                       "Protocol for adding the ability to invoke an object as a function.
-  For example, a vecttor can also be used to look up a value:
-  ([1 2 3 4] 1) => 2"
-                       (-invoke
-                         [this]
-                         [this a]
-                         [this a b]
-                         [this a b c]
-                         [this a b c d]
-                         [this a b c d e]
-                         [this a b c d e f]
-                         [this a b c d e f g]
-                         [this a b c d e f g h]
-                         [this a b c d e f g h i]
- #_                        [this a b c d e f g h i j])
-                       (-invoke-more [this a b c d e f g h i #_j rest])))
-
-
-  (emit '(fn*
-          ([thiss a b c d e f g & i]
-           (if (dart-is? thiss IFn) (. thiss _invoke$10 a b c d e f g h i)))
-          ([thiss a b c d e f g]
-           (if (dart-is? thiss IFn) (. thiss _invoke$8 a b c d e f g)))) {})
-
-
-  (emit-test '(if (f) then else) {})
-  (dart/let [[_test_$1_ (GLOBAL_f)]] (dart/if _test_$1_ GLOBAL_then GLOBAL_else))
-  (write *2 (var-locus 'V))
-
-  (emit-test
-   '(let [a 42]
-      (reify Object (meth [_] a))))
-(dart/let [[a_$1_ 42]] (_reify_$34_ a_$1_))
-
-(run! #(emit-test % {}) '[
-(defprotocol IFn
-      "Protocol for adding the ability to invoke an object as a function.
-  For example, a vecttor can also be used to look up a value:
-  ([1 2 3 4] 1) => 2"
-      (-invoke
-        [this]
-        [this a]
-        [this a b]
-        [this a b c]
-        [this a b c d]
-        [this a b c d e]
-        [this a b c d e f]
-        [this a b c d e f g]
-        [this a b c d e f g h]
-        [this a b c d e f g h i])
-      (-invoke-more [this a b c d e f g h i rest]))
-                          (defn < [a b] (.< a b))
-
-(defn pos? [a] (.< 0 a))
-
-(defn + [a b] (.+ a b))
-
-(defn - [a b] (.- a b))
-
-(defn nil? [x] (.== nil x))
-
-(defn ^:dart fib [n]
-  (if (< 1 n)
-    (+ (fib (- n 1)) (fib (- n 2)))
-    1))])
-nses
 
   )
