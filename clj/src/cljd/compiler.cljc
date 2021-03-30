@@ -461,6 +461,10 @@
   [x]
   (some {'dart/recur true} (tree-seq seq? #(case (first %) (dart/loop dart/fn) nil %) x)))
 
+(defn- dart-binding [hint dart-expr]
+  (let [tmp (-> hint dart-local (vary-meta into (infer-type dart-expr)))]
+    [tmp dart-expr]))
+
 (defn liftable
   "Takes a dartsexp and returns a [bindings expr] where expr is atomic
    or nil if there are no bindings to lift."
@@ -473,17 +477,13 @@
          (if (atomic? expr)
            [bindings expr]
            ;; this case should not happen
-           (let [tmp (dart-local)]
-             [(conj (vec bindings) [tmp expr]) tmp]))))
+           (let [[tmp :as binding] (dart-binding "" expr)]
+             [(conj (vec bindings) binding) tmp]))))
     (dart/if dart/try dart/case) ; no ternary for now
-    (let [tmp (dart-local (first x))]
-      [[[tmp x]]
+    (let [[tmp :as binding] (dart-binding (first x) x)]
+      [[binding]
        tmp])
     nil))
-
-(defn- dart-binding [hint dart-expr]
-  (let [tmp (-> hint dart-local (vary-meta into (infer-type dart-expr)))]
-    [tmp dart-expr]))
 
 (defn- lift-arg [must-lift x hint]
   (or (liftable x)
@@ -500,7 +500,7 @@
     [positional-args named-args]))
 
 (defn emit-args
-  "[bindings dart-args has-nameds]"
+  "[bindings dart-args]"
   ([args env]
    (emit-args false args env))
   ([must-lift args env]
@@ -545,15 +545,7 @@
             (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn$iface env))
               ifn-call
               (let [[meth & args] (nnext ifn-call)] ; "callables" must be handled by an extesion on dynamic or Object
-                (list* 'dart/. (list 'dart/. (emit 'cljd.core/IFn env) 'extensions dart-f) meth (cons dart-f args)))
-
-              #_(let [if-env {'ext (dart-local 'ext)}
-                      ext (if-env 'ext)
-                      [dart-if dart-test] (emit '(if ext) if-env)]
-                  (list 'dart/let [[ext (list 'dart/. (emit 'cljd.core/IFn env) 'extensions dart-f)]]
-                    (list dart-if dart-test
-                      (let [[meth & args] (nnext ifn-call)] (list* 'dart/. ext meth (cons dart-f args)))
-                      (cons (list 'dart/as (first native-call) 'dc.dynamic) (next native-call))))))))]
+                (list* 'dart/. (list 'dart/. (emit 'cljd.core/IFn env) 'extensions dart-f) meth (cons dart-f args))))))]
     (cond->> dart-fn-call
       (seq bindings) (list 'dart/let bindings))))
 
@@ -613,13 +605,11 @@
       (and (seq? target) (= '. (first target)))
       (let [[_ obj member] target]
         (if-some [[_ fld] (re-matches #"-(.+)" (name member))]
-          (let [tmpobj (dart-local "objset")
-                tmpval (dart-local fld)]
+          (let [[bindings [dart-obj dart-val]] (emit-args true [obj expr] env)]
             (list 'dart/let
-                  [[tmpobj (emit obj env)]
-                   [tmpval (emit expr env)]
-                   [nil (list 'dart/set! (list 'dart/.- tmpobj fld) tmpval)]]
-                  tmpval))
+              (conj (vec bindings)
+                [nil (list 'dart/set! (list 'dart/.- dart-obj fld) dart-val)])
+              dart-val))
           (throw (ex-info (str "Cannot assign to a non-property: " member ", make sure the property name is prefixed by a dash.")
                           {:target target}))))
       :else
