@@ -481,13 +481,17 @@
        tmp])
     nil))
 
+(defn- dart-binding [hint dart-expr]
+  (let [tmp (-> hint dart-local (vary-meta into (infer-type dart-expr)))]
+    [tmp dart-expr]))
+
 (defn- lift-arg [must-lift x hint]
   (or (liftable x)
       (cond
         (atomic? x) [nil x]
         must-lift
-        (let [tmp (dart-local hint)]
-          [[[tmp x]] tmp])
+        (let [[tmp :as binding] (dart-binding hint x)]
+          [[binding] tmp])
         :else
         [nil x])))
 
@@ -625,8 +629,8 @@
   (let [[dart-bindings env]
         (reduce
          (fn [[dart-bindings env] [k v]]
-           (let [tmp (dart-local k)]
-             [(conj dart-bindings [tmp (emit v env)])
+           (let [[tmp :as binding] (dart-binding k (emit v env))]
+             [(conj dart-bindings binding)
               (assoc env k tmp)]))
          [[] env] (partition 2 bindings))
         dart-bindings
@@ -1233,9 +1237,9 @@
    :post ";\n"})
 
 (defn var-locus [varname]
-  {:pre (str (-> varname meta (:dart/type "var")) " " varname "=")
+  {:pre (str (-> varname meta :dart/type (or "var")) " " varname "=")
    :post ";\n"
-   :decl (str (-> varname meta (:dart/type "var")) " " varname ";\n")
+   :decl (str (-> varname meta :dart/type (or "var")) " " varname ";\n")
    :fork (assignment-locus varname)})
 
 (declare write)
