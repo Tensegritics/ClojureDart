@@ -1185,7 +1185,8 @@
 
 (defn emit-test [expr env]
   (binding [*locals-gen* {}]
-    (emit expr env)))
+    ;; force lazy expresions
+    (doto (emit expr env) hash)))
 
 ;; WRITING
 (defn declaration [locus] (:decl locus ""))
