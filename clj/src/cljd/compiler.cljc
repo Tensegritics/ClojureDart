@@ -99,8 +99,6 @@
 (def nses (atom {:current-ns 'user
                  'user ns-prototype}))
 
-(declare munge)
-
 (defn resolve-symbol
   "Returns either a pair [tag value] or nil when the symbol can't be resolved.
    tag can be :local, :def or :dart respectively indicating the symbol refers
