@@ -129,7 +129,7 @@
   (if (string? tag)
     (let [nses @nses
           {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
-      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)\.)?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
+      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
         (fn [[_ alias type identifier]]
           (cond->
               (if (and (nil? alias) (#{"Function" "void" "dynamic"} type))
@@ -140,8 +140,8 @@
       (case t
         :dart (name info)
         :def (case (:type info)
-               ; TODO should be "namespaced" by dart alias if needed
-               :class (:dart/name info))))))
+               ; TODO XNS should be "namespaced" by dart alias if needed
+               :class (name (:dart/name info)))))))
 
 (defn dart-type-truthiness [type]
   (case type
@@ -212,7 +212,7 @@
                            (if (= "__auto__" x) "$AUTO_")
                            (or (char-map x))
                            (str "$u"
-                                ;; TODO :cljd version
+                                ;; TODO SELFHOST :cljd version
                                 (str/join "_$u" (map #(-> % int Long/toHexString .toUpperCase) x))
                                 "_"))))))
       (dart-meta sym))))
@@ -257,7 +257,7 @@
       (list* 'or (list 'dart-is? 'x iface)
         (concat (for [t (keys extensions)] (list 'dart-is? 'x t)) [false])))
     (list 'extensions '[_ x]
-      ;; TODO sort types
+      ;; TODO SELFHOST sort types
       (list 'let
         [(with-meta 'ext {:tag iext})
          (cons 'cond
@@ -293,7 +293,7 @@
                     (let [[mname arglist & body] spec
                           mname (or (some-> @last-seen-type (resolve-dart-mname mname (count arglist)))
                                     mname)]
-                      ;; TODO: mname resolution against protocol ifaces
+                      ;; TODO: OBSOLETE mname resolution against protocol ifaces
                       (list* mname (parse-dart-params arglist) body))
                     (reset! last-seen-type spec)))
                 specs))))
@@ -359,8 +359,7 @@
                    (list args
                      (list 'if (list 'dart-is? (first args) iface)
                        (list* '. (first args) name (next args)) ; TODO cast to iface
-                       `(. (.extensions ~proto ~(first args)) ~name ~@args)
-                       #_TODO_EXTENSIONS)))))
+                       `(. (.extensions ~proto ~(first args)) ~name ~@args))))))
              (list proto)))))
 
      (defn- expand-case [expr & clauses]
@@ -403,7 +402,6 @@
                     :let [mname (get-in info [:sigs mname (count args) :dart/name])]]
                 (list* mname (into '[_] args) body)))
             (list 'def extension-instance (list 'new extension-name))
-            ;; TODO qualify class-name
             (list 'extend-type-protocol* type (:ns info) (:name info)
               (symbol (name (:current-ns @nses)) (name extension-instance)))))))))
 
@@ -418,10 +416,10 @@
           macro-fn (or
                      (when-some [v (when *bootstrap* (ns-resolve (ghost-ns) f))]
                        (when (-> v meta :macro) @v))
+                     ; TODO SELFHOST
                      (case f-type ; wishful coding for the compiler running on dart
                        :def (when (-> f-v :meta :macro) (-> f-v :runtime-value))
                        nil))]
-      ;; TODO add proper expansion here, before defaults
       (cond
         (env f) form
         #?@(:clj ; macro overrides
@@ -452,10 +450,6 @@
 
 (defn atomic?
   [x] (not (coll? x)))
-
-(def primitives?
-  ;; TODO : handles other primitives (bytes ?)
-  (some-fn string? float? int? boolean? char? double?))
 
 (defn has-recur?
   "Takes a dartsexp and returns true when it contains an open recur."
@@ -542,9 +536,9 @@
         (case fn-type
           :native native-call
           :ifn ifn-call
-          (list 'dart/if (list 'dart/is dart-f 'dc.Function)
+          (list 'dart/if (list 'dart/is dart-f "dc.Function")
             (cons (list 'dart/as dart-f 'dc.Function) dart-args)
-            (list 'dart/if (list 'dart/is dart-f (emit 'cljd.core/IFn$iface env))
+            (list 'dart/if (list 'dart/is dart-f (emit-type 'cljd.core/IFn$iface))
               ifn-call
               (let [[meth & args] (nnext ifn-call)] ; "callables" must be handled by an extesion on dynamic or Object
                 (list* 'dart/. (list 'dart/. (emit 'cljd.core/IFn env) 'extensions dart-f) meth (cons dart-f args))))))]
@@ -862,12 +856,12 @@
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
         methods (remove symbol? specs)  ; crude
         mixins(filter (comp :mixin meta) classes)
-        ifaces-or-protocols (remove (comp :mixin meta) classes) ; TODO resolve protocol ifaces
+        ifaces-or-protocols (remove (comp :mixin meta) classes)
         ifaces (map #(let [[tag x] (resolve-symbol % env)]
                        (case tag
                          :def (case (:type x)
                                 :class %
-                                :protocol (symbol (name (:ns x)) (name (:iface x)))) ; should be qualified?
+                                :protocol (symbol (name (:ns x)) (name (:iface x))))
                          :dart %)) ifaces-or-protocols)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
         dart-methods (map #(emit-method % env) methods)]
@@ -955,7 +949,6 @@
     (emit class-name env)))
 
 (defn emit-extend-type-protocol* [[_ class-name protocol-ns protocol-name extension-instance] env]
-  ;; TODO qualify extension-instance
   (let [{:keys [current-ns] {proto-map protocol-name} protocol-ns}
         (swap! nses assoc-in [protocol-ns protocol-name :extensions class-name] extension-instance)]
     (swap! nses assoc :current-ns protocol-ns)
@@ -1025,7 +1018,7 @@
     (->
       (case tag
         :local v
-        :def (:dart/name v) ; TODO qualify
+        :def (:dart/name v) ; TODO XNS qualify
         :dart v
         #_"TODO next form should throw"
         (munge (symbol nil (str "GLOBAL_" x))))
@@ -1101,7 +1094,7 @@
                        exprs (if st exprs body)
                        env (cond-> (assoc env e (dart-local e))
                              st (assoc st (dart-local st)))]]
-             [classname (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
+             [(emit-type classname) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
            (some-> finally-body (conj 'do) (emit-no-recur env)))))
 
 (defn emit-throw [[_ expr] env]
@@ -1109,12 +1102,12 @@
   (list 'dart/let [[nil (list 'dart/throw (emit expr env))]] nil))
 
 (defn emit-dart-is [[_ x type] env]
-  (when (or (not (symbol? type)) (env type))
+  #_(when (or (not (symbol? type)) (env type))
     (throw (ex-info (str "The second argument to dart-is? must be a literal type. Got: " (pr-str type)) {:type type})))
   (let [x (emit x env)]
     (if-some [[bindings x] (liftable x)]
-      (list 'dart/let bindings (list 'dart/is x (emit type env))) ; TODO emit-type that doesn't munge, only resolve
-      (list 'dart/is x (emit type env)))))
+      (list 'dart/let bindings (list 'dart/is x (emit-type type)))
+      (list 'dart/is x (emit-type type)))))
 
 (defn- ensure-new-special [x]
   (case (and (symbol? x) (name x))
@@ -1446,7 +1439,7 @@
         (print "(")
         (write expr expr-locus)
         (print " is ")
-        (write type expr-locus)
+        (print type)
         (print ")")
         (print (:post locus)))
       dart/throw
@@ -1530,7 +1523,9 @@
           (print "continue;\n")
           true))
       dart/set!
-      (let [[_ target val] x] ; TODO it's dubious that locus isn't used
+      (let [[_ target val] x]
+        ;; locus isn't used here because set! should always be lifted
+        ;; into a side-effecting (nil-bound) let binding
         (write val (assignment-locus
                     (if (symbol? target)
                       target
