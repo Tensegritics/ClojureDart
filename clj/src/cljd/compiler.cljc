@@ -15,8 +15,8 @@
 
 (def ^:dynamic *target-subdir*
   "Relative path to the lib directory (*lib-dir*) where compiled dart file will be put.
-   Defaults to \"cljd/\"."
-  "cljd/")
+   Defaults to \"cljd-out/\"."
+  "cljd-out/")
 
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
@@ -215,6 +215,18 @@
                                 "_"))))))
       (dart-meta sym))))
 
+(defn munge* [dart-names]
+  (let [sb (StringBuilder. "$C$")]
+    (reduce
+      (fn [need-sep dart-name]
+        (when (and need-sep (not (.startsWith dart-name "$C$")))
+          (.append sb "$$"))
+        (.append sb dart-name)
+        (not (.endsWith dart-name "$D$")))
+      false (map name dart-names))
+    (.append sb "$D$")
+    (symbol (.toString sb))))
+
 (defn- dont-munge [& args]
   (let [sym (symbol (apply str args))]
     (with-meta sym {:dart/name sym})))
@@ -330,9 +342,9 @@
              ; TODO check munging below
              iface (symbol (str (munge proto) "$iface"))
              iface (with-meta iface {:dart/name iface})
-             iext (symbol (str (munge proto) "$extension"))
+             iext (symbol (str (munge proto) "$iext"))
              iext (with-meta iext {:dart/name iext})
-             impl (symbol (str (munge proto) "$impl"))
+             impl (symbol (str (munge proto) "$iprot"))
              impl (with-meta impl {:dart/name impl})
              proto-map
              {:iface iface
@@ -385,12 +397,9 @@
               :let [[tag info] (resolve-symbol protocol {})
                     _ (when-not (and (= tag :def) (= :protocol (:type info)))
                         (throw (Exception. (str protocol " isn't a protocol."))))
-                    extension-name (dont-munge (symbol (str/join "$$" (for [x [type protocol]
-                                                                            f [namespace name]
-                                                                            :let [x (some-> x f munge)]
-                                                                            :when x]
-                                                                               x))))
-                    extension-instance (dont-munge (symbol (str extension-name "$instance")))]]
+                    extension-base (munge* [(str type) (str protocol)]) ; str to get ns aliases if any
+                    extension-name (dont-munge (symbol (str extension-base "$cext")))
+                    extension-instance (dont-munge (symbol (str extension-base "$extension")))]]
           (list 'do
             (list* 'deftype extension-name []
               :type-only true
@@ -409,10 +418,9 @@
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
     (let [f-name (name f)
-          f (if (= "clojure.core" (namespace f)) (symbol "cljd.core" f-name) f)
           [f-type f-v] (resolve-symbol f env)
           macro-fn (or
-                     (when-some [v (when *bootstrap* (ns-resolve (ghost-ns) f))]
+                     (when-some [v (when *bootstrap* (ns-resolve (ghost-ns) (if (= "clojure.core" (namespace f)) (symbol "cljd.core" f-name) f)))]
                        (when (-> v meta :macro) @v))
                      ; TODO SELFHOST
                      (case f-type ; wishful coding for the compiler running on dart
@@ -765,7 +773,7 @@
                           (for [args+1 (next (reductions conj [] base-args))]
                             [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
                           fixed-arities-expr)))))))
-        [tmp :as binding] (dart-binding '^:clj f
+        [tmp :as binding] (dart-binding (with-meta (or name 'f) {:clj true})
                             (emit `(~'reify cljd.core/IFn
                                     ~@fixed-invokes
                                     ~@invoke-exts
@@ -775,7 +783,7 @@
                               env))]
     (list 'dart/let [binding] tmp)))
 
-(defn- emit-dart-fn [dart-fn-name [params & body] env]
+(defn- emit-dart-fn [fn-name [params & body] env]
   (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
         dart-fixed-params (map dart-local fixed-params)
         dart-opt-params (for [[p d] opt-params]
@@ -795,7 +803,7 @@
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
         dart-fn
         (list 'dart/fn dart-fixed-params opt-kind dart-opt-params dart-body)]
-    (if dart-fn-name
+    (if-some [dart-fn-name (some-> fn-name env)]
       (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name)
       dart-fn)))
 
@@ -805,8 +813,8 @@
         env (cond-> env name (assoc name (dart-local name)))
         [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)]
     (if (or more-bodies (variadic? body))
-      (emit-ifn (some-> name env) bodies env)
-      (emit-dart-fn (some-> name env) body env))))
+      (emit-ifn name bodies env)
+      (emit-dart-fn name body env))))
 
 (defn emit-method [[mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
   ;; params destructuring will be added by a macro
@@ -998,25 +1006,19 @@
            (:imports (all-nses current-ns)))
      (let [[_ last-segment] (re-matches #".*?([^.]+)$" (name the-ns))
            alias (str (dart-global last-segment))]
-       (swap! nses update-in [current-ns :imports] assoc alias {:lib the-lib :ns the-ns})
+       (swap! nses assoc-in [current-ns :imports alias] {:lib the-lib :ns the-ns})
        alias))))
 
-(defn emit-fully-qualified-symbol [x]
-  (let [x-ns (some-> x namespace symbol)
-        x-ns (case x-ns clojure.core 'cljd.core x-ns)
-        ns-map (@nses x-ns)]
-    (when-some [{dart-name :dart/name} (get ns-map (symbol (name x)))]
-      (if (= (:current-ns @nses) x-ns)
-        dart-name
-        (symbol (str (ensure-import x-ns) "." dart-name))))))
-
 (defn emit-symbol [x env]
-  (let [x (if (= "clojure.core" (namespace x)) (symbol "cljd.core" (name x)) x)
-        [tag v] (resolve-symbol x env)]
+  (let [[tag v] (resolve-symbol x env)]
     (->
       (case tag
         :local v
-        :def (:dart/name v) ; TODO XNS qualify
+        :def
+        (let [{dart-name :dart/name the-ns :ns} v]
+          (if (= (:current-ns @nses) the-ns)
+            dart-name
+            (symbol (str (ensure-import the-ns) "." dart-name))))
         :dart v
         #_"TODO next form should throw"
         (munge (symbol nil (str "GLOBAL_" x))))
@@ -1047,33 +1049,55 @@
           {:keys [only rename]} (apply hash-map (rest spec))]
       [lib :refer only :rename rename])))
 
+(defn- refer-clojure-to-require [refer-spec]
+  (let [{:keys [exclude only rename]} (reduce (fn [m [k v]] (merge-with into m {k v})) {} (partition 2 refer-spec))
+        exclude (into (set exclude) (keys rename))
+        include (if only (set only) any?)
+        refer (for [{:keys [type name] {:keys [private]} :meta} (vals (@nses 'cljd.core))
+                    :when (and (#{:field :dartfn} type) (not private)
+                            (include name) (not (exclude name)))]
+                name)]
+    ['cljd.core
+     :as 'clojure.core
+     :refer refer
+     :rename (or rename {})]))
+
 (defn emit-ns [[_ ns-sym & ns-clauses] _]
   (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
+        refer-clojures (or (seq (filter #(= :refer-clojure (first %)) ns-clauses)) [[:refer-clojure]])
+        require-specs
+        (concat
+          (map refer-clojure-to-require refer-clojures)
+          (for [[directive & specs]
+                ns-clauses
+                :let [f (case directive
+                          :require #(if (sequential? %) % [%])
+                          :import import-to-require
+                          :use use-to-require
+                          :refer-clojure nil)]
+                :when f
+                spec specs]
+            (f spec)))
+        ns-lib (ns-to-lib ns-sym)
         ns-map
         (reduce
          (partial merge-with into)
-         (assoc ns-prototype :lib (ns-to-lib ns-sym))
-         (for [[directive & specs] ns-clauses
-               :let [f (case directive
-                         :require #(if (sequential? %) % [%])
-                         :import import-to-require
-                         :use use-to-require
-                         :refer-clojure nil)]
-               :when f ; TODO fix refer-clojure
-               spec specs
-               :let [[lib & {:keys [as refer rename]}] (f spec)
-                     alias (name (dart-global (or as "lib")))
+         (assoc ns-prototype :lib ns-lib)
+         (for [[lib & {:keys [as refer rename]}] require-specs
+               :let [dart-alias (name (dart-global (or as "lib")))
                      clj-ns (when-not (string? lib) lib)
+                     clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
                      dartlib (else->>
                               (if (string? lib) lib)
                               (if-some [{:keys [lib]} (@nses lib)] lib)
+                              (if (= ns-sym lib) ns-lib)
                               (compile-namespace lib))
                      to-dart-sym (if clj-ns munge identity)]]
-           (cond-> {:imports {alias {:lib dartlib :ns clj-ns}}
-                    :mappings (into {} (for [[from to] (concat (zipmap refer refer) rename)]
-                                         [from (with-meta (symbol (str alias "." (to-dart-sym to)))
-                                                 {:dart/fn-type (when (nil? clj-ns) :native)})]))}
-             as (assoc :aliases {(name as) alias}))))]
+           {:imports {dart-alias {:lib dartlib :ns clj-ns}}
+            :aliases {clj-alias dart-alias}
+            :mappings (into {} (for [[from to] (concat (zipmap refer refer) rename)]
+                                 [from (with-meta (symbol clj-alias (name to))
+                                         {:dart (nil? clj-ns)})]))}))]
     (swap! nses assoc ns-sym ns-map :current-ns ns-sym)))
 
 (defn- emit-no-recur [expr env]
@@ -1116,6 +1140,7 @@
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
   (let [x (macroexpand env x)
+        ; x (inline env x)
         dart-x
         (cond
           (symbol? x) (emit-symbol x env)
@@ -1512,8 +1537,10 @@
                            (reductions into)
                            reverse)
               tmps (into {}
-                         (map (fn [v vs] (when (vs v) [v (dart-local v)])) ; TODO using dart-local in write is going to cause double munging
-                              loop-bindings vars-usages))]
+                     (map (fn [v vs]
+                            (assert (re-matches #".*\$\d+" (name v)))
+                            (when (vs v) [v (with-meta (symbol (str v "tmp")) (meta v))]))
+                       loop-bindings vars-usages))]
           (doseq [[v e] (map vector loop-bindings exprs)]
             (write e (if-some [tmp (tmps v)] (var-locus tmp) (assignment-locus v))))
           (doseq [[v tmp] tmps]
@@ -1594,11 +1621,21 @@
             (print (:post locus))
             (:exit locus))))
 
+(defn- relativize-lib [^String src ^String target]
+  (if (<= 0 (.indexOf target ":"))
+    target
+    (loop [[s & ss] (str/split src #"/") [t & ts :as all-ts] (str/split target #"/")]
+      (cond
+        (nil? ts) t
+        (nil? ss) (str/join "/" all-ts)
+        (= s t) (recur ss ts)
+        :else (str/join "/" (concat (map (constantly "..") ss) all-ts))))))
+
 ;; Compile clj -> dart file
-(defn dump-ns [ns-map]
+(defn dump-ns [{ns-lib :lib :as ns-map}]
   (doseq [[alias {:keys [lib]}] (:imports ns-map)]
     (print "import ")
-    (write-string-literal lib) ;; TODO: relativize local libs (nses)
+    (write-string-literal (relativize-lib ns-lib lib)) ;; TODO: relativize local libs (nses)
     (print " as ")
     (print alias)
     (print ";\n"))
@@ -1700,5 +1737,6 @@
 
   (-> @nses (get-in '[cljd.core]
               ))
+
 
   )
