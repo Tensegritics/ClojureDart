@@ -618,7 +618,10 @@
 
 (defn ^bool pos? [a] (.< 0 a))
 
-(defn ^num + [a b] (.+ a b))
+(defn ^num +
+  {:inline-arities #{2} :inline (fn [a b] `(.+ ~a ~b))}
+  [a b]
+  (.+ a b))
 
 (defn ^num - [a b] (.- a b))
 

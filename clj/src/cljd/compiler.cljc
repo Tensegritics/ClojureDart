@@ -413,14 +413,39 @@
               (symbol (name (:current-ns @nses)) (name extension-instance)))))))))
 
 (defn ghost-ns []
-  (create-ns (symbol (str (:current-ns @nses) ".ghost"))))
+  (create-ns (symbol (str (:current-ns @nses) "$ghost"))))
+
+(defn ghost-resolve
+  ([sym] (ghost-resolve sym false))
+  ([sym ghost-only]
+   (let [gns (ghost-ns)
+         v (ns-resolve gns (if (= "clojure.core" (namespace sym)) (symbol "cljd.core" (name sym)) sym))]
+     (when (or (not ghost-only) (some-> v meta :ns (= gns)))
+       v))))
+
+(defn inline-expand [env form]
+  (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
+    (let [f-name (name f)
+          [f-type f-v] (resolve-symbol f env)
+          {:keys [inline-arities inline]} (or
+               (when-some [v (when *bootstrap* (ghost-resolve f true))]
+                 (when (-> v meta :inline-arities) (meta v)))
+               ; TODO SELFHOST
+               (case f-type ; wishful coding for the compiler running on dart
+                 :def (when (-> f-v :meta :inline-arities) (-> f-v :runtime-value))
+                 nil))]
+      (cond
+        (env f) form
+        (and inline-arities (inline-arities (count args))) (apply inline args)
+        :else form))
+    form))
 
 (defn macroexpand-1 [env form]
   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
     (let [f-name (name f)
           [f-type f-v] (resolve-symbol f env)
           macro-fn (or
-                     (when-some [v (when *bootstrap* (ns-resolve (ghost-ns) (if (= "clojure.core" (namespace f)) (symbol "cljd.core" f-name) f)))]
+                     (when-some [v (when *bootstrap* (ghost-resolve f))]
                        (when (-> v meta :macro) @v))
                      ; TODO SELFHOST
                      (case f-type ; wishful coding for the compiler running on dart
@@ -451,6 +476,11 @@
 (defn macroexpand [env form]
   (let [ex (macroexpand-1 env form)]
     (cond->> ex (not (identical? ex form)) (recur env))))
+
+(defn macroexpand-and-inline [env form]
+  (let [ex (->> form (macroexpand env) (inline-expand env))]
+    (cond->> ex (not (identical? ex form)) (recur env))))
+
 
 (declare emit infer-type)
 
@@ -1142,8 +1172,7 @@
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
-  (let [x (macroexpand env x)
-        ; x (inline env x)
+  (let [x (macroexpand-and-inline env x)
         dart-x
         (cond
           (symbol? x) (emit-symbol x env)
