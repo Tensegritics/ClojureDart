@@ -398,8 +398,8 @@
                     _ (when-not (and (= tag :def) (= :protocol (:type info)))
                         (throw (Exception. (str protocol " isn't a protocol."))))
                     extension-base (munge* [(str type) (str protocol)]) ; str to get ns aliases if any
-                    extension-name (dont-munge (symbol (str extension-base "$cext")))
-                    extension-instance (dont-munge (symbol (str extension-base "$extension")))]]
+                    extension-name (dont-munge extension-base "$cext")
+                    extension-instance (dont-munge extension-base "$extension")]]
           (list 'do
             (list* 'deftype extension-name []
               :type-only true
@@ -580,7 +580,10 @@
     (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))))
 
 (defn emit-new [[_ class & args] env]
-  (emit-fn-call (cons (vary-meta class assoc :dart true) args) env))
+  (let [dart-type (emit-type class)
+        [bindings dart-args] (emit-args args env)]
+    (cond->> (list* 'dart/new dart-type dart-args)
+      (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-dot [[_ obj member & args] env]
   (if (seq? member)
@@ -686,11 +689,11 @@
         invoke-exts (for [[params & body] fixed-bodies
                           :let [n (count params)]
                           :when (>= n *threshold*)]
-                      `(~(dont-munge "_invoke$ext" n) [~this ~@params] ~@body))
+                      `(~(symbol (str "_invoke$ext" n)) [~this ~@params] ~@body))
         fixed-invokes (for [[params & body] fixed-bodies
                             :when (< (count params) *threshold*)]
                         `(~'-invoke [~this ~@params] ~@body))
-        vararg-mname (dont-munge "_invoke$vararg")
+        vararg-mname '_invoke$vararg
         vararg-invokes
         (when vararg-params
           (cons
@@ -1376,6 +1379,8 @@
        (case (first x)
          dart/let (infer-type (last x))
          dart/fn {:dart/fn-type :native}
+         dart/new {:dart/type (second x)
+                   :dart/truth (dart-type-truthiness (second x))}
          dart/.
          (let [[_ a meth b] x]
            (case (name meth)
@@ -1605,6 +1610,13 @@
             (write obj expr-locus)
             (print (str "." meth))
             (write-args args)))
+        (print (:post locus))
+        (:exit locus))
+      dart/new
+      (let [[_ type & args] x]
+        (print (:pre locus))
+        (print type)
+        (write-args args)
         (print (:post locus))
         (:exit locus))
       ;; native fn call
