@@ -364,12 +364,22 @@
            (list 'defprotocol* proto proto-map)
            (concat
              (for [[method arity-mapping] method-mapping]
-               (list* 'defn method
-                 (for [{:keys [dart/name args]} (vals arity-mapping)]
-                   (list args
-                     (list 'if (list 'dart-is? (first args) iface)
-                       (list* '. (first args) name (next args)) ; TODO cast to iface
-                       `(. (.extensions ~proto ~(first args)) ~name ~@args))))))
+               `(defn ~method
+                  {:inline-arities ~(into #{} (map (comp count :args)) (vals arity-mapping))
+                   :inline
+                   (fn
+                     ~@(for [{:keys [dart/name] all-args :args} (vals arity-mapping)
+                             :let [[this & args :as locals] (map gensym all-args)]]
+                         `(~all-args
+                           `(let [~'~(interleave locals all-args)]
+                              (if (dart-is? ~~this ~'~iface)
+                                (. ~~this ~'~name ~~@args) ; TODO cast to iface
+                                (. (.extensions ~'~proto ~~this) ~'~name ~~@all-args))))))}
+                  ~@(for [{:keys [dart/name] [this & args :as all-args] :args} (vals arity-mapping)]
+                      `(~all-args
+                        (if (dart-is? ~this ~iface)
+                          (. ~this ~name ~@args) ; TODO cast to iface
+                          (. (.extensions ~proto ~this) ~name ~@all-args))))))
              (list proto)))))
 
      (defn- expand-case [expr & clauses]
@@ -1229,6 +1239,7 @@
               (cond
                 (or macro bootstrap) (binding [*ns* (ghost-ns)] (eval x))
                 inline (binding [*ns* (ghost-ns)] (eval (list 'def (vary-meta sym select-keys [:inline :inline-arities]) nil)))))
+        do (run! bootstrap-eval (next x))
         nil))))
 
 (defn emit-test [expr env]

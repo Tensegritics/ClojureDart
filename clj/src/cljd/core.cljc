@@ -94,8 +94,6 @@
   (-invoke-more [this a b c d e f g h i rest])
   (-apply [this more]))
 
-(defn foobar [x] (let [[a b] x] (.+ a b)))
-
 (def ^:macro fn
   (fn* [&form &env & decl]
     (cons 'fn* decl)))
@@ -532,6 +530,8 @@
      always return a seq, e.g.
      (rest []) => ()
      (rest nil) => ()"))
+
+(defn foobar [x] (let [[a b] x] (.+ a b)) (-first x))
 
 (defprotocol ASeq
   "Marker protocol indicating an array sequence.")
