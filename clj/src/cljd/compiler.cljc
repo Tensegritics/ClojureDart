@@ -1228,7 +1228,7 @@
                   {:keys [macro bootstrap inline]} (meta sym)]
               (cond
                 (or macro bootstrap) (binding [*ns* (ghost-ns)] (eval x))
-                inline (binding [*ns* (ghost-ns)] (eval (list 'def sym nil)))))
+                inline (binding [*ns* (ghost-ns)] (eval (list 'def (vary-meta sym select-keys [:inline :inline-arities]) nil)))))
         nil))))
 
 (defn emit-test [expr env]
