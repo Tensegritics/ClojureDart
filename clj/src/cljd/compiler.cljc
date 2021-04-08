@@ -369,7 +369,7 @@
                    :inline
                    (fn
                      ~@(for [{:keys [dart/name] all-args :args} (vals arity-mapping)
-                             :let [[this & args :as locals] (map (fn [arg] (list 'quote (gensym arg)))all-args)]]
+                             :let [[this & args :as locals] (map (fn [arg] (list 'quote (gensym arg))) all-args)]]
                          `(~all-args
                            `(let [~~@(interleave locals all-args)]
                               (if (dart-is? ~~this ~'~iface)
@@ -632,7 +632,11 @@
           [_ prop name] (re-matches #"(-)?(.+)" member)
           prop (and prop (nil? args))
           op (if prop 'dart/.- 'dart/.)
-          [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)]
+          [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
+          dart-obj (if-some [type (:dart/type (infer-type dart-obj))]
+                     ;; TODO with mirrors one can check membership
+                     (list 'dart/as dart-obj type)
+                     dart-obj)]
       (cond->> (list* op dart-obj name dart-args)
         (seq bindings) (list 'dart/let bindings)))))
 
@@ -1415,6 +1419,7 @@
      (cond
        (:dart/inferred m) m
        (boolean? x) {:dart/type "dc.bool" :dart/truth :boolean}
+       (string? x) {:dart/type "dc.String" :dart/truth :some}
        (seq? x)
        (case (first x)
          dart/let (infer-type (last x))
@@ -1498,7 +1503,7 @@
         (print "(")
         (write expr expr-locus)
         (print " as ")
-        (write type expr-locus)
+        (print type)
         (print ")")
         (print (:post locus)))
       dart/is
