@@ -41,7 +41,6 @@
 (def ^{:dart true} namespace)
 (def ^{:dart true} not)
 (def ^{:dart true} next)
-(def ^{:dart true} nil?)
 (def ^{:dart true} nnext)
 (def ^{:clj true} partition)
 (def ^{:clj true} reduce)
@@ -239,6 +238,11 @@
                             (recur (next p) (cons (first p) d))
                             d))]
                (cons `defn decl))))
+
+(defn ^bool nil?
+  {:inline-arities #{1}
+   :inline (fn [x] `(.== nil ~x))}
+  [x] (.== nil x))
 
 (defn ^:bootstrap destructure [bindings]
   (let [bents (partition 2 bindings)
