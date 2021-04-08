@@ -618,12 +618,54 @@
 
 (defn ^bool pos? [a] (.< 0 a))
 
-(defn ^num +
-  {:inline-arities #{2} :inline (fn [a b] `(.+ ~a ~b))}
-  [a b]
-  (.+ a b))
+(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
 
-(defn ^num - [a b] (.- a b))
+(defn +
+  {:inline (fn [x y] `(.+ ~x ~y))
+   :inline-arities #{2}}
+  ([] 0)
+  ;; TODO: cast to num ??
+  ([x] x)
+  ([x y] (.+ x y))
+  ([x y & more]
+   (reduce + (+ x y) more)))
+
+(defn *
+  {:inline (fn ([x] x) ([x y] `(.* ~x ~y)))
+   :inline-arities #{1 2}}
+  ([] 1)
+  ([x] x)
+  ([x y] (.* x y))
+  ([x y & more]
+   (reduce * (* x y) more)))
+
+(defn /
+  {:inline (fn ([x] `(. 1 "/" ~x)) ([x y] `(. ~x "/" ~y)))
+   :inline-arities #{1 2}}
+  ([x] (. 1 "/" x))
+  ([x y] (. x "/" y))
+  ([x y & more]
+   (reduce / (/ x y) more)))
+
+(defn -
+  {:inline (fn ([x] `(.- ~x)) ([x y] `(.- ~x ~y)))
+   :inline-arities #{1 2}}
+  ([x] (.- 0 x))
+  ([x y] (.- x y))
+  ([x y & more]
+   (reduce - (- x y) more)))
+
+(defn <=
+  {:inline (fn [x y] `(.<= ~x ~y))
+   :inline-arities #{2}}
+  ([x] true)
+  ([x y] (.<= x y))
+  ([x y & more]
+   (if (<= x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (<= y (first more)))
+     false)))
 
 (defn ^num inc
   "Returns a number one greater than num."
