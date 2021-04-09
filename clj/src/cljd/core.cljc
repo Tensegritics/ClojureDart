@@ -2065,3 +2065,27 @@
 
 
   )
+
+(defn- ^:bootstrap roll-leading-opts [body]
+  (loop [[k v & more :as body] (seq body) opts {}]
+    (if (and body (keyword? k))
+      (recur more (assoc opts k v))
+      [opts body])))
+
+(defmacro deftype [& args]
+  (let [[class-name fields & args] args
+        [opts specs] (roll-leading-opts args)]
+    `(do
+       (~'deftype* ~class-name ~fields ~opts ~@specs)
+       ~(when-not (:type-only opts)
+          `(defn
+             ~(symbol (str "->" class-name))
+             [~@fields]
+             (new ~class-name ~@fields))))))
+
+
+(defmacro definterface [iface & meths]
+  `(deftype ~(vary-meta iface assoc :abstract true) []
+     :type-only true
+     ~@(for [[meth args] meths]
+         `(~meth [~'_ ~@args]))))

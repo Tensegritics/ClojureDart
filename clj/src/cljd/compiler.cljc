@@ -275,11 +275,11 @@
            (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) extensions))]
         (list 'if 'ext 'ext '(throw (dart:core/Exception. "No extension found.")))))))
 
-     (defn- roll-leading-opts [body]
-       (loop [[k v & more :as body] (seq body) opts {}]
-         (if (and body (keyword? k))
-           (recur more (assoc opts k v))
-           [opts body])))
+(defn- roll-leading-opts [body]
+  (loop [[k v & more :as body] (seq body) opts {}]
+    (if (and body (keyword? k))
+      (recur more (assoc opts k v))
+      [opts body])))
 
 (defn resolve-dart-mname
   "Takes two symbols (a protocol and one of its method) and the number
@@ -291,23 +291,6 @@
       (or
         (get-in protocol [:sigs mname args-count :dart/name] mname)
         (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " pname ".")))))))
-
-(defn-  expand-deftype [& args]
-  (let [[class-name fields & args] args
-        [opts specs] (roll-leading-opts args)]
-    `(do
-       (~'deftype* ~class-name ~fields ~opts ~@specs)
-       ~(when-not (:type-only opts)
-          `(defn
-             ~(symbol (str "->" class-name))
-           [~@fields]
-           (new ~class-name ~@fields))))))
-
-(defn- expand-definterface [iface & meths]
-  `(deftype ~(vary-meta iface assoc :abstract true) []
-    :type-only true
-    ~@(for [[meth args] meths]
-        `(~meth [~'_ ~@args]))))
 
 (defn- expand-defprotocol [proto & methods]
   ;; TODO do something with docstrings
@@ -449,8 +432,6 @@
              (= 'reify f)
              (let [[opts specs] (roll-leading-opts args)]
                (list* 'reify* opts specs))
-             ('#{clojure.core/deftype deftype} f) (apply expand-deftype args)
-             (= 'definterface f) (apply expand-definterface args)
              (= 'defprotocol f) (apply expand-defprotocol args)
              (= 'case f) (apply expand-case args)
              (= 'extend-type f) (apply expand-extend-type args)])
