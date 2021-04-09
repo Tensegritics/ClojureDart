@@ -521,8 +521,6 @@
     (. x "[]" i)
     default))
 
-(defn ^bool = [a b] (.== a b))
-
 (defn ^bool zero? [num] (= 0 num))
 
 (defprotocol ISeq
@@ -628,7 +626,23 @@
      ([x y & more] (reduce (fn [a b] `(. ~a ~op ~b)) `(. ~x ~op ~y) more)))))
 
 (defn ^:bootstrap ^:private >0? [n] #?(:cljd (.> n 0) :clj @#'clojure.core/>0?))
-#_(defn ^:bootstrap ^:private >1? [n] (. n ">" 1))
+(defn ^:bootstrap ^:private >1? [n] #?(:cljd (.> n 1) :clj @#'clojure.core/>1?))
+
+;; TODO should use -equiv or equivalent
+(defn ^bool = [a b] (.== a b))
+
+(defn ^bool ==
+  {:inline (nary-inline (fn [_] true) "==")
+   :inline-arities any?}
+  ([x] true)
+  ([x y] (. x "==" y))
+  ([x y & more]
+   (if (== x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (== y (first more)))
+     false)))
+
 
 (defn ^num *
   {:inline (nary-inline 1 identity "*")
@@ -714,10 +728,103 @@
      false)))
 
 (defn ^num inc
-  "Returns a number one greater than num."
-  [x] (+ x 1))
+  {:inline (fn [x] `(+ ~x 1))
+   :inline-arities #{1}}
+  [x] (.+ x 1))
 
-(defn ^num dec [x] (- x 1))
+(defn ^num dec
+  {:inline (fn [x] `(- ~x 1))
+   :inline-arities #{1}}
+  [x]
+  (.- x 1))
+
+;; bit ops
+(defn ^int bit-not
+  "Bitwise complement"
+  {:inline (fn [x] `(. ~x "~"))
+   :inline-arities #{1}}
+  [x] (. x "~"))
+
+(defn ^int bit-and
+  "Bitwise and"
+  {:inline (nary-inline "&")
+   :inline-arities >1?}
+  ([x y] (. x "&" y))
+  ([x y & more]
+   (reduce bit-and (bit-and x y) more)))
+
+(defn ^int bit-or
+  "Bitwise or"
+  {:inline (nary-inline "|")
+   :inline-arities >1?}
+  ([x y] (. x "|" y))
+  ([x y & more]
+   (reduce bit-or (bit-or x y) more)))
+
+(defn ^int bit-xor
+  "Bitwise exclusive or"
+  {:inline (nary-inline "^")
+   :inline-arities >1?}
+  ([x y] (. x "^" y))
+  ([x y & more]
+   (reduce bit-xor (bit-xor x y) more)))
+
+(defn ^int bit-and-not
+  "Bitwise and with complement"
+  {:inline (fn
+             ([x y] `(bit-not (bit-and ~x ~y)))
+             ([x y & more] (reduce (fn [a b] `(bit-not (bit-and ~a ~b))) `(bit-not (bit-and ~x ~y)) more)))
+   :inline-arities >1?}
+  ([x y] (bit-not (bit-and x y)))
+  ([x y & more]
+   (reduce bit-and-not (bit-and-not x y) more)))
+
+(defn ^int bit-shift-left
+  "Bitwise shift left"
+  {:inline (fn [x n] `(. ~x "<<" ~n))
+   :inline-arities #{2}}
+  [x n] (. x "<<" n))
+
+(defn ^int bit-shift-right
+  {:inline (fn [x n] `(. ~x ">>" ~n))
+   :inline-arities #{2}}
+  [x n] (. x ">>" n))
+
+(defn ^int bit-clear
+  "Clear bit at index n"
+  {:inline (fn [x n] `(bit-and ~x (bit-not (bit-shift-left 1 ~n))))
+   :inline-arities #{2}}
+  [x n] (bit-and x (bit-not (bit-shift-left 1 n))))
+
+(defn ^int bit-set
+  "Set bit at index n"
+  {:inline (fn [x n] `(bit-or ~x (bit-shift-left 1 ~n)))
+   :inline-arities #{2}}
+  [x n] (bit-or x (bit-shift-left 1 n)))
+
+(defn ^int bit-flip
+  "Flip bit at index n"
+  {:inline (fn [x n] `(bit-xor ~x (bit-shift-left 1 ~n)))
+   :inline-arities #{2}}
+  [x n] (bit-xor x (bit-shift-left 1 n)))
+
+;; it might be faster to use (== 1 (bit-and 1 (bit-shift-right x n))) -> to benchmark
+(defn ^bool bit-test
+  "Test bit at index n"
+  {:inline (fn [x n] `(.-isOdd (bit-shift-right ~x ~n)))
+   :inline-arities #{2}}
+  [x n] (.-isOdd (bit-shift-right x n)))
+
+;; js version ?
+(defn unsigned-bit-shift-right
+  "Bitwise shift right, without sign-extension."
+  {:inline (fn [x n] `(bit-shift-right (bit-and 0x7FFFFFFFFFFFFFFF ~x) ~n))
+   :inline-arities #{2}}
+  [x n] (bit-shift-right (bit-and 0x7FFFFFFFFFFFFFFF x) n))
+
+
+
+(comment)
 
 #_(
 
@@ -1945,17 +2052,17 @@
     "valeur2"))
 
 (defn main []
-  (let [f "f"]
-    (* 1 2 3 4 6 7 8)
-    (/ 1)
-    (/ 1 2)
-    (/ 1 2 3 4)
-    (- 5)
-    (+)
-    (<= 1)
+  (bit-and 1 2 3 4 5 6 78)
+  (bit-or 1 2 3 4 5 6 78)
+  (bit-xor 1 2 3 4)
+  (bit-and-not 1 2)
+  (bit-and-not 1 2 3 4)
+  (^:dart dart:core/print (bit-shift-left 1 5))
+  (^:dart dart:core/print (bit-shift-right 32 5))
+  (^:dart dart:core/print (unsigned-bit-shift-right 32 5))
 
-    (<= 1 2)
-    (<= 1 2 3 4)
-    (>= 1 2 3 4)
-    (> 1 2 3 4)
-    ))
+  (^:dart dart:core/print (bit-shift-right -32 5))
+  (^:dart dart:core/print (unsigned-bit-shift-right -32 5))
+
+
+  )
