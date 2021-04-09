@@ -816,15 +816,14 @@
   [x n] (.-isOdd (bit-shift-right x n)))
 
 ;; js version ?
-(defn unsigned-bit-shift-right
+(defn ^int unsigned-bit-shift-right
   "Bitwise shift right, without sign-extension."
-  {:inline (fn [x n] `(bit-shift-right (bit-and 0x7FFFFFFFFFFFFFFF ~x) ~n))
+  {:inline (fn [x n] `(bit-and (bit-shift-right ~x ~n) (bit-shift-right -0x800000000000000 (dec ~n))))
    :inline-arities #{2}}
-  [x n] (bit-shift-right (bit-and 0x7FFFFFFFFFFFFFFF x) n))
+  [x n]
+  (bit-and (bit-shift-right x n) (bit-shift-right -0x800000000000000 (dec n))))
+;; 00 0000 100000001
 
-
-
-(comment)
 
 #_(
 
