@@ -274,124 +274,104 @@
            (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) extensions))]
         (list 'if 'ext 'ext '(throw (dart:core/Exception. "No extension found.")))))))
 
-#?(:clj
-   (do
      (defn- roll-leading-opts [body]
        (loop [[k v & more :as body] (seq body) opts {}]
          (if (and body (keyword? k))
            (recur more (assoc opts k v))
            [opts body])))
 
-     (defn resolve-dart-mname
-       "Takes two symbols (a protocol and one of its method) and the number
+(defn resolve-dart-mname
+  "Takes two symbols (a protocol and one of its method) and the number
   of arguments passed to this method.
   Returns the name (as symbol) of the dart method backing this clojure method."
-       [pname mname args-count]
-       (let [[tag protocol] (resolve-symbol pname {})]
-         (when (and (= :def tag) (= :protocol (:type protocol)))
-           (or
-             (get-in protocol [:sigs mname args-count :dart/name] mname)
-             (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " pname ".")))))))
+  [pname mname args-count]
+  (let [[tag protocol] (resolve-symbol pname {})]
+    (when (and (= :def tag) (= :protocol (:type protocol)))
+      (or
+        (get-in protocol [:sigs mname args-count :dart/name] mname)
+        (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " pname ".")))))))
 
-     (defn- expand-opts+specs [opts+specs]
-       (let [[opts specs] (roll-leading-opts opts+specs)
-             last-seen-type (atom nil)]
-         (cons opts
-               (map
-                (fn [spec]
-                  (if (seq? spec)
-                    (let [[mname arglist & body] spec
-                          mname (or (some-> @last-seen-type (resolve-dart-mname mname (count arglist)))
-                                    mname)]
-                      ;; TODO: OBSOLETE mname resolution against protocol ifaces
-                      (list* mname (parse-dart-params arglist) body))
-                    (reset! last-seen-type spec)))
-                specs))))
+(defn-  expand-deftype [& args]
+  (let [[class-name fields & args] args
+        [opts specs] (roll-leading-opts args)]
+    (list 'do
+      (list* 'deftype* class-name fields opts specs)
+      (when-not (:type-only opts)
+        (list 'defn
+          (symbol (str "->" class-name))
+          (vec fields)
+          (list* 'new class-name fields))))))
 
-     #_(defmacro reify [& args]
-       `(reify* ~@(expand-opts+specs args)))
+(defn- expand-definterface [iface & meths]
+  (list* 'deftype (vary-meta iface assoc :abstract true) []
+    :type-only true
+    (for [[meth args] meths]
+      (list meth (into '[_] args)))))
 
-     (defn-  expand-deftype [& args]
-       (let [[class-name fields & args] args
-             [opts & specs](expand-opts+specs args)]
-         (list 'do
-           (list* 'deftype* class-name fields opts specs)
-           (when-not (:type-only opts)
-             (list 'defn
-               (symbol (str "->" class-name))
-               (vec fields)
-               (list* 'new class-name fields))))))
+(defn- expand-defprotocol [proto & methods]
+  ;; TODO do something with docstrings
+  (let [[doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
+        method-mapping
+        (into {} (map (fn [[m & arglists]]
+                        (let [dart-m (munge m)
+                              [doc-string & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
+                          [(with-meta m {:doc doc-string})
+                           (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" (dec l)))
+                                                                 :args %}]))
+                             arglists)]))) methods)
+        ; TODO check munging below
+        iface (symbol (str (munge proto) "$iface"))
+        iface (with-meta iface {:dart/name iface})
+        iext (symbol (str (munge proto) "$iext"))
+        iext (with-meta iext {:dart/name iext})
+        impl (symbol (str (munge proto) "$iprot"))
+        impl (with-meta impl {:dart/name impl})
+        proto-map
+        {:iface iface
+         :iext iext
+         :impl impl
+         :sigs method-mapping}]
+    (list* 'do
+      (list* 'definterface iface
+        (for [[method arity-mapping] method-mapping
+              {:keys [dart/name args]} (vals arity-mapping)]
+          (list name (subvec args 1))))
+      (list* 'definterface iext
+        (for [[method arity-mapping] method-mapping
+              {:keys [dart/name args]} (vals arity-mapping)]
+          (list name args)))
+      (expand-protocol-impl proto-map)
+      (list 'defprotocol* proto proto-map)
+      (concat
+        (for [[method arity-mapping] method-mapping]
+          `(defn ~method
+             {:inline-arities ~(into #{} (map (comp count :args)) (vals arity-mapping))
+              :inline
+              (fn
+                ~@(for [{:keys [dart/name] all-args :args} (vals arity-mapping)
+                        :let [[this & args :as locals] (map (fn [arg] (list 'quote (gensym arg))) all-args)]]
+                    `(~all-args
+                      `(let [~~@(interleave locals all-args)]
+                         (if (dart-is? ~~this ~'~iface)
+                           (. ~~this ~'~name ~~@args) ; TODO cast to iface
+                           (. (.extensions ~'~proto ~~this) ~'~name ~~@all-args))))))}
+             ~@(for [{:keys [dart/name] [this & args :as all-args] :args} (vals arity-mapping)]
+                 `(~all-args
+                   (if (dart-is? ~this ~iface)
+                     (. ~this ~name ~@args) ; TODO cast to iface
+                     (. (.extensions ~proto ~this) ~name ~@all-args))))))
+        (list proto)))))
 
-     (defn- expand-definterface [iface & meths]
-       (list* 'deftype (vary-meta iface assoc :abstract true) []
-         :type-only true
-         (for [[meth args] meths]
-           (list meth (into '[_] args)))))
-
-     (defn- expand-defprotocol [proto & methods]
-       ;; TODO do something with docstrings
-       (let [[doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
-             method-mapping
-             (into {} (map (fn [[m & arglists]]
-                             (let [dart-m (munge m)
-                                   [doc-string & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
-                               [(with-meta m {:doc doc-string})
-                                (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" (dec l)))
-                                                                      :args %}]))
-                                      arglists)]))) methods)
-             ; TODO check munging below
-             iface (symbol (str (munge proto) "$iface"))
-             iface (with-meta iface {:dart/name iface})
-             iext (symbol (str (munge proto) "$iext"))
-             iext (with-meta iext {:dart/name iext})
-             impl (symbol (str (munge proto) "$iprot"))
-             impl (with-meta impl {:dart/name impl})
-             proto-map
-             {:iface iface
-              :iext iext
-              :impl impl
-              :sigs method-mapping}]
-         (list* 'do
-           (list* 'definterface iface
-             (for [[method arity-mapping] method-mapping
-                   {:keys [dart/name args]} (vals arity-mapping)]
-               (list name (subvec args 1))))
-           (list* 'definterface iext
-             (for [[method arity-mapping] method-mapping
-                   {:keys [dart/name args]} (vals arity-mapping)]
-               (list name args)))
-           (expand-protocol-impl proto-map)
-           (list 'defprotocol* proto proto-map)
-           (concat
-             (for [[method arity-mapping] method-mapping]
-               `(defn ~method
-                  {:inline-arities ~(into #{} (map (comp count :args)) (vals arity-mapping))
-                   :inline
-                   (fn
-                     ~@(for [{:keys [dart/name] all-args :args} (vals arity-mapping)
-                             :let [[this & args :as locals] (map (fn [arg] (list 'quote (gensym arg))) all-args)]]
-                         `(~all-args
-                           `(let [~~@(interleave locals all-args)]
-                              (if (dart-is? ~~this ~'~iface)
-                                (. ~~this ~'~name ~~@args) ; TODO cast to iface
-                                (. (.extensions ~'~proto ~~this) ~'~name ~~@all-args))))))}
-                  ~@(for [{:keys [dart/name] [this & args :as all-args] :args} (vals arity-mapping)]
-                      `(~all-args
-                        (if (dart-is? ~this ~iface)
-                          (. ~this ~name ~@args) ; TODO cast to iface
-                          (. (.extensions ~proto ~this) ~name ~@all-args))))))
-             (list proto)))))
-
-     (defn- expand-case [expr & clauses]
-       (if (or (symbol? expr) (odd? (count clauses)))
-         (let [clauses (vec (partition-all 2 clauses))
-               last-clause (peek clauses)
-               clauses (cond-> clauses (nil? (next last-clause)) pop)
-               default (if (next last-clause)
-                         `(throw (.value dart:core/ArgumentError ~expr nil "No matching clause."))
-                         (first last-clause))]
-           (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
-         `(let* [test# ~expr] (~'case test# ~@clauses))))))
+(defn- expand-case [expr & clauses]
+  (if (or (symbol? expr) (odd? (count clauses)))
+    (let [clauses (vec (partition-all 2 clauses))
+          last-clause (peek clauses)
+          clauses (cond-> clauses (nil? (next last-clause)) pop)
+          default (if (next last-clause)
+                    `(throw (.value dart:core/ArgumentError ~expr nil "No matching clause."))
+                    (first last-clause))]
+      (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
+    `(let* [test# ~expr] (~'case test# ~@clauses))))
 
 
 (defn expand-extend-type [type & specs]
@@ -465,7 +445,9 @@
         (env f) form
         #?@(:clj ; macro overrides
             [(= 'ns f) form
-             (= 'reify f) (cons 'reify* (expand-opts+specs args))
+             (= 'reify f)
+             (let [[opts specs] (roll-leading-opts args)]
+               (list* 'reify* opts specs))
              (= 'deftype f) (apply expand-deftype args)
              (= 'definterface f) (apply expand-definterface args)
              (= 'defprotocol f) (apply expand-defprotocol args)
@@ -634,7 +616,7 @@
           op (if prop 'dart/.- 'dart/.)
           [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
           dart-obj (if-some [type (:dart/type (infer-type dart-obj))]
-                     ;; TODO with mirrors one can check membership
+                     ;; TODO SELFHOST with mirrors one can check membership
                      (list 'dart/as dart-obj type)
                      dart-obj)]
       (cond->> (list* op dart-obj name dart-args)
@@ -900,8 +882,22 @@
         m (assoc m :ns the-ns :name sym :meta (merge (meta sym) (:meta m)))]
     (assoc-in nses [the-ns sym] m)))
 
+(defn- resolve-methods-specs [specs]
+  (let [last-seen-type (atom nil)]
+    (map
+      (fn [spec]
+        (if (seq? spec)
+          (let [[mname arglist & body] spec
+                mname (or (some-> @last-seen-type (resolve-dart-mname mname (count arglist)))
+                        mname)]
+            ;; TODO: OBSOLETE mname resolution against protocol ifaces
+            (list* mname (parse-dart-params arglist) body))
+          (reset! last-seen-type spec)))
+      specs)))
+
 (defn- emit-class-specs [opts specs env]
   (let [{:keys [extends] :or {extends 'Object}} opts
+        specs (resolve-methods-specs specs)
         [ctor-op base & ctor-args :as ctor]
         (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
@@ -1109,43 +1105,44 @@
      :refer refer
      :rename (or rename {})]))
 
-(defn emit-ns [[_ ns-sym & ns-clauses] _]
-  (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
-        refer-clojures (or (seq (filter #(= :refer-clojure (first %)) ns-clauses)) [[:refer-clojure]])
-        require-specs
-        (concat
-          (map refer-clojure-to-require refer-clojures)
-          (for [[directive & specs]
-                ns-clauses
-                :let [f (case directive
-                          :require #(if (sequential? %) % [%])
-                          :import import-to-require
-                          :use use-to-require
-                          :refer-clojure nil)]
-                :when f
-                spec specs]
-            (f spec)))
-        ns-lib (ns-to-lib ns-sym)
-        ns-map
-        (reduce
-         (partial merge-with into)
-         (assoc ns-prototype :lib ns-lib)
-         (for [[lib & {:keys [as refer rename]}] require-specs
-               :let [dart-alias (name (dart-global (or as "lib")))
-                     clj-ns (when-not (string? lib) lib)
-                     clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
-                     dartlib (else->>
-                              (if (string? lib) lib)
-                              (if-some [{:keys [lib]} (@nses lib)] lib)
-                              (if (= ns-sym lib) ns-lib)
-                              (compile-namespace lib))
-                     to-dart-sym (if clj-ns munge identity)]]
-           {:imports {dart-alias {:lib dartlib :ns clj-ns}}
-            :aliases {clj-alias dart-alias}
-            :mappings (into {} (for [[from to] (concat (zipmap refer refer) rename)]
-                                 [from (with-meta (symbol clj-alias (name to))
-                                         {:dart (nil? clj-ns)})]))}))]
-    (swap! nses assoc ns-sym ns-map :current-ns ns-sym)))
+(defn emit-ns [[_ ns-sym & ns-clauses :as ns-form] _]
+  (when (or (not *bootstrap*) (-> ns-form meta :force))
+    (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
+          refer-clojures (or (seq (filter #(= :refer-clojure (first %)) ns-clauses)) [[:refer-clojure]])
+          require-specs
+          (concat
+            (map refer-clojure-to-require refer-clojures)
+            (for [[directive & specs]
+                  ns-clauses
+                  :let [f (case directive
+                            :require #(if (sequential? %) % [%])
+                            :import import-to-require
+                            :use use-to-require
+                            :refer-clojure nil)]
+                  :when f
+                  spec specs]
+              (f spec)))
+          ns-lib (ns-to-lib ns-sym)
+          ns-map
+          (reduce
+            (partial merge-with into)
+            (assoc ns-prototype :lib ns-lib)
+            (for [[lib & {:keys [as refer rename]}] require-specs
+                  :let [dart-alias (name (dart-global (or as "lib")))
+                        clj-ns (when-not (string? lib) lib)
+                        clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
+                        dartlib (else->>
+                                  (if (string? lib) lib)
+                                  (if-some [{:keys [lib]} (@nses lib)] lib)
+                                  (if (= ns-sym lib) ns-lib)
+                                  (compile-namespace lib))
+                        to-dart-sym (if clj-ns munge identity)]]
+              {:imports {dart-alias {:lib dartlib :ns clj-ns}}
+               :aliases {clj-alias dart-alias}
+               :mappings (into {} (for [[from to] (concat (zipmap refer refer) rename)]
+                                    [from (with-meta (symbol clj-alias (name to))
+                                            {:dart (nil? clj-ns)})]))}))]
+      (swap! nses assoc ns-sym ns-map :current-ns ns-sym))))
 
 (defn- emit-no-recur [expr env]
   (let [dart-expr (emit expr env)]
@@ -1233,7 +1230,7 @@
     (when (seq? x)
       (case (first x)
         ns (let [the-ns (second x)]
-             (emit-ns x {})
+             (emit-ns (vary-meta x assoc :force true) {})
              (remove-ns (ns-name (ghost-ns))) ; ensure we don't have a dirty ns
              (binding [*ns* (ghost-ns)]
                (refer-clojure)
@@ -1242,7 +1239,15 @@
                   {:keys [macro bootstrap inline]} (meta sym)]
               (cond
                 (or macro bootstrap) (binding [*ns* (ghost-ns)] (eval x))
-                inline (binding [*ns* (ghost-ns)] (eval (list 'def (vary-meta sym select-keys [:inline :inline-arities]) nil)))))
+                inline (binding [*ns* (ghost-ns)] (eval (list 'def (vary-meta sym select-keys [:inline :inline-arities]) nil))))
+              (when-not macro
+                (let [v (macroexpand {} (last x))]
+                  (if (and (seq? v) (= 'fn* (first v)))
+                    (let [bodies (next v)
+                          bodies (cond-> bodies (symbol? (first bodies)) next)
+                          bodies (cond-> bodies (vector? (first bodies)) list)
+                          ifn (or (next bodies) (some '#{&} (ffirst bodies)))]
+                      (emit-def (list 'def (vary-meta sym assoc (if ifn :clj :dart) true) nil) {}))))))
         do (run! bootstrap-eval (next x))
         nil))))
 
