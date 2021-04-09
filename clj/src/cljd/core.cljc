@@ -620,7 +620,7 @@
 
 (def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
 
-(defn +
+(defn ^num +
   {:inline (fn [x y] `(.+ ~x ~y))
    :inline-arities #{2}}
   ([] 0)
@@ -630,24 +630,39 @@
   ([x y & more]
    (reduce + (+ x y) more)))
 
-(defn *
-  {:inline (fn ([x] x) ([x y] `(.* ~x ~y)))
-   :inline-arities #{1 2}}
+(defn ^:bootstrap ^:private nary-inline
+  ([op] (nary-inline nil nil op))
+  ([unary-fn op] (nary-inline nil unary-fn op))
+  ([zero unary-fn op]
+   (fn
+     ([] zero)
+     ([x] (unary-fn x))
+     ([x y] `(~op ~x ~y))
+     ([x y & more] (reduce (fn [a b] `(~op ~a ~b)) `(~op ~x ~y) more)))))
+
+(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
+
+(defn ^:bootstrap ^:private >0? [n] #?(:cljd (.> n 0) :clj @#'clojure.core/>0?))
+#_(defn ^:bootstrap ^:private >1? [n] (. n ">" 1))
+
+(defn ^num *
+  {:inline (nary-inline 1 identity '.*)
+   :inline-arities any?}
   ([] 1)
   ([x] x)
   ([x y] (.* x y))
   ([x y & more]
    (reduce * (* x y) more)))
 
-(defn /
-  {:inline (fn ([x] `(. 1 "/" ~x)) ([x y] `(. ~x "/" ~y)))
-   :inline-arities #{1 2}}
+(defn ^num /
+  {:inline (nary-inline (fn [x] (list '. 1 "/" x)) (symbol "./"))
+   :inline-arities >0?}
   ([x] (. 1 "/" x))
   ([x y] (. x "/" y))
   ([x y & more]
    (reduce / (/ x y) more)))
 
-(defn -
+(defn ^num -
   {:inline (fn ([x] `(.- ~x)) ([x y] `(.- ~x ~y)))
    :inline-arities #{1 2}}
   ([x] (.- 0 x))
@@ -655,7 +670,7 @@
   ([x y & more]
    (reduce - (- x y) more)))
 
-(defn <=
+(defn ^bool <=
   {:inline (fn [x y] `(.<= ~x ~y))
    :inline-arities #{2}}
   ([x] true)
@@ -1887,8 +1902,21 @@
   IFn
   (-invoke ([person] (.+ "Je m'appelle " name))))
 
+(defprotocol XXX
+  (-xxx
+    [this]
+    [this a b c d e f h i j k l m n o p]))
+
+(deftype Coucou []
+  XXX
+  (-xxx [this] "valeur")
+  (-xxx [this a b c d e f h i j k l m n o p]
+    "valeur2"))
+
 (defn main []
   (let [f "f"]
-    (f (.toString f))
-    )
-  )
+    (* 1 2 3 4 6 7 8)
+    (/ 1)
+    (/ 1 2)
+    (/ 1 2 3 4)
+    ))
