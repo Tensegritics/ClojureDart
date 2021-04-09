@@ -139,7 +139,8 @@
         :dart (name info)
         :def (case (:type info)
                ; TODO XNS should be "namespaced" by dart alias if needed
-               :class (name (:dart/name info)))))))
+               :class (name (:dart/name info)))
+        (throw (Exception. (str "Can't resolve type: " tag)))))))
 
 (defn dart-type-truthiness [type]
   (case type
@@ -260,7 +261,7 @@
        [p (when-not (symbol? d) d)])}))
 
 (defn expand-protocol-impl [{:keys [impl iface iext extensions]}]
-  (list 'deftype impl []
+  (list `deftype impl []
     :type-only true
     'cljd.core/IProtocol
     (list 'satisfies '[_ x]
@@ -294,19 +295,19 @@
 (defn-  expand-deftype [& args]
   (let [[class-name fields & args] args
         [opts specs] (roll-leading-opts args)]
-    (list 'do
-      (list* 'deftype* class-name fields opts specs)
-      (when-not (:type-only opts)
-        (list 'defn
-          (symbol (str "->" class-name))
-          (vec fields)
-          (list* 'new class-name fields))))))
+    `(do
+       (~'deftype* ~class-name ~fields ~opts ~@specs)
+       ~(when-not (:type-only opts)
+          `(defn
+             ~(symbol (str "->" class-name))
+           [~@fields]
+           (new ~class-name ~@fields))))))
 
 (defn- expand-definterface [iface & meths]
-  (list* 'deftype (vary-meta iface assoc :abstract true) []
+  `(deftype ~(vary-meta iface assoc :abstract true) []
     :type-only true
-    (for [[meth args] meths]
-      (list meth (into '[_] args)))))
+    ~@(for [[meth args] meths]
+        `(~meth [~'_ ~@args]))))
 
 (defn- expand-defprotocol [proto & methods]
   ;; TODO do something with docstrings
@@ -391,7 +392,7 @@
                     extension-name (dont-munge extension-base "$cext")
                     extension-instance (dont-munge extension-base "$extension")]]
           (list 'do
-            (list* 'deftype extension-name []
+            (list* `deftype extension-name []
               :type-only true
               (:iext info)
               (for [[mname & body-or-bodies] meths
@@ -448,7 +449,7 @@
              (= 'reify f)
              (let [[opts specs] (roll-leading-opts args)]
                (list* 'reify* opts specs))
-             (= 'deftype f) (apply expand-deftype args)
+             ('#{clojure.core/deftype deftype} f) (apply expand-deftype args)
              (= 'definterface f) (apply expand-definterface args)
              (= 'defprotocol f) (apply expand-defprotocol args)
              (= 'case f) (apply expand-case args)
@@ -1234,7 +1235,7 @@
              (emit-ns (vary-meta x assoc :force true) {})
              (remove-ns (ns-name (ghost-ns))) ; ensure we don't have a dirty ns
              (binding [*ns* (ghost-ns)]
-               (refer-clojure)
+               (refer-clojure :exclude '[definterface deftype defprotocol case])
                (alias the-ns (ns-name *ns*))))
         def (let [sym (second x)
                   {:keys [macro bootstrap inline]} (meta sym)]
