@@ -1435,7 +1435,7 @@
          dart/.
          (let [[_ a meth b] x]
            (case (name meth)
-             ("!" "<" ">" "<=" ">=" "==" "!=" "&&")
+             ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "^^" "||")
              {:dart/type "dc.bool" :dart/truth :boolean}
              ("~" "&" "|" "^" "<<" ">>")
              {:dart/type "dc.int" :dart/truth :some}
@@ -1648,15 +1648,10 @@
                 (do
                   (print meth)
                   (write obj paren-locus)))
-          ("<" ">" "&" "&&" "<=" ">=" "==" "!=" "+" "~/" "/" "*" "%" "<<" ">>" ">>>" "|" "^")
+          ("<" ">" "&&" "||" "^^" "<=" ">=" "==" "!=" "+" "~/" "/" "*" "%" "<<" ">>" #_">>>" "&" "|" "^")
           (do
             (write obj paren-locus)
             (print meth)
-            (write (first args) paren-locus))
-          #_#_(#_"|" "^" #_"&")
-          (do
-            (write obj paren-locus)
-            (print (str meth meth))
             (write (first args) paren-locus))
           ;; else plain method
           (do
