@@ -612,28 +612,11 @@
     "Returns a new stack without the item on top of the stack. Is used
      by cljs.core/pop."))
 
-(defn ^bool < [a b] (.< a b))
-
-(defn ^bool <= [a b] (.<= a b))
-
-(defn ^bool > [a b] (.> a b))
-
-(defn ^bool >= [a b] (.>= a b))
-
 (defn ^bool pos? [a] (.< 0 a))
 
 (def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
 
-(defn ^num +
-  {:inline (fn [x y] `(.+ ~x ~y))
-   :inline-arities #{2}}
-  ([] 0)
-  ;; TODO: cast to num ??
-  ([x] x)
-  ([x y] (.+ x y))
-  ([x y & more]
-   (reduce + (+ x y) more)))
-
+;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:bootstrap ^:private nary-inline
   ([op] (nary-inline nil nil op))
   ([unary-fn op] (nary-inline nil unary-fn op))
@@ -641,16 +624,14 @@
    (fn
      ([] zero)
      ([x] (unary-fn x))
-     ([x y] `(~op ~x ~y))
-     ([x y & more] (reduce (fn [a b] `(~op ~a ~b)) `(~op ~x ~y) more)))))
-
-(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
+     ([x y] `(. ~x ~op ~y))
+     ([x y & more] (reduce (fn [a b] `(. ~a ~op ~b)) `(. ~x ~op ~y) more)))))
 
 (defn ^:bootstrap ^:private >0? [n] #?(:cljd (.> n 0) :clj @#'clojure.core/>0?))
 #_(defn ^:bootstrap ^:private >1? [n] (. n ">" 1))
 
 (defn ^num *
-  {:inline (nary-inline 1 identity '.*)
+  {:inline (nary-inline 1 identity "*")
    :inline-arities any?}
   ([] 1)
   ([x] x)
@@ -659,24 +640,34 @@
    (reduce * (* x y) more)))
 
 (defn ^num /
-  {:inline (nary-inline (fn [x] (list '. 1 "/" x)) (symbol "./"))
+  {:inline (nary-inline (fn [x] (list '. 1 "/" x)) "/")
    :inline-arities >0?}
   ([x] (. 1 "/" x))
   ([x y] (. x "/" y))
   ([x y & more]
    (reduce / (/ x y) more)))
 
+(defn ^num +
+  {:inline (nary-inline 0 identity "+")
+   :inline-arities any?}
+  ([] 0)
+  ;; TODO: cast to num ??
+  ([x] x)
+  ([x y] (.+ x y))
+  ([x y & more]
+   (reduce + (+ x y) more)))
+
 (defn ^num -
-  {:inline (fn ([x] `(.- ~x)) ([x y] `(.- ~x ~y)))
-   :inline-arities #{1 2}}
+  {:inline (nary-inline (fn [x] (list '. x "-")) "-")
+   :inline-arities >0?}
   ([x] (.- 0 x))
   ([x y] (.- x y))
   ([x y & more]
    (reduce - (- x y) more)))
 
 (defn ^bool <=
-  {:inline (fn [x y] `(.<= ~x ~y))
-   :inline-arities #{2}}
+  {:inline (nary-inline (fn [_] true) "<=")
+   :inline-arities >0?}
   ([x] true)
   ([x y] (.<= x y))
   ([x y & more]
@@ -684,6 +675,42 @@
      (if (next more)
        (recur y (first more) (next more))
        (<= y (first more)))
+     false)))
+
+(defn ^bool <
+  {:inline (nary-inline (fn [_] true) "<")
+   :inline-arities >0?}
+  ([x] true)
+  ([x y] (.< x y))
+  ([x y & more]
+   (if (< x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (< y (first more)))
+     false)))
+
+(defn ^bool >=
+  {:inline (nary-inline (fn [_] true) ">=")
+   :inline-arities >0?}
+  ([x] true)
+  ([x y] (.>= x y))
+  ([x y & more]
+   (if (>= x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (>= y (first more)))
+     false)))
+
+(defn ^bool >
+  {:inline (nary-inline (fn [_] true) ">")
+   :inline-arities >0?}
+  ([x] true)
+  ([x y] (.> x y))
+  ([x y & more]
+   (if (> x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (> y (first more)))
      false)))
 
 (defn ^num inc
@@ -1923,4 +1950,12 @@
     (/ 1)
     (/ 1 2)
     (/ 1 2 3 4)
+    (- 5)
+    (+)
+    (<= 1)
+
+    (<= 1 2)
+    (<= 1 2 3 4)
+    (>= 1 2 3 4)
+    (> 1 2 3 4)
     ))
