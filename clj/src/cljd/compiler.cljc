@@ -1120,7 +1120,7 @@
               (fn [ns-map]
                 (-> ns-map
                   (cond-> (nil? (get (:imports ns-map) dartlib))
-                    (assoc dartlib {:dart-alias dart-alias :ns clj-ns}))
+                    (assoc-in [:imports dartlib] {:dart-alias dart-alias :ns clj-ns}))
                   (assoc-in [:aliases clj-alias] dartlib)
                   (update :mappings into (for [[from to] (concat (zipmap refer refer) rename)]
                                             [from (with-meta (symbol clj-alias (name to))
