@@ -151,13 +151,14 @@
 (defn dart-meta
   "Takes a clojure symbol and returns its dart metadata."
   [sym]
-  (let [m (meta sym)
-        type (some-> m :tag emit-type)]
+  (let [{:keys [tag] :as m} (meta sym)
+        type (when (and tag (not= 'some tag)) (emit-type tag))]
     (cond-> {}
       (:getter m) (assoc :dart/getter true)
       (:setter m) (assoc :dart/setter true)
       (:dart m) (assoc :dart/fn-type :native)
       (:clj m) (assoc :dart/fn-type :ifn)
+      (= tag 'some) (assoc :dart/truth :some)
       type (assoc :dart/type type :dart/truth (dart-type-truthiness type)))))
 
 (def reserved-words ; and built-in identifiers for good measure
@@ -533,15 +534,18 @@
         [bindings' dart-f] (lift-arg (seq bindings) dart-f "f")
         bindings (concat bindings' bindings)
         native-call (cons dart-f dart-args)
-        ifn-call (let [ifn-cast (list 'dart/. (list 'dart/as dart-f (emit 'cljd.core/IFn$iface env)))]
+        ifn-call (let [dart-f (if fn-type
+                                dart-f
+                                ; cast when unknown
+                                (list 'dart/as dart-f (emit 'cljd.core/IFn$iface env)))]
                    (if (< (count dart-args) *threshold*)
-                     (concat ifn-cast
-                             [(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count dart-args)))]
-                             dart-args)
-                     (concat ifn-cast
-                             [(resolve-dart-mname 'cljd.core/IFn '-invoke-more (inc *threshold*))]
-                             (subvec (vec dart-args) 0 (dec *threshold*))
-                             [(subvec (vec dart-args) (dec *threshold*))])))
+                     (list* 'dart/. dart-f
+                       (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count dart-args)))
+                       dart-args)
+                     (list* 'dart/. dart-f
+                       (resolve-dart-mname 'cljd.core/IFn '-invoke-more (inc *threshold*))
+                       (conj (subvec (vec dart-args) 0 (dec *threshold*))
+                         (subvec (vec dart-args) (dec *threshold*))))))
         dart-fn-call
         (case fn-type
           :native native-call
@@ -597,10 +601,11 @@
           prop (and prop (nil? args))
           op (if prop 'dart/.- 'dart/.)
           [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
-          dart-obj (if-some [type (:dart/type (infer-type dart-obj))]
+          dart-obj (let [{:dart/keys [type nat-type]} (infer-type dart-obj)]
                      ;; TODO SELFHOST with mirrors one can check membership
-                     (list 'dart/as dart-obj type)
-                     dart-obj)]
+                     (if (not= type nat-type)
+                       (list 'dart/as dart-obj type)
+                       dart-obj))]
       (cond->> (list* op dart-obj name dart-args)
         (seq bindings) (list 'dart/let bindings)))))
 
@@ -685,7 +690,7 @@
 
 (defn- variadic? [[params]] (some #{'&} params))
 
-(defn- emit-ifn [name bodies env]
+(defn- emit-ifn [var-name name bodies env]
   (let [synth-params (into [] (map (fn [_] (gensym "arg"))) (range *threshold*)) ; param names used when no user-specified
         more-param (gensym 'more)
         fixed-bodies (remove variadic? bodies)
@@ -785,7 +790,10 @@
                             [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
                           fixed-arities-expr)))))))
         [tmp :as binding] (dart-binding (with-meta (or name 'f) {:clj true})
-                            (emit `(~'reify cljd.core/IFn
+                            (emit `(~'reify
+                                    :var-name ~var-name
+                                    :name-hint ~name
+                                    cljd.core/IFn
                                     ~@fixed-invokes
                                     ~@invoke-exts
                                     ~@vararg-invokes
@@ -818,13 +826,14 @@
       (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name)
       dart-fn)))
 
-(defn emit-fn* [[_ & bodies] env]
-  (let [name (when (symbol? (first bodies)) (first bodies))
+(defn emit-fn* [[fn-sym & bodies] env]
+  (let [var-name (some-> fn-sym meta :var-name)
+        name (when (symbol? (first bodies)) (first bodies))
         bodies (cond-> bodies name next)
         env (cond-> env name (assoc name (dart-local name)))
         [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)]
     (if (or more-bodies (variadic? body))
-      (emit-ifn name bodies env)
+      (emit-ifn var-name name bodies env)
       (emit-dart-fn name body env))))
 
 (defn emit-method [[mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
@@ -910,9 +919,11 @@
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param"))
         named-ctor-params (map dart-local (take-nth 2 named-ctor-args))
-        class-name (dart-global "Reify")  ; TODO change this to a more telling name
+        class-name (if-some [var-name (:var-name opts)]
+                     (symbol (str (munge var-name) "$ifn"))
+                     (dart-global (or (:name-hint opts) "Reify")))
         closed-overs (transduce (map #(method-closed-overs % env)) into #{}
-                                (:methods class))
+                       (:methods class))
         class (-> class
                   (assoc :name class-name
                          :fields closed-overs
@@ -986,6 +997,13 @@
     (emit (expand-protocol-impl proto-map) env)
     (swap! nses assoc :current-ns current-ns)))
 
+(defn- fn-kind [x]
+  (when (and (seq? x) (= 'fn* (first x)))
+    (let [[maybe-name :as body] (next x)
+          [arglist-or-body :as body] (cond-> body (symbol? maybe-name) next)
+          [[args] & more-bodies] (cond-> body (vector? arglist-or-body) list)]
+      (if (or more-bodies (some '#{&} args)) :clj :dart))))
+
 (defn emit-def [[_ sym & doc-string?+expr] env]
   (let [[doc-string expr]
         (case (count doc-string?+expr)
@@ -997,11 +1015,18 @@
           (throw (ex-info "Too many arguments to def" {})))
         sym (vary-meta sym assoc :doc doc-string)
         expr (macroexpand env expr)
-        dartname (munge sym)]
-    (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
+        kind (fn-kind expr)
+        sym (cond-> sym kind (vary-meta assoc kind true))
+        expr (if (= 'fn* (first expr))
+               (cons (vary-meta (first expr) assoc :var-name sym) (next expr))
+               expr)
+        dartname (munge sym)
+        dart-fn
+        (do
+          (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
+          (emit expr env))]
     (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
-      (let [dart-fn (emit expr env)
-            dart-fn
+      (let [dart-fn
             (or
               ; peephole optimization: unwrap single let
               (and (seq? dart-fn) (= 'dart/let (first dart-fn))
@@ -1015,12 +1040,12 @@
                                  dart/fn :native
                                  :ifn)}
                           (meta dartname)))
-           :type :dartfn
+           :type :field
            :dart/code (with-out-str (write-top-dartfn dartname dart-fn))}))
       (swap! nses do-def sym
         {:dart/name dartname
          :type :field
-         :dart/code (with-out-str (write-top-field dartname (emit expr env)))}))
+         :dart/code (with-out-str (write-top-field dartname dart-fn))}))
     (emit sym env)))
 
 (defn ensure-import [the-ns]
@@ -1078,7 +1103,7 @@
         exclude (into (set exclude) (keys rename))
         include (if only (set only) any?)
         refer (for [{:keys [type name] {:keys [private]} :meta} (vals (@nses 'cljd.core))
-                    :when (and (#{:field :dartfn} type) (not private)
+                    :when (and (= :field type) (not private)
                             (include name) (not (exclude name)))]
                 name)]
     ['cljd.core
@@ -1225,12 +1250,8 @@
                 inline (binding [*ns* (ghost-ns)] (eval (list 'def (vary-meta sym select-keys [:inline :inline-arities]) nil))))
               (when-not macro
                 (let [v (macroexpand {} (last x))]
-                  (if (and (seq? v) (= 'fn* (first v)))
-                    (let [bodies (next v)
-                          bodies (cond-> bodies (symbol? (first bodies)) next)
-                          bodies (cond-> bodies (vector? (first bodies)) list)
-                          ifn (or (next bodies) (some '#{&} (ffirst bodies)))]
-                      (emit-def (list 'def (vary-meta sym assoc (if ifn :clj :dart) true) nil) {}))))))
+                  (when-some [kind (fn-kind (macroexpand {} (last x)))]
+                    (emit-def (list 'def (vary-meta sym assoc kind true) nil) {})))))
         do (run! bootstrap-eval (next x))
         nil))))
 
@@ -1246,7 +1267,8 @@
   (merge  (dissoc locus :fork :decl) (:fork locus)))
 
 (def statement-locus
-  {:pre ""
+  {:statement true
+   :pre ""
    :post ";\n"})
 
 (defn named-fn-locus [name]
@@ -1279,11 +1301,13 @@
   {:pre (str left-value "=")
    :post ";\n"})
 
-(defn var-locus [varname]
-  {:pre (str (-> varname meta :dart/type (or "var")) " " varname "=")
-   :post ";\n"
-   :decl (str (-> varname meta :dart/type (or "var")) " " varname ";\n")
-   :fork (assignment-locus varname)})
+(defn var-locus
+  ([varname] (var-locus (-> varname meta :dart/type) varname))
+  ([vartype varname]
+   {:pre (str (or vartype "var") " " varname "=")
+    :post ";\n"
+    :decl (str (or vartype "var") " " varname ";\n")
+    :fork (assignment-locus varname)}))
 
 (declare write)
 
@@ -1293,7 +1317,7 @@
               (print (-> sym meta (:dart/type "dc.dynamic")) (name sym))
               (write x expr-locus)
               (print "\n"))
-    (write x (var-locus (name sym)))))
+    (write x (var-locus (emit-type 'cljd.core/IFn$iface) (name sym)))))
 
 (defn write-top-field [sym x]
   (write (ensure-dart-expr x) (var-locus (name sym))))
@@ -1401,28 +1425,58 @@
 
 (def ^:private ^:dynamic *caught-exception-symbol* nil)
 
+(defn- widen-num-op [a b]
+  (case a
+    "dc.int" (case b ("dc.int" "dc.double") b nil)
+    "dc.double" (case b ("dc.int" "dc.double") a nil)
+    nil))
+
+(def inferences
+  {"+" (fn [a b]
+         (case a
+           "dc.int" (case b ("dc.int" "dc.double") b nil)
+           "dc.double" (case b ("dc.int" "dc.double") a nil)
+           "dc.String" (case b ("dc.String") b nil)
+           nil))
+   "*" (fn [a b]
+         (case a
+           "dc.int" (case b ("dc.int" "dc.double") b nil)
+           "dc.double" (case b ("dc.int" "dc.double") a nil)
+           "dc.String" (case b ("dc.int") a nil)
+           nil))
+   "-" widen-num-op
+   "/" widen-num-op})
+
 (defn infer-type [x]
   (let [m (meta x)]
     (->
      (cond
        (:dart/inferred m) m
-       (boolean? x) {:dart/type "dc.bool" :dart/truth :boolean}
-       (string? x) {:dart/type "dc.String" :dart/truth :some}
+       (boolean? x) {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
+       (string? x) {:dart/type "dc.String" :dart/nat-type "dc.String" :dart/truth :some}
+       (double? x) {:dart/type "dc.double" :dart/nat-type "dc.double" :dart/truth :some}
+       (integer? x) {:dart/type "dc.int" :dart/nat-type "dc.int" :dart/truth :some}
        (seq? x)
        (case (first x)
          dart/let (infer-type (last x))
          dart/fn {:dart/fn-type :native}
          dart/new {:dart/type (second x)
+                   :dart/nat-type (second x)
                    :dart/truth (dart-type-truthiness (second x))}
          dart/.
-         (let [[_ a meth b] x]
+         (let [[_ a meth b & bs] x]
            (case (name meth)
              ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "^^" "||")
-             {:dart/type "dc.bool" :dart/truth :boolean}
-             ("~" "&" "|" "^" "<<" ">>")
-             {:dart/type "dc.int" :dart/truth :some}
+             {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
+             ("~" "&" "|" "^" "<<" ">>" "~/")
+             {:dart/type "dc.int" :dart/nat-type "dc.int" :dart/truth :some}
+             ("+" "*" "-" "/")
+             (let [type (reduce (inferences meth) (map (comp :dart/type infer-type) (list* a b bs)))]
+               {:dart/type type
+                :dart/nat-type type
+                :dart/truth (dart-type-truthiness type)})
              nil))
-         dart/is {:dart/type "dc.bool" :dart/truth :boolean}
+         dart/is {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
          dart/as (let [[_ _ type] x] {:dart/type type
                                       :dart/truth (dart-type-truthiness type)})
          (when-some [{:keys [dart/type dart/truth]} (infer-type (first x))]
@@ -1607,7 +1661,7 @@
       (let [[_ obj meth & args] x]
         (print (:pre locus))
         (case meth
-          ;; operators, ! and != are cljd tricks
+          ;; operators, some are cljd tricks
           "[]" (do
                  (write obj expr-locus)
                  (print "[")
@@ -1630,7 +1684,13 @@
                 (do
                   (print meth)
                   (write obj paren-locus)))
-          ("<" ">" "&&" "||" "^^" "<=" ">=" "==" "!=" "+" "~/" "/" "*" "%" "<<" ">>" #_">>>" "&" "|" "^")
+          ("&&" "||" "^^" "+" "*" "&" "|" "^")
+          (do
+            (write obj paren-locus)
+            (doseq [arg args]
+              (print meth)
+              (write arg paren-locus)))
+          ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" #_">>>")
           (do
             (write obj paren-locus)
             (print meth)
@@ -1657,7 +1717,7 @@
         (write-args args)
         (print (:post locus))
         (:exit locus)))
-    :else (do
+    :else (when-not (:statement locus)
             (print (:pre locus))
             (write-literal x)
             (print (:post locus))
@@ -1682,7 +1742,7 @@
     (print dart-alias)
     (print ";\n"))
   (print "\n")
-  (doseq [[sym v] ns-map
+  (doseq [[sym v] (->> ns-map (filter (comp symbol? key)) (sort-by key))
           :when (symbol? sym)
           :let [{:keys [dart/code]} v]
           :when code]

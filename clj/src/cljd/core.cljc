@@ -625,15 +625,27 @@
      ([x y] `(. ~x ~op ~y))
      ([x y & more] (reduce (fn [a b] `(. ~a ~op ~b)) `(. ~x ~op ~y) more)))))
 
-(defn ^:bootstrap ^:private >0? [n] #?(:cljd (.> n 0) :clj @#'clojure.core/>0?))
-(defn ^:bootstrap ^:private >1? [n] #?(:cljd (.> n 1) :clj @#'clojure.core/>1?))
+(defn ^:bootstrap ^:private nary-cmp-inline
+  [op]
+  (fn
+    ([x] true)
+    ([x y] `(. ~x ~op ~y))
+    ([x y & more]
+     (let [bindings (mapcat (fn [x] [(gensym op) x]) (list* x y more))]
+       `(let [~@bindings]
+          (.&&
+            ~@(map (fn [[x y]] `(. ~x ~op ~y))
+                (partition 2 1 (take-nth 2 bindings)))))))))
+
+(defn ^:bootstrap ^:private >0? [n] (< 0 n))
+(defn ^:bootstrap ^:private >1? [n] (< 1 n))
 
 ;; TODO should use -equiv or equivalent
 (defn ^bool = [a b] (.== a b))
 
 (defn ^bool ==
-  {:inline (nary-inline (fn [_] true) "==")
-   :inline-arities any?}
+  {:inline (nary-cmp-inline "==")
+   :inline-arities >0?}
   ([x] true)
   ([x y] (. x "==" y))
   ([x y & more]
@@ -642,7 +654,6 @@
        (recur y (first more) (next more))
        (== y (first more)))
      false)))
-
 
 (defn ^num *
   {:inline (nary-inline 1 identity "*")
@@ -680,7 +691,7 @@
    (reduce - (- x y) more)))
 
 (defn ^bool <=
-  {:inline (nary-inline (fn [_] true) "<=")
+  {:inline (nary-cmp-inline "<=")
    :inline-arities >0?}
   ([x] true)
   ([x y] (.<= x y))
@@ -692,7 +703,7 @@
      false)))
 
 (defn ^bool <
-  {:inline (nary-inline (fn [_] true) "<")
+  {:inline (nary-cmp-inline "<")
    :inline-arities >0?}
   ([x] true)
   ([x y] (.< x y))
@@ -704,7 +715,7 @@
      false)))
 
 (defn ^bool >=
-  {:inline (nary-inline (fn [_] true) ">=")
+  {:inline (nary-cmp-inline ">=")
    :inline-arities >0?}
   ([x] true)
   ([x y] (.>= x y))
@@ -716,7 +727,7 @@
      false)))
 
 (defn ^bool >
-  {:inline (nary-inline (fn [_] true) ">")
+  {:inline (nary-cmp-inline ">")
    :inline-arities >0?}
   ([x] true)
   ([x y] (.> x y))
@@ -728,12 +739,12 @@
      false)))
 
 (defn ^num inc
-  {:inline (fn [x] `(+ ~x 1))
+  {:inline (fn [x] `(.+ ~x 1))
    :inline-arities #{1}}
   [x] (.+ x 1))
 
 (defn ^num dec
-  {:inline (fn [x] `(- ~x 1))
+  {:inline (fn [x] `(.- ~x 1))
    :inline-arities #{1}}
   [x]
   (.- x 1))
@@ -840,6 +851,17 @@
         bsr (bit-shift-right x n')]
     (bit-and (bit-xor bsr (bit-shift-right -0x8000000000000000 (dec n'))) bsr)))
 ;; 00 0000 100000001
+
+(defn ^String str
+  ([] "")
+  ([x] (if (nil? x) "" (.toString x)))
+  ([x & xs]
+   (let [sb (StringBuffer. (str x))]
+     (loop [^some xs xs]
+       (when xs
+         (.write sb (str (first xs)))
+         (recur (next xs))))
+     (.toString sb))))
 
 
 #_(
@@ -2104,5 +2126,4 @@
 (defmacro definterface [iface & meths]
   `(deftype ~(vary-meta iface assoc :abstract true) []
      :type-only true
-     ~@(for [[meth args] meths]
-         `(~meth [~'_ ~@args]))))
+     ~@(map (fn [[meth args]] `(~meth [~'_ ~@args])) meths)))
