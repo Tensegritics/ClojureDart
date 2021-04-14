@@ -815,13 +815,30 @@
    :inline-arities #{2}}
   [x n] (.-isOdd (bit-shift-right x n)))
 
-;; js version ?
+(defn ^int mod
+  "Modulus of num and div. Truncates toward negative infinity."
+  {:inline (fn [num div] `(. ~num "%" ~div))
+   :inline-arities #{2}}
+  [num div]
+  (. num "%" div))
+
+#_(defn mod
+  [num div]
+  (let [m (rem num div)]
+    (if (or (zero? m) (= (pos? num) (pos? div)))
+      m
+      (+ m div))))
+
 (defn ^int unsigned-bit-shift-right
   "Bitwise shift right, without sign-extension."
-  {:inline (fn [x n] `(bit-and (bit-shift-right ~x ~n) (bit-shift-right -0x800000000000000 (dec ~n))))
+  {:inline (fn [x n] `(let [n# (mod ~n 64)
+                            bsr# (bit-shift-right ~x n#)]
+                        (bit-and (bit-xor bsr# (bit-shift-right -0x8000000000000000 (dec n#))) bsr#)))
    :inline-arities #{2}}
   [x n]
-  (bit-and (bit-shift-right x n) (bit-shift-right -0x800000000000000 (dec n))))
+  (let [n' (mod n 64)
+        bsr (bit-shift-right x n')]
+    (bit-and (bit-xor bsr (bit-shift-right -0x8000000000000000 (dec n'))) bsr)))
 ;; 00 0000 100000001
 
 
