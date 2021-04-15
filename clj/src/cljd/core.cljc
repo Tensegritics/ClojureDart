@@ -35,6 +35,7 @@
 (def ^{:clj true} list)
 (def ^{:clj true} list*)
 (def ^{:clj true} map)
+(def ^{:clj true} mapcat)
 (def ^{:dart true} map?)
 (def ^{:dart true} meta)
 (def ^{:dart true} name)
@@ -426,6 +427,28 @@
           (list* 'fn* name new-sigs)
           (cons 'fn* new-sigs))
         (meta &form))))
+
+(defn- ^:bootstrap roll-leading-opts [body]
+  (loop [[k v & more :as body] (seq body) opts {}]
+    (if (and body (keyword? k))
+      (recur more (assoc opts k v))
+      [opts body])))
+
+(defmacro deftype [& args]
+  (let [[class-name fields & args] args
+        [opts specs] (roll-leading-opts args)]
+    `(do
+       (~'deftype* ~class-name ~fields ~opts ~@specs)
+       ~(when-not (:type-only opts)
+          `(defn
+             ~(symbol (str "->" class-name))
+             [~@fields]
+             (new ~class-name ~@fields))))))
+
+(defmacro definterface [iface & meths]
+  `(deftype ~(vary-meta iface assoc :abstract true) []
+     :type-only true
+     ~@(map (fn [[meth args]] `(~meth [~'_ ~@args])) meths)))
 
 (defmacro and
   "Evaluates exprs one at a time, from left to right. If a form
@@ -2104,26 +2127,3 @@
 
 
   )
-
-(defn- ^:bootstrap roll-leading-opts [body]
-  (loop [[k v & more :as body] (seq body) opts {}]
-    (if (and body (keyword? k))
-      (recur more (assoc opts k v))
-      [opts body])))
-
-(defmacro deftype [& args]
-  (let [[class-name fields & args] args
-        [opts specs] (roll-leading-opts args)]
-    `(do
-       (~'deftype* ~class-name ~fields ~opts ~@specs)
-       ~(when-not (:type-only opts)
-          `(defn
-             ~(symbol (str "->" class-name))
-             [~@fields]
-             (new ~class-name ~@fields))))))
-
-
-(defmacro definterface [iface & meths]
-  `(deftype ~(vary-meta iface assoc :abstract true) []
-     :type-only true
-     ~@(map (fn [[meth args]] `(~meth [~'_ ~@args])) meths)))
