@@ -539,7 +539,7 @@
 
 #_(defn first [coll] (if (.== coll nil) nil (.-first coll)))
 
-(defn nth [x i default]
+#_(defn nth [x i default]
   (if (.< i (.-length x))
     (. x "[]" i)
     default))
@@ -664,7 +664,7 @@
 (defn ^:bootstrap ^:private >1? [n] (< 1 n))
 
 ;; TODO should use -equiv or equivalent
-(defn ^bool = [a b] (.== a b))
+#_(defn ^bool = [a b] (.== a b))
 
 (defn ^bool ==
   {:inline (nary-cmp-inline "==")
@@ -815,14 +815,16 @@
 
 (defn ^int bit-shift-left
   "Bitwise shift left"
-  {:inline (fn [x n] `(. ~x "<<" ~n))
+  {:inline (fn [x n] `(. ~x "<<" (bit-and ~n 63)))
    :inline-arities #{2}}
-  [x n] (. x "<<" n))
+  ; dart does not support negative n values. bit-and acts as a modulo.
+  [x n] (. x "<<" (bit-and n 63)))
 
 (defn ^int bit-shift-right
-  {:inline (fn [x n] `(. ~x ">>" ~n))
+  {:inline (fn [x n] `(. ~x ">>" (bit-and ~n 63)))
    :inline-arities #{2}}
-  [x n] (. x ">>" n))
+  ; dart does not support negative n values. bit-and acts as a modulo.
+  [x n] (. x ">>" (bit-and n 63)))
 
 (defn ^int bit-clear
   "Clear bit at index n"
@@ -855,13 +857,6 @@
    :inline-arities #{2}}
   [num div]
   (. num "%" div))
-
-#_(defn mod
-  [num div]
-  (let [m (rem num div)]
-    (if (or (zero? m) (= (pos? num) (pos? div)))
-      m
-      (+ m div))))
 
 (defn ^int unsigned-bit-shift-right
   "Bitwise shift right, without sign-extension."
@@ -2113,17 +2108,8 @@
     "valeur2"))
 
 (defn main []
-  (bit-and 1 2 3 4 5 6 78)
-  (bit-or 1 2 3 4 5 6 78)
-  (bit-xor 1 2 3 4)
-  (bit-and-not 1 2)
-  (bit-and-not 1 2 3 4)
-  (^:dart dart:core/print (bit-shift-left 1 5))
-  (^:dart dart:core/print (bit-shift-right 32 5))
-  (^:dart dart:core/print (unsigned-bit-shift-right 32 5))
-
-  (^:dart dart:core/print (bit-shift-right -32 5))
-  (^:dart dart:core/print (unsigned-bit-shift-right -32 5))
+  (^:dart dart:core/print
+   (bit-shift-left -1 -1))
 
 
   )
