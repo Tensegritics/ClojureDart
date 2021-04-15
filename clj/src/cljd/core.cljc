@@ -858,17 +858,25 @@
   [num div]
   (. num "%" div))
 
-(defn ^int unsigned-bit-shift-right
-  "Bitwise shift right, without sign-extension."
-  {:inline (fn [x n] `(let [n# (mod ~n 64)
-                            bsr# (bit-shift-right ~x n#)]
-                        (bit-and (bit-xor bsr# (bit-shift-right -0x8000000000000000 (dec n#))) bsr#)))
-   :inline-arities #{2}}
-  [x n]
-  (let [n' (mod n 64)
-        bsr (bit-shift-right x n')]
-    (bit-and (bit-xor bsr (bit-shift-right -0x8000000000000000 (dec n'))) bsr)))
-;; 00 0000 100000001
+(defn u32 [x] (.& 0xFFFFFFFF x))
+
+(defn u32-add [x y] (u32 (.+ x y)))
+
+; can't work for dartjs (see Math/imul)
+(defn u32-mul [x y] (u32 (.* x y)))
+
+(defn u32-bit-shift-right [x n]
+  (.>> x (.& 31 n)))
+
+(defn u32-bit-shift-left [x n]
+  (u32 (.>> x (.& 31 n))))
+
+(defn u32-rol [x n]
+  (.|
+   (u32-bit-shift-left x n)
+   (u32-bit-shift-right x (.- n))))
+
+
 
 (defn ^String str
   ([] "")
