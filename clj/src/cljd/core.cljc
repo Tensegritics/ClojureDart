@@ -544,7 +544,7 @@
     (. x "[]" i)
     default))
 
-(defn ^bool zero? [num] (= 0 num))
+
 
 (defprotocol ISeq
   "Protocol for collections to provide access to their items as sequences."
@@ -772,6 +772,12 @@
   [x]
   (.- x 1))
 
+(defn ^bool zero?
+  {:inline (fn [num] `(.== 0 ~num))
+   :inline-arities #{1}}
+  [num]
+  (== 0 num))
+
 ;; bit ops
 (defn ^int bit-not
   "Bitwise complement"
@@ -858,25 +864,125 @@
   [num div]
   (. num "%" div))
 
-(defn u32 [x] (.& 0xFFFFFFFF x))
+(defn ^int u32
+  {:inline (fn [x] `(.& 0xFFFFFFFF ~x))
+   :inline-arities #{1}}
+  [x] (.& 0xFFFFFFFF x))
 
-(defn u32-add [x y] (u32 (.+ x y)))
+(defn ^int u32-add
+  {:inline (fn [x y] `(u32 (.+ ~x ~y)))
+   :inline-arities #{2}}
+  [x y]
+  (u32 (.+ x y)))
 
 ; can't work for dartjs (see Math/imul)
-(defn u32-mul [x y] (u32 (.* x y)))
+(defn ^int u32-mul
+  {:inline (fn [x y] `(u32 (.* ~x ~y)))
+   :inline-arities #{2}}
+  [x y]
+  (u32 (.* x y)))
 
-(defn u32-bit-shift-right [x n]
+(defn ^int u32-bit-shift-right
+  {:inline (fn [x n] `(.>> ~x (.& 31 ~n)))
+   :inline-arities #{2}}
+  [x n]
   (.>> x (.& 31 n)))
 
-(defn u32-bit-shift-left [x n]
-  (u32 (.>> x (.& 31 n))))
+(defn ^int u32-bit-shift-left
+  {:inline (fn [x n] `(u32 (.<< ~x (.& 31 ~n))))
+   :inline-arities #{2}}
+  [x n]
+  (u32 (.<< x (.& 31 n))))
 
-(defn u32-rol [x n]
+(defn ^int u32-rol
+  {:inline (fn [x n] `(let [x# ~x
+                            n# ~n]
+                        (.|
+                         (u32-bit-shift-left x# n#)
+                         (u32-bit-shift-right x# (.- n#)))))
+   :inline-arities #{2}}
+  [x n]
   (.|
    (u32-bit-shift-left x n)
    (u32-bit-shift-right x (.- n))))
 
+;; murmur3
+;; https://en.wikipedia.org/wiki/MurmurHash#Algorithm
+(defn ^int m3-mix-k1 [k1]
+  (u32-mul (u32-rol (u32-mul k1 0xcc9e2d51) 15) 0x1b873593))
 
+(defn ^int m3-mix-h1 [h1 k1]
+  (u32-add (u32-mul (u32-rol (bit-xor h1 k1) 13) 5) 0xe6546b64))
+
+(defn ^int m3-fmix [h1 len]
+  ;; TODO : rewrite with as-> when repeat is implemented
+  (let [hash (bit-xor h1 len)
+        hash (bit-xor hash (u32-bit-shift-right hash 16))
+        hash (u32-mul hash 0x85ebca6b)
+        hash (bit-xor hash (u32-bit-shift-right hash 13))
+        hash (u32-mul hash 0xc2b2ae35)]
+    (bit-xor hash (u32-bit-shift-right hash 16))))
+
+(defn ^int m3-hash-u32 [in]
+  (let [k1 (m3-mix-k1 in)
+        h1 (m3-mix-h1 0 k1)]
+    (m3-fmix h1 4)))
+
+(defn ^int m3-hash-int [in]
+  (if (zero? in)
+    in
+    (let [upper (u32 (bit-shift-right in 32))
+          lower (u32 in)
+          k (m3-mix-k1 lower)
+          h (m3-mix-h1 0 k)
+          k (m3-mix-k1 upper)
+          h (m3-mix-h1 h k)]
+      (m3-fmix h 8))))
+
+(defprotocol IHash
+  "Protocol for adding hashing functionality to a type."
+  (-hash [o] "Returns the hash code of o."))
+
+(defn ^bool identical?
+  {:inline (fn [x y] `(dart:core/identical ~x ~y))
+   :inline-arities #{2}}
+  [x y]
+  (dart:core/identical x y))
+
+(defn ^bool true?
+  {:inline (fn [x y] `(dart:core/identical ~x true))
+   :inline-arities #{2}}
+  [x]
+  (dart:core/identical x true))
+
+(defn ^bool false?
+  {:inline (fn [x y] `(dart:core/identical ~x false))
+   :inline-arities #{2}}
+  [x]
+  (dart:core/identical x false))
+
+(extend-type bool
+  IHash
+  (-hash [o]
+    (cond
+      (true? o) 1231
+      (false? o) 1237)))
+
+(extend-type double
+  IHash
+  (-hash [o]
+    ; values taken from cljs
+    (cond
+      (.== double/negativeInfinity o) -1048576
+      (.== double/infinity o) 2146435072
+      (.== double/nan o) 2146959360
+      true (m3-hash-int (.-hashCode o)))))
+
+(extend-type Object
+  IHash
+  (-hash [o] (m3-hash-int (.-hashCode o))))
+
+(defn ^int hash [o] (-hash o))
 
 (defn ^String str
   ([] "")
