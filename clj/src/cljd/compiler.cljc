@@ -1068,7 +1068,7 @@
           (if (= (:current-ns @nses) the-ns)
             dart-name
             (symbol (str (ensure-import the-ns) "." dart-name))))
-        :dart v
+        :dart (vary-meta v assoc :dart/fn-type :native)
         #_"TODO next form should throw"
         (munge (symbol nil (str "GLOBAL_" x))))
       (vary-meta merge (dart-meta x)))))
