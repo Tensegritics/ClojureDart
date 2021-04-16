@@ -902,7 +902,8 @@
                          :def (case (:type x)
                                 :class %
                                 :protocol (symbol (name (:ns x)) (name (:iface x))))
-                         :dart %)) ifaces-or-protocols)
+                         :dart %
+                         (throw (Exception. (str "Can't resolve " %))))) ifaces-or-protocols)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
         dart-methods (map #(emit-method % env) methods)]
     {:extends (emit base env)
