@@ -15,18 +15,18 @@
 (def ^{:dart true} butlast)
 (def ^{:clj true} concat)
 (def ^{:clj true} conj)
-(def ^{:dart true} cons)
+#_(def ^{:dart true} cons)
 (def ^{:dart true} contains?)
 (def ^{:dart true} count)
 (def ^{:clj true} dissoc)
 (def ^{:clj true} drop)
 (def ^{:dart true} every?)
-(def ^{:dart true} first)
+#_(def ^{:dart true} first)
 (def ^{:clj true} gensym)
 (def ^{:clj true} get)
 (def ^{:dart true} ident?)
 (def ^{:clj true} interleave)
-(def ^{:dart true} inc)
+#_(def ^{:dart true} inc)
 (def ^{:dart true} key)
 (def ^{:dart true} keys)
 (def ^{:clj true} keyword)
@@ -41,16 +41,16 @@
 (def ^{:dart true} name)
 (def ^{:dart true} namespace)
 (def ^{:dart true} not)
-(def ^{:dart true} next)
+#_(def ^{:dart true} next)
 (def ^{:dart true} nnext)
 (def ^{:clj true} partition)
 (def ^{:clj true} reduce)
 (def ^{:dart true} second)
-(def ^{:dart true} seq)
+#_(def ^{:dart true} seq)
 (def ^{:dart true} seq?)
 (def ^{:dart true} set)
 (def ^{:dart true} some)
-(def ^{:clj true} str)
+#_(def ^{:clj true} str)
 (def ^{:dart true} string?)
 (def ^{:clj true} subvec)
 (def ^{:clj true} symbol)
@@ -239,6 +239,12 @@
                             (recur (next p) (cons (first p) d))
                             d))]
                (cons `defn decl))))
+
+(defn ^bool satisfies?
+  {:inline (fn [protocol x] `(.satisfies ~protocol ~x))
+   :inline-arities #{2}}
+  [^IProtocol protocol x]
+  (.satisfies protocol x))
 
 (defn ^bool nil?
   {:inline-arities #{1}
@@ -521,30 +527,34 @@
 
 ;;; NOT THE REAL THING BELOW
 
-(extend-type String
-  IFn
-  (-invoke
-    ([s] "one arg" #_(str s ))
-    ([s x] (.+ x " coucou"))))
-
-(defn ^num count [x] (if (.== nil x) 0 (.-length x)))
-
-;; used by writer when encounter ()
+;; TODO
 (def empty-list nil)
-
-#_(defn next [coll]
-  (let [s (.sublist coll 1)]
-    (when (.< 0 (.-length s))
-      s)))
-
-#_(defn first [coll] (if (.== coll nil) nil (.-first coll)))
 
 #_(defn nth [x i default]
   (if (.< i (.-length x))
     (. x "[]" i)
     default))
 
+(defprotocol ISeqable
+  "Protocol for adding the ability to a type to be transformed into a sequence."
+  (-seq [o]
+    "Returns a seq of o, or nil if o is empty."))
 
+(defn seq
+  "Returns a seq on the collection. If the collection is
+    empty, returns nil.  (seq nil) returns nil. seq also works on
+    Strings, native Java arrays (of reference types) and any objects
+    that implement Iterable. Note that seqs cache values, thus seq
+    should not be used on any Iterable whose iterator repeatedly
+    returns the same mutable object."
+  ;; TODO FIX urgently
+  #_{:inline (fn [coll] `(-seq ~coll))
+   :inline-arities #{1}}
+  [coll] (-seq coll))
+
+(extend-type Null
+  ISeqable
+  (-seq [coll] nil))
 
 (defprotocol ISeq
   "Protocol for collections to provide access to their items as sequences."
@@ -554,28 +564,41 @@
     "Returns a new collection of coll without the first item. It should
      always return a seq, e.g.
      (rest []) => ()
-     (rest nil) => ()"))
-
-(defn foobar [x] (let [[a b] x] (.+ a b)) (-first x))
-
-(defprotocol ASeq
-  "Marker protocol indicating an array sequence.")
-
-(defprotocol INext
-  "Protocol for accessing the next items of a collection."
+     (rest nil) => ()")
   (-next [coll]
     "Returns a new collection of coll without the first item. In contrast to
      rest, it should return nil if there are no more items, e.g.
      (next []) => nil
      (next nil) => nil"))
 
+(defn first
+  "Returns the first item in the collection. Calls seq on its
+   argument. If coll is nil, returns nil."
+  [coll]
+  (let [s (seq coll)]
+    (when s (-first s))))
+
+(defn next
+  "Returns a seq of the items after the first. Calls seq on its
+  argument.  If there are no more items, returns nil."
+  [coll]
+  #_(some-> (seq coll) -next)
+  (let [s (seq coll)]
+    (when s (-next s))))
+
+
+(defn rest
+  "Returns a possibly empty seq of the items after the first. Calls seq on its
+  argument."
+  [coll]
+  (if (satisfies? ISeq coll)
+    (-rest coll)
+    #_(some-> (seq coll) -rest)
+    (let [s (seq coll)]
+      (when s (-rest s)))))
+
 (defprotocol ISequential
   "Marker interface indicating a persistent collection of sequential items")
-
-(defprotocol ISeqable
-  "Protocol for adding the ability to a type to be transformed into a sequence."
-  (-seq [o]
-    "Returns a seq of o, or nil if o is empty."))
 
 (defprotocol IList
   "Marker interface indicating a persistent list")
@@ -587,11 +610,6 @@
      should be added to the most efficient place, e.g.
      (conj [1 2 3 4] 5) => [1 2 3 4 5]
      (conj '(2 3 4 5) 1) => '(1 2 3 4 5)"))
-
-(defprotocol ICloneable
-  "Protocol for cloning a value."
-  (-clone [value]
-    "Creates a clone of value."))
 
 (defprotocol ICounted
   "Protocol for adding the ability to count a collection in constant time."
@@ -632,6 +650,19 @@
   (-pop [coll]
     "Returns a new stack without the item on top of the stack. Is used
      by cljs.core/pop."))
+
+(defprotocol IWithMeta
+  "Protocol for adding metadata to an object."
+  (-with-meta [o meta]
+    "Returns a new object with value of o and metadata meta added to it."))
+
+(defprotocol IMeta
+  "Protocol for accessing the metadata of an object."
+  (-meta [o] "Returns the metadata of object o."))
+
+(defprotocol IHash
+  "Protocol for adding hashing functionality to a type."
+  (-hash [o] "Returns the hash code of o."))
 
 (defn ^bool pos? [a] (.< 0 a))
 
@@ -939,25 +970,22 @@
           h (m3-mix-h1 h k)]
       (m3-fmix h 8))))
 
-(defprotocol IHash
-  "Protocol for adding hashing functionality to a type."
-  (-hash [o] "Returns the hash code of o."))
-
 (defn ^bool identical?
-  {:inline (fn [x y] `(dart:core/identical ~x ~y))
+  ;; TODO FIX Urgently
+  #_{:inline (fn [x y] `(dart:core/identical ~x ~y))
    :inline-arities #{2}}
   [x y]
   (dart:core/identical x y))
 
 (defn ^bool true?
-  {:inline (fn [x y] `(dart:core/identical ~x true))
-   :inline-arities #{2}}
+  #_{:inline (fn [x] `(dart:core/identical ~x true))
+   :inline-arities #{1}}
   [x]
   (dart:core/identical x true))
 
 (defn ^bool false?
-  {:inline (fn [x y] `(dart:core/identical ~x false))
-   :inline-arities #{2}}
+  #_{:inline (fn [x] `(dart:core/identical ~x false))
+   :inline-arities #{1}}
   [x]
   (dart:core/identical x false))
 
@@ -973,16 +1001,76 @@
   (-hash [o]
     ; values taken from cljs
     (cond
-      (.== double/negativeInfinity o) -1048576
-      (.== double/infinity o) 2146435072
-      (.== double/nan o) 2146959360
+      (.== (.-negativeInfinity double) o) -1048576
+      (.== (.-infinity double) o) 2146435072
+      (.== (.-nan double) o) 2146959360
       true (m3-hash-int (.-hashCode o)))))
 
 (extend-type Object
   IHash
   (-hash [o] (m3-hash-int (.-hashCode o))))
 
-(defn ^int hash [o] (-hash o))
+(defn ^int hash
+  {:inline (fn [o] `(-hash ~o))
+   :inline-arities #{1}}
+  [o] (-hash o))
+
+(deftype Cons [meta first rest ^:mutable __hash]
+  Object
+  ;; TODO FIXME urgently
+  #_(^String toString [coll] "TODO" #_(pr-str* coll))
+
+  IList
+
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (Cons. new-meta first rest __hash)))
+
+  IMeta
+  (-meta [coll] meta)
+
+  ISeq
+  (-first [coll] first)
+  (-rest [coll] (if (nil? rest) empty-list rest))
+  (-next [coll] (if (nil? rest) nil (seq rest)))
+
+  ICollection
+  (-conj [coll o] (Cons. nil o coll nil))
+
+  #_#_IEmptyableCollection
+  (-empty [coll] empty-list)
+
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+
+  ISeqable
+  (-seq [coll] coll)
+
+  #_#_#_IReduce
+  (-reduce [coll f] (seq-reduce f coll))
+  (-reduce [coll f start] (seq-reduce f start coll)))
+
+(defn cons
+  "Returns a new seq where x is the first element and coll is the rest."
+  [x coll]
+  (cond
+    ;; TODO List
+    #_#_(nil? coll)             (List. nil x nil 1 nil)
+    (satisfies? ISeq coll) (Cons. nil x coll nil)
+    true                   (Cons. nil x (seq coll) nil)))
+
+(defn seq-iterator [^Iterator iter] nil)
+
+(extend-type Iterable
+  ISeqable
+  (-seq [coll] (seq-iterator (.-iterator ^Iterable coll)))) ; TODO infer argument type in extend-type
+
 
 (defn ^String str
   ([] "")
@@ -2222,8 +2310,28 @@
     "valeur2"))
 
 (defn main []
-  (^:dart dart:core/print
-   (bit-shift-left -1 -1))
+
+  (let [one (cons 1 (cons 2 (cons 3 nil)))]
 
 
-  )
+    (^:dart dart:core/print
+     (first one))
+
+
+    (^:dart dart:core/print
+     (rest one))
+
+    (^:dart dart:core/print
+     (first (rest one)))
+
+
+    (^:dart dart:core/print
+     (first (next one)))
+
+    (^:dart dart:core/print
+     (first (next (next one))))
+
+    (^:dart dart:core/print
+     (first (next (next (next one)))))
+
+    ))
