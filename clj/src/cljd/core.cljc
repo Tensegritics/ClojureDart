@@ -525,8 +525,6 @@
   {:added "1.0"}
   [& body])
 
-;;; NOT THE REAL THING BELOW
-
 ;; TODO
 (def empty-list nil)
 
@@ -586,7 +584,6 @@
   (let [s (seq coll)]
     (when s (-next s))))
 
-
 (defn rest
   "Returns a possibly empty seq of the items after the first. Calls seq on its
   argument."
@@ -611,10 +608,41 @@
      (conj [1 2 3 4] 5) => [1 2 3 4 5]
      (conj '(2 3 4 5) 1) => '(1 2 3 4 5)"))
 
+(defprotocol IReduce
+  "Protocol for seq types that can reduce themselves.
+  Called by cljs.core/reduce."
+  (-reduce [coll f] [coll f start]
+    "f should be a function of 2 arguments. If start is not supplied,
+     returns the result of applying f to the first 2 items in coll, then
+     applying f to that result and the 3rd item, etc."))
+
+;; TODO handle Reduced
+(defn reduce
+  ([f coll]
+   (if (satisfies? IReduce coll)
+     (-reduce coll f)
+     (if-some [[x & xs] (seq coll)]
+       (if-some [[y & xs] xs]
+         (reduce f (f x y) xs)
+         x)
+       (f))))
+  ([f init coll]
+   (if (satisfies? IReduce coll)
+     (-reduce coll f init)
+     (loop [acc init xs (seq coll)]
+       (if-some [[x & xs] xs]
+         (recur (f acc x) xs)
+         acc)))))
+
 (defprotocol ICounted
   "Protocol for adding the ability to count a collection in constant time."
   (-count [coll]
     "Calculates the count of coll in constant time."))
+
+(defn ^int count [coll]
+  (if (satisfies? ICounted coll)
+    (-count coll)
+    (reduce (fn [n _] (inc n)) 0 coll)))
 
 (defprotocol IVector
   "Protocol for adding vector functionality to collections."
@@ -628,6 +656,11 @@
   (-assoc [coll k v]
     "Returns a new collection of coll with a mapping from key k to
      value v added to it."))
+
+(defprotocol IEquiv
+  "Protocol for adding value comparison functionality to a type."
+  (-equiv [o other]
+   "Returns true if o and other are equal, false otherwise."))
 
 (defprotocol IIndexed
   "Protocol for collections to provide indexed-based access to their items."
@@ -1065,12 +1098,104 @@
     (satisfies? ISeq coll) (Cons. nil x coll nil)
     true                   (Cons. nil x (seq coll) nil)))
 
-(defn seq-iterator [^Iterator iter] nil)
+(def ^:dart seq-iterator nil)
+
+(deftype IteratorSeq [value iter ^:mutable _rest]
+  ISeqable
+  (-seq [this] this)
+  ISeq
+  (-first [coll] value)
+  (-rest [coll]
+    (when (nil? _rest) (set! _rest (seq-iterator iter)))
+    (if (nil? _rest) empty-list _rest))
+  (-next [coll]
+    (when (nil? _rest) (set! _rest (seq-iterator iter)))
+    _rest))
+
+(defn seq-iterator [^Iterator iter]
+  (when (.moveNext iter)
+    (IteratorSeq. (.-current iter) iter nil)))
 
 (extend-type Iterable
   ISeqable
   (-seq [coll] (seq-iterator (.-iterator ^Iterable coll)))) ; TODO infer argument type in extend-type
 
+(deftype StringSeq [string i meta]
+  #_Object
+  #_(toString [coll]
+      (pr-str* coll))
+
+  ISeqable
+  (-seq [this] (when (< i (.-length string)) this))
+  IMeta
+  (-meta [coll] meta)
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (StringSeq. string i new-meta)))
+  ISeq
+  (-first [this] (. string "[]" i))
+  (-rest [_]
+    (if (< (inc i) (.-length string))
+      (StringSeq. string (inc i) nil)
+      empty-list))
+  (-next [_]
+    (if (< (inc i) (.-length string))
+      (StringSeq. string (inc i) nil)
+      nil))
+  ICounted
+  (-count [_] (- (.-length string) i))
+  IIndexed
+  (-nth [coll n]
+    (if (< n 0)
+      (throw (ArgumentError. "Index out of bounds"))
+      (let [i (+ n i)]
+        (if (< i (.-length string))
+          (. string "[]" i)
+          (throw (ArgumentError. "Index out of bounds"))))))
+  (-nth [coll n not-found]
+    (if (< n 0)
+      not-found
+      (let [i (+ n i)]
+        (if (< i (.-length string))
+          (. string "[]" i)
+          not-found))))
+  ISequential
+  IEquiv
+  (-equiv [coll other] (== string (.-string other)))
+  ICollection
+  (-conj [coll o] (cons o coll))
+  #_#_IEmptyableCollection
+  (-empty [coll] (.-EMPTY List))
+  IReduce
+  (-reduce [coll f]
+    (let [l (.-length string)
+          x (. string "[]" i)]
+      (if (< (inc i) l)
+        (loop [idx (inc i) acc x]
+          (if (< idx l)
+            (recur (inc idx) (f acc (. string "[]" idx) ))
+            acc))
+        x)))
+  (-reduce [coll f start]
+    (let [l (.-length string)]
+      (loop [acc start idx i]
+        (if (< idx l)
+          (recur (f acc (. string "[]" idx) ) (inc idx))
+          acc))))
+  IHash
+  (-hash [coll] (m3-hash-int (.-hashCode string)))
+
+  #_#_IReversible
+  (-rseq [coll]
+    (let [c (-count coll)]
+      (if (pos? c)
+        (RSeq. coll (dec c) nil)))))
+
+(extend-type String
+  ISeqable
+  (-seq [coll] (when (.-isNotEmpty coll) (StringSeq. coll 0 nil))))
 
 (defn ^String str
   ([] "")
@@ -1086,49 +1211,7 @@
 
 #_(
 
-  (defn count [x] (if (.== nil x) 0 (.-length x)))
 
-   (defn seq [coll] coll)
-
-   (defn next [coll]
-     (let [s (.sublist coll 1)]
-       (when (.< 0 (.-length s))
-         s)))
-
-   (defn first [coll] (if (.== coll nil) nil (.-first coll)))
-
-   (defn nth [x i default]
-     (if (.< i (.-length x))
-       (. x "[]" i)
-       default))
-
-   (defn = [a b] (.== a b))
-
-   (defn < [a b] (.< a b))
-
-   (defn pos? [a] (.< 0 a))
-
-   (defn + [a b] (.+ a b))
-
-   (defn - [a b] (.- a b))
-
-   (defn ^bool nil? [x] (.== nil x))
-
-(defn ^bool not
-  "Returns true if x is logical false, false otherwise."
-  [x] (if x false true))
-
-(defn ^:clj str
-  ([] "")
-  ([x] (if (nil? x)
-         ""
-         (.toString x)))
-  ([x & ys]
-   ;; TODO : maybe use writeAll ?
-   (loop [sb (dc/StringBuffer. (str x)) more ys]
-     (if more
-       (recur (doto sb (.write (str (first more)))) (next more))
-       (.toString sb)))))
 
 (defn ^num alength [array] (.-length array))
 
@@ -2290,28 +2373,10 @@
   )
    )
 
-(deftype Person [name ^:mutable age]
-  Object
-  (changeage [_ agee] (set! age agee)))
-
-(extend-type Person
-  IFn
-  (-invoke ([person] (.+ "Je m'appelle " name))))
-
-(defprotocol XXX
-  (-xxx
-    [this]
-    [this a b c d e f h i j k l m n o p]))
-
-(deftype Coucou []
-  XXX
-  (-xxx [this] "valeur")
-  (-xxx [this a b c d e f h i j k l m n o p]
-    "valeur2"))
 
 (defn main []
 
-  (let [one (cons 1 (cons 2 (cons 3 nil)))]
+  #_(let [one (cons 1 (cons 2 (cons 3 nil)))]
 
 
     (^:dart dart:core/print
@@ -2334,4 +2399,54 @@
     (^:dart dart:core/print
      (first (next (next (next one)))))
 
-    ))
+    (^:dart dart:core/print
+    )
+
+    )
+
+  #_(let [coucou #dart [1 2]]
+
+    (^:dart dart:core/print
+     (first coucou))
+
+    (^:dart dart:core/print
+     ())
+
+    (^:dart dart:core/print
+     (first coucou))
+
+    (^:dart dart:core/print
+     (first (rest coucou)))
+
+    (^:dart dart:core/print
+     (first coucou))
+
+    (^:dart dart:core/print
+     (first (rest coucou)))
+
+    #_(^:dart dart:core/print
+     (first (rest (rest coucou))))
+
+    )
+
+
+
+
+  (^:dart dart:core/print
+   (reduce #(str %1 " " %2) "START: " (seq "abc"))
+   )
+
+  (^:dart dart:core/print
+   (reduce #(str %1 " " %2) "START: " (seq "a"))
+   )
+
+  (^:dart dart:core/print
+   (reduce #(str %1 " " %2) (seq "a"))
+   )
+
+  (^:dart dart:core/print
+   (reduce (fn [] "aa") "")
+   )
+
+
+  )
