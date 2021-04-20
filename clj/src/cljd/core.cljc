@@ -1052,39 +1052,29 @@
   Object
   ;; TODO FIXME urgently
   #_(^String toString [coll] "TODO" #_(pr-str* coll))
-
   IList
-
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
       (Cons. new-meta first rest __hash)))
-
   IMeta
   (-meta [coll] meta)
-
   ISeq
   (-first [coll] first)
   (-rest [coll] (if (nil? rest) empty-list rest))
   (-next [coll] (if (nil? rest) nil (seq rest)))
-
   ICollection
   (-conj [coll o] (Cons. nil o coll nil))
-
   #_#_IEmptyableCollection
   (-empty [coll] empty-list)
-
   ISequential
   #_#_IEquiv
   (-equiv [coll other] (equiv-sequential coll other))
-
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
-
   ISeqable
   (-seq [coll] coll)
-
   #_#_#_IReduce
   (-reduce [coll f] (seq-reduce f coll))
   (-reduce [coll f start] (seq-reduce f start coll)))
@@ -1186,7 +1176,7 @@
           acc))))
   IHash
   (-hash [coll] (m3-hash-int (.-hashCode string)))
-
+; TODO
   #_#_IReversible
   (-rseq [coll]
     (let [c (-count coll)]
@@ -1231,183 +1221,6 @@
    val)
   ([array idx idx2 & idxv]
    (apply aset (aget array idx) idx2 idxv)))
-
-(def cons nil)
-
-(deftype IndexedSeq [arr i meta]
-  #_Object
-  #_(toString [coll]
-    (pr-str* coll))
-  #_(equiv [this other]
-    (-equiv this other))
-  #_(indexOf [coll x]
-    (-indexOf coll x 0))
-  #_(indexOf [coll x start]
-    (-indexOf coll x start))
-  #_(lastIndexOf [coll x]
-    (-lastIndexOf coll x (count coll)))
-  #_(lastIndexOf [coll x start]
-    (-lastIndexOf coll x start))
-
-  ICloneable
-  (-clone [_] (IndexedSeq. arr i meta))
-
-  ISeqable
-  (-seq [this]
-    (when (< i (alength arr))
-      this))
-
-  #_#_IMeta
-  (-meta [coll] meta)
-  #_#_IWithMeta
-  (-with-meta [coll new-meta]
-    (if (identical? new-meta meta)
-      coll
-      (IndexedSeq. arr i new-meta)))
-
-  ASeq
-  ISeq
-  (-first [this] (aget arr i))
-  (-rest [_] (if (< (inc i) (alength arr))
-               (IndexedSeq. arr (inc i) nil)
-               ()))
-
-  INext
-  (-next [_] (if (< (inc i) (alength arr))
-               (IndexedSeq. arr (inc i) nil)
-               nil))
-
-  ICounted
-  (-count [_]
-    ; TODO : use max
-    (let [l (- (alength arr) i)]
-      (if (< 0 l) l 0))
-    #_(max 0 (- (alength arr) i)))
-
-  IIndexed
-  (-nth [coll n]
-    (let [i (+ n i)]
-      (if (and (<= 0 i) (< i (alength arr)))
-        (aget arr i)
-        (throw (UnimplementedError. "Index out of bounds")))))
-  (-nth [coll n not-found]
-    (let [i (+ n i)]
-      (if (and (<= 0 i) (< i (alength arr)))
-        (aget arr i)
-        not-found)))
-
-  ISequential
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
-
-  #_#_IIterable
-  (-iterator [coll]
-    (IndexedSeqIterator. arr i))
-
-  ICollection
-  (-conj [coll o] (cons o coll))
-
-  #_#_IEmptyableCollection
-  (-empty [coll] (.-EMPTY List))
-
-  #_#_#_IReduce
-  (-reduce [coll f]
-    (array-reduce arr f (aget arr i) (inc i)))
-  (-reduce [coll f start]
-    (array-reduce arr f start i))
-
-  #_#_IHash
-  (-hash [coll] (hash-ordered-coll coll))
-
-  #_#_IReversible
-  (-rseq [coll]
-    (let [c (-count coll)]
-      (if (pos? c)
-        (RSeq. coll (dec c) nil)))))
-
-(defn ^ISeq seq
-  "Returns a seq on the collection. If the collection is
-  empty, returns nil.  (seq nil) returns nil. seq also works on
-  Strings."
-  [coll]
-  (when-not (nil? coll)
-    (cond
-      (dart-is? coll ISeqable)
-      (-seq coll)
-
-      (dart-is? coll dc/List)
-      (when-not (zero? (alength coll))
-        (IndexedSeq. coll 0 nil))
-
-      (dart-is? coll String)
-      (when-not (zero? (.-length coll))
-        (IndexedSeq. coll 0 nil))
-
-      #_#_(js-iterable? coll)
-      (es6-iterator-seq
-        (.call (gobject/get coll ITER_SYMBOL) coll))
-
-      #_#_(native-satisfies? ISeqable coll)
-      (-seq coll)
-
-      true (throw (UnimplementedError. "not implemented yet.")))))
-
-(defn first
-  "Returns the first item in the collection. Calls seq on its
-  argument. If coll is nil, returns nil."
-  [coll]
-  (when-not (nil? coll)
-    (if (dart-is? coll ISeq)
-      (-first coll)
-      (let [s (seq coll)]
-        (when-not (nil? s)
-          (-first s))))))
-
-(defn ^ISeq rest
-  "Returns a possibly empty seq of the items after the first. Calls seq on its
-  argument."
-  [coll]
-  (if-not (nil? coll)
-    (if (dart-is? coll ISeq)
-      (-rest coll)
-      (let [s (seq coll)]
-        (if s
-          (-rest s)
-          ())))
-    ()))
-
-(defn ^int count
-  [coll]
-  (if-not (nil? coll)
-    (cond
-      (dart-is? coll ICounted)
-      (-count coll)
-
-      (dart-is? coll dc/List)
-      (alength coll)
-
-      (dart-is? coll dc/String)
-      ^number (.-length coll)
-
-      true (throw (UnimplementedError. "not implemented yet."))
-      #_#_(implements? ISeqable coll)
-      (accumulating-seq-count coll)
-
-      #_#_:else (-count coll))
-    0))
-
-(defn clone
-  [value]
-  (-clone value))
-
-(defn next
-  "Returns a seq of the items after the first. Calls seq on its
-  argument.  If there are no more items, returns nil"
-  [coll]
-  (when-not (nil? coll)
-    (if (dart-is? coll ISeq)
-      (-next coll)
-      (seq (rest coll)))))
 
 (defn second
   "Same as (first (next x))"
@@ -1680,72 +1493,7 @@
         (recur (dec i) (-conj r (aget arr (dec i))))
         r))))
 
-(deftype Cons [meta first rest ^:mutable __hash]
-  #_#_#_#_#_#_#_Object
-  (toString [coll]
-    (pr-str* coll))
-  (equiv [this other]
-    (-equiv this other))
-  (indexOf [coll x]
-    (-indexOf coll x 0))
-  (indexOf [coll x start]
-    (-indexOf coll x start))
-  (lastIndexOf [coll x]
-    (-lastIndexOf coll x (count coll)))
-  (lastIndexOf [coll x start]
-    (-lastIndexOf coll x start))
 
-  IList
-
-  ICloneable
-  (-clone [_] (Cons. meta first rest __hash))
-
-  #_#_IWithMeta
-  (-with-meta [coll new-meta]
-    (if (identical? new-meta meta)
-      coll
-      (Cons. new-meta first rest __hash)))
-
-  #_#_IMeta
-  (-meta [coll] meta)
-
-  ASeq
-  ISeq
-  (-first [coll] first)
-  (-rest [coll] (if (nil? rest) () rest))
-
-  INext
-  (-next [coll]
-    (if (nil? rest) nil (seq rest)))
-
-  ICollection
-  (-conj [coll o] (Cons. nil o coll nil))
-
-  #_#_IEmptyableCollection
-  (-empty [coll] (.-EMPTY List))
-
-  ISequential
-
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
-
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
-
-  ISeqable
-  (-seq [coll] coll)
-
-  #_#_#_IReduce
-  (-reduce [coll f] (seq-reduce f coll))
-  (-reduce [coll f start] (seq-reduce f start coll)))
-
-(defn cons
-  "Returns a new seq where x is the first element and coll is the rest."
-  [x coll]
-  (cond
-    (nil? coll)          (List. nil x nil 1 nil)
-    (dart-is? coll ISeq) (Cons. nil x coll nil)
-    true                 (Cons. nil x (seq coll) nil)))
 
 (defn spread
   [arglist]
