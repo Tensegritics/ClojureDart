@@ -1082,6 +1082,24 @@
   ISeqable
   (-seq [coll] coll))
 
+(defn spread
+  {:private true}
+  [arglist]
+  (cond
+    (nil? arglist) nil
+    (nil? (next arglist)) (seq (first arglist))
+    true (cons (first arglist) (spread (next arglist)))))
+
+(defn list*
+  "Creates a new seq containing the items prepended to the rest, the
+  last of which will be treated as a sequence."
+  ([args] (seq args))
+  ([a args] (cons a args))
+  ([a b args] (cons a (cons b args)))
+  ([a b c args] (cons a (cons b (cons c args))))
+  ([a b c d & more]
+   (cons a (cons b (cons c (cons d (spread more)))))))
+
 (defn cons
   "Returns a new seq where x is the first element and coll is the rest."
   [x coll]
