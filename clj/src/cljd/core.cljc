@@ -1029,8 +1029,7 @@
       (m3-fmix h 8))))
 
 (defn ^bool identical?
-  ;; TODO FIX Urgently
-  #_{:inline (fn [x y] `(dart:core/identical ~x ~y))
+  {:inline (fn [x y] `(dart:core/identical ~x ~y))
    :inline-arities #{2}}
   [x y]
   (dart:core/identical x y))
