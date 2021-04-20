@@ -1153,7 +1153,7 @@
           not-found))))
   ISequential
   IEquiv
-  (-equiv [coll other] (== string (.-string other)))
+  (-equiv [coll other] (== (if (< 0 i) (.substring string i) string) (.-string other)))
   ICollection
   (-conj [coll o] (cons o coll))
   #_#_IEmptyableCollection
