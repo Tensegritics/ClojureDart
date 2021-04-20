@@ -597,6 +597,12 @@
 (defprotocol ISequential
   "Marker interface indicating a persistent collection of sequential items")
 
+(defprotocol IPending
+  "Protocol for types which can have a deferred realization. Currently only
+  implemented by Delay and LazySeq."
+  (-realized? [x]
+   "Returns true if a value for x has been produced, false otherwise."))
+
 (defprotocol IList
   "Marker interface indicating a persistent list")
 
@@ -1074,10 +1080,7 @@
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
   ISeqable
-  (-seq [coll] coll)
-  #_#_#_IReduce
-  (-reduce [coll f] (seq-reduce f coll))
-  (-reduce [coll f start] (seq-reduce f start coll)))
+  (-seq [coll] coll))
 
 (defn cons
   "Returns a new seq where x is the first element and coll is the rest."
@@ -1114,7 +1117,6 @@
   #_Object
   #_(toString [coll]
       (pr-str* coll))
-
   ISeqable
   (-seq [this] (when (< i (.-length string)) this))
   IMeta
@@ -1198,6 +1200,74 @@
          (recur (next xs))))
      (.toString sb))))
 
+(defn ^bool not
+  "Returns true if x is logical false, false otherwise."
+  {:inline (fn [x] `(if ~x false true))
+   :inline-arities #{1}}
+  [x] (if x false true))
+
+(deftype LazySeq [meta ^:mutable fn ^:mutable s ^:mutable __hash]
+  Object
+  #_(toString [coll]
+      (pr-str* coll))
+  (sval [coll]
+    (if (nil? fn)
+      s
+      (do
+        (set! s (fn))
+        (set! fn nil)
+        s)))
+  IPending
+  (-realized? [coll]
+    (not fn))
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (LazySeq. new-meta #(-seq coll) nil __hash)))
+  IMeta
+  (-meta [coll] meta)
+  ISeqable
+  (-seq [coll]
+    (.sval coll)
+    (when-not (nil? s)
+      (loop [ls s]
+        (if (dart-is? ls LazySeq)
+          (recur (.sval ls))
+          (do (set! s ls)
+              (seq s))))))
+  ISeq
+  (-first [coll]
+    (-seq coll)
+    (when-not (nil? s)
+      (first s)))
+  (-rest [coll]
+    (-seq coll)
+    (if-not (nil? s)
+      (rest s)
+      empty-list))
+  (-next [coll]
+    (-seq coll)
+    (when-not (nil? s)
+      (next s)))
+  ICollection
+  (-conj [coll o] (cons o coll))
+  #_#_IEmptyableCollection
+  (-empty [coll] (-with-meta (.-EMPTY List) meta))
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash)))
+
+(defmacro lazy-seq
+  "Takes a body of expressions that returns an ISeq or nil, and yields
+  a ISeqable object that will invoke the body only the first time seq
+  is called, and will cache the result and return it on all subsequent
+  seq calls."
+  [& body]
+  `(new cljd.core/LazySeq nil (fn [] ~@body) nil nil))
+
 
 #_(
 
@@ -1255,84 +1325,7 @@
       (recur sn)
       (first s))))
 
-(deftype LazySeq [meta ^:mutable ^:dart fn ^:mutable s ^:mutable __hash]
-  Object
-  #_#_(toString [coll]
-        (pr-str* coll))
-  (equiv [this other]
-    (-equiv this other))
-  (sval [coll]
-    (if (nil? fn)
-      s
-      (do
-        (set! s (fn))
-        (set! fn nil)
-        s)))
-  #_#_#_#_(indexOf [coll x]
-            (-indexOf coll x 0))
-  (indexOf [coll x start]
-    (-indexOf coll x start))
-  (lastIndexOf [coll x]
-    (-lastIndexOf coll x (count coll)))
-  (lastIndexOf [coll x start]
-    (-lastIndexOf coll x start))
 
-  #_#_IPending
-  (-realized? [coll]
-    (not fn))
-
-  #_#_IWithMeta
-  (-with-meta [coll new-meta]
-    (if (identical? new-meta meta)
-      coll
-      (LazySeq. new-meta #(-seq coll) nil __hash)))
-
-  #_#_IMeta
-  (-meta [coll] meta)
-
-  ISeq
-  (-first [coll]
-    (-seq coll)
-    (when-not (nil? s)
-      (first s)))
-  (-rest [coll]
-    (-seq coll)
-    (if-not (nil? s)
-      (rest s)
-      ()))
-
-  INext
-  (-next [coll]
-    (-seq coll)
-    (when-not (nil? s)
-      (next s)))
-
-  ICollection
-  (-conj [coll o] (cons o coll))
-
-  #_#_IEmptyableCollection
-  (-empty [coll] (-with-meta (.-EMPTY List) meta))
-
-  ISequential
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
-
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
-
-  ISeqable
-  (-seq [coll]
-    (.sval coll)
-    (when-not (nil? s)
-      (loop [ls s]
-        (if (dart-is? ls LazySeq)
-          (recur (.sval ls))
-          (do (set! s ls)
-              (seq s))))))
-
-  #_#_#_IReduce
-  (-reduce [coll f] (seq-reduce f coll))
-  (-reduce [coll f start] (seq-reduce f start coll)))
 
 (deftype List [meta first rest count ^:mutable __hash]
   #_#_#_#_#_#_#_Object
@@ -1511,14 +1504,6 @@
   ([a b c args] (cons a (cons b (cons c args))))
   ([a b c d & more]
    (cons a (cons b (cons c (cons d (spread more)))))))
-
-#_(defmacro lazy-seq
-  "Takes a body of expressions that returns an ISeq or nil, and yields
-  a ISeqable object that will invoke the body only the first time seq
-  is called, and will cache the result and return it on all subsequent
-  seq calls."
-  [& body]
-    `(new cljd.core/LazySeq nil (fn [] ~@body) nil nil))
 
 (defn ^{:tag "dc.List"} to-array
   [coll]
@@ -2195,6 +2180,14 @@
   (^:dart dart:core/print
    (reduce (fn [] "aa") "")
    )
+
+  (^:dart dart:core/print
+   (first (lazy-seq #dart [1 2 3])))
+
+  (^:dart dart:core/print
+     (first (next (lazy-seq #dart [1 2 3]))))
+
+
 
 
   )
