@@ -650,6 +650,20 @@
     (-count coll)
     (reduce (fn [n _] (inc n)) 0 coll)))
 
+(defprotocol IChunk
+  "Protocol for accessing the items of a chunk."
+  (-drop-first [coll]
+    "Return a new chunk of coll with the first item removed."))
+
+(defprotocol IChunkedSeq
+  "Protocol for accessing a collection as sequential chunks."
+  (-chunked-first [coll]
+    "Returns the first chunk in coll.")
+  (-chunked-rest [coll]
+    "Return a new collection of coll with the first chunk removed.")
+  (-chunked-next [coll]
+    "Returns a new collection of coll without the first chunk."))
+
 (defprotocol IVector
   "Protocol for adding vector functionality to collections."
   (-assoc-n [coll n val]
@@ -1181,9 +1195,10 @@
   IReduce
   (-reduce [coll f]
     (let [l (.-length string)
-          x (. string "[]" i)]
-      (if (< (inc i) l)
-        (loop [idx (inc i) acc x]
+          x (. string "[]" i)
+          i' (inc i)]
+      (if (< i' l)
+        (loop [idx i' acc x]
           (if (< idx l)
             (recur (inc idx) (f acc (. string "[]" idx) ))
             acc))
@@ -1285,6 +1300,141 @@
   seq calls."
   [& body]
   `(new cljd.core/LazySeq nil (fn [] ~@body) nil nil))
+
+;; chunks
+
+(defn chunked-seq?
+  "Return true if x satisfies IChunkedSeq."
+  [x] (satisfies? IChunkedSeq x))
+
+(deftype ArrayChunk [arr off end]
+  ICounted
+  (-count [_] (- end off))
+  IIndexed
+  (-nth [coll i]
+    ;; TODO check out of bound exceptions
+    (. arr "[]" (+ off i)))
+  (-nth [coll i not-found]
+    (if (< n 0)
+      not-found
+      (if (< i (- end off))
+        (. arr "[]" (+ off i))
+        not-found)))
+  IChunk
+  (-drop-first [coll]
+    (if (== off end)
+      (throw (ArgumentError. "-drop-first of empty chunk"))
+      (ArrayChunk. arr (inc off) end)))
+  IReduce
+  (-reduce [coll f]
+    ;; TODO check out of bound exceptions
+    (let [x (. arr "[]" off)
+          off' (inc off)]
+      (if (< off' end)
+        (loop [acc x idx off']
+          (if (< idx end)
+            (recur (f acc (. arr "[]" idx)) (inc idx))
+            acc))
+        x)))
+  (-reduce [coll f start]
+    (loop [acc start idx off]
+      (if (< idx end)
+        (recur (f acc (. arr "[]" idx)) (inc idx))
+        acc))))
+
+(defn array-chunk
+  ([arr]
+   (ArrayChunk. arr 0 (.-length arr)))
+  ([arr off]
+   (ArrayChunk. arr off (.-length arr)))
+  ([arr off end]
+   (ArrayChunk. arr off end)))
+
+(deftype ChunkBuffer [^:mutable arr ^:mutable end]
+  Object
+  (add [_ o]
+    (. arr "[]" end o)
+    (set! end (inc end)))
+  (chunk [_]
+    (let [ret (ArrayChunk. arr 0 end)]
+      (set! arr nil)
+      ret))
+  ICounted
+  (-count [_] end))
+
+(defn chunk-buffer [capacity]
+  (ChunkBuffer. (.filled dart:core/List capacity nil) 0))
+
+(deftype ChunkedCons [chunk more meta ^:mutable __hash]
+  Object
+  #_(toString [coll]
+      (pr-str* coll))
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (ChunkedCons. chunk more new-meta __hash)))
+  IMeta
+  (-meta [coll] meta)
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+  ISeqable
+  (-seq [coll] coll)
+  ISeq
+  (-first [coll] (-nth chunk 0))
+  (-rest [coll]
+    (if (< 1 (-count chunk))
+      (ChunkedCons. (-drop-first chunk) more nil nil)
+      (if (nil? more)
+        empty-list
+        more)))
+  (-next [coll]
+    (if (< 1 (-count chunk))
+      (ChunkedCons. (-drop-first chunk) more nil nil)
+      (when-not (nil? more)
+        (-seq more))))
+  IChunkedSeq
+  (-chunked-first [coll] chunk)
+  (-chunked-rest [coll]
+    (if (nil? more)
+      empty-list
+      more))
+  (-chunked-next [coll]
+    (if (nil? more)
+      nil
+      more))
+  ICollection
+  (-conj [this o] (cons o this))
+  #_#_IEmptyableCollection
+  (-empty [coll] (.-EMPTY List))
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash)))
+
+(defn chunk-cons [chunk rest]
+  (if (< 0 (-count chunk))
+    (ChunkedCons. chunk rest nil nil)
+    rest))
+
+(defn chunk-append [b x]
+  (.add b x))
+
+(defn chunk [b]
+  (.chunk b))
+
+(defn chunk-first [s]
+  (-chunked-first s))
+
+(defn chunk-rest [s]
+  (-chunked-rest s))
+
+(defn chunk-next [s]
+  ;; TODO : check when it is supposed to not be used in a chunk context
+  (-chunked-next s)
+  #_(if (implements? IChunkedNext s)
+    (-chunked-next s)
+    (seq (-chunked-rest s))))
+
 
 
 #_(
