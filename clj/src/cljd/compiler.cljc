@@ -403,11 +403,11 @@
     (let [f-name (name f)
           [f-type f-v] (resolve-symbol f env)
           {:keys [inline-arities inline]} (or
-               (when-some [v (when *bootstrap* (ghost-resolve f true))]
+               #_(when-some [v (when *bootstrap* (ghost-resolve f true))]
                  (when (-> v meta :inline-arities) (meta v)))
                ; TODO SELFHOST
                (case f-type ; wishful coding for the compiler running on dart
-                 :def (when (-> f-v :meta :inline-arities) (-> f-v :runtime-value))
+                 :def (:meta f-v)
                  nil))]
       (cond
         (env f) form
@@ -870,8 +870,14 @@
 
 (defn do-def [nses sym m]
   (let [the-ns (:current-ns nses)
-        m (assoc m :ns the-ns :name sym :meta (merge (meta sym) (:meta m)))]
+        {:keys [inline-arities inline] :as msym} (meta sym)
+        msym (cond-> msym inline-arities (assoc :inline (binding [*ns* (ghost-ns)] (eval inline))))
+        m (assoc m :ns the-ns :name sym :meta (merge msym (:meta m)))]
     (assoc-in nses [the-ns sym] m)))
+
+(defn alter-def [nses sym f & args]
+  (let [the-ns (:current-ns nses)]
+    (apply update-in nses [the-ns sym] f args)))
 
 (defn- resolve-methods-specs [specs]
   (let [last-seen-type (atom nil)]
@@ -884,7 +890,7 @@
             ;; TODO: OBSOLETE mname resolution against protocol ifaces
             (list* mname (parse-dart-params arglist) body))
           (reset! last-seen-type spec)))
-      specs)))
+        specs)))
 
 (defn- emit-class-specs [opts specs env]
   (let [{:keys [extends] :or {extends 'Object}} opts
@@ -1025,28 +1031,18 @@
         dart-fn
         (do
           (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
-          (emit expr env))]
-    (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
-      (let [dart-fn
-            (or
-              ; peephole optimization: unwrap single let
-              (and (seq? dart-fn) (= 'dart/let (first dart-fn))
-                (let [[_ [[x e] & more-bindings] x'] dart-fn]
-                  (and (nil? more-bindings) (= x x') e)))
-              (ensure-dart-expr dart-fn))]
-        (swap! nses do-def sym
-          {:dart/name (with-meta dartname
-                        (into {:dart/fn-type
-                               (case (first dart-fn)
-                                 dart/fn :native
-                                 :ifn)}
-                          (meta dartname)))
-           :type :field
-           :dart/code (with-out-str (write-top-dartfn dartname dart-fn))}))
-      (swap! nses do-def sym
-        {:dart/name dartname
-         :type :field
-         :dart/code (with-out-str (write-top-field dartname dart-fn))}))
+          (emit expr env))
+        dart-fn
+        (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
+          (or
+            ; peephole optimization: unwrap single let
+            (and (seq? dart-fn) (= 'dart/let (first dart-fn))
+              (let [[_ [[x e] & more-bindings] x'] dart-fn]
+                (and (nil? more-bindings) (= x x') e)))
+            (ensure-dart-expr dart-fn))
+          dart-fn)]
+    (swap! nses alter-def sym assoc
+      :dart/code (with-out-str (write-top-field dartname dart-fn)))
     (emit sym env)))
 
 (defn ensure-import [the-ns]
@@ -1245,10 +1241,8 @@
                (refer-clojure :exclude '[definterface deftype defprotocol case])
                (alias the-ns (ns-name *ns*))))
         def (let [sym (second x)
-                  {:keys [macro bootstrap inline]} (meta sym)]
-              (cond
-                (or macro bootstrap) (binding [*ns* (ghost-ns)] (eval x))
-                inline (binding [*ns* (ghost-ns)] (eval (list 'def (vary-meta sym select-keys [:inline :inline-arities]) nil))))
+                  {:keys [macro bootstrap]} (meta sym)]
+              (when (or macro bootstrap) (binding [*ns* (ghost-ns)] (eval x)))
               (when-not macro
                 (let [v (macroexpand {} (last x))]
                   (when-some [kind (fn-kind (macroexpand {} (last x)))]
@@ -1765,7 +1759,10 @@
            (loop []
              (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
                (when-not (identical? form in)
-                 (binding [*locals-gen* {}] (emit form {}))
+                 (try
+                   (binding [*locals-gen* {}] (emit form {}))
+                   (catch Exception e
+                     (throw (ex-info "Compilation error." {:form form} e))))
                  (recur))))))))
 
 (defn bootstrap-load-input [in]
