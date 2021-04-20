@@ -551,7 +551,6 @@
     that implement Iterable. Note that seqs cache values, thus seq
     should not be used on any Iterable whose iterator repeatedly
     returns the same mutable object."
-  ;; TODO FIX urgently
   {:inline (fn [coll] `(-seq ~coll))
    :inline-arities #{1}}
   [coll] (-seq coll))
@@ -1076,8 +1075,7 @@
 
 (deftype Cons [meta first rest ^:mutable __hash]
   Object
-  ;; TODO FIXME urgently
-  #_(^String toString [coll] "TODO" #_(pr-str* coll))
+  (^String toString [coll] "TODO" #_(pr-str* coll))
   IList
   IWithMeta
   (-with-meta [coll new-meta]

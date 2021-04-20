@@ -1396,10 +1396,10 @@
     (print ";\n")
 
     (doseq [[mname fixed-params opt-kind opt-params no-explicit-body body] methods
-            :let [{:dart/keys [getter setter]} (meta mname)]]
+            :let [{:dart/keys [getter setter type]} (meta mname)]]
       (newline)
       (when-not setter
-        (print (:dart/type mname "dc.dynamic"))
+        (print (or type "dc.dynamic"))
         (print " "))
       (cond
         getter (print "get ")
