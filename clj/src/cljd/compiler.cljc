@@ -1032,17 +1032,18 @@
         (do
           (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
           (emit expr env))
-        dart-fn
-        (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
-          (or
-            ; peephole optimization: unwrap single let
-            (and (seq? dart-fn) (= 'dart/let (first dart-fn))
-              (let [[_ [[x e] & more-bindings] x'] dart-fn]
-                (and (nil? more-bindings) (= x x') e)))
-            (ensure-dart-expr dart-fn))
-          dart-fn)]
-    (swap! nses alter-def sym assoc
-      :dart/code (with-out-str (write-top-field dartname dart-fn)))
+        dart-code
+        (with-out-str
+          (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
+            (write-top-dartfn dartname
+              (or
+                ; peephole optimization: unwrap single let
+                (and (seq? dart-fn) (= 'dart/let (first dart-fn))
+                  (let [[_ [[x e] & more-bindings] x'] dart-fn]
+                    (and (nil? more-bindings) (= x x') e)))
+                (ensure-dart-expr dart-fn)))
+            (write-top-field dartname dart-fn)))]
+    (swap! nses alter-def sym assoc :dart/code dart-code)
     (emit sym env)))
 
 (defn ensure-import [the-ns]
