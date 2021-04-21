@@ -1060,20 +1060,19 @@
       (m3-fmix h 8))))
 
 (defn ^bool identical?
-  ;; TODO inline does not work
-  #_{:inline (fn [x y] `(dart:core/identical ~x ~y))
+  {:inline (fn [x y] `(dart:core/identical ~x ~y))
    :inline-arities #{2}}
   [x y]
   (dart:core/identical x y))
 
 (defn ^bool true?
-  #_{:inline (fn [x] `(dart:core/identical ~x true))
+  {:inline (fn [x] `(dart:core/identical ~x true))
    :inline-arities #{1}}
   [x]
   (dart:core/identical x true))
 
 (defn ^bool false?
-  #_{:inline (fn [x] `(dart:core/identical ~x false))
+  {:inline (fn [x] `(dart:core/identical ~x false))
    :inline-arities #{1}}
   [x]
   (dart:core/identical x false))
