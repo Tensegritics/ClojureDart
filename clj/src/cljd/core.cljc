@@ -1127,7 +1127,7 @@
 (deftype PersistentList [meta first rest ^int count ^:mutable ^int __hash]
   ;; invariant: first is nil when count is zero
   Object
-  (^String toString [coll]
+  #_(^String toString [coll]
     ;; TODO
     #_(pr-str* coll))
   IList
@@ -1169,6 +1169,16 @@
   (-reduce [coll f start] (seq-reduce f start coll)))
 
 (def ^PersistentList empty-list (PersistentList. nil nil nil 0 -1))
+
+(defn list
+  "Creates a new list containing the items."
+  [& xs]
+  ;; TODO : like to-array, find a more efficient way to not rebuild an intermediate array
+  (let [arr (reduce (fn [acc item] (.add acc item) acc) #dart[] xs)]
+    (loop [i (.-length arr) r ^PersistentList empty-list]
+      (if (< 0 i)
+        (recur (dec i) (-conj ^PersistentList r (. arr "[]" (dec i))))
+        r))))
 
 (defn cons
   "Returns a new seq where x is the first element and coll is the rest."
