@@ -1383,7 +1383,7 @@
     (print " {\n")
     (doseq [field fields
             :let [{:dart/keys [mutable type]} (meta field)]]
-      (print (str (cond (not mutable) "final " (not type) "var ") type field ";\n")))
+      (print (str (cond (not mutable) "final " (not type) "var ") (some-> type (str " ")) field ";\n")))
     (newline)
 
     (print (str class-name "("))

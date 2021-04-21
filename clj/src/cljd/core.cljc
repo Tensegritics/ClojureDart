@@ -10,17 +10,14 @@
 (def empty-persistent-vector nil)
 
 (def ^{:clj true} =)
-(def ^{:clj true} apply)
 (def ^{:clj true} assoc)
 (def ^{:dart true} butlast)
 (def ^{:clj true} concat)
 (def ^{:clj true} conj)
 #_(def ^{:dart true} cons)
 (def ^{:dart true} contains?)
-(def ^{:dart true} count)
 (def ^{:clj true} dissoc)
 (def ^{:clj true} drop)
-(def ^{:dart true} every?)
 #_(def ^{:dart true} first)
 (def ^{:clj true} gensym)
 (def ^{:clj true} get)
@@ -33,18 +30,14 @@
 (def ^{:dart true} keyword?)
 (def ^{:dart true} last)
 (def ^{:clj true} list)
-(def ^{:clj true} list*)
-(def ^{:clj true} map)
 (def ^{:clj true} mapcat)
 (def ^{:dart true} map?)
 (def ^{:dart true} meta)
 (def ^{:dart true} name)
 (def ^{:dart true} namespace)
-(def ^{:dart true} not)
 #_(def ^{:dart true} next)
 (def ^{:dart true} nnext)
 (def ^{:clj true} partition)
-(def ^{:clj true} reduce)
 (def ^{:dart true} second)
 #_(def ^{:dart true} seq)
 (def ^{:dart true} seq?)
@@ -551,8 +544,8 @@
     that implement Iterable. Note that seqs cache values, thus seq
     should not be used on any Iterable whose iterator repeatedly
     returns the same mutable object."
-  ;; TODO FIX urgently
-  {:inline (fn [coll] `(-seq ~coll))
+  ;; TODO FIX casting
+  #_{:inline (fn [coll] `(-seq ~coll))
    :inline-arities #{1}}
   [coll] (-seq coll))
 
@@ -1074,7 +1067,16 @@
    :inline-arities #{1}}
   [o] (-hash o))
 
-(deftype Cons [meta first rest ^:mutable __hash]
+(defmacro ensure-hash [hash-key hash-expr]
+  #_(core/assert (clojure.core/symbol? hash-key) "hash-key is substituted twice")
+  `(let [h# ~hash-key]
+     (if (< h# 0)
+       (let [h# ~hash-expr]
+         (set! ~hash-key h#)
+         h#)
+       h#)))
+
+(deftype Cons [meta first rest ^:mutable ^int __hash]
   Object
   ;; TODO FIXME urgently
   #_(^String toString [coll] "TODO" #_(pr-str* coll))
@@ -1120,14 +1122,59 @@
   ([a b c d & more]
    (cons a (cons b (cons c (cons d (spread more)))))))
 
+(deftype PersistentList [meta first rest ^int count ^:mutable ^int __hash]
+  ;; invariant: first is nil when count is zero
+  Object
+  (toString [coll]
+    ;; TODO
+    #_(pr-str* coll))
+  IList
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (PersistentList. new-meta first rest count __hash)))
+  IMeta
+  (-meta [coll] meta)
+  ISeq
+  (-first [coll] first)
+  (-rest [coll]
+    (if (<= count 1)
+      empty-list
+      rest))
+  (-next [coll]
+    (if (<= count 1)
+      nil
+      rest))
+  #_#_#_IStack
+  (-peek [coll] first)
+  (-pop [coll] (if (pos? count) rest (throw (js/Error. "Can't pop empty list"))))
+  ICollection
+  (-conj [coll o] (PersistentList. meta o coll (inc count) -1))
+  #_#_IEmptyableCollection
+  (-empty [coll] (-with-meta (.-EMPTY List) meta))
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+  ISeqable
+  (-seq [coll] coll)
+  ICounted
+  (-count [coll] count)
+  #_#_#_IReduce
+  (-reduce [coll f] (seq-reduce f coll))
+  (-reduce [coll f start] (seq-reduce f start coll)))
+
+(def ^PersistentList empty-list (PersistentList. nil nil nil 0 -1))
+
 (defn cons
   "Returns a new seq where x is the first element and coll is the rest."
   [x coll]
   (cond
-    ;; TODO List
-    #_#_(nil? coll)             (List. nil x nil 1 nil)
-    (satisfies? ISeq coll) (Cons. nil x coll nil)
-    true                   (Cons. nil x (seq coll) nil)))
+    (nil? coll)            (PersistentList. nil x nil 1 -1)
+    (satisfies? ISeq coll) (Cons. nil x coll -1)
+    true                   (Cons. nil x (seq coll) -1)))
 
 (def ^:dart seq-iterator nil)
 
@@ -1151,7 +1198,7 @@
   ISeqable
   (-seq [coll] (seq-iterator (.-iterator ^Iterable coll)))) ; TODO infer argument type in extend-type
 
-(deftype StringSeq [string i meta]
+(deftype StringSeq [string i meta ^:mutable ^int __hash]
   #_Object
   #_(toString [coll]
       (pr-str* coll))
@@ -1168,11 +1215,11 @@
   (-first [this] (. string "[]" i))
   (-rest [_]
     (if (< (inc i) (.-length string))
-      (StringSeq. string (inc i) nil)
+      (StringSeq. string (inc i) -1)
       empty-list))
   (-next [_]
     (if (< (inc i) (.-length string))
-      (StringSeq. string (inc i) nil)
+      (StringSeq. string (inc i) -1)
       nil))
   ICounted
   (-count [_] (- (.-length string) i))
@@ -1192,13 +1239,14 @@
           (. string "[]" i)
           not-found))))
   ISequential
-  IEquiv
-  (-equiv [coll other] (== (if (< 0 i) (.substring string i) string) (.-string other)))
+  #_#_IEquiv
+  (-equiv [coll other] false)
   ICollection
   (-conj [coll o] (cons o coll))
   #_#_IEmptyableCollection
   (-empty [coll] (.-EMPTY List))
   IReduce
+  ;; TODO handle reduced
   (-reduce [coll f]
     (let [l (.-length string)
           x (. string "[]" i)
@@ -1216,8 +1264,8 @@
           (recur (f acc (. string "[]" idx) ) (inc idx))
           acc))))
   IHash
-  (-hash [coll] (m3-hash-int (.-hashCode string)))
-; TODO
+  (-hash [coll] (ensure-hash __hash (m3-hash-int (.-hashCode (.substring string i)))))
+; TODO : not reversible in clj (is in cljs)
   #_#_IReversible
   (-rseq [coll]
     (let [c (-count coll)]
@@ -1226,7 +1274,7 @@
 
 (extend-type String
   ISeqable
-  (-seq [coll] (when (.-isNotEmpty coll) (StringSeq. coll 0 nil))))
+  (-seq [coll] (when (.-isNotEmpty coll) (StringSeq. coll 0 nil -1))))
 
 (defn ^String str
   ([] "")
@@ -1245,7 +1293,7 @@
    :inline-arities #{1}}
   [x] (if x false true))
 
-(deftype LazySeq [meta ^:mutable fn ^:mutable s ^:mutable __hash]
+(deftype LazySeq [meta ^:mutable ^some fn ^:mutable s ^:mutable ^int __hash]
   Object
   #_(toString [coll]
       (pr-str* coll))
@@ -1305,7 +1353,7 @@
   is called, and will cache the result and return it on all subsequent
   seq calls."
   [& body]
-  `(new cljd.core/LazySeq nil (fn [] ~@body) nil nil))
+  `(new cljd.core/LazySeq nil (fn [] ~@body) nil -1))
 
 ;; chunks
 
@@ -1371,7 +1419,7 @@
 (defn chunk-buffer [capacity]
   (ChunkBuffer. (.filled dart:core/List capacity nil) 0))
 
-(deftype ChunkedCons [chunk more meta ^:mutable __hash]
+(deftype ChunkedCons [chunk more meta ^:mutable ^int __hash]
   Object
   #_(toString [coll]
       (pr-str* coll))
@@ -1391,13 +1439,13 @@
   (-first [coll] (-nth chunk 0))
   (-rest [coll]
     (if (< 1 (-count chunk))
-      (ChunkedCons. (-drop-first chunk) more nil nil)
+      (ChunkedCons. (-drop-first chunk) more nil -1)
       (if (nil? more)
         empty-list
         more)))
   (-next [coll]
     (if (< 1 (-count chunk))
-      (ChunkedCons. (-drop-first chunk) more nil nil)
+      (ChunkedCons. (-drop-first chunk) more nil -1)
       (when-not (nil? more)
         (-seq more))))
   IChunkedSeq
@@ -1419,7 +1467,7 @@
 
 (defn chunk-cons [chunk rest]
   (if (< 0 (-count chunk))
-    (ChunkedCons. chunk rest nil nil)
+    (ChunkedCons. chunk rest nil -1)
     rest))
 
 (defn chunk-append [b x]
@@ -1441,6 +1489,42 @@
     (-chunked-next s)
     (seq (-chunked-rest s))))
 
+(defn ^List to-array
+  [coll]
+  ;; TODO : use more concrete implem of to-array for DS ?
+  (let [ary #dart []]
+    (loop [s (seq coll)]
+      (if-not (nil? s)
+        (do (.add ary (first s))
+            (recur (next s)))
+        ary))))
+
+(defn apply
+  ([f args]
+   (if (satisfies? IFn f)
+     (-apply f (seq args))
+     (.apply Function f (to-array args))))
+  ([f x args]
+   (let [args (list* x args)]
+     (if (satisfies? IFn f)
+       (-apply f args)
+       (.apply Function f (to-array args)))))
+  ([f x y args]
+   (let [args (list* x y args)]
+     (if (satisfies? IFn f)
+       (-apply f args)
+       (.apply Function f (to-array args)))))
+  ([f x y z args]
+   (let [args (list* x y z args)]
+     (if (satisfies? IFn f)
+       (-apply f args)
+       (.apply Function f (to-array args)))))
+  ([f a b c d & args]
+   (let [args (cons a (cons b (cons c (cons d (spread args)))))]
+     (if (satisfies? IFn f)
+       (-apply f args)
+       (.apply Function f (to-array args))))))
+
 (defmacro dotimes
   "bindings => name n
 
@@ -1453,11 +1537,24 @@
   (let [i (first bindings)
         n (second bindings)]
     ;; TODO : re-think about `long`
-    `(let [n# #_(long ~n) ~n]
+    `(let [n# ^int ~n]
        (loop [~i 0]
          (when (< ~i n#)
            ~@body
            (recur (inc ~i)))))))
+
+(defn identity
+  "Returns its argument."
+  [x] x)
+
+(defn ^bool every?
+  "Returns true if (pred x) is logical true for every x in coll, else
+  false."
+  [pred coll]
+  (cond
+    (nil? (seq coll)) true
+    (pred (first coll)) (recur pred (next coll))
+    true false))
 
 (defn map
   "Returns a lazy sequence consisting of the result of applying f to
@@ -1466,8 +1563,7 @@
   exhausted.  Any remaining items in other colls are ignored. Function
   f should accept number-of-colls arguments. Returns a transducer when
   no collection is provided."
-  ;; TODO : tx version
-  #_([f]
+  ([f]
    (fn [rf]
      (fn
        ([] (rf))
@@ -1481,7 +1577,7 @@
     (when-let [s (seq coll)]
       (if (chunked-seq? s)
         (let [c (chunk-first s)
-              size (count c) ;; TODO cast int like clj ?
+              size (count c)
               b (chunk-buffer size)]
           (dotimes [i size]
             (chunk-append b (f (-nth c i))))
@@ -1499,14 +1595,43 @@
       (when (and  s1 s2 s3)
         (cons (f (first s1) (first s2) (first s3))
               (map f (rest s1) (rest s2) (rest s3)))))))
-  ;; TODO apply
-  #_([f c1 c2 c3 & colls]
+  ([f c1 c2 c3 & colls]
    (let [step (fn step [cs]
                 (lazy-seq
                  (let [ss (map seq cs)]
                    (when (every? identity ss)
                      (cons (map first ss) (step (map rest ss)))))))]
-     (map #(apply f %) (step (conj colls c3 c2 c1))))))
+     (map #(apply f %) (step (list* c1 c2 c3 colls))))))
+
+(defn filter
+  "Returns a lazy sequence of the items in coll for which
+  (pred item) returns logical true. pred must be free of side-effects.
+  Returns a transducer when no collection is provided."
+  ([pred]
+   (fn [rf]
+     (fn
+       ([] (rf))
+       ([result] (rf result))
+       ([result input]
+        (if (pred input)
+          (rf result input)
+          result)))))
+  ([pred coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (if (chunked-seq? s)
+        (let [c (chunk-first s)
+              size (count c)
+              b (chunk-buffer size)]
+          (dotimes [i size]
+            (let [v (-nth c i)]
+              (when (pred v)
+                (chunk-append b v))))
+          (chunk-cons (chunk b) (filter pred (chunk-rest s))))
+        (let [f (first s) r (rest s)]
+          (if (pred f)
+            (cons f (filter pred r))
+            (filter pred r))))))))
 
 
 
@@ -2406,27 +2531,43 @@
 
 
 
-  (^:dart dart:core/print
+  #_(^:dart dart:core/print
    (reduce #(str %1 " " %2) "START: " (seq "abc"))
    )
 
-  (^:dart dart:core/print
+  #_(^:dart dart:core/print
    (reduce #(str %1 " " %2) "START: " (seq "a"))
    )
 
-  (^:dart dart:core/print
+  #_(^:dart dart:core/print
    (reduce #(str %1 " " %2) (seq "a"))
    )
 
-  (^:dart dart:core/print
+  #_(^:dart dart:core/print
    (reduce (fn [] "aa") "")
    )
 
-  (^:dart dart:core/print
+  #_(^:dart dart:core/print
    (first (lazy-seq #dart [1 2 3])))
 
-  (^:dart dart:core/print
-     (first (next (lazy-seq #dart [1 2 3]))))
+  #_(^:dart dart:core/print
+   (first (next (lazy-seq #dart [1 2 3]))))
+
+  #_(let [a (map #(do (^:dart dart:core/print %) (inc %)) #dart [1 2 3])]
+    (^:dart dart:core/print
+     "not realized")
+    (^:dart dart:core/print
+     (first a)))
+
+  #_(let [a ]
+      (dart:core/print (first (map #(+ %1 %2)  #dart [3 4 2 1]  #dart [1 2 3]))))
+
+  #_(dart:core/print (seq #dart [1 2]))
+
+  #_(dart:core/print (next (next (seq #dart [1 2]))))
+
+  (dotimes [n 15] "a")
+
 
 
 
