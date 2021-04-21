@@ -1484,7 +1484,7 @@
               size (count c) ;; TODO cast int like clj ?
               b (chunk-buffer size)]
           (dotimes [i size]
-            (chunk-append b (f (.nth c i))))
+            (chunk-append b (f (-nth c i))))
           (chunk-cons (chunk b) (map f (chunk-rest s))))
         (cons (f (first s)) (map f (rest s)))))))
   ([f c1 c2]
