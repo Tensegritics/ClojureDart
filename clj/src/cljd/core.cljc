@@ -1939,6 +1939,49 @@
       (let [seg (doall (take n s))]
         (cons seg (partition-all n step (nthrest s step))))))))
 
+(defn partition-by
+  "Applies f to each value in coll, splitting it each time f returns a
+   new value.  Returns a lazy seq of partitions.  Returns a stateful
+   transducer when no collection is provided."
+  ;; TODO: tx version
+  #_([f]
+   (fn [rf]
+     (let [a (java.util.ArrayList.)
+           pv (volatile! ::none)]
+       (fn
+         ([] (rf))
+         ([result]
+          (let [result (if (.isEmpty a)
+                         result
+                         (let [v (vec (.toArray a))]
+                           ;;clear first!
+                           (.clear a)
+                           (unreduced (rf result v))))]
+            (rf result)))
+         ([result input]
+          (let [pval @pv
+                val (f input)]
+            (vreset! pv val)
+            (if (or (identical? pval ::none)
+                    (= val pval))
+              (do
+                (.add a input)
+                result)
+              (let [v (vec (.toArray a))]
+                (.clear a)
+                (let [ret (rf result v)]
+                  (when-not (reduced? ret)
+                    (.add a input))
+                  ret)))))))))
+  ([f coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (let [fst (first s)
+            fv (f fst)
+            ;; TODO change == to =
+            run (cons fst (take-while #(== fv (f %)) (next s)))]
+        (cons run (partition-by f (lazy-seq (drop (count run) s)))))))))
+
 
 
 #_(
@@ -2662,8 +2705,12 @@
   (dart:core/print
    (next (partition 2 #dart[1 2 3])))
 
+  (dart:core/print (count (cons 1 (seq #dart [2 3 4]))))
+  (dart:core/print
+   (first (last (partition-by #(< % 2) #dart[1 2 3 4 1]))))
+
   #_(dart:core/print
-   (first (next (take 2 #dart[1 2 3 4]))))
+   (count (take-while #(< % 10) #dart [1 9 10 8])))
 
 
   )
