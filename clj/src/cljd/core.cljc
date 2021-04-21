@@ -1906,6 +1906,39 @@
           (cons p (partition n step pad (nthrest s step)))
           (list (take n (concat p pad)))))))))
 
+(defn partition-all
+  "Returns a lazy sequence of lists like partition, but may include
+  partitions with fewer than n items at the end.  Returns a stateful
+  transducer when no collection is provided."
+  ;; tx version
+  #_([^long n]
+   (fn [rf]
+     (let [a (java.util.ArrayList. n)]
+       (fn
+         ([] (rf))
+         ([result]
+          (let [result (if (.isEmpty a)
+                         result
+                         (let [v (vec (.toArray a))]
+                           ;;clear first!
+                           (.clear a)
+                           (unreduced (rf result v))))]
+            (rf result)))
+         ([result input]
+          (.add a input)
+          (if (= n (.size a))
+            (let [v (vec (.toArray a))]
+              (.clear a)
+              (rf result v))
+            result))))))
+  ([n coll]
+   (partition-all n n coll))
+  ([n step coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (let [seg (doall (take n s))]
+        (cons seg (partition-all n step (nthrest s step))))))))
+
 
 
 #_(
@@ -2622,6 +2655,12 @@
 
   (dart:core/print
    (first (second (partition 2 #dart[1 2 3 4]))))
+
+  (dart:core/print
+   (first (second (partition-all 2 #dart[1 2 3]))))
+
+  (dart:core/print
+   (next (partition 2 #dart[1 2 3])))
 
   #_(dart:core/print
    (first (next (take 2 #dart[1 2 3 4]))))
