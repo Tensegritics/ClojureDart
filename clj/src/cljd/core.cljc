@@ -621,22 +621,23 @@
      applying f to that result and the 3rd item, etc."))
 
 ;; TODO handle Reduced
+(extend-type fallback
+  IReduce
+  (-reduce [coll f]
+    (if-some [[x & xs] (seq coll)]
+      (if-some [[y & xs] xs]
+        (-reduce f (f x y) xs)
+        x)
+      (f)))
+  (-reduce [coll f start]
+    (loop [acc start xs (seq coll)]
+      (if-some [[x & xs] xs]
+        (recur (f acc x) xs)
+        acc))))
+
 (defn reduce
-  ([f coll]
-   (if (satisfies? IReduce coll)
-     (-reduce coll f)
-     (if-some [[x & xs] (seq coll)]
-       (if-some [[y & xs] xs]
-         (reduce f (f x y) xs)
-         x)
-       (f))))
-  ([f init coll]
-   (if (satisfies? IReduce coll)
-     (-reduce coll f init)
-     (loop [acc init xs (seq coll)]
-       (if-some [[x & xs] xs]
-         (recur (f acc x) xs)
-         acc)))))
+  ([f coll] (-reduce coll f))
+  ([f init coll] (-reduce coll f init)))
 
 (defprotocol ICounted
   "Protocol for adding the ability to count a collection in constant time."
