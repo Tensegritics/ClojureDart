@@ -261,20 +261,19 @@
            :when (symbol? p)]
        [p (when-not (symbol? d) d)])}))
 
-(defn expand-protocol-impl [{:keys [impl iface iext extensions]}]
+(defn expand-protocol-impl [{:keys [name impl iface iext extensions]}]
   (list `deftype impl []
     :type-only true
     'cljd.core/IProtocol
     (list 'satisfies '[_ x]
       (list* 'or (list 'dart-is? 'x iface)
-        (concat (for [t (keys extensions)] (list 'dart-is? 'x t)) [false])))
+        (concat (for [t (keys (dissoc extensions 'fallback))] (list 'dart-is? 'x t)) [false])))
     (list 'extensions '[_ x]
       ;; TODO SELFHOST sort types
-      (list 'let
-        [(with-meta 'ext {:tag iext})
-         (cons 'cond
-           (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) extensions))]
-        (list 'if 'ext 'ext '(throw (dart:core/Exception. "No extension found.")))))))
+      (cons 'cond
+        (concat
+          (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) (dissoc extensions 'fallback))
+          [:else (or ('fallback extensions) `(throw (dart:core/Exception. ~(str "No extension found for protocol " name "."))))])))))
 
 (defn- roll-leading-opts [body]
   (loop [[k v & more :as body] (seq body) opts {}]

@@ -650,10 +650,13 @@
   (-count [coll]
     "Calculates the count of coll in constant time."))
 
-(defn ^int count [coll]
-  (if (satisfies? ICounted coll)
-    (-count coll)
+(extend-type fallback
+  ICounted
+  (-count [coll]
     (reduce (fn [n _] (inc n)) 0 coll)))
+
+(defn ^int count [coll]
+  (-count coll))
 
 (defprotocol IChunk
   "Protocol for accessing the items of a chunk."
