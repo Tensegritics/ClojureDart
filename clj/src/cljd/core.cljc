@@ -2027,27 +2027,6 @@
    (apply aset (aget array idx) idx2 idxv)))
 
 
-
-(defn list
-  "Creates a new list containing the items."
-  [& xs]
-  (let [arr (if (and (dart-is? xs IndexedSeq) (zero? (.-i xs)))
-              (.-arr xs)
-              xs
-              ;; TODO : for now, xs is a pure dart array, change when it will be a seq
-              #_(let [arr #dart []]
-                (loop [xs xs]
-                  (if-not (nil? xs)
-                    (do
-                      (.push arr (-first xs))
-                      (recur (-next xs)))
-                    arr))))]
-    (loop [i (alength arr) r ()]
-      (if (> i 0)
-        (recur (dec i) (-conj r (aget arr (dec i))))
-        r))))
-
-
 #_(defn make-array
   ([size]
      (dc/List. size))
