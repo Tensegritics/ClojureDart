@@ -544,8 +544,7 @@
     that implement Iterable. Note that seqs cache values, thus seq
     should not be used on any Iterable whose iterator repeatedly
     returns the same mutable object."
-  ;; TODO FIX casting
-  #_{:inline (fn [coll] `(-seq ~coll))
+  {:inline (fn [coll] `(-seq ~coll))
    :inline-arities #{1}}
   [coll] (-seq coll))
 
@@ -644,10 +643,13 @@
   (-count [coll]
     "Calculates the count of coll in constant time."))
 
-(defn ^int count [coll]
-  (if (satisfies? ICounted coll)
-    (-count coll)
+(extend-type fallback
+  ICounted
+  (-count [coll]
     (reduce (fn [n _] (inc n)) 0 coll)))
+
+(defn ^int count [coll]
+  (-count coll))
 
 (defprotocol IChunk
   "Protocol for accessing the items of a chunk."
@@ -1023,8 +1025,7 @@
       (m3-fmix h 8))))
 
 (defn ^bool identical?
-  ;; TODO FIX Urgently
-  #_{:inline (fn [x y] `(dart:core/identical ~x ~y))
+  {:inline (fn [x y] `(dart:core/identical ~x ~y))
    :inline-arities #{2}}
   [x y]
   (dart:core/identical x y))
@@ -1078,8 +1079,7 @@
 
 (deftype Cons [meta first rest ^:mutable ^int __hash]
   Object
-  ;; TODO FIXME urgently
-  #_(^String toString [coll] "TODO" #_(pr-str* coll))
+  (^String toString [coll] "TODO" #_(pr-str* coll))
   IList
   IWithMeta
   (-with-meta [coll new-meta]

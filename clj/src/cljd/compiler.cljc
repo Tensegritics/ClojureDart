@@ -261,20 +261,19 @@
            :when (symbol? p)]
        [p (when-not (symbol? d) d)])}))
 
-(defn expand-protocol-impl [{:keys [impl iface iext extensions]}]
+(defn expand-protocol-impl [{:keys [name impl iface iext extensions]}]
   (list `deftype impl []
     :type-only true
     'cljd.core/IProtocol
     (list 'satisfies '[_ x]
       (list* 'or (list 'dart-is? 'x iface)
-        (concat (for [t (keys extensions)] (list 'dart-is? 'x t)) [false])))
+        (concat (for [t (keys (dissoc extensions 'fallback))] (list 'dart-is? 'x t)) [false])))
     (list 'extensions '[_ x]
       ;; TODO SELFHOST sort types
-      (list 'let
-        [(with-meta 'ext {:tag iext})
-         (cons 'cond
-           (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) extensions))]
-        (list 'if 'ext 'ext '(throw (dart:core/Exception. "No extension found.")))))))
+      (cons 'cond
+        (concat
+          (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) (dissoc extensions 'fallback))
+          [:else (or ('fallback extensions) `(throw (dart:core/Exception. ~(str "No extension found for protocol " name "."))))])))))
 
 (defn- roll-leading-opts [body]
   (loop [[k v & more :as body] (seq body) opts {}]
@@ -334,12 +333,12 @@
               :inline
               (fn
                 ~@(for [{:keys [dart/name] all-args :args} (vals arity-mapping)
-                        :let [[this & args :as locals] (map (fn [arg] (list 'quote (gensym arg))) all-args)]]
+                        :let [[[_ this] & args :as locals] (map (fn [arg] (list 'quote (gensym arg))) all-args)]]
                     `(~all-args
                       `(let [~~@(interleave locals all-args)]
-                         (if (dart-is? ~~this ~'~iface)
-                           (. ~~this ~'~name ~~@args) ; TODO cast to iface
-                           (. (.extensions ~'~proto ~~this) ~'~name ~~@all-args))))))}
+                         (if (dart-is? ~'~this ~'~iface)
+                           (. ~'~(vary-meta this assoc :tag iface) ~'~name ~~@args) ; TODO cast to iface
+                           (. (.extensions ~'~proto ~'~this) ~'~name ~'~this ~~@args))))))}
              ~@(for [{:keys [dart/name] [this & args :as all-args] :args} (vals arity-mapping)]
                  `(~all-args
                    (if (dart-is? ~this ~iface)
@@ -1396,10 +1395,10 @@
     (print ";\n")
 
     (doseq [[mname fixed-params opt-kind opt-params no-explicit-body body] methods
-            :let [{:dart/keys [getter setter]} (meta mname)]]
+            :let [{:dart/keys [getter setter type]} (meta mname)]]
       (newline)
       (when-not setter
-        (print (:dart/type mname "dc.dynamic"))
+        (print (or type "dc.dynamic"))
         (print " "))
       (cond
         getter (print "get ")
