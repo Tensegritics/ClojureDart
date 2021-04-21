@@ -1081,7 +1081,7 @@
 
 (deftype Cons [meta first rest ^:mutable ^int __hash]
   Object
-  (^String toString [coll] "TODO" #_(pr-str* coll))
+  #_(^String toString [coll] "TODO" #_(pr-str* coll))
   IList
   IWithMeta
   (-with-meta [coll new-meta]
@@ -1128,7 +1128,6 @@
   ;; invariant: first is nil when count is zero
   Object
   #_(^String toString [coll]
-    ;; TODO
     #_(pr-str* coll))
   IList
   IWithMeta
@@ -1161,7 +1160,7 @@
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
   ISeqable
-  (-seq [coll] coll)
+  (-seq [coll] (when (< 0 count) coll))
   ICounted
   (-count [coll] count)
   #_#_#_IReduce
@@ -1501,6 +1500,8 @@
     (-chunked-next s)
     (seq (-chunked-rest s))))
 
+;;;
+
 (defn ^List to-array
   [coll]
   ;; TODO : use more concrete implem of to-array for DS ?
@@ -1600,6 +1601,31 @@
     (if-not (nil? sn)
       (recur sn)
       (first s))))
+
+(defn concat
+  "Returns a lazy seq representing the concatenation of the elements in the supplied colls."
+  ([] (lazy-seq nil))
+  ([x] (lazy-seq x))
+  ([x y]
+   (lazy-seq
+    (let [s (seq x)]
+      (if s
+        (if (chunked-seq? s)
+          (chunk-cons (chunk-first s) (concat (chunk-rest s) y))
+          (cons (first s) (concat (rest s) y)))
+        y))))
+  ([x y & zs]
+   (let [cat (fn cat [xys zs]
+               (lazy-seq
+                (let [xys (seq xys)]
+                  (if xys
+                    (if (chunked-seq? xys)
+                      (chunk-cons (chunk-first xys)
+                                  (cat (chunk-rest xys) zs))
+                      (cons (first xys) (cat (rest xys) zs)))
+                    (when zs
+                      (cat (first zs) (next zs)))))))]
+     (cat (concat x y) zs))))
 
 (defn map
   "Returns a lazy sequence consisting of the result of applying f to
