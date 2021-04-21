@@ -1026,7 +1026,8 @@
       (m3-fmix h 8))))
 
 (defn ^bool identical?
-  {:inline (fn [x y] `(dart:core/identical ~x ~y))
+  ;; TODO inline does not work
+  #_{:inline (fn [x y] `(dart:core/identical ~x ~y))
    :inline-arities #{2}}
   [x y]
   (dart:core/identical x y))
@@ -1126,7 +1127,7 @@
 (deftype PersistentList [meta first rest ^int count ^:mutable ^int __hash]
   ;; invariant: first is nil when count is zero
   Object
-  (toString [coll]
+  (^String toString [coll]
     ;; TODO
     #_(pr-str* coll))
   IList
@@ -1201,7 +1202,7 @@
 
 (deftype StringSeq [string i meta ^:mutable ^int __hash]
   #_Object
-  #_(toString [coll]
+  #_(^String toString [coll]
       (pr-str* coll))
   ISeqable
   (-seq [this] (when (< i (.-length string)) this))
@@ -1211,16 +1212,16 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (StringSeq. string i new-meta)))
+      (StringSeq. string i new-meta -1)))
   ISeq
   (-first [this] (. string "[]" i))
   (-rest [_]
     (if (< (inc i) (.-length string))
-      (StringSeq. string (inc i) -1)
+      (StringSeq. string (inc i) nil -1)
       empty-list))
   (-next [_]
     (if (< (inc i) (.-length string))
-      (StringSeq. string (inc i) -1)
+      (StringSeq. string (inc i) nil -1)
       nil))
   ICounted
   (-count [_] (- (.-length string) i))
@@ -1296,7 +1297,7 @@
 
 (deftype LazySeq [meta ^:mutable ^some fn ^:mutable s ^:mutable ^int __hash]
   Object
-  #_(toString [coll]
+  #_(^String toString [coll]
       (pr-str* coll))
   (sval [coll]
     (if (nil? fn)
@@ -1422,7 +1423,7 @@
 
 (deftype ChunkedCons [chunk more meta ^:mutable ^int __hash]
   Object
-  #_(toString [coll]
+  #_(^String toString [coll]
       (pr-str* coll))
   IWithMeta
   (-with-meta [coll new-meta]
@@ -1696,7 +1697,7 @@
 
 (deftype List [meta first rest count ^:mutable __hash]
   #_#_#_#_#_#_#_Object
-  (toString [coll]
+  (^String toString [coll]
     (pr-str* coll))
   (equiv [this other]
     (-equiv this other))
@@ -1766,7 +1767,7 @@
 
 (deftype EmptyList [meta]
   #_#_#_#_#_#_#_Object
-  (toString [coll]
+  (^String toString [coll]
     (pr-str* coll))
   (equiv [this other]
     (-equiv this other))
@@ -2098,7 +2099,7 @@
 
 (deftype PersistentVector [meta cnt shift root tail ^:mutable __hash]
   #_#_#_#_#_#_#_Object
-  (toString [coll]
+  (^String toString [coll]
     (pr-str* coll))
   (equiv [this other]
     (-equiv this other))
@@ -2316,7 +2317,7 @@
 
 (deftype PersistentQueueSeq [meta front rear ^:mutable __hash]
   #_#_#_#_#_#_#_Object
-  (toString [coll]
+  (^String toString [coll]
     (pr-str* coll))
   (equiv [this other]
     (-equiv this other))
@@ -2372,7 +2373,7 @@
 
 (deftype PersistentQueue [meta count front rear ^:mutable __hash]
   #_#_#_#_#_#_#_Object
-  (toString [coll]
+  (^String toString [coll]
     (pr-str* coll))
   (equiv [this other]
     (-equiv this other))
@@ -2566,8 +2567,7 @@
   #_(dart:core/print (seq #dart [1 2]))
 
   #_(dart:core/print (next (next (seq #dart [1 2]))))
-
-  (dotimes [n 15] "a")
+  (dart:core/print (reduce (fn [acc item] (+ acc item)) 0 #dart[1 2 3]))
 
 
 
