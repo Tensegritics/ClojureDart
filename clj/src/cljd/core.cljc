@@ -12,7 +12,7 @@
 (def ^{:clj true} =)
 (def ^{:clj true} assoc)
 (def ^{:dart true} butlast)
-(def ^{:clj true} concat)
+#_(def ^{:clj true} concat)
 (def ^{:clj true} conj)
 #_(def ^{:dart true} cons)
 (def ^{:dart true} contains?)
@@ -22,23 +22,23 @@
 (def ^{:clj true} gensym)
 (def ^{:clj true} get)
 (def ^{:dart true} ident?)
-(def ^{:clj true} interleave)
+#_(def ^{:clj true} interleave)
 #_(def ^{:dart true} inc)
 (def ^{:dart true} key)
 (def ^{:dart true} keys)
 (def ^{:clj true} keyword)
 (def ^{:dart true} keyword?)
-(def ^{:dart true} last)
-(def ^{:clj true} list)
-(def ^{:clj true} mapcat)
+#_(def ^{:dart true} last)
+#_(def ^{:clj true} list)
+#_(def ^{:clj true} mapcat)
 (def ^{:dart true} map?)
 (def ^{:dart true} meta)
 (def ^{:dart true} name)
 (def ^{:dart true} namespace)
 #_(def ^{:dart true} next)
-(def ^{:dart true} nnext)
-(def ^{:clj true} partition)
-(def ^{:dart true} second)
+#_(def ^{:dart true} nnext)
+#_(def ^{:clj true} partition)
+#_(def ^{:dart true} second)
 #_(def ^{:dart true} seq)
 (def ^{:dart true} seq?)
 (def ^{:dart true} set)
@@ -1857,6 +1857,55 @@
             (cons f (filter pred r))
             (filter pred r))))))))
 
+(defn dorun
+  "When lazy sequences are produced via functions that have side
+  effects, any effects other than those needed to produce the first
+  element in the seq do not occur until the seq is consumed. dorun can
+  be used to force any effects. Walks through the successive nexts of
+  the seq, does not retain the head and returns nil."
+  ([coll]
+   (when-let [s (seq coll)]
+     (recur (next s))))
+  ([n coll]
+   (when (and (seq coll) (pos? n))
+     (recur (dec n) (next coll)))))
+
+(defn doall
+  "When lazy sequences are produced via functions that have side
+  effects, any effects other than those needed to produce the first
+  element in the seq do not occur until the seq is consumed. doall can
+  be used to force any effects. Walks through the successive nexts of
+  the seq, retains the head and returns it, thus causing the entire
+  seq to reside in memory at one time."
+  ([coll]
+   (dorun coll)
+   coll)
+  ([n coll]
+   (dorun n coll)
+   coll))
+
+(defn partition
+  "Returns a lazy sequence of lists of n items each, at offsets step
+  apart. If step is not supplied, defaults to n, i.e. the partitions
+  do not overlap. If a pad collection is supplied, use its elements as
+  necessary to complete last partition upto n items. In case there are
+  not enough padding elements, return a partition with less than n items."
+  ([n coll]
+   (partition n n coll))
+  ([n step coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (let [p (doall (take n s))]
+        (when (== n (count p))
+          (cons p (partition n step (nthrest s step))))))))
+  ([n step pad coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (let [p (doall (take n s))]
+        (if (== n (count p))
+          (cons p (partition n step pad (nthrest s step)))
+          (list (take n (concat p pad)))))))))
+
 
 
 #_(
@@ -2570,6 +2619,12 @@
 
   (dart:core/print
    (fnext (drop-last (list 1 2))))
+
+  (dart:core/print
+   (first (second (partition 2 #dart[1 2 3 4]))))
+
+  #_(dart:core/print
+   (first (next (take 2 #dart[1 2 3 4]))))
 
 
   )
