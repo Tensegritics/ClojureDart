@@ -1579,6 +1579,15 @@
     ([x y] (not (f x y)))
     ([x y & zs] (not (apply f x y zs)))))
 
+(defn some
+  "Returns the first logical true value of (pred x) for any x in coll,
+  else nil.  One common idiom is to use a set as pred, for example
+  this will return :fred if :fred is in the sequence, otherwise nil:
+  (some #{:fred} coll)"
+  [pred coll]
+  (when-let [s (seq coll)]
+    (or (pred (first s)) (recur pred (next s)))))
+
 (defn second
   "Same as (first (next x))"
   [coll]
@@ -2712,6 +2721,9 @@
 
   (dart:core/print
    (last (remove #(== 1 %) #dart[1 2 3 4 1])))
+
+  (dart:core/print
+   (some #(== 1 %) #dart[ 2 3 4 5 1]))
 
 
   )
