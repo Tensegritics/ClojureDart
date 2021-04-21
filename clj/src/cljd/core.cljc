@@ -17,7 +17,7 @@
 #_(def ^{:dart true} cons)
 (def ^{:dart true} contains?)
 (def ^{:clj true} dissoc)
-(def ^{:clj true} drop)
+#_(def ^{:clj true} drop)
 #_(def ^{:dart true} first)
 (def ^{:clj true} gensym)
 (def ^{:clj true} get)
@@ -1602,6 +1602,124 @@
       (recur sn)
       (first s))))
 
+(defn drop
+  "Returns a lazy sequence of all but the first n items in coll.
+  Returns a stateful transducer when no collection is provided."
+  ;; TODO tx version
+  #_([n]
+   (fn [rf]
+     (let [nv (volatile! n)]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (let [n @nv]
+            (vswap! nv dec)
+            (if (pos? n)
+              result
+              (rf result input))))))))
+  ([n coll]
+   (let [step (fn [n coll]
+                (let [s (seq coll)]
+                  (if (and (pos? n) s)
+                    (recur (dec n) (rest s))
+                    s)))]
+     (lazy-seq (step n coll)))))
+
+(defn drop-while
+  "Returns a lazy sequence of the items in coll starting from the
+  first item for which (pred item) returns logical false.  Returns a
+  stateful transducer when no collection is provided."
+  ;; TODO : tx version
+  #_([pred]
+   (fn [rf]
+     (let [dv (volatile! true)]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (let [drop? @dv]
+            (if (and drop? (pred input))
+              result
+              (do
+                (vreset! dv nil)
+                (rf result input)))))))))
+  ([pred coll]
+   (let [step (fn [pred coll]
+                (let [s (seq coll)]
+                  (if (and s (pred (first s)))
+                    (recur pred (rest s))
+                    s)))]
+     (lazy-seq (step pred coll)))))
+
+(defn drop-last
+  "Return a lazy sequence of all but the last n (default 1) items in coll"
+  ([coll] (drop-last 1 coll))
+  ([n coll] (map (fn [x _] x) coll (drop n coll))))
+
+(defn take
+  "Returns a lazy sequence of the first n items in coll, or all items if
+  there are fewer than n.  Returns a stateful transducer when
+  no collection is provided."
+  ;; TODO : tx version
+  #_([n]
+   (fn [rf]
+     (let [nv (volatile! n)]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (let [n @nv
+                nn (vswap! nv dec)
+                result (if (pos? n)
+                         (rf result input)
+                         result)]
+            (if (not (pos? nn))
+              (ensure-reduced result)
+              result)))))))
+  ([n coll]
+   (lazy-seq
+    (when (pos? n)
+      (when-let [s (seq coll)]
+        (cons (first s) (take (dec n) (rest s))))))))
+
+(defn take-while
+  "Returns a lazy sequence of successive items from coll while
+  (pred item) returns logical true. pred must be free of side-effects.
+  Returns a transducer when no collection is provided."
+  ;; TODO : tx version
+  #_([pred]
+   (fn [rf]
+     (fn
+       ([] (rf))
+       ([result] (rf result))
+       ([result input]
+        (if (pred input)
+          (rf result input)
+          (reduced result))))))
+  ([pred coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (when (pred (first s))
+        (cons (first s) (take-while pred (rest s))))))))
+
+(defn take-last
+  "Returns a seq of the last n items in coll.  Depending on the type
+  of coll may be no better than linear time.  For vectors, see also subvec."
+  [n coll]
+  (loop [s (seq coll) lead (seq (drop n coll))]
+    (if lead
+      (recur (next s) (next lead))
+      s)))
+
+(defn nthrest
+  "Returns the nth rest of coll, coll when n is 0."
+  [coll n]
+  (loop [n n xs coll]
+    (if-let [xs (and (pos? n) (seq xs))]
+      (recur (dec n) (rest xs))
+      xs)))
+
 (defn concat
   "Returns a lazy seq representing the concatenation of the elements in the supplied colls."
   ([] (lazy-seq nil))
@@ -1673,6 +1791,41 @@
                    (when (every? identity ss)
                      (cons (map first ss) (step (map rest ss)))))))]
      (map #(apply f %) (step (list* c1 c2 c3 colls))))))
+
+(defn mapcat
+  "Returns the result of applying concat to the result of applying map
+  to f and colls.  Thus function f should return a collection. Returns
+  a transducer when no collections are provided"
+  ;; TODO tx version
+  #_([f] (comp (map f) cat))
+  ([f & colls]
+   (apply concat (apply map f colls))))
+
+(defmacro lazy-cat
+  "Expands to code which yields a lazy sequence of the concatenation
+  of the supplied colls.  Each coll expr is not evaluated until it is
+  needed.
+
+  (lazy-cat xs ys zs) === (concat (lazy-seq xs) (lazy-seq ys) (lazy-seq zs))"
+  {:added "1.0"}
+  [& colls]
+  `(concat ~@(map #(list `lazy-seq %) colls)))
+
+(defn interleave
+  "Returns a lazy seq of the first item in each coll, then the second etc."
+  ([] empty-list)
+  ([c1] (lazy-seq c1))
+  ([c1 c2]
+   (lazy-seq
+    (let [s1 (seq c1) s2 (seq c2)]
+      (when (and s1 s2)
+        (cons (first s1) (cons (first s2)
+                               (interleave (rest s1) (rest s2))))))))
+  ([c1 c2 & colls]
+   (lazy-seq
+    (let [ss (map seq (list* c1 c2 colls))]
+      (when (every? identity ss)
+        (concat (map first ss) (apply interleave (map rest ss))))))))
 
 (defn filter
   "Returns a lazy sequence of the items in coll for which
@@ -2406,10 +2559,17 @@
   #_(dart:core/print (seq #dart [1 2]))
 
   #_(dart:core/print (next (next (seq #dart [1 2]))))
-  (dart:core/print (reduce (fn [acc item] (+ acc item)) 0 #dart[1 2 3]))
 
 
+  (dart:core/print
+   (fnext (next (interleave (list 3 2) (list "a" "b") (list 10 11)))))
 
+
+  (dart:core/print
+   (first (drop-last (list 1 2))))
+
+  (dart:core/print
+   (fnext (drop-last (list 1 2))))
 
 
   )
