@@ -334,12 +334,12 @@
               :inline
               (fn
                 ~@(for [{:keys [dart/name] all-args :args} (vals arity-mapping)
-                        :let [[this & args :as locals] (map (fn [arg] (list 'quote (gensym arg))) all-args)]]
+                        :let [[[_ this] & args :as locals] (map (fn [arg] (list 'quote (gensym arg))) all-args)]]
                     `(~all-args
                       `(let [~~@(interleave locals all-args)]
-                         (if (dart-is? ~~this ~'~iface)
-                           (. ~~this ~'~name ~~@args) ; TODO cast to iface
-                           (. (.extensions ~'~proto ~~this) ~'~name ~~@all-args))))))}
+                         (if (dart-is? ~'~this ~'~iface)
+                           (. ~'~(vary-meta this assoc :tag iface) ~'~name ~~@args) ; TODO cast to iface
+                           (. (.extensions ~'~proto ~'~this) ~'~name ~'~this ~~@args))))))}
              ~@(for [{:keys [dart/name] [this & args :as all-args] :args} (vals arity-mapping)]
                  `(~all-args
                    (if (dart-is? ~this ~iface)
