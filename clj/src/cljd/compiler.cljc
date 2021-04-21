@@ -1753,7 +1753,7 @@
                  (resolveAlias [_ sym]
                    (let [{:keys [current-ns] :as nses} @nses
                          {:keys [aliases imports]} (nses current-ns)]
-                     (some-> (aliases (name sym)) imports :dart-alias symbol)))
+                     (some-> (aliases (name sym)) imports :ns symbol)))
                  (resolveVar [_ sym] nil))]
          (let [in (clojure.lang.LineNumberingPushbackReader. in)]
            (loop []
@@ -1775,7 +1775,7 @@
                  (resolveAlias [_ sym]
                    (let [{:keys [current-ns] :as nses} @nses
                          {:keys [aliases imports]} (nses current-ns)]
-                     (some-> (aliases (name sym)) imports :dart-alias symbol)))
+                     (some-> (aliases (name sym)) imports :ns symbol)))
                  (resolveVar [_ sym] nil))]
          (let [in (clojure.lang.LineNumberingPushbackReader. in)]
            (loop []
