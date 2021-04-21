@@ -1569,6 +1569,16 @@
     (pred (first coll)) (recur pred (next coll))
     true false))
 
+(defn complement
+  "Takes a fn f and returns a fn that takes the same arguments as f,
+  has the same effects, if any, and returns the opposite truth value."
+  [f]
+  (fn
+    ([] (not (f)))
+    ([x] (not (f x)))
+    ([x y] (not (f x y)))
+    ([x y & zs] (not (apply f x y zs)))))
+
 (defn second
   "Same as (first (next x))"
   [coll]
@@ -1981,6 +1991,15 @@
             ;; TODO change == to =
             run (cons fst (take-while #(== fv (f %)) (next s)))]
         (cons run (partition-by f (lazy-seq (drop (count run) s)))))))))
+
+(defn remove
+  "Returns a lazy sequence of the items in coll for which
+  (pred item) returns logical false. pred must be free of side-effects.
+  Returns a transducer when no collection is provided."
+  ;; TODO tx version
+  #_([pred] (filter (complement pred)))
+  ([pred coll]
+   (filter (complement pred) coll)))
 
 
 
@@ -2709,8 +2728,11 @@
   (dart:core/print
    (first (last (partition-by #(< % 2) #dart[1 2 3 4 1]))))
 
-  #_(dart:core/print
-   (count (take-while #(< % 10) #dart [1 9 10 8])))
+  (dart:core/print
+   (count (remove #(== 1 %) #dart[1 2 3 4 1])))
+
+  (dart:core/print
+   (last (remove #(== 1 %) #dart[1 2 3 4 1])))
 
 
   )
