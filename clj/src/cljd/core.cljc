@@ -468,6 +468,12 @@
    `(let [and# ~x]
       (if and# (and ~@next) and#))))
 
+(defmacro when
+  "Evaluates test. If logical true, evaluates body in an implicit do."
+  {:added "1.0"}
+  [test & body]
+  `(if ~test (do ~@body)))
+
 (defmacro or
   "Evaluates exprs one at a time, from left to right. If a form
   returns a logical true value, or returns that value and doesn't
@@ -1315,7 +1321,7 @@
     ;; TODO check out of bound exceptions
     (. arr "[]" (+ off i)))
   (-nth [coll i not-found]
-    (if (< n 0)
+    (if (< i 0)
       not-found
       (if (< i (- end off))
         (. arr "[]" (+ off i))
