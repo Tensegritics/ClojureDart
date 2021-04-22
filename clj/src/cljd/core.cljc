@@ -1180,7 +1180,6 @@
 (defn unreduced
   "If x is reduced?, returns (deref x), else returns x"
   [x]
-  ;; TODO: use deref at some point
   (if (reduced? x) (-deref x) x))
 
 (deftype PersistentList [meta first rest ^int count ^:mutable ^int __hash]
