@@ -524,7 +524,6 @@
   {:added "1.0"}
   [& body])
 
-;; TODO
 (def empty-list nil)
 
 #_(defn nth [x i default]
@@ -612,6 +611,34 @@
      (conj [1 2 3 4] 5) => [1 2 3 4 5]
      (conj '(2 3 4 5) 1) => '(1 2 3 4 5)"))
 
+(defprotocol IDeref
+  "Protocol for adding dereference functionality to a reference."
+  (-deref [o]
+    "Returns the value of the reference o."))
+
+(defn deref
+  "Also reader macro: @ref/@agent/@var/@atom/@delay/@future/@promise. Within a transaction,
+  returns the in-transaction-value of ref, else returns the
+  most-recently-committed value of ref. When applied to a var, agent
+  or atom, returns its current state. When applied to a delay, forces
+  it if not already forced. When applied to a future, will block if
+  computation not complete. When applied to a promise, will block
+  until a value is delivered.  The variant taking a timeout can be
+  used for blocking references (futures and promises), and will return
+  timeout-val if the timeout (in milliseconds) is reached before a
+  value is available. See also - realized?."
+  {:added "1.0"
+   :static true}
+  ;; TODO: rethink
+  ([ref] #_(if (instance? clojure.lang.IDeref ref)
+           (.deref ^clojure.lang.IDeref ref)
+           (deref-future ref))
+   (-deref ref))
+  #_([ref timeout-ms timeout-val]
+   (if (instance? clojure.lang.IBlockingDeref ref)
+     (.deref ^clojure.lang.IBlockingDeref ref timeout-ms timeout-val)
+     (deref-future ref timeout-ms timeout-val))))
+
 (defprotocol IReduce
   "Protocol for seq types that can reduce themselves.
   Called by cljs.core/reduce."
@@ -620,19 +647,26 @@
      returns the result of applying f to the first 2 items in coll, then
      applying f to that result and the 3rd item, etc."))
 
-;; TODO handle Reduced
+(def ^:dart reduced? nil)
+
 (extend-type fallback
   IReduce
   (-reduce [coll f]
     (if-some [[x & xs] (seq coll)]
       (if-some [[y & xs] xs]
-        (-reduce f (f x y) xs)
+        (let [val (f x y)]
+          (if (reduced? val)
+            (deref val)
+            (-reduce f val xs)))
         x)
       (f)))
   (-reduce [coll f start]
     (loop [acc start xs (seq coll)]
       (if-some [[x & xs] xs]
-        (recur (f acc x) xs)
+        (let [val (f acc x)]
+          (if (reduced? val)
+            (deref val)
+            (recur val xs)))
         acc))))
 
 (defn reduce
@@ -1124,6 +1158,31 @@
   ([a b c d & more]
    (cons a (cons b (cons c (cons d (spread more)))))))
 
+(deftype Reduced [val]
+  IDeref
+  (-deref [o] val))
+
+(defn reduced
+  "Wraps x in a way such that a reduce will terminate with the value x"
+  [x]
+  (Reduced. x))
+
+(defn reduced?
+  "Returns true if x is the result of a call to reduced"
+  [r]
+  (dart-is? r Reduced))
+
+(defn ensure-reduced
+  "If x is already reduced?, returns it, else returns (reduced x)"
+  [x]
+  (if (reduced? x) x (reduced x)))
+
+(defn unreduced
+  "If x is reduced?, returns (deref x), else returns x"
+  [x]
+  ;; TODO: use deref at some point
+  (if (reduced? x) (-deref x) x))
+
 (deftype PersistentList [meta first rest ^int count ^:mutable ^int __hash]
   ;; invariant: first is nil when count is zero
   Object
@@ -1257,22 +1316,27 @@
   #_#_IEmptyableCollection
   (-empty [coll] (.-EMPTY List))
   IReduce
-  ;; TODO handle reduced
   (-reduce [coll f]
     (let [l (.-length string)
           x (. string "[]" i)
           i' (inc i)]
       (if (< i' l)
-        (loop [idx i' acc x]
+        (loop [acc x idx i']
           (if (< idx l)
-            (recur (inc idx) (f acc (. string "[]" idx) ))
+            (let [val (f acc (. string "[]" idx) )]
+              (if (reduced? val)
+                (deref val)
+                (recur val (inc idx))))
             acc))
         x)))
   (-reduce [coll f start]
     (let [l (.-length string)]
       (loop [acc start idx i]
         (if (< idx l)
-          (recur (f acc (. string "[]" idx) ) (inc idx))
+          (let [val (f acc (. string "[]" idx) )]
+            (if (reduced? val)
+              (deref val)
+              (recur val (inc idx))))
           acc))))
   IHash
   (-hash [coll] (ensure-hash __hash (m3-hash-int (.-hashCode (.substring string i)))))
@@ -1398,13 +1462,19 @@
       (if (< off' end)
         (loop [acc x idx off']
           (if (< idx end)
-            (recur (f acc (. arr "[]" idx)) (inc idx))
+            (let [val (f acc (. arr "[]" idx))]
+              (if (reduced? val)
+                (deref val)
+                (recur val (inc idx))))
             acc))
         x)))
   (-reduce [coll f start]
     (loop [acc start idx off]
       (if (< idx end)
-        (recur (f acc (. arr "[]" idx)) (inc idx))
+        (let [val (f acc (. arr "[]" idx))]
+          (if (reduced? val)
+            (deref val)
+            (recur val (inc idx))))
         acc))))
 
 (defn array-chunk
