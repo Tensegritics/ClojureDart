@@ -1811,6 +1811,39 @@
                      (cons (map first ss) (step (map rest ss)))))))]
      (map #(apply f %) (step (list* c1 c2 c3 colls))))))
 
+(defn keep
+  "Returns a lazy sequence of the non-nil results of (f item). Note,
+  this means false return values will be included.  f must be free of
+  side-effects.  Returns a transducer when no collection is provided."
+  {:added "1.2"
+   :static true}
+  ([f]
+   (fn [rf]
+     (fn
+       ([] (rf))
+       ([result] (rf result))
+       ([result input]
+        (let [v (f input)]
+          (if (nil? v)
+            result
+            (rf result v)))))))
+  ([f coll]
+   (lazy-seq
+    (when-let [s (seq coll)]
+      (if (chunked-seq? s)
+        (let [c (chunk-first s)
+              size (count c)
+              b (chunk-buffer size)]
+          (dotimes [i size]
+            (let [x (f (-nth c i))]
+              (when-not (nil? x)
+                (chunk-append b x))))
+          (chunk-cons (chunk b) (keep f (chunk-rest s))))
+        (let [x (f (first s))]
+          (if (nil? x)
+            (keep f (rest s))
+            (cons x (keep f (rest s))))))))))
+
 (defn mapcat
   "Returns the result of applying concat to the result of applying map
   to f and colls.  Thus function f should return a collection. Returns
@@ -2723,7 +2756,10 @@
    (last (remove #(== 1 %) #dart[1 2 3 4 1])))
 
   (dart:core/print
-   (some #(== 1 %) #dart[ 2 3 4 5 1]))
+   (some #(if (== 1 %) %) #dart[ 2 3 4 5 1]))
+
+  (dart:core/print
+   (count (keep identity #dart[nil 2 3 nil 4 5 1])))
 
 
   )
