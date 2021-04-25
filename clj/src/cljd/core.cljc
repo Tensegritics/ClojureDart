@@ -931,11 +931,11 @@
 
 (defn ^int bit-and-not
   "Bitwise and with complement"
-  {:inline (fn
-             ([x y] `(bit-not (bit-and ~x ~y)))
-             ([x y & more] (reduce (fn [a b] `(bit-not (bit-and ~a ~b))) `(bit-not (bit-and ~x ~y)) more)))
+  {"inline" (fn
+             ([x y] `(bit-and ~x (bit-not ~y)))
+              ([x y & more] (reduce (fn [a b] `(bit-and ~a (bit-not ~b))) `(bit-and ~x (bit-not ~y)) more)))
    :inline-arities >1?}
-  ([x y] (bit-not (bit-and x y)))
+  ([x y] (bit-and x (bit-not y)))
   ([x y & more]
    (reduce bit-and-not (bit-and-not x y) more)))
 
@@ -1129,7 +1129,7 @@
   (-rest [coll] (if (nil? rest) empty-list rest))
   (-next [coll] (if (nil? rest) nil (seq rest)))
   ICollection
-  (-conj [coll o] (Cons. nil o coll nil))
+  (-conj [coll o] (Cons. nil o coll -1))
   #_#_IEmptyableCollection
   (-empty [coll] empty-list)
   ISequential
@@ -1221,6 +1221,7 @@
   (-seq [coll] (when (< 0 count) coll))
   ICounted
   (-count [coll] count)
+  ;; TODO: do or not
   #_#_#_IReduce
   (-reduce [coll f] (seq-reduce f coll))
   (-reduce [coll f start] (seq-reduce f start coll)))
@@ -1487,7 +1488,7 @@
 (deftype ChunkBuffer [^:mutable arr ^:mutable end]
   Object
   (add [_ o]
-    (. arr "[]" end o)
+    (. arr "[]=" end o)
     (set! end (inc end)))
   (chunk [_]
     (let [ret (ArrayChunk. arr 0 end)]
@@ -1568,6 +1569,235 @@
   #_(if (implements? IChunkedNext s)
     (-chunked-next s)
     (seq (-chunked-rest s))))
+
+;;;
+
+;;; PersistentVector
+
+(deftype VectorNode [edit ^List arr])
+
+(defn pv-clone-node [^VectorNode node]
+  (let [^List source (.-arr node)
+        ^List target (.filled List (.-length source) nil)]
+    (.copyRange List target 0 source)
+    (VectorNode. (.-edit node) target)))
+
+(defn pv-fresh-node [edit]
+  ;; TODO Tag ?
+  (VectorNode. edit (.filled List 32 nil)))
+
+(defn pv-aset [^VectorNode node ^int idx val]
+  (. (.-arr node) "[]=" idx val))
+
+(defn pv-aget [^VectorNode node ^int idx]
+  (. (.-arr node) "[]" idx))
+
+
+;; (push-tail coll shift root (VectorNode. nil tail))
+(defn push-tail [pv ^int level ^VectorNode parent ^VectorNode tailnode]
+  (let [^int subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
+        ^List arr-parent (.-arr parent)]
+    (if (< subidx (.-length arr-parent))
+      (let [^VectorNode cloned-node (pv-clone-node parent)
+            ^VectorNode new-node (push-tail pv (- level 5) (pv-aget cloned-node subidx) tailnode)]
+        (pv-aset cloned-node subidx new-node)
+        cloned-node)
+      (let [^VectorNode new-node (VectorNode. (.-edit parent) (.filled List (inc subidx) nil))
+            _ (.copyRange List (.-arr new-node) 0 arr-parent)
+            ^VectorNode node-to-insert (new-path nil (- level 5) tailnode)]
+        (pv-aset new-node subidx node-to-insert)
+        new-node))))
+
+(defn new-path [edit ^int level ^VectorNode node]
+  (loop [ll level
+         ret node]
+    (if (zero? ll)
+      ret
+      (recur (- ll 5) (VectorNode. edit (.filled List 1 ret))))))
+
+(defn tail-off [pv]
+  (let [^int cnt (.-cnt pv)]
+    (if (pos? cnt)
+      (bit-and-not (dec cnt) 31)
+      0)))
+
+(defn unchecked-array-for
+  "Returns the array where i is located."
+  [pv ^int i]
+  (if (<= (bit-and-not (dec (.-cnt pv)) 31) i)
+    (.-tail pv)
+    (loop [node (.-root pv)
+           level (.-shift pv)]
+      (if (< 0 level)
+        (recur (pv-aget node (bit-and (u32-bit-shift-right i level) 0x01f))
+          (- level 5))
+        (.-arr node)))))
+
+(deftype PersistentVector [meta ^int cnt ^int shift root tail ^:mutable ^int __hash]
+  Object
+  #_(toString [coll]
+    (pr-str* coll))
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (PersistentVector. new-meta cnt shift root tail __hash)))
+  IMeta
+  (-meta [coll] meta)
+  #_#_#_IStack
+  (-peek [coll]
+    (when (> cnt 0)
+      (-nth coll (dec cnt))))
+  (-pop [coll]
+    (cond
+     (zero? cnt) (throw (js/Error. "Can't pop empty vector"))
+     (== 1 cnt) (-with-meta (.-EMPTY PersistentVector) meta)
+     (< 1 (- cnt (tail-off coll)))
+      (PersistentVector. meta (dec cnt) shift root (.slice tail 0 -1) nil)
+      :else (let [new-tail (unchecked-array-for coll (- cnt 2))
+                  nr (pop-tail coll shift root)
+                  new-root (if (nil? nr) (.-EMPTY-NODE PersistentVector) nr)
+                  cnt-1 (dec cnt)]
+              (if (and (< 5 shift) (nil? (pv-aget new-root 1)))
+                (PersistentVector. meta cnt-1 (- shift 5) (pv-aget new-root 0) new-tail nil)
+                (PersistentVector. meta cnt-1 shift new-root new-tail nil)))))
+  ICollection
+  (-conj [coll o]
+    (if (< (- cnt (tail-off coll)) 32)
+      (let [len (.-length tail)
+            new-tail (.filled List (inc len) o)]
+        (.copyRange List new-tail 0 tail)
+        (PersistentVector. meta (inc cnt) shift root new-tail -1))
+      (let [root-overflow? (< (u32-bit-shift-left 1 shift) (u32-bit-shift-right cnt 5))
+            new-shift (if root-overflow? (+ shift 5) shift)
+            new-root (if root-overflow?
+                       (let [n-r (VectorNode. nil (.filled List 2 nil))]
+                         (pv-aset n-r 0 root)
+                         (pv-aset n-r 1 (new-path nil shift (VectorNode. nil tail)))
+                         n-r)
+                       (push-tail coll shift root (VectorNode. nil tail)))]
+        (PersistentVector. meta (inc cnt) new-shift new-root (.filled List 1 o) -1))))
+  #_#_IEmptyableCollection
+  (-empty [coll] (-with-meta (.-EMPTY PersistentVector) meta))
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other]
+    (if (instance? PersistentVector other)
+      (if (== cnt (count other))
+        (let [me-iter  (-iterator coll)
+              you-iter (-iterator other)]
+          (loop []
+            (if ^boolean (.hasNext me-iter)
+              (let [x (.next me-iter)
+                    y (.next you-iter)]
+                (if (= x y)
+                  (recur)
+                  false))
+              true)))
+        false)
+      (equiv-sequential coll other)))
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+  ISeqable
+  (-seq [coll]
+    nil
+    #_(cond
+      (zero? cnt) nil
+      (<= cnt 32) (IndexedSeq. tail 0 nil)
+      :else (chunked-seq coll (first-array-for-longvec coll) 0 0)))
+  ICounted
+  (-count [coll] cnt)
+  IIndexed
+  (-nth [coll n]
+    (if (or (<= cnt n) (< n 0))
+      (throw (ArgumentError. (str "No item " n " in vector of length " cnt)))
+      (let [arr (unchecked-array-for coll n)]
+        (. arr "[]" (bit-and n 31)))))
+  #_(-nth [coll n not-found]
+    (if (and (<= 0 n) (< n cnt))
+      (aget (unchecked-array-for coll n) (bit-and n 0x01f))
+      not-found))
+  #_#_#_ILookup
+  (-lookup [coll k] (-lookup coll k nil))
+  (-lookup [coll k not-found] (if (number? k)
+                                (-nth coll k not-found)
+                                not-found))
+  #_#_#_IAssociative
+  (-assoc [coll k v]
+    (if (number? k)
+      (-assoc-n coll k v)
+      (throw (js/Error. "Vector's key for assoc must be a number."))))
+  (-contains-key? [coll k]
+    (if (integer? k)
+      (and (<= 0 k) (< k cnt))
+      false))
+  #_#_IFind
+  (-find [coll n]
+    (when (and (<= 0 n) (< n cnt))
+      (MapEntry. n (aget (unchecked-array-for coll n) (bit-and n 0x01f)) nil)))
+  #_APersistentVector
+  #_#_IVector
+  (-assoc-n [coll n val]
+    (cond
+       (and (<= 0 n) (< n cnt))
+       (if (<= (tail-off coll) n)
+         (let [new-tail (aclone tail)]
+           (aset new-tail (bit-and n 0x01f) val)
+           (PersistentVector. meta cnt shift root new-tail nil))
+         (PersistentVector. meta cnt shift (do-assoc coll shift root n val) tail nil))
+       (== n cnt) (-conj coll val)
+       :else (throw (js/Error. (str "Index " n " out of bounds  [0," cnt "]")))))
+  #_#_#_IReduce
+  (-reduce [v f]
+    (pv-reduce v f 0 cnt))
+  (-reduce [v f init]
+    (loop [i 0 init init]
+      (if (< i cnt)
+        (let [arr  (unchecked-array-for v i)
+              len  (alength arr)
+              init (loop [j 0 init init]
+                     (if (< j len)
+                       (let [init (f init (aget arr j))]
+                         (if (reduced? init)
+                           init
+                           (recur (inc j) init)))
+                       init))]
+          (if (reduced? init)
+            @init
+            (recur (+ i len) init)))
+        init)))
+  #_#_IKVReduce
+  (-kv-reduce [v f init]
+    (loop [i 0 init init]
+      (if (< i cnt)
+        (let [arr  (unchecked-array-for v i)
+              len  (alength arr)
+              init (loop [j 0 init init]
+                     (if (< j len)
+                       (let [init (f init (+ j i) (aget arr j))]
+                         (if (reduced? init)
+                           init
+                           (recur (inc j) init)))
+                       init))]
+          (if (reduced? init)
+            @init
+            (recur (+ i len) init)))
+        init)))
+  #_#_#_IFn
+  (-invoke [coll k]
+    (-nth coll k))
+  (-invoke [coll k not-found]
+    (-nth coll k not-found))
+  #_#_IEditableCollection
+  (-as-transient [coll]
+    (TransientVector. cnt shift (tv-editable-root root) (tv-editable-tail tail)))
+  #_#_IReversible
+  (-rseq [coll]
+    (when (pos? cnt)
+      (RSeq. coll (dec cnt) nil)))
+  #_#_IIterable
+  (-iterator [this]
+    (ranged-iterator this 0 cnt)))
 
 ;;;
 
@@ -2323,204 +2553,7 @@
 (def ^VectorNode empty-vector-node (VectorNode. nil (dc/List. 32)))
 (def empty-persistent-vector nil)
 
-(deftype PersistentVector [meta cnt shift root tail ^:mutable __hash]
-  #_#_#_#_#_#_#_Object
-  (^String toString [coll]
-    (pr-str* coll))
-  (equiv [this other]
-    (-equiv this other))
-  (indexOf [coll x]
-    (-indexOf coll x 0))
-  (indexOf [coll x start]
-    (-indexOf coll x start))
-  (lastIndexOf [coll x]
-    (-lastIndexOf coll x (count coll)))
-  (lastIndexOf [coll x start]
-    (-lastIndexOf coll x start))
 
-  ICloneable
-  (-clone [_] (PersistentVector. meta cnt shift root tail __hash))
-
-  #_#_IWithMeta
-  (-with-meta [coll new-meta]
-    (if (identical? new-meta meta)
-      coll
-      (PersistentVector. new-meta cnt shift root tail __hash)))
-
-  #_#_IMeta
-  (-meta [coll] meta)
-
-  IStack
-  (-peek [coll]
-    (when (> cnt 0)
-      (-nth coll (dec cnt))))
-  (-pop [coll]
-    (cond
-      (zero? cnt) (throw (UnimplementedError. "Can't pop empty vector"))
-      (= 1 cnt) empty-persistent-vector ;; TODO : with-meta...
-      (< 1 (- cnt (tail-off coll)))
-      (PersistentVector. meta (dec cnt) shift root (doto #dart []
-                                                     (.addAll (.sublist tail 0 (dec (alength tail))))) nil)
-      :else (let [new-tail (unchecked-array-for coll (- cnt 2))
-                  nr (pop-tail coll shift root)
-                  new-root (if (nil? nr) empty-vector-node nr)
-                  cnt-1 (dec cnt)]
-              (if (and (< 5 shift) (nil? (pv-aget new-root 1)))
-                (PersistentVector. meta cnt-1 (- shift 5) (pv-aget new-root 0) new-tail nil)
-                (PersistentVector. meta cnt-1 shift new-root new-tail nil)))))
-
-  ICollection
-  (-conj [coll o]
-    (if (< (- cnt (tail-off coll)) 32)
-      ;; Check if it's better to fix dc/List length and iterate over old tail
-      (let [new-tail (.from dc/List tail .& :growable true)]
-        (.add new-tail o)
-        (PersistentVector. meta (inc cnt) shift root new-tail nil))
-      (let [root-overflow? (> (unsigned-bit-shift-right cnt 5) (bit-shift-left 1 shift))
-            new-shift (if root-overflow? (+ shift 5) shift)
-            new-root (if root-overflow?
-                       (let [n-r (pv-fresh-node nil)]
-                           (pv-aset n-r 0 root)
-                           (pv-aset n-r 1 (new-path nil shift (VectorNode. nil tail)))
-                           n-r)
-                       (push-tail coll shift root (VectorNode. nil tail)))]
-        (PersistentVector. meta (inc cnt) new-shift new-root #dart [o] nil))))
-
-  #_#_IEmptyableCollection
-  (-empty [coll] (-with-meta (.-EMPTY PersistentVector) meta))
-
-  ISequential
-
-  #_#_IEquiv
-  (-equiv [coll other]
-    (if (instance? PersistentVector other)
-      (if (== cnt (count other))
-        (let [me-iter  (-iterator coll)
-              you-iter (-iterator other)]
-          (loop []
-            (if ^boolean (.hasNext me-iter)
-              (let [x (.next me-iter)
-                    y (.next you-iter)]
-                (if (= x y)
-                  (recur)
-                  false))
-              true)))
-        false)
-      (equiv-sequential coll other)))
-
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
-
-  ISeqable
-  (-seq [coll]
-    (cond
-      (zero? cnt) nil
-      (<= cnt 32) (IndexedSeq. tail 0 nil)
-      true (chunked-seq coll (first-array-for-longvec coll) 0 0)))
-
-  ICounted
-  (-count [coll] cnt)
-
-  IIndexed
-  (-nth [coll n]
-    (aget (array-for coll n) (bit-and n 0x01f)))
-  (-nth [coll n not-found]
-    (if (and (<= 0 n) (< n cnt))
-      (aget (unchecked-array-for coll n) (bit-and n 0x01f))
-      not-found))
-
-  ILookup
-  (-lookup [coll k] (-lookup coll k nil))
-  (-lookup [coll k not-found] (if (dart-is? k dc/int)
-                                (-nth coll k not-found)
-                                not-found))
-
-  IAssociative
-  (-assoc [coll k v]
-    (if (dart-is? k int)
-      (-assoc-n coll k v)
-      (throw (UnimplementedError. "Vector's key for assoc must be a number."))))
-  (-contains-key? [coll k]
-    (if (dart-is? k int)
-      (and (<= 0 k) (< k cnt))
-      false))
-
-  #_#_IFind
-  (-find [coll n]
-    (when (and (<= 0 n) (< n cnt))
-      (MapEntry. n (aget (unchecked-array-for coll n) (bit-and n 0x01f)) nil)))
-
-  APersistentVector
-  IVector
-  (-assoc-n [coll n val]
-    (cond
-       (and (<= 0 n) (< n cnt))
-       (if (<= (tail-off coll) n)
-         (let [new-tail (aclone tail)]
-           (aset new-tail (bit-and n 0x01f) val)
-           (PersistentVector. meta cnt shift root new-tail nil))
-         (PersistentVector. meta cnt shift (do-assoc coll shift root n val) tail nil))
-       (= n cnt) (-conj coll val)
-       true (throw (UnimplementedError. "Message that do no suck."))))
-
-  #_#_#_IReduce
-  (-reduce [v f]
-    (pv-reduce v f 0 cnt))
-  (-reduce [v f init]
-    (loop [i 0 init init]
-      (if (< i cnt)
-        (let [arr  (unchecked-array-for v i)
-              len  (alength arr)
-              init (loop [j 0 init init]
-                     (if (< j len)
-                       (let [init (f init (aget arr j))]
-                         (if (reduced? init)
-                           init
-                           (recur (inc j) init)))
-                       init))]
-          (if (reduced? init)
-            @init
-            (recur (+ i len) init)))
-        init)))
-
-  #_#_IKVReduce
-  (-kv-reduce [v f init]
-    (loop [i 0 init init]
-      (if (< i cnt)
-        (let [arr  (unchecked-array-for v i)
-              len  (alength arr)
-              init (loop [j 0 init init]
-                     (if (< j len)
-                       (let [init (f init (+ j i) (aget arr j))]
-                         (if (reduced? init)
-                           init
-                           (recur (inc j) init)))
-                       init))]
-          (if (reduced? init)
-            @init
-            (recur (+ i len) init)))
-        init)))
-
-  IFn
-  (-invoke [coll k]
-    (-nth coll k))
-  (-invoke [coll k not-found]
-    (-nth coll k not-found))
-
-  #_#_IEditableCollection
-  (-as-transient [coll]
-    (TransientVector. cnt shift (tv-editable-root root) (tv-editable-tail tail)))
-
-  #_#_IReversible
-  (-rseq [coll]
-    (when (pos? cnt)
-      (RSeq. coll (dec cnt) nil)))
-
-  #_#_IIterable
-  (-iterator [this]
-    (ranged-iterator this 0 cnt)))
-
-(def ^PersistentVector empty-persistent-vector (PersistentVector. nil 0 5 empty-vector-node #dart[] nil))
 
 ;; Transient should go here
 
@@ -2795,40 +2828,88 @@
   #_(dart:core/print (next (next (seq #dart [1 2]))))
 
 
-  (dart:core/print
+  #_(dart:core/print
    (fnext (next (interleave (list 3 2) (list "a" "b") (list 10 11)))))
 
 
-  (dart:core/print
+  #_(dart:core/print
    (first (drop-last (list 1 2))))
 
-  (dart:core/print
+  #_(dart:core/print
    (fnext (drop-last (list 1 2))))
 
-  (dart:core/print
+  #_(dart:core/print
    (first (second (partition 2 #dart[1 2 3 4]))))
 
-  (dart:core/print
+  #_(dart:core/print
    (first (second (partition-all 2 #dart[1 2 3]))))
 
-  (dart:core/print
+  #_(dart:core/print
    (next (partition 2 #dart[1 2 3])))
 
-  (dart:core/print (count (cons 1 (seq #dart [2 3 4]))))
-  (dart:core/print
+  #_(dart:core/print (count (cons 1 (seq #dart [2 3 4]))))
+  #_(dart:core/print
    (first (last (partition-by #(< % 2) #dart[1 2 3 4 1]))))
 
-  (dart:core/print
+  #_(dart:core/print
    (count (remove #(== 1 %) #dart[1 2 3 4 1])))
 
-  (dart:core/print
+  #_(dart:core/print
    (last (remove #(== 1 %) #dart[1 2 3 4 1])))
 
-  (dart:core/print
+  #_(dart:core/print
    (some #(if (== 1 %) %) #dart[ 2 3 4 5 1]))
 
-  (dart:core/print
+  #_(dart:core/print
    (count (keep identity #dart[nil 2 3 nil 4 5 1])))
+
+  #_(dart:core/print
+   (reduce (fn [acc item]
+             (if (== item 5)
+               (reduced acc)
+               (+ acc item)))
+           0
+           #dart[10 1 3 5 6]))
+
+  #_(dart:core/print
+   (reduce (fn [acc item]
+             (if (== item "a")
+               (reduced acc)
+               (str acc " " item)))
+           ""
+           "bcdeafjdffd"))
+
+  #_(dart:core/print
+   (u32-bit-shift-right 33 5))
+
+
+  (dart:core/print "Started PV test")
+  (let [sw (Stopwatch.)
+        _ (.start sw)
+        pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)
+        pv1
+        (loop [pv2 pv
+               idx 0]
+          (if (== idx 1000000)
+            pv2
+            (recur (-conj pv2 idx) (inc idx))))]
+    (.stop sw)
+    (dart:core/print (.-elapsedMilliseconds sw))
+    (dart:core/print "ms"))
+
+  #_(dart:core/print "Started Vector test")
+  #_(let [sw (Stopwatch.)
+        _ (.start sw)
+
+        pv1
+        (loop [v (.filled List 1000000 1)
+               idx 0]
+          (if (== idx 1000000)
+            (.elementAt v 11111)
+            (recur (do (. v "[]=" idx idx) v) (inc idx))))]
+    (.stop sw)
+    (dart:core/print (.-elapsedMilliseconds sw))
+    (dart:core/print "ms"))
 
 
   )
