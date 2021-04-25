@@ -199,23 +199,29 @@
    "\\"   "$BSLASH_"
    "?"    "$QMARK_"})
 
-(defn munge [sym]
-  (let [s (name sym)]
-    (with-meta
-      (symbol
-       (or (when (reserved-words s) (str "$" s "_"))
-           (replace-all s #"__(\d+)|__auto__|(^-)|[^a-zA-Z0-9]"
-                        (fn [[x n leading-dash]]
-                          (else->>
-                           (if leading-dash "$_")
-                           (if n (str "$" n "_"))
-                           (if (= "__auto__" x) "$AUTO_")
-                           (or (char-map x))
-                           (str "$u"
-                                ;; TODO SELFHOST :cljd version
-                                (str/join "_$u" (map #(-> % int Long/toHexString .toUpperCase) x))
-                                "_"))))))
-      (dart-meta sym))))
+(defn munge
+  ([sym] (munge sym nil))
+  ([sym suffix]
+   (let [s (name sym)]
+     (with-meta
+       (or
+         (-> sym meta :dart/name)
+         (symbol
+          (cond->
+              (or (when (reserved-words s) (str "$" s "_"))
+                (replace-all s #"__(\d+)|__auto__|(^-)|[^a-zA-Z0-9]"
+                  (fn [[x n leading-dash]]
+                    (else->>
+                      (if leading-dash "$_")
+                      (if n (str "$" n "_"))
+                      (if (= "__auto__" x) "$AUTO_")
+                      (or (char-map x))
+                      (str "$u"
+                        ;; TODO SELFHOST :cljd version
+                        (str/join "_$u" (map #(-> % int Long/toHexString .toUpperCase) x))
+                        "_")))))
+              suffix (str "$" suffix))))
+       (dart-meta sym)))))
 
 (defn munge* [dart-names]
   (let [sb (StringBuilder. "$C$")]
@@ -229,16 +235,15 @@
     (.append sb "$D$")
     (symbol (.toString sb))))
 
-(defn- dont-munge [& args]
-  (let [sym (symbol (apply str args))]
-    (with-meta sym {:dart/name sym})))
+(defn- dont-munge [sym suffix]
+  (let [m (meta sym)
+        sym (cond-> sym suffix (-> name (str "$" suffix) symbol))]
+    (with-meta sym (assoc m :dart/name sym))))
 
 (defonce ^:private gens (atom 1))
 (defn dart-global
   ([] (dart-global ""))
-  ([prefix]
-   (with-meta (symbol (str (munge prefix) "$" (swap! gens inc)))
-     (dart-meta prefix))))
+  ([prefix] (munge prefix (swap! gens inc))))
 
 (def ^:dynamic *locals-gen*)
 (defn dart-local
@@ -303,15 +308,15 @@
                            (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" (dec l)))
                                                                  :args %}]))
                              arglists)]))) methods)
-        ; TODO check munging below
-        iface (symbol (str (munge proto) "$iface"))
+        iface (munge proto "iface")
         iface (with-meta iface {:dart/name iface})
-        iext (symbol (str (munge proto) "$iext"))
+        iext (munge proto "ext")
         iext (with-meta iext {:dart/name iext})
-        impl (symbol (str (munge proto) "$iprot"))
+        impl (munge proto "iprot")
         impl (with-meta impl {:dart/name impl})
         proto-map
-        {:iface iface
+        {:name proto
+         :iface iface
          :iext iext
          :impl impl
          :sigs method-mapping}]
@@ -372,8 +377,8 @@
                     _ (when-not (and (= tag :def) (= :protocol (:type info)))
                         (throw (Exception. (str protocol " isn't a protocol."))))
                     extension-base (munge* [(str type) (str protocol)]) ; str to get ns aliases if any
-                    extension-name (dont-munge extension-base "$cext")
-                    extension-instance (dont-munge extension-base "$extension")]]
+                    extension-name (dont-munge extension-base "cext")
+                    extension-instance (dont-munge extension-base "extension")]]
           (list 'do
             (list* `deftype extension-name []
               :type-only true
@@ -454,7 +459,6 @@
 (defn macroexpand-and-inline [env form]
   (let [ex (->> form (macroexpand env) (inline-expand env))]
     (cond->> ex (not (identical? ex form)) (recur env))))
-
 
 (declare emit infer-type)
 
@@ -600,10 +604,17 @@
           prop (and prop (nil? args))
           op (if prop 'dart/.- 'dart/.)
           [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
-          dart-obj (let [{:dart/keys [type nat-type]} (infer-type dart-obj)]
-                     ;; TODO SELFHOST with mirrors one can check membership
-                     (if (not= type nat-type)
-                       (list 'dart/as dart-obj type)
+          {:dart/keys [type nat-type]} (infer-type dart-obj)
+          ;; TODO SELFHOST with mirrors one can check membership
+          dart-obj (if (not= type nat-type)
+                     (list 'dart/as dart-obj type)
+                     (do
+                       ;; Can't do it properly in crosscompilation
+                       #_(when (or (nil? type) (= type "dc.dynamic")) ; TODO refine with mirrors and add *warn-on-dynamic*
+                         (binding [*out* *err*]
+                           ; TODO add file and line info (preserve meta through macroexpansion)
+                           (println "Dynamic invocation warning. Reference to" (if prop "field" "method")
+                             member "can't be resolved." obj)))
                        dart-obj))]
       (cond->> (list* op dart-obj name dart-args)
         (seq bindings) (list 'dart/let bindings)))))
@@ -689,23 +700,136 @@
 
 (defn- variadic? [[params]] (some #{'&} params))
 
+(defn- ensure-ifn-arities-mixin [fixed-arities base-vararg-arity]
+  (let [fixed-arities (set fixed-arities)
+        max-fixed-arity (some->> fixed-arities seq (reduce max))
+        min-fixed-arity (some->> fixed-arities seq (reduce min))
+        n (or base-vararg-arity max-fixed-arity)
+        mixin-name (munge (apply str "IFnMixin-" (map (fn [i] (cond (= i base-vararg-arity) "Z" (fixed-arities i) "X" :else "u")) (range (inc n)))))
+        synth-params (mapv #(symbol (str "arg" (inc %))) (range (max n (dec *threshold*))))
+        more-param (gensym 'more)
+        this 'this
+        fixed-invokes (for [n fixed-arities
+                            :when (< n *threshold* )]
+                        `(~'-invoke [~this ~@(subvec synth-params 0 n)]))
+        invoke-exts (for [n fixed-arities
+                          :when (<= *threshold* n)]
+                      `(~(symbol (str "$_invoke$ext" n)) [~this ~@(subvec synth-params 0 n)]))
+        vararg-mname '$_invoke$vararg
+        vararg-invokes
+        (when base-vararg-arity
+          (cons
+            `(~vararg-mname [~this ~@(subvec synth-params 0 base-vararg-arity) ~'etc])
+            (let [base-args (subvec synth-params 0 base-vararg-arity)
+                  from (cond-> base-vararg-arity max-fixed-arity (max (inc max-fixed-arity)))]
+              (for [n (range from *threshold*)
+                    :let [rest-args (subvec synth-params base-vararg-arity n)]]
+                `(~'-invoke [~this ~@base-args ~@rest-args]
+                  (. ~this ~vararg-mname ~@base-args ~(tagged-literal 'dart rest-args)))))))
+        max-fixed-arity (or base-vararg-arity max-fixed-arity)
+        invoke-more
+        (when (or base-vararg-arity (seq invoke-exts))
+          (let [more-params (subvec synth-params 0 (dec *threshold*))
+                vararg-call
+                (when base-vararg-arity
+                  (let [above-threshold (- base-vararg-arity *threshold*)]
+                    (if (neg? above-threshold)
+                      `(. ~this ~vararg-mname
+                          ~@(take base-vararg-arity more-params)
+                          (.+ ~(tagged-literal 'dart (vec (drop base-vararg-arity more-params)))
+                              ~more-param))
+                      (let [more-destructuring (conj (subvec synth-params (dec *threshold*)) '& 'etc)
+                            bound-vars (remove #{'&} more-destructuring)]
+                        `(if (.< ~above-threshold (count ~more-param))
+                           (let [~more-destructuring ~more-param]
+                             (. ~this ~vararg-mname ~@more-params ~@bound-vars))
+                           (throw (dart:core/ArgumentError. "No matching arity")))))))]
+            `(~'-invoke-more [~'this ~@more-params ~more-param]
+              ~(if (seq invoke-exts)
+                 `(~'case (count ~more-param)
+                    ~@(mapcat (fn [[meth params]]
+                                (let [ext-params (subvec params *threshold*)]
+                                  [(count ext-params)
+                                   `(let [~ext-params ~more-param]
+                                      (. ~this ~meth ~@more-params ~@ext-params))])) invoke-exts)
+                    ~@(some-> vararg-call list)) ; if present vararg is the default
+                 vararg-call))))
+        call+apply
+        (let [[this & call-args] (cond->> synth-params (not base-vararg-arity) (take (inc max-fixed-arity)))
+              fixed-args (cond->> call-args base-vararg-arity (take base-vararg-arity))
+              base-arity (or min-fixed-arity base-vararg-arity)
+              base-args (take base-arity call-args)
+              opt-args (drop base-arity call-args)
+              default-value (str (gensym "default"))
+              fixed-arities-expr
+              (for [args+1 (next (reductions conj (vec base-args)
+                                             (cond->> opt-args base-vararg-arity (take (- base-vararg-arity base-arity)))))]
+                [args+1 `(. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (count args+1)) ~@(pop args+1))])]
+          `((~'call [~this ~@base-args ... ~@(interleave opt-args (repeat default-value))]
+             (cond
+               ~@(mapcat (fn [[args+1 expr]] `((.== ~(peek args+1) ~default-value) ~expr)) fixed-arities-expr)
+               true ~(if base-vararg-arity
+                       (if-some [[first-rest-arg :as rest-args] (seq (drop base-vararg-arity call-args))]
+                         `(if (.== ~first-rest-arg ~default-value)
+                            (. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
+                               ~@fixed-args)
+                            (. ~this ~vararg-mname ~@fixed-args
+                               (.toList
+                                (.takeWhile ~(tagged-literal 'dart (vec rest-args))
+                                            (fn [e#] (.!= e# ~default-value))))))
+                         `(. ~this ~vararg-mname ~@fixed-args nil))
+                       `(. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
+                               ~@fixed-args))))
+            (~'-apply [~this ~more-param]
+             (let [~more-param (seq ~more-param)]
+               ~(reduce (fn [body [args+1 expr]]
+                          `(if (nil? ~more-param)
+                             ~expr
+                             (let* [~(peek args+1) (first ~more-param)
+                                    ~more-param (next ~more-param)]
+                               ~body)))
+                        `(if (nil? ~more-param)
+                           (. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
+                              ~@fixed-args)
+                           ~(if base-vararg-arity
+                              `(. ~this ~vararg-mname ~@fixed-args ~more-param)
+                              `(throw (dart:core/ArgumentError. "No matching arity"))))
+                        (reverse
+                         (concat
+                          (for [args+1 (next (reductions conj [] base-args))]
+                            [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
+                          fixed-arities-expr)))))))]
+    (emit
+      `(deftype ~(vary-meta mixin-name assoc :abstract true) []
+         :type-only true
+         cljd.core/IFn
+         ~@fixed-invokes
+         ~@invoke-exts
+         ~@vararg-invokes
+         ~@(some-> invoke-more list)
+         ~@call+apply)
+      {})
+    mixin-name))
+
 (defn- emit-ifn [var-name name bodies env]
   (let [synth-params (into [] (map (fn [_] (gensym "arg"))) (range *threshold*)) ; param names used when no user-specified
         more-param (gensym 'more)
         fixed-bodies (remove variadic? bodies)
-        max-fixed-arity (some->> fixed-bodies seq (map first) (map count) (reduce max))
-        min-fixed-arity (some->> fixed-bodies seq (map first) (map count) (reduce min))
+        fixed-arities (some->> fixed-bodies seq (map first) (map count))
+        max-fixed-arity (some->> fixed-arities (reduce max))
+        min-fixed-arity (some->> fixed-arities (reduce min))
         [vararg-params & vararg-body] (some #(when (variadic? %) %) bodies)
         base-vararg-arity (some->> vararg-params (take-while (complement #{'&})) count)
+        arities-mixin (ensure-ifn-arities-mixin fixed-arities base-vararg-arity)
         this (or name (gensym "this"))
         invoke-exts (for [[params & body] fixed-bodies
                           :let [n (count params)]
                           :when (>= n *threshold*)]
-                      `(~(symbol (str "_invoke$ext" n)) [~this ~@params] ~@body))
+                      `(~(symbol (str "$_invoke$ext" n)) [~this ~@params] ~@body))
         fixed-invokes (for [[params & body] fixed-bodies
                             :when (< (count params) *threshold*)]
                         `(~'-invoke [~this ~@params] ~@body))
-        vararg-mname '_invoke$vararg
+        vararg-mname '$_invoke$vararg
         vararg-invokes
         (when vararg-params
           (cons
@@ -870,7 +994,9 @@
 (defn do-def [nses sym m]
   (let [the-ns (:current-ns nses)
         {:keys [inline-arities inline] :as msym} (meta sym)
-        msym (cond-> msym inline-arities (assoc :inline (binding [*ns* (ghost-ns)] (eval inline))))
+        msym (cond-> msym inline-arities (into (binding [*ns* (ghost-ns)]
+                                                  (eval {:inline inline
+                                                         :inline-arities inline-arities}))))
         m (assoc m :ns the-ns :name sym :meta (merge msym (:meta m)))]
     (assoc-in nses [the-ns sym] m)))
 
@@ -926,7 +1052,7 @@
         positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param"))
         named-ctor-params (map dart-local (take-nth 2 named-ctor-args))
         class-name (if-some [var-name (:var-name opts)]
-                     (symbol (str (munge var-name) "$ifn"))
+                     (munge var-name "ifn")
                      (dart-global (or (:name-hint opts) "Reify")))
         closed-overs (transduce (map #(method-closed-overs % env)) into #{}
                        (:methods class))
@@ -983,17 +1109,14 @@
         class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         class (-> class
-                  (assoc :name mclass-name
-                         :fields (vals env)
-                         :ctor-params (map #(list '. %) (vals env)))
-                  (assoc-in [:super-ctor :args]
-                            (concat (map #(-> % (emit env) ensure-dart-expr) positional-ctor-args)
-                                    (->> named-ctor-args (partition 2)
-                                         (mapcat (fn [[name arg]] [name (-> arg (emit env) ensure-dart-expr)]))))))]
-    (swap! nses do-def class-name
-           {:dart/name mclass-name
-            :type :class
-            :dart/code (with-out-str (write-class class))})
+                (assoc :name mclass-name
+                  :fields (vals env)
+                  :ctor-params (map #(list '. %) (vals env)))
+                (assoc-in [:super-ctor :args]
+                  (concat (map #(-> % (emit env) ensure-dart-expr) positional-ctor-args)
+                    (->> named-ctor-args (partition 2)
+                      (mapcat (fn [[name arg]] [name (-> arg (emit env) ensure-dart-expr)]))))))]
+    (swap! nses alter-def class-name assoc :dart/code (with-out-str (write-class class)))
     (emit class-name env)))
 
 (defn emit-extend-type-protocol* [[_ class-name protocol-ns protocol-name extension-instance] env]
@@ -1837,6 +1960,5 @@
 
   (-> @nses (get-in '[cljd.core]
               ))
-
 
   )
