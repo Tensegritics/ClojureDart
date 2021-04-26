@@ -1,4 +1,5 @@
-(ns cljd.core)
+(ns cljd.core
+  (:require ["dart:math" :as math]))
 
 (definterface IProtocol
   (extension [x])
@@ -243,6 +244,12 @@
   {:inline-arities #{1}
    :inline (fn [x] `(.== nil ~x))}
   [x] (.== nil x))
+
+(defn ^bool some?
+  "Returns true if x is not nil, false otherwise."
+  {:inline-arities #{1}
+   :inline (fn [x] `(. ~x "!=" nil))}
+  [x] (. x "!=" nil))
 
 (defn ^:bootstrap destructure [bindings]
   (let [bents (partition 2 bindings)
@@ -1575,36 +1582,35 @@
 
 (deftype VectorNode [edit ^List arr])
 
-(defn pv-clone-node [^VectorNode node]
-  (let [^List source (.-arr node)
-        ^List target (.filled List (.-length source) nil)]
-    (.copyRange List target 0 source)
-    (VectorNode. (.-edit node) target)))
-
-(defn pv-fresh-node [edit]
-  ;; TODO Tag ?
-  (VectorNode. edit (.filled List 32 nil)))
-
-(defn pv-aset [^VectorNode node ^int idx val]
+(defn pv-aset
+  {:inline-arities #{3}
+   :inline (fn [node idx val] `(. (.-arr ~node) "[]=" ~idx ~val))}
+  [^VectorNode node ^int idx val]
   (. (.-arr node) "[]=" idx val))
 
-(defn pv-aget [^VectorNode node ^int idx]
+(defn pv-aget
+  {:inline (fn [node idx] `(. (.-arr ~node) "[]" ~idx))
+   :inline-arities #{2}}
+  [^VectorNode node ^int idx]
   (. (.-arr node) "[]" idx))
 
-;; (push-tail coll shift root (VectorNode. nil tail))
 (defn push-tail [pv ^int level ^VectorNode parent ^VectorNode tailnode]
   (let [^int subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
-        ^List arr-parent (.-arr parent)]
-    (if (< subidx (.-length arr-parent))
-      (let [^VectorNode cloned-node (pv-clone-node parent)
-            ^VectorNode new-node (push-tail pv (- level 5) (pv-aget cloned-node subidx) tailnode)]
-        (pv-aset cloned-node subidx new-node)
-        cloned-node)
-      (let [^VectorNode new-node (VectorNode. (.-edit parent) (.filled List (inc subidx) nil))
-            _ (.copyRange List (.-arr new-node) 0 arr-parent)
-            ^VectorNode node-to-insert (new-path nil (- level 5) tailnode)]
-        (pv-aset new-node subidx node-to-insert)
-        new-node))))
+        ^List arr-parent (.-arr parent)
+        level (- level 5)
+        new-node (cond
+                   (zero? level) tailnode ; fast path
+                   (< subidx (.-length arr-parent)) ;some? is for transients
+                   (if-some [child (. arr-parent "[]" subidx)]
+                     (push-tail pv level child tailnode)
+                     (new-path nil level tailnode))
+                   :else
+                   (new-path nil level tailnode))
+        arr (.filled List (inc subidx) new-node)]
+    (dotimes [n subidx]
+      (. arr "[]=" n (. arr-parent "[]" n)))
+    (VectorNode. (.-edit parent) arr)))
+
 
 (defn new-path [edit ^int level ^VectorNode node]
   (loop [ll level
@@ -1664,14 +1670,14 @@
     (if (< (- cnt (tail-off coll)) 32)
       (let [len (.-length tail)
             new-tail (.filled List (inc len) o)]
-        (.copyRange List new-tail 0 tail)
+        (dotimes [n len]
+          (. new-tail "[]=" n (. tail "[]" n)))
         (PersistentVector. meta (inc cnt) shift root new-tail -1))
       (let [root-overflow? (< (u32-bit-shift-left 1 shift) (u32-bit-shift-right cnt 5))
             new-shift (if root-overflow? (+ shift 5) shift)
             new-root (if root-overflow?
-                       (let [n-r (VectorNode. nil (.filled List 2 nil))]
+                       (let [n-r (VectorNode. nil (.filled List 2 (new-path nil shift (VectorNode. nil tail))))]
                          (pv-aset n-r 0 root)
-                         (pv-aset n-r 1 (new-path nil shift (VectorNode. nil tail)))
                          n-r)
                        (push-tail coll shift root (VectorNode. nil tail)))]
         (PersistentVector. meta (inc cnt) new-shift new-root (.filled List 1 o) -1))))
