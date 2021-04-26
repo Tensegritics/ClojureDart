@@ -1176,7 +1176,7 @@
 (defn reduced?
   "Returns true if x is the result of a call to reduced"
   [r]
-  (dart-is? r Reduced))
+  (dart/is? r Reduced))
 
 (defn ensure-reduced
   "If x is already reduced?, returns it, else returns (reduced x)"
@@ -1400,7 +1400,7 @@
     (.sval coll)
     (when-not (nil? s)
       (loop [ls s]
-        (if (dart-is? ls LazySeq)
+        (if (dart/is? ls LazySeq)
           (recur (.sval ls))
           (do (set! s ls)
               (seq s))))))
