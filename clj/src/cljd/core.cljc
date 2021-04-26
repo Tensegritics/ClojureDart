@@ -1586,7 +1586,6 @@
   {:inline-arities #{3}
    :inline (fn [node idx val] `(. (.-arr ~node) "[]=" ~idx ~val))}
   [^VectorNode node ^int idx val]
-  (. (.-arr node) "[]=" idx val))
 
 (defn pv-aget
   {:inline (fn [node idx] `(. (.-arr ~node) "[]" ~idx))
