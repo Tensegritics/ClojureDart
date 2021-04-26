@@ -1575,7 +1575,7 @@
 
 (deftype VectorNode [edit ^List arr])
 
-(defn pv-clone-node [^VectorNode node]
+(defn ^VectorNode pv-clone-node [^VectorNode node]
   (let [^List source (.-arr node)
         ^List target (.filled List (.-length source) nil)]
     (.copyRange List target 0 source)

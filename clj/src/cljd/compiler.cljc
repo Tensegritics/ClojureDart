@@ -1287,7 +1287,7 @@
               (when-not macro
                 (let [v (macroexpand {} (last x))]
                   (when-some [kind (fn-kind (macroexpand {} (last x)))]
-                    (emit-def (list 'def (vary-meta sym assoc kind true) nil) {})))))
+                    (emit-def (list 'def (with-meta sym {kind true}) nil) {})))))
         do (run! bootstrap-eval (next x))
         nil))))
 
