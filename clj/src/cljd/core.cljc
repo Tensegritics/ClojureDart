@@ -1591,7 +1591,6 @@
 (defn pv-aget [^VectorNode node ^int idx]
   (. (.-arr node) "[]" idx))
 
-
 ;; (push-tail coll shift root (VectorNode. nil tail))
 (defn push-tail [pv ^int level ^VectorNode parent ^VectorNode tailnode]
   (let [^int subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
@@ -1614,7 +1613,7 @@
       ret
       (recur (- ll 5) (VectorNode. edit (.filled List 1 ret))))))
 
-(defn tail-off [pv]
+(defn ^int tail-off [pv]
   (let [^int cnt (.-cnt pv)]
     (if (pos? cnt)
       (bit-and-not (dec cnt) 31)
@@ -2389,175 +2388,6 @@
 
 ;; TODO : multi-arity
 (defn bit-and [x y] (. x "&" y))
-
-(deftype VectorNode [edit arr])
-
-(defn- pv-fresh-node [edit]
-  (VectorNode. edit (dc/List. 32)))
-
-(defn- pv-aget [node idx]
-  (.elementAt (.-arr node) idx))
-
-(defn- pv-aset [node idx val]
-  (. (.-arr node) "[]=" idx val)
-  val)
-
-(defn pv-clone-node [node]
-  (VectorNode. (.-edit node) (aclone (.-arr node))))
-
-(defn- tail-off [pv]
-  (let [cnt (.-cnt pv)]
-    (if (< cnt 32)
-      0
-      (bit-shift-left (unsigned-bit-shift-right (dec cnt) 5) 5))))
-
-(defn- new-path [edit level node]
-  (loop [ll level
-         ret node]
-    (if (zero? ll)
-      ret
-      (let [r (pv-fresh-node edit)]
-        (pv-aset r 0 ret)
-        (recur (- ll 5) r)))))
-
-(defn unchecked-array-for [pv i]
-  (if (>= i (tail-off pv))
-    (.-tail pv)
-    (loop [node (.-root pv)
-           level (.-shift pv)]
-      (if (pos? level)
-        (recur (pv-aget node (bit-and (unsigned-bit-shift-right i level) 0x01f))
-               (- level 5))
-        (.-arr node)))))
-
-(defn- array-for [pv i]
-  (if (and (<= 0 i) (< i (.-cnt pv)))
-    (unchecked-array-for pv i)
-    (throw (UnimplementedError. (str "No item " i " in vector of length " (.-cnt pv))))))
-
-(defn- push-tail [pv level parent tailnode]
-  (let [ret (pv-clone-node parent)
-        subdix (bit-and (unsigned-bit-shift-right (dec (.-cnt pv)) level) 0x01f)]
-    (if (= 5 level)
-      (do
-        (pv-aset ret subdix tailnode)
-        ret)
-      (let [child (pv-aget parent subdix)]
-        (if-not (nil? child)
-          (let [node-to-insert (push-tail pv (- level 5) child tailnode)]
-            (pv-aset ret subdix node-to-insert)
-            ret)
-          (let [node-to-insert (new-path nil (- level 5) tailnode)]
-            (pv-aset ret subdix node-to-insert)
-            ret))))))
-
-(defn- do-assoc [pv level node i val]
-  (let [ret (pv-clone-node node)]
-    (if (zero? level)
-      (do
-        (pv-aset ret (bit-and i 0x01f) val)
-        ret)
-      (let [subidx (bit-and (unsigned-bit-shift-right i level) 0x01f)]
-        (pv-aset ret subidx (do-assoc pv (- level 5) (pv-aget node subidx) i val))
-        ret))))
-
-(defn nth
-  ([coll n]
-   (cond
-     (not (dart-is? n int))
-     (throw (UnimplementedError. "Index argument to nth must be a number"))
-
-     (nil? coll)
-     coll
-
-     (dart-is? coll IIndexed)
-     (-nth coll n)
-
-     (or (dart-is? coll dc/List) (dart-is? coll dc/String))
-     (if (and (< -1 n) (< n (.-length coll)))
-       (aget coll n)
-       (throw (UnimplementedError. "Index out of bounds")))
-
-     true (throw (UnimplementedError. "UnimplementedError nth"))
-
-     #_#_#_#_#_#_(or (implements? ISeq coll)
-         (implements? ISequential coll))
-     (if (neg? n)
-       (throw (UnimplementedError. "Index out of bounds"))
-       (linear-traversal-nth coll n))
-
-     (native-satisfies? IIndexed coll)
-     (-nth coll n)
-
-     :else
-     (throw (js/Error. (str "nth not supported on this type "
-                            (type->str (type coll)))))))
-  ([coll n not-found]
-   (cond
-     (not (dart-is? n int))
-     (throw (UnimplementedError. "Index argument to nth must be a number"))
-
-     (nil? coll)
-     not-found
-
-     (dart-is? coll IIndexed)
-     (-nth coll n not-found)
-
-     (or (dart-is? coll dc/List) (dart-is? coll dc/String))
-     (if (and (< -1 n) (< n (.-length coll)))
-       (aget coll n)
-       not-found)
-
-     true (throw (UnimplementedError. "UnimplementedError nth"))
-
-     #_#_#_#_#_#_(or (implements? ISeq coll)
-         (implements? ISequential coll))
-     (if (neg? n)
-       not-found
-       (linear-traversal-nth coll n not-found))
-
-     (native-satisfies? IIndexed coll)
-     (-nth coll n not-found)
-
-     :else
-     (throw (js/Error. (str "nth not supported on this type "
-                            (type->str (type coll))))))))
-
-(defprotocol APersistentVector
-  "Marker protocol")
-
-(defn- first-array-for-longvec [pv]
-  (loop [node (.-root pv)
-         level (.-shift pv)]
-    (if (pos? level)
-      (recur (pv-aget node 0) (- level 5))
-      (.-arr node))))
-
-(def ^:clj chunked-seq nil)
-
-(defn- pop-tail [pv level node]
-  (let [subidx (bit-and (unsigned-bit-shift-right (- (.-cnt pv) 2) level) 0x01f)]
-    (cond
-      (> level 5) (let [new-child (pop-tail pv (- level 5) (pv-aget node subidx))]
-                    (if (and (nil? new-child) (zero? subidx))
-                      nil
-                      (let [ret (pv-clone-node node)]
-                        (pv-aset ret subidx new-child)
-                        ret)))
-      (zero? subidx) nil
-      true (let [ret (pv-clone-node node)]
-             (pv-aset ret subidx nil)
-             ret))))
-
-(def ^VectorNode empty-vector-node (VectorNode. nil (dc/List. 32)))
-(def empty-persistent-vector nil)
-
-
-
-;; Transient should go here
-
-
-;; PersistentQueue
 
 (defn ^bool some? [x] (not (nil? x)))
 
