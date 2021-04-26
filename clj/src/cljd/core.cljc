@@ -931,8 +931,8 @@
 
 (defn ^int bit-and-not
   "Bitwise and with complement"
-  {"inline" (fn
-             ([x y] `(bit-and ~x (bit-not ~y)))
+  {:inline (fn
+              ([x y] `(bit-and ~x (bit-not ~y)))
               ([x y & more] (reduce (fn [a b] `(bit-and ~a (bit-not ~b))) `(bit-and ~x (bit-not ~y)) more)))
    :inline-arities >1?}
   ([x y] (bit-and x (bit-not y)))
