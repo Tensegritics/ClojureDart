@@ -1351,8 +1351,7 @@
   (case (first x)
     dart/fn (do
               (print (-> sym meta (:dart/type "dc.dynamic")) (name sym))
-              (write x expr-locus)
-              (print "\n"))
+              (write x expr-locus))
     (write x (var-locus (emit-type 'cljd.core/IFn$iface) (name sym)))))
 
 (defn write-top-field [sym x]
@@ -1783,7 +1782,7 @@
           :when (symbol? sym)
           :let [{:keys [dart/code]} v]
           :when code]
-    (print code)))
+    (println code)))
 
 (defn load-input [in]
   #?(:clj
