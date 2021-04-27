@@ -283,7 +283,7 @@
       (cons 'cond
         (concat
           (mapcat (fn [[t ext]] [(list 'dart/is? 'x t) ext]) (dissoc extensions 'fallback))
-          [:else (or ('fallback extensions) `(throw (dart:core/Exception. ~(str "No extension found for protocol " name "."))))])))))
+          [:else (or ('fallback extensions) `(throw (dart:core/Exception. (.+ ~(str "No extension of protocol " name " found for type ") (.toString (.-runtimeType ~'x)) "."))))])))))
 
 (defn- roll-leading-opts [body]
   (loop [[k v & more :as body] (seq body) opts {}]
