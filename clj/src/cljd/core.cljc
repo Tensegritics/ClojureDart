@@ -664,7 +664,7 @@
         (let [val (f x y)]
           (if (reduced? val)
             (deref val)
-            (-reduce f val xs)))
+            (-reduce xs f val)))
         x)
       (f)))
   (-reduce [coll f start]
