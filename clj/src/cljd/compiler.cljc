@@ -60,6 +60,7 @@
      Iterator dart:core/Iterator,
      Stopwatch dart:core/Stopwatch,
      int dart:core/int,
+     dynamic dart:core/dynamic
      Invocation dart:core/Invocation,
      RuneIterator dart:core/RuneIterator,
      RegExpMatch dart:core/RegExpMatch,
@@ -124,22 +125,26 @@
      nil)))
 
 (defn emit-type [tag]
-  (if (string? tag)
+  (cond
+    (string? tag)
     (let [nses @nses
           {:keys [mappings] :as current-ns} (nses (:current-ns nses))]
       (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
         (fn [[_ alias type identifier]]
           (cond->
-              (if (and (nil? alias) (#{"Function" "void" "dynamic"} type))
+              (if (and (nil? alias) (#{"Function" "void"} type))
                 type
                 (name (emit-type (symbol alias type))))
             identifier (str identifier)))))
+    (= 'some tag) "dc.dynamic"
+    :else
     (let [[t info] (resolve-symbol tag {})]
       (case t
         :dart (name info)
         :def (case (:type info)
                ; TODO XNS should be "namespaced" by dart alias if needed
-               :class (name (:dart/name info)))
+               :class (name (:dart/name info))
+               (throw (Exception. (str "Not a type: " tag))))
         (throw (Exception. (str "Can't resolve type: " tag)))))))
 
 (defn dart-type-truthiness [type]
@@ -152,14 +157,14 @@
   "Takes a clojure symbol and returns its dart metadata."
   [sym]
   (let [{:keys [tag] :as m} (meta sym)
-        type (when (and tag (not= 'some tag)) (emit-type tag))]
+        type (some-> tag emit-type)]
     (cond-> {}
       (:getter m) (assoc :dart/getter true)
       (:setter m) (assoc :dart/setter true)
       (:dart m) (assoc :dart/fn-type :native)
       (:clj m) (assoc :dart/fn-type :ifn)
-      (= tag 'some) (assoc :dart/truth :some)
-      type (assoc :dart/type type :dart/truth (dart-type-truthiness type)))))
+      type (assoc :dart/type type :dart/truth (dart-type-truthiness type))
+      (= tag 'some) (assoc :dart/truth :some))))
 
 (def reserved-words ; and built-in identifiers for good measure
   #{"Function" "abstract" "as" "assert" "async" "await" "break" "case" "catch"
@@ -522,7 +527,12 @@
                        [(concat bindings' bindings) (list* k x' dart-fn-args)]))
              acc (reverse (partition 2 nameds)))
            (reduce (fn [[bindings dart-fn-args] x]
-                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "arg")]
+                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "arg")
+                           {:dart/keys [type nat-type]} (infer-type x')
+                           here-type (or (some-> x meta :tag emit-type) type)
+                           x' (if (and here-type (not= here-type nat-type))
+                                (list 'dart/as x' here-type)
+                                x')]
                        [(concat bindings' bindings) (cons x' dart-fn-args)]))
              acc (reverse positionals)))
          bindings (cond-> bindings must-lift butlast)]
@@ -606,7 +616,7 @@
           [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
           {:dart/keys [type nat-type]} (infer-type dart-obj)
           ;; TODO SELFHOST with mirrors one can check membership
-          dart-obj (if (not= type nat-type)
+          #_#_dart-obj (if (not= type nat-type)
                      (list 'dart/as dart-obj type)
                      (do
                        ;; Can't do it properly in crosscompilation
@@ -1839,7 +1849,7 @@
 (defn ns-to-paths [ns-name]
   (let [base (replace-all (name ns-name) #"[.-]" {"." "/" "-" "_"})]
     [(str base ".cljd") (str base ".cljc")]))
-@
+
 (defn find-file
   "Search for a file on the clojure path."
   [filename]
