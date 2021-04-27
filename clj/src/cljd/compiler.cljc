@@ -271,13 +271,13 @@
     :type-only true
     'cljd.core/IProtocol
     (list 'satisfies '[_ x]
-      (list* 'or (list 'dart-is? 'x iface)
-        (concat (for [t (keys (dissoc extensions 'fallback))] (list 'dart-is? 'x t)) [false])))
+      (list* 'or (list 'dart/is? 'x iface)
+        (concat (for [t (keys (dissoc extensions 'fallback))] (list 'dart/is? 'x t)) [false])))
     (list 'extensions '[_ x]
       ;; TODO SELFHOST sort types
       (cons 'cond
         (concat
-          (mapcat (fn [[t ext]] [(list 'dart-is? 'x t) ext]) (dissoc extensions 'fallback))
+          (mapcat (fn [[t ext]] [(list 'dart/is? 'x t) ext]) (dissoc extensions 'fallback))
           [:else (or ('fallback extensions) `(throw (dart:core/Exception. ~(str "No extension found for protocol " name "."))))])))))
 
 (defn- roll-leading-opts [body]
@@ -341,12 +341,12 @@
                         :let [[[_ this] & args :as locals] (map (fn [arg] (list 'quote (gensym arg))) all-args)]]
                     `(~all-args
                       `(let [~~@(interleave locals all-args)]
-                         (if (dart-is? ~'~this ~'~iface)
+                         (if (dart/is? ~'~this ~'~iface)
                            (. ~'~(vary-meta this assoc :tag iface) ~'~name ~~@args) ; TODO cast to iface
                            (. (.extensions ~'~proto ~'~this) ~'~name ~'~this ~~@args))))))}
              ~@(for [{:keys [dart/name] [this & args :as all-args] :args} (vals arity-mapping)]
                  `(~all-args
-                   (if (dart-is? ~this ~iface)
+                   (if (dart/is? ~this ~iface)
                      (. ~this ~name ~@args) ; TODO cast to iface
                      (. (.extensions ~proto ~this) ~name ~@all-args))))))
         (list proto)))))
@@ -1215,7 +1215,7 @@
 
 (defn emit-dart-is [[_ x type] env]
   #_(when (or (not (symbol? type)) (env type))
-    (throw (ex-info (str "The second argument to dart-is? must be a literal type. Got: " (pr-str type)) {:type type})))
+    (throw (ex-info (str "The second argument to dart/is? must be a literal type. Got: " (pr-str type)) {:type type})))
   (let [x (emit x env)]
     (if-some [[bindings x] (liftable x)]
       (list 'dart/let bindings (list 'dart/is x (emit-type type)))
@@ -1223,7 +1223,7 @@
 
 (defn- ensure-new-special [x]
   (case (and (symbol? x) (name x))
-    "dart-is?" 'dart-is?
+    "dart/is?" 'dart/is?
     x))
 
 (defn emit
@@ -1243,8 +1243,7 @@
           (let [emit (case (-> (first x) ensure-new-special)
                        . emit-dot
                        set! emit-set!
-                                        ; have to think twice about hwo to handle namespacing of new specials by syntax quote -cgrand
-                       (cljd.core/dart-is? dart-is?) emit-dart-is
+                       dart/is? emit-dart-is
                        throw emit-throw
                        new emit-new
                        ns emit-ns
@@ -1840,7 +1839,7 @@
 (defn ns-to-paths [ns-name]
   (let [base (replace-all (name ns-name) #"[.-]" {"." "/" "-" "_"})]
     [(str base ".cljd") (str base ".cljc")]))
-
+@
 (defn find-file
   "Search for a file on the clojure path."
   [filename]
