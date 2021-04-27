@@ -760,6 +760,18 @@
   "Protocol for adding hashing functionality to a type."
   (-hash [o] "Returns the hash code of o."))
 
+(defprotocol IEditableCollection
+  "Protocol for collections which can transformed to transients."
+  (-as-transient [coll]
+    "Returns a new, transient version of the collection, in constant time."))
+
+(defprotocol ITransientCollection
+  "Protocol for adding basic functionality to transient collections."
+  (-conj! [tcoll val]
+    "Adds value val to tcoll and returns tcoll.")
+  (-persistent! [tcoll]
+    "Creates a persistent data structure from tcoll and returns it."))
+
 (defn ^bool pos? [a] (.< 0 a))
 
 (def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
@@ -1611,7 +1623,6 @@
       (. arr "[]=" n (. arr-parent "[]" n)))
     (VectorNode. (.-edit parent) arr)))
 
-
 (defn new-path [edit ^int level ^VectorNode node]
   (loop [ll level
          ret node]
@@ -1636,6 +1647,11 @@
         (recur (pv-aget node (bit-and (u32-bit-shift-right i level) 0x01f))
           (- level 5))
         (.-arr node)))))
+
+;; declare dependencies
+(def ^:dart tv-editable-tail nil)
+(def ^:dart tv-editable-root nil)
+(deftype TransientVector [])
 
 (deftype PersistentVector [meta ^int cnt ^int shift root tail ^:mutable ^int __hash]
   Object
@@ -1792,7 +1808,7 @@
     (-nth coll k))
   (-invoke [coll k not-found]
     (-nth coll k not-found))
-  #_#_IEditableCollection
+  IEditableCollection
   (-as-transient [coll]
     (TransientVector. cnt shift (tv-editable-root root) (tv-editable-tail tail)))
   #_#_IReversible
@@ -1802,6 +1818,196 @@
   #_#_IIterable
   (-iterator [this]
     (ranged-iterator this 0 cnt)))
+
+;; TODO move aget/aset to a better place
+(defn aget
+  "Returns the value at the index/indices. Works on Java arrays of all
+  types."
+  {:inline (fn [array idx] `(. ~array "[]" ~idx))
+   :inline-arities #{2}}
+  ([array idx]
+   (. array "[]" idx))
+  ([array idx & idxs]
+   (apply aget (aget array idx) idxs)))
+
+(defn aset
+  "Sets the value at the index/indices. Works on Java arrays of
+  reference types. Returns val."
+  {:inline (fn [a i v] `(let [v# ~v] (. ~a "[]=" ~i v#) v#))
+   :inline-arities #{3}}
+  ([array idx val]
+   (. array "[]=" idx val) val)
+  ([array idx idx2 & idxv]
+   (apply aset (aget array idx) idx2 idxv)))
+
+(defn aclone
+  {:inline (fn [arr] `(.from dart:core/List ~arr .& :growable false))
+   :inline-arities #{1}}
+  [arr]
+  (.from List arr .& :growable false))
+
+(defn tv-ensure-editable [edit node]
+  (if (identical? edit (.-edit node))
+    node
+    (let [^"List<dart:core.dynamic>" ret (.filled List 32 nil)
+          arr (.-arr node)]
+      (dotimes [n (.-length arr)]
+        (aset ret n (aget arr n)))
+      (VectorNode. edit ret))))
+
+(defn- tv-editable-root [^VectorNode node]
+  (let [^"List<VectorNode>" ret (.filled List 32 nil)
+        arr (.-arr node)]
+    (dotimes [n (.-length arr)]
+      (aset ret n (aget arr n)))
+    (VectorNode. (Object.) ret)))
+
+(defn- tv-editable-tail [tl]
+  (let [^"List<dart:core.dynamic>" ret (.filled List 32 nil)]
+    (dotimes [n (.-length tl)]
+      (aset ret n (aget tl n)))
+    ret))
+
+(defn tv-new-path [edit ^int level ^VectorNode node]
+  (loop [ll level
+         ret node]
+    (if (zero? ll)
+      ret
+      (let [^"List<dart:core.dynamic>" arr (.filled List 32 nil)]
+        (aset arr 0 ret)
+        (recur (- ll 5) (VectorNode. edit arr))))))
+
+(defn tv-push-tail [tv level parent tail-node]
+  (let [edit (.-edit (.-root tv))
+        ret (tv-ensure-editable edit parent)
+        subidx (bit-and (u32-bit-shift-right (dec (.-cnt tv)) level) 31)
+        level (- level 5)]
+    (pv-aset ret subidx
+      (if (zero? level)
+        tail-node
+        (let [child (pv-aget ret subidx)]
+          (if-not (nil? child)
+            (tv-push-tail tv level child tail-node)
+            (tv-new-path edit level tail-node)))))
+    ret))
+
+(deftype TransientVector [^int ^:mutable cnt
+                          ^int ^:mutable shift
+                          ^:mutable root
+                          ^:mutable tail]
+  ITransientCollection
+  (-conj! [tcoll o]
+    (if-some [edit ^some (.-edit root)]
+      (if (< (- cnt (tail-off tcoll)) 32)
+        (do (aset tail (bit-and cnt 31) o)
+            (set! cnt (inc cnt))
+            tcoll)
+        (let [tail-node (VectorNode. edit tail)
+              ^"List<dart:core.dynamic>" new-tail (.filled List 32 nil)]
+          (aset new-tail 0 o)
+          (set! tail new-tail)
+          (if (< (u32-bit-shift-left 1 shift) (u32-bit-shift-right cnt 5))
+            (let [^"List<VectorNode>" new-root-array (.filled List 32 nil)
+                  new-shift (+ shift 5)]
+              (aset new-root-array 0 root)
+              (aset new-root-array 1 (tv-new-path edit shift tail-node))
+              (set! root (VectorNode. edit new-root-array))
+              (set! shift new-shift))
+            (set! root (tv-push-tail tcoll shift root tail-node)))
+          (set! cnt (inc cnt))
+          tcoll))
+      (throw (ArgumentError. "conj! after persistent!"))))
+  #_(-persistent! [tcoll]
+      (if ^boolean (.-edit root)
+        (do (set! (.-edit root) nil)
+            (let [len (- cnt (tail-off tcoll))
+                  trimmed-tail (make-array len)]
+              (array-copy tail 0 trimmed-tail 0 len)
+              (PersistentVector. nil cnt shift root trimmed-tail nil)))
+        (throw (js/Error. "persistent! called twice"))))
+  #_#_ITransientAssociative
+  (-assoc! [tcoll key val]
+    (if (number? key)
+      (-assoc-n! tcoll key val)
+      (throw (js/Error. "TransientVector's key for assoc! must be a number."))))
+  #_#_ITransientVector
+  (-assoc-n! [tcoll n val]
+    (if ^boolean (.-edit root)
+      (cond
+        (and (<= 0 n) (< n cnt))
+        (if (<= (tail-off tcoll) n)
+          (do (aset tail (bit-and n 0x01f) val)
+              tcoll)
+          (let [new-root
+                ((fn go [level node]
+                   (let [node (tv-ensure-editable (.-edit root) node)]
+                     (if (zero? level)
+                       (do (pv-aset node (bit-and n 0x01f) val)
+                           node)
+                       (let [subidx (bit-and (bit-shift-right-zero-fill n level)
+                                      0x01f)]
+                         (pv-aset node subidx
+                           (go (- level 5) (pv-aget node subidx)))
+                         node))))
+                 shift root)]
+            (set! root new-root)
+            tcoll))
+        (== n cnt) (-conj! tcoll val)
+        :else
+        (throw
+          (js/Error.
+            (str "Index " n " out of bounds for TransientVector of length" cnt))))
+      (throw (js/Error. "assoc! after persistent!"))))
+  #_(-pop! [tcoll]
+      (if ^boolean (.-edit root)
+        (cond
+          (zero? cnt) (throw (js/Error. "Can't pop empty vector"))
+          (== 1 cnt)                       (do (set! cnt 0) tcoll)
+          (pos? (bit-and (dec cnt) 0x01f)) (do (set! cnt (dec cnt)) tcoll)
+          :else
+          (let [new-tail (unchecked-editable-array-for tcoll (- cnt 2))
+                new-root (let [nr (tv-pop-tail tcoll shift root)]
+                           (if-not (nil? nr)
+                             nr
+                             (VectorNode. (.-edit root) (make-array 32))))]
+            (if (and (< 5 shift) (nil? (pv-aget new-root 1)))
+              (let [new-root (tv-ensure-editable (.-edit root) (pv-aget new-root 0))]
+                (set! root  new-root)
+                (set! shift (- shift 5))
+                (set! cnt   (dec cnt))
+                (set! tail  new-tail)
+                tcoll)
+              (do (set! root new-root)
+                  (set! cnt  (dec cnt))
+                  (set! tail new-tail)
+                  tcoll))))
+        (throw (js/Error. "pop! after persistent!"))))
+  ICounted
+  (-count [coll]
+    (if ^some (.-edit root)
+      cnt
+      (throw (ArgumentError. "count after persistent!"))))
+  #_#_#_IIndexed
+  (-nth [coll n]
+    (if ^boolean (.-edit root)
+      (aget (array-for coll n) (bit-and n 0x01f))
+      (throw (js/Error. "nth after persistent!"))))
+  (-nth [coll n not-found]
+    (if (and (<= 0 n) (< n cnt))
+      (-nth coll n)
+      not-found))
+  #_#_ILookup
+  (-lookup [coll k] (-lookup coll k nil))
+  #_(-lookup [coll k not-found]
+      (cond
+        (not ^boolean (.-edit root)) (throw (js/Error. "lookup after persistent!"))
+        (number? k) (-nth coll k not-found)
+        :else not-found))
+  #_#_#_IFn
+  (-invoke [coll k]
+    (-lookup coll k))
+  (-invoke [coll k not-found]
+    (-lookup coll k not-found)))
 
 ;;;
 
@@ -2731,6 +2937,29 @@
     (.stop sw)
     (dart:core/print (.-elapsedMilliseconds sw))
     (dart:core/print "ms"))
+
+  (dart:core/print "Started TranscientVector test")
+  (let [sw (Stopwatch.)
+        _ (.start sw)
+        pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)
+        pv1
+        (loop [pv2 pv
+               idx 0]
+          (if (== idx 2)
+            pv2
+            (recur (-conj pv2 idx) (inc idx))))
+        tv (-as-transient pv1)
+        tv1 (loop [t tv
+                   idx 0]
+              (if (== idx 1000000)
+                t
+                (recur (-conj! t idx) (inc idx))))]
+    (.stop sw)
+    (dart:core/print (.-elapsedMilliseconds sw))
+    (dart:core/print "ms")
+    (dart:core/print (count tv1)))
+
+
 
   #_(dart:core/print "Started Vector test")
   #_(let [sw (Stopwatch.)
