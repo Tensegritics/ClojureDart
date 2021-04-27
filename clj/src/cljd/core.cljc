@@ -917,6 +917,33 @@
   [num]
   (== 0 num))
 
+;; array ops
+(defn aget
+  "Returns the value at the index/indices. Works on Java arrays of all
+  types."
+  {:inline (fn [array idx] `(. ~array "[]" ~idx))
+   :inline-arities #{2}}
+  ([array idx]
+   (. array "[]" idx))
+  ([array idx & idxs]
+   (apply aget (aget array idx) idxs)))
+
+(defn aset
+  "Sets the value at the index/indices. Works on Java arrays of
+  reference types. Returns val."
+  {:inline (fn [a i v] `(let [v# ~v] (. ~a "[]=" ~i v#) v#))
+   :inline-arities #{3}}
+  ([array idx val]
+   (. array "[]=" idx val) val)
+  ([array idx idx2 & idxv]
+   (apply aset (aget array idx) idx2 idxv)))
+
+(defn aclone
+  {:inline (fn [arr] `(.from dart:core/List ~arr .& :growable false))
+   :inline-arities #{1}}
+  [arr]
+  (.from List arr .& :growable false))
+
 ;; bit ops
 (defn ^int bit-not
   "Bitwise complement"
@@ -1644,8 +1671,7 @@
     (loop [node (.-root pv)
            level (.-shift pv)]
       (if (< 0 level)
-        (recur (pv-aget node (bit-and (u32-bit-shift-right i level) 0x01f))
-          (- level 5))
+        (recur (pv-aget node (bit-and (u32-bit-shift-right i level) 31)) (- level 5))
         (.-arr node)))))
 
 ;; declare dependencies
@@ -1728,15 +1754,16 @@
   ICounted
   (-count [coll] cnt)
   IIndexed
-  (-nth [coll n]
+  (-nth [coll ^int n]
+    ;; TODO : cast n to int ?
     (if (or (<= cnt n) (< n 0))
       (throw (ArgumentError. (str "No item " n " in vector of length " cnt)))
       (let [arr (unchecked-array-for coll n)]
         (. arr "[]" (bit-and n 31)))))
-  #_(-nth [coll n not-found]
-    (if (and (<= 0 n) (< n cnt))
-      (aget (unchecked-array-for coll n) (bit-and n 0x01f))
-      not-found))
+  (-nth [coll n not-found]
+    (if (or (<= cnt n) (< n 0))
+      not-found
+      (aget (unchecked-array-for coll n) (bit-and n 31))))
   #_#_#_ILookup
   (-lookup [coll k] (-lookup coll k nil))
   (-lookup [coll k not-found] (if (number? k)
@@ -1818,33 +1845,6 @@
   #_#_IIterable
   (-iterator [this]
     (ranged-iterator this 0 cnt)))
-
-;; TODO move aget/aset to a better place
-(defn aget
-  "Returns the value at the index/indices. Works on Java arrays of all
-  types."
-  {:inline (fn [array idx] `(. ~array "[]" ~idx))
-   :inline-arities #{2}}
-  ([array idx]
-   (. array "[]" idx))
-  ([array idx & idxs]
-   (apply aget (aget array idx) idxs)))
-
-(defn aset
-  "Sets the value at the index/indices. Works on Java arrays of
-  reference types. Returns val."
-  {:inline (fn [a i v] `(let [v# ~v] (. ~a "[]=" ~i v#) v#))
-   :inline-arities #{3}}
-  ([array idx val]
-   (. array "[]=" idx val) val)
-  ([array idx idx2 & idxv]
-   (apply aset (aget array idx) idx2 idxv)))
-
-(defn aclone
-  {:inline (fn [arr] `(.from dart:core/List ~arr .& :growable false))
-   :inline-arities #{1}}
-  [arr]
-  (.from List arr .& :growable false))
 
 (defn tv-ensure-editable [edit node]
   (if (identical? edit (.-edit node))
