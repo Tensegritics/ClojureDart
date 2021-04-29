@@ -1778,8 +1778,7 @@
     ;; TODO : cast n to int ?
     (if (or (<= cnt n) (< n 0))
       (throw (ArgumentError. (str "No item " n " in vector of length " cnt)))
-      (let [arr (unchecked-array-for coll n)]
-        (. arr "[]" (bit-and n 31)))))
+      (aget (unchecked-array-for coll n) (bit-and n 31))))
   (-nth [coll n not-found]
     (if (or (<= cnt n) (< n 0))
       not-found
@@ -1823,25 +1822,29 @@
           (PersistentVector. meta cnt shift (new-root-fn shift root n val) tail -1)))
       (== n cnt) (-conj coll val)
       :else (throw (ArgumentError. (str "Index " n " out of bounds  [0," cnt "]")))))
-  #_#_#_IReduce
-  (-reduce [v f]
-    (pv-reduce v f 0 cnt))
-  (-reduce [v f init]
-    (loop [i 0 init init]
-      (if (< i cnt)
-        (let [arr  (unchecked-array-for v i)
-              len  (alength arr)
-              init (loop [j 0 init init]
-                     (if (< j len)
-                       (let [init (f init (aget arr j))]
-                         (if (reduced? init)
-                           init
-                           (recur (inc j) init)))
-                       init))]
-          (if (reduced? init)
-            @init
-            (recur (+ i len) init)))
-        init)))
+  IReduce
+  (-reduce [pv f]
+    (if (zero? cnt)
+      (f)
+      (loop [acc (aget tail 0)
+             idx 1]
+        (if (< idx cnt)
+          (let [val (f acc (-nth pv idx))]
+            (if (reduced? val)
+              (deref val)
+              (recur val (inc idx))))
+          acc))))
+  (-reduce [pv f init]
+    (if (zero? cnt)
+      init
+      (loop [acc init
+             idx 0]
+        (if (< idx cnt)
+          (let [val (f acc (-nth pv idx))]
+            (if (reduced? val)
+              (deref val)
+              (recur val (inc idx))))
+          acc))))
   #_#_IKVReduce
   (-kv-reduce [v f init]
     (loop [i 0 init init]
@@ -1859,7 +1862,7 @@
             @init
             (recur (+ i len) init)))
         init)))
-  #_#_#_IFn
+  IFn
   (-invoke [coll k]
     (-nth coll k))
   (-invoke [coll k not-found]
@@ -3031,6 +3034,13 @@
                pv
                (recur (-conj pv idx) (inc idx))))]
     (dart:core/print (-nth (-assoc pv 11111 "coucou") 11111)))
+
+  (let [pv (loop [pv []
+                  idx 0]
+             (if (== idx 100000)
+               pv
+               (recur (-conj pv idx) (inc idx))))]
+    (reduce + 0 pv))
 
   #_(dart:core/print "Started Vector test")
   #_(let [sw (Stopwatch.)
