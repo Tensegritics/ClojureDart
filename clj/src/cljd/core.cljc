@@ -1651,18 +1651,6 @@
 
 (deftype VectorNode [edit ^List arr])
 
-(defn pv-aset
-  {:inline-arities #{3}
-   :inline (fn [node idx val] `(. (.-arr ~node) "[]=" ~idx ~val))}
-  [^VectorNode node ^int idx val]
-  (. (.-arr node) "[]=" idx val))
-
-(defn pv-aget
-  {:inline (fn [node idx] `(. (.-arr ~node) "[]" ~idx))
-   :inline-arities #{2}}
-  [^VectorNode node ^int idx]
-  (. (.-arr node) "[]" idx))
-
 (defn push-tail [pv ^int level ^VectorNode parent ^VectorNode tailnode]
   (let [^int subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
         ^List arr-parent (.-arr parent)
@@ -1693,17 +1681,6 @@
       (bit-and-not (dec cnt) 31)
       0)))
 
-(defn unchecked-array-for
-  "Returns the array where i is located."
-  [pv ^int i]
-  (if (<= (bit-and-not (dec (.-cnt pv)) 31) i)
-    (.-tail pv)
-    (loop [node (.-root pv)
-           level (.-shift pv)]
-      (if (< 0 level)
-        (recur (pv-aget node (bit-and (u32-bit-shift-right i level) 31)) (- level 5))
-        (.-arr node)))))
-
 ;; declare dependencies
 (def ^:dart tv-editable-tail nil)
 (def ^:dart tv-editable-root nil)
@@ -1720,7 +1697,7 @@
         subidx (bit-and (u32-bit-shift-right n level) 31)]
     (cond
       (< 5 level)
-      (if-some [new-child (pop-tail pv (- level 5) (pv-aget node subidx))]
+      (if-some [new-child (pop-tail pv (- level 5) (aget (.-arr node) subidx))]
         (VectorNode. nil (aresize (.-arr node) (inc subidx) new-child))
         (when (< 0 subidx) (VectorNode. nil (aresize (.-arr node) subidx nil))))
       (< 0 subidx) (VectorNode. nil (aresize (.-arr node) subidx nil)))))
@@ -1755,7 +1732,7 @@
               (PersistentVector. meta cnt-1 5 (VectorNode. nil (aresize arr new-arr-length nil)) (.-arr (aget arr new-arr-length)) -1))
             ;; root-underflow
             (== (- cnt-1 32) (u32-bit-shift-left 1 shift))
-            (PersistentVector. meta cnt-1 (- shift 5) (pv-aget root 0) (unchecked-array-for coll (dec cnt-1)) -1)
+            (PersistentVector. meta cnt-1 (- shift 5) (aget (.-arr root) 0) (unchecked-array-for coll (dec cnt-1)) -1)
             :else
             (PersistentVector. meta cnt-1 shift (pop-tail coll shift root) (unchecked-array-for coll (dec cnt-1)) -1))))))
   ICollection
@@ -1770,7 +1747,7 @@
             new-shift (if root-overflow? (+ shift 5) shift)
             new-root (if root-overflow?
                        (let [n-r (VectorNode. nil (.filled List 2 (new-path nil shift (VectorNode. nil tail))))]
-                         (pv-aset n-r 0 root)
+                         (aset (.-arr n-r) 0 root)
                          n-r)
                        (push-tail coll shift root (VectorNode. nil tail)))]
         (PersistentVector. meta (inc cnt) new-shift new-root (.filled List 1 o) -1))))
@@ -1848,7 +1825,7 @@
                                 (do (aset cloned-node (bit-and n 31) val)
                                     (VectorNode. nil cloned-node))
                                 (let [subidx (bit-and (u32-bit-shift-right n level) 31)
-                                      new-child (new-root-fn (- level 5) (pv-aget node subidx) n val)]
+                                      new-child (new-root-fn (- level 5) (aget (.-arr node) subidx) n val)]
                                   (aset cloned-node subidx new-child)
                                   (VectorNode. nil cloned-node)))))]
           (PersistentVector. meta cnt shift (new-root-fn shift root n val) tail -1)))
@@ -1907,9 +1884,20 @@
   (-iterator [this]
     (ranged-iterator this 0 cnt)))
 
+(defn unchecked-array-for
+  "Returns the array where i is located."
+  [^PersistentVector pv ^int i]
+  (if (<= (bit-and-not (dec (.-cnt pv)) 31) i)
+    (.-tail pv)
+    (loop [node (.-root pv)
+           level (.-shift pv)]
+      (if (< 0 level)
+        (recur (aget (.-arr node) (bit-and (u32-bit-shift-right i level) 31)) (- level 5))
+        (.-arr node)))))
+
 (def empty-persistent-vector (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1))
 
-(defn tv-ensure-editable [edit node]
+(defn ^VectorNode tv-ensure-editable [edit node]
   (if (identical? edit (.-edit node))
     node
     (let [^"List<dart:core.dynamic>" ret (.filled List 32 nil)
@@ -1945,10 +1933,10 @@
         ret (tv-ensure-editable edit parent)
         subidx (bit-and (u32-bit-shift-right (dec (.-cnt tv)) level) 31)
         level (- level 5)]
-    (pv-aset ret subidx
+    (aset (.-arr ret) subidx
       (if (zero? level)
         tail-node
-        (let [child (pv-aget ret subidx)]
+        (let [child (aget (.-arr ret) subidx)]
           (if-not (nil? child)
             (tv-push-tail tv level child tail-node)
             (tv-new-path edit level tail-node)))))
