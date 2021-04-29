@@ -494,7 +494,7 @@
            ;; this case should not happen
            (let [[tmp :as binding] (dart-binding "" expr)]
              [(conj (vec bindings) binding) tmp]))))
-    (dart/if dart/try dart/case) ; no ternary for now
+    (dart/if dart/try dart/case dart/loop) ; no ternary for now
     (let [[tmp :as binding] (dart-binding (first x) x)]
       [[binding]
        tmp])
