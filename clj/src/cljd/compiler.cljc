@@ -1318,7 +1318,7 @@
    :post ";\n"})
 
 (defn named-fn-locus [name]
-  {:pre (str (-> name meta :dart/type (or  "dc.dynamic")) " " name)
+  {:pre (str (-> name meta :dart/ret-type (or  "dc.dynamic")) " " name)
    :post "\n"})
 
 (def return-locus
