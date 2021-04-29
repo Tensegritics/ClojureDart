@@ -389,9 +389,10 @@
               :type-only true
               (:iext info)
               (for [[mname & body-or-bodies] meths
-                    [args & body] (cond-> body-or-bodies (vector? (first body-or-bodies)) list)
-                    :let [mname (get-in info [:sigs mname (count args) :dart/name])]]
-                (list* mname (into '[_] args) body)))
+                    [[this & args] & body] (cond-> body-or-bodies (vector? (first body-or-bodies)) list)
+                    :let [mname (get-in info [:sigs mname (inc (count args)) :dart/name])]]
+                `(~mname [~'_ ~this ~@args] (let* [~@(when-not (= type 'fallback)
+                                                       [(vary-meta this assoc :tag type) this])] ~@body))))
             (list 'def extension-instance (list 'new extension-name))
             (list 'extend-type-protocol* type (:ns info) (:name info)
               (symbol (name (:current-ns @nses)) (name extension-instance)))))))))
@@ -1498,6 +1499,9 @@
     (->
      (cond
        (:dart/inferred m) m
+       ;; TODO use mirrors
+       (= 'dc.identical x) {:dart/fn-type :native :dart/type "dc.Function" :dart/nat-type "dc.Function"
+                            :dart/ret-type "dc.bool" :dart/ret-truth :boolean}
        (boolean? x) {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
        (string? x) {:dart/type "dc.String" :dart/nat-type "dc.String" :dart/truth :some}
        (double? x) {:dart/type "dc.double" :dart/nat-type "dc.double" :dart/truth :some}
