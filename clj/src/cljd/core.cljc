@@ -1679,10 +1679,46 @@
 (def ^:dart tv-editable-root nil)
 (deftype TransientVector [])
 
+
+(defn- pop-tail [pv level node]
+  (let [n (- (.-cnt pv) 2)
+        subidx (bit-and (u32-bit-shift-right n level) 31)
+      ]
+    (loop [level level
+           new-root? false]
+      (let [subidx ]))
+    #_(cond
+      (> level 5) (let [new-child (pop-tail pv (- level 5) (pv-aget node subidx))]
+                    (if (and (nil? new-child) (zero? subidx))
+                      nil
+                      (let [ret (pv-clone-node node)]
+                        (pv-aset ret subidx new-child)
+                        ret)))
+      (zero? subidx) nil
+      :else (let [ret (pv-clone-node node)]
+              (pv-aset ret subidx nil)
+              ret))))
+
+(defn aresize [a n fill]
+  (let [a' (.filled List n fill)]
+    (dotimes [i n]
+      (aset a' i (aget a i)))
+    a'))
+
+(defn- pop-tail [pv ^int level ^VectorNode node]
+  (let [n (- (.-cnt pv) 2)
+        subidx (bit-and (u32-bit-shift-right n level) 31)]
+    (cond
+      (< 5 level)
+      (if-some [new-child (pop-tail pv (- level 5) (pv-aget node subidx))]
+        (VectorNode. nil (aresize (.-arr node) (inc subidx) new-child))
+        (when (< 0 subidx) (VectorNode. nil (aresize (.-arr node) subidx nil))))
+      (< 0 subidx) (VectorNode. nil (aresize (.-arr node) subidx nil)))))
+
 (deftype PersistentVector [meta ^int cnt ^int shift root tail ^:mutable ^int __hash]
   Object
   #_(toString [coll]
-    (pr-str* coll))
+      (pr-str* coll))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -1690,23 +1726,29 @@
       (PersistentVector. new-meta cnt shift root tail __hash)))
   IMeta
   (-meta [coll] meta)
-  #_#_#_IStack
+  IStack
   (-peek [coll]
-    (when (> cnt 0)
-      (-nth coll (dec cnt))))
+    (when (< 0 cnt) (aget tail (bit-and (dec cnt) 31))))
   (-pop [coll]
-    (cond
-     (zero? cnt) (throw (js/Error. "Can't pop empty vector"))
-     (== 1 cnt) (-with-meta (.-EMPTY PersistentVector) meta)
-     (< 1 (- cnt (tail-off coll)))
-      (PersistentVector. meta (dec cnt) shift root (.slice tail 0 -1) nil)
-      :else (let [new-tail (unchecked-array-for coll (- cnt 2))
-                  nr (pop-tail coll shift root)
-                  new-root (if (nil? nr) (.-EMPTY-NODE PersistentVector) nr)
-                  cnt-1 (dec cnt)]
-              (if (and (< 5 shift) (nil? (pv-aget new-root 1)))
-                (PersistentVector. meta cnt-1 (- shift 5) (pv-aget new-root 0) new-tail nil)
-                (PersistentVector. meta cnt-1 shift new-root new-tail nil)))))
+    (let [cnt-1 (dec cnt)]
+      (cond
+        (zero? cnt) (throw (ArgumentError. "Can't pop empty vector"))
+        ;; TODO empty-persistent-vector
+        (== 1 cnt) (-with-meta [] meta)
+        :else
+        (let [new-tail-length (dec (- cnt (tail-off coll)))]
+          (cond
+            (< 0 new-tail-length)
+            (PersistentVector. meta cnt-1 shift root (aresize tail new-tail-length nil) -1)
+            (== 5 shift)
+            (let [new-arr-length (dec (u32-bit-shift-right cnt-1 5))
+                  arr (.-arr root)]
+              (PersistentVector. meta cnt-1 5 (VectorNode. nil (aresize arr new-arr-length nil)) (.-arr (aget arr new-arr-length)) -1))
+            ;; root-underflow
+            (== (- cnt-1 32) (u32-bit-shift-left 1 shift))
+            (PersistentVector. meta cnt-1 (- shift 5) (pv-aget root 0) (unchecked-array-for coll (dec cnt-1)) -1)
+            :else
+            (PersistentVector. meta cnt-1 shift (pop-tail coll shift root) (unchecked-array-for coll (dec cnt-1)) -1))))))
   ICollection
   (-conj [coll o]
     (if (< (- cnt (tail-off coll)) 32)
@@ -1748,13 +1790,13 @@
   (-seq [coll]
     nil
     #_(cond
-      (zero? cnt) nil
-      (<= cnt 32) (IndexedSeq. tail 0 nil)
-      :else (chunked-seq coll (first-array-for-longvec coll) 0 0)))
+        (zero? cnt) nil
+        (<= cnt 32) (IndexedSeq. tail 0 nil)
+        :else (chunked-seq coll (first-array-for-longvec coll) 0 0)))
   ICounted
   (-count [coll] cnt)
   IIndexed
-  (-nth [coll ^int n]
+  (-nth [coll n]
     ;; TODO : cast n to int ?
     (if (or (<= cnt n) (< n 0))
       (throw (ArgumentError. (str "No item " n " in vector of length " cnt)))
@@ -1786,14 +1828,14 @@
   #_#_IVector
   (-assoc-n [coll n val]
     (cond
-       (and (<= 0 n) (< n cnt))
-       (if (<= (tail-off coll) n)
-         (let [new-tail (aclone tail)]
-           (aset new-tail (bit-and n 0x01f) val)
-           (PersistentVector. meta cnt shift root new-tail nil))
-         (PersistentVector. meta cnt shift (do-assoc coll shift root n val) tail nil))
-       (== n cnt) (-conj coll val)
-       :else (throw (js/Error. (str "Index " n " out of bounds  [0," cnt "]")))))
+      (and (<= 0 n) (< n cnt))
+      (if (<= (tail-off coll) n)
+        (let [new-tail (aclone tail)]
+          (aset new-tail (bit-and n 0x01f) val)
+          (PersistentVector. meta cnt shift root new-tail nil))
+        (PersistentVector. meta cnt shift (do-assoc coll shift root n val) tail nil))
+      (== n cnt) (-conj coll val)
+      :else (throw (js/Error. (str "Index " n " out of bounds  [0," cnt "]")))))
   #_#_#_IReduce
   (-reduce [v f]
     (pv-reduce v f 0 cnt))
@@ -1845,6 +1887,8 @@
   #_#_IIterable
   (-iterator [this]
     (ranged-iterator this 0 cnt)))
+
+(def empty-persistent-vector (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1))
 
 (defn tv-ensure-editable [edit node]
   (if (identical? edit (.-edit node))
@@ -2936,7 +2980,10 @@
             (recur (-conj pv2 idx) (inc idx))))]
     (.stop sw)
     (dart:core/print (.-elapsedMilliseconds sw))
-    (dart:core/print "ms"))
+    (dart:core/print "ms")
+    (dart:core/print "-nth with a default value")
+    (dart:core/print (-nth pv1 10000))
+    (dart:core/print (-nth pv1 100000000 "default")))
 
   (dart:core/print "Started TranscientVector test")
   (let [sw (Stopwatch.)
@@ -2958,6 +3005,30 @@
     (dart:core/print (.-elapsedMilliseconds sw))
     (dart:core/print "ms")
     (dart:core/print (count tv1)))
+
+
+  (let [sw (Stopwatch.)
+        _ (.start sw)
+        N 1000000
+        pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)
+        pv1
+        (loop [pv2 pv
+               idx 0]
+          (if (== idx N)
+            pv2
+            (recur (-conj pv2 idx) (inc idx))))]
+    (.stop sw)
+    (loop [pv pv1 expected (dec N)]
+      (if (<= 0 expected)
+        (if (== expected (-peek pv))
+          (recur (-pop pv) (dec expected))
+          (dart:core/print (str "fail " expected)))
+        (if (== 0 (count pv))
+          "ok"
+          (dart:core/print "ouch"))))
+    (dart:core/print (-peek (-pop pv1)))
+    (dart:core/print (.-shift pv1))
+    (dart:core/print (.-shift  (-pop pv1))))
 
 
 
