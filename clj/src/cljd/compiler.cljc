@@ -1077,7 +1077,9 @@
         expr (if (= 'fn* (first expr))
                (cons (vary-meta (first expr) assoc :var-name sym) (next expr))
                expr)
-        dartname (munge sym)
+        dartname (cond-> (munge sym) kind (vary-meta (fn [{:dart/keys [type truth] :as m}]
+                                                       (-> m (dissoc :dart/type :dart/nat-type :dart/truth)
+                                                         (assoc :dart/ret-type type :dart/ret-truth truth)))))
         dart-fn
         (do
           (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
@@ -1504,7 +1506,7 @@
        (seq? x)
        (case (first x)
          dart/let (infer-type (last x))
-         dart/fn {:dart/fn-type :native}
+         dart/fn {:dart/fn-type :native :dart/type "dc.Function" :dart/nat-type "dc.Function"}
          dart/new {:dart/type (second x)
                    :dart/nat-type (second x)
                    :dart/truth (dart-type-truthiness (second x))}
@@ -1524,9 +1526,9 @@
          dart/is {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
          dart/as (let [[_ _ type] x] {:dart/type type
                                       :dart/truth (dart-type-truthiness type)})
-         (when-some [{:keys [dart/type dart/truth]} (infer-type (first x))]
-           {:dart/type type
-            :dart/truth (or truth (dart-type-truthiness type))}))
+         (when-some [{:keys [dart/ret-type dart/ret-truth]} (infer-type (first x))]
+           {:dart/type ret-type
+            :dart/truth (or ret-truth (dart-type-truthiness ret-type))}))
        :else nil)
      (merge m)
      (assoc :dart/inferred true))))
