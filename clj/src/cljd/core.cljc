@@ -5,6 +5,9 @@
   (extension [x])
   (satisfies [x]))
 
+(def empty-list nil)
+(def empty-persistent-vector nil)
+
 (def ^:dart to-map)
 (def ^:dart to-list)
 
@@ -528,9 +531,6 @@
   "Ignores body, yields nil"
   {:added "1.0"}
   [& body])
-
-(def empty-list nil)
-(def empty-persistent-vector nil)
 
 #_(defn nth [x i default]
   (if (.< i (.-length x))
@@ -1789,13 +1789,13 @@
   (-lookup [coll k not-found] (if (number? k)
                                 (-nth coll k not-found)
                                 not-found))
-  #_#_#_IAssociative
+  IAssociative
   (-assoc [coll k v]
-    (if (number? k)
+    (if (dart/is? k int)
       (-assoc-n coll k v)
-      (throw (js/Error. "Vector's key for assoc must be a number."))))
+      (throw (ArgumentError. "Vector's key for assoc must be a number."))))
   (-contains-key? [coll k]
-    (if (integer? k)
+    (if (dart/is? k int)
       (and (<= 0 k) (< k cnt))
       false))
   #_#_IFind
@@ -1803,17 +1803,26 @@
     (when (and (<= 0 n) (< n cnt))
       (MapEntry. n (aget (unchecked-array-for coll n) (bit-and n 0x01f)) nil)))
   #_APersistentVector
-  #_#_IVector
+  IVector
   (-assoc-n [coll n val]
     (cond
       (and (<= 0 n) (< n cnt))
       (if (<= (tail-off coll) n)
         (let [new-tail (aclone tail)]
-          (aset new-tail (bit-and n 0x01f) val)
-          (PersistentVector. meta cnt shift root new-tail nil))
-        (PersistentVector. meta cnt shift (do-assoc coll shift root n val) tail nil))
+          (aset new-tail (bit-and n 31) val)
+          (PersistentVector. meta cnt shift root new-tail -1))
+        (let [new-root-fn (fn new-root-fn [^int level ^VectorNode node ^int n val]
+                            (let [cloned-node (aclone (.-arr node))]
+                              (if (zero? level)
+                                (do (aset cloned-node (bit-and n 31) val)
+                                    (VectorNode. nil cloned-node))
+                                (let [subidx (bit-and (u32-bit-shift-right n level) 31)
+                                      new-child (new-root-fn (- level 5) (pv-aget node subidx) n val)]
+                                  (aset cloned-node subidx new-child)
+                                  (VectorNode. nil cloned-node)))))]
+          (PersistentVector. meta cnt shift (new-root-fn shift root n val) tail -1)))
       (== n cnt) (-conj coll val)
-      :else (throw (js/Error. (str "Index " n " out of bounds  [0," cnt "]")))))
+      :else (throw (ArgumentError. (str "Index " n " out of bounds  [0," cnt "]")))))
   #_#_#_IReduce
   (-reduce [v f]
     (pv-reduce v f 0 cnt))
@@ -3008,7 +3017,20 @@
     (dart:core/print (.-shift pv1))
     (dart:core/print (.-shift  (-pop pv1))))
 
+  (let [pv []]
+    (dart:core/print (-peek (-assoc pv 0 1)))
+    ; throw
+    #_(dart:core/print (-peek (-assoc pv 10 1)))
+    (dart:core/print (-peek (-assoc (-conj (-conj pv 10) 11) 1 1)))
+    ; throw
+    #_(dart:core/print (-assoc (-conj (-conj pv 10) 11) "a" 1)))
 
+  (let [pv (loop [pv []
+                  idx 0]
+             (if (== idx 10000000)
+               pv
+               (recur (-conj pv idx) (inc idx))))]
+    (dart:core/print (-nth (-assoc pv 11111 "coucou") 11111)))
 
   #_(dart:core/print "Started Vector test")
   #_(let [sw (Stopwatch.)
