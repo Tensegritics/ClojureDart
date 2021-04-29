@@ -679,6 +679,13 @@
   ([f coll] (-reduce coll f))
   ([f init coll] (-reduce coll f init)))
 
+(defprotocol IKVReduce
+  "Protocol for associative types that can reduce themselves
+  via a function of key and val."
+  (-kv-reduce [coll f init]
+    "Reduces an associative collection and returns the result. f should be
+     a function that takes three arguments."))
+
 (defprotocol ICounted
   "Protocol for adding the ability to count a collection in constant time."
   (-count [coll]
@@ -1810,6 +1817,7 @@
         (let [new-tail (aclone tail)]
           (aset new-tail (bit-and n 31) val)
           (PersistentVector. meta cnt shift root new-tail -1))
+        ;; TODO : extract this one
         (let [new-root-fn (fn new-root-fn [^int level ^VectorNode node ^int n val]
                             (let [cloned-node (aclone (.-arr node))]
                               (if (zero? level)
@@ -1845,23 +1853,20 @@
               (deref val)
               (recur val (inc idx))))
           acc))))
-  #_#_IKVReduce
-  (-kv-reduce [v f init]
-    (loop [i 0 init init]
-      (if (< i cnt)
-        (let [arr  (unchecked-array-for v i)
-              len  (alength arr)
-              init (loop [j 0 init init]
-                     (if (< j len)
-                       (let [init (f init (+ j i) (aget arr j))]
-                         (if (reduced? init)
-                           init
-                           (recur (inc j) init)))
-                       init))]
-          (if (reduced? init)
-            @init
-            (recur (+ i len) init)))
-        init)))
+  IKVReduce
+  (-kv-reduce [pv f init]
+    (if (zero? cnt)
+      init
+      (loop [acc init
+             i 0
+             arr (unchecked-array-for pv 0)]
+        (if (< i cnt)
+          (let [val ^dynamic (f acc i (aget arr (bit-and i 31)))
+                i' (inc i)]
+            (if (reduced? val)
+              (deref val)
+              (recur val i' (if (< 0 (bit-and i' 31)) arr (unchecked-array-for pv i')))))
+          acc))))
   IFn
   (-invoke [coll k]
     (-nth coll k))
@@ -3040,7 +3045,24 @@
              (if (== idx 100000)
                pv
                (recur (-conj pv idx) (inc idx))))]
-    (reduce + 0 pv))
+    (dart:core/print (reduce + 0 pv)))
+
+  (let [pv (loop [pv []
+                  idx 0]
+             (if (== idx 100000)
+               pv
+               (recur (-conj pv idx) (inc idx))))]
+    (-kv-reduce pv (fn [acc i item]
+                     (-conj acc #_(-conj (-conj [] i) item) i))
+      [])
+    (dart:core/print (-peek (-peek (-kv-reduce
+                                     pv
+                                     (fn [acc i item]
+                                       (-conj acc (-conj (-conj [] i) item)))
+                                     [])))))
+
+  (let [pv (-conj [] 100)]
+    (dart:core/print (pv 0)))
 
   #_(dart:core/print "Started Vector test")
   #_(let [sw (Stopwatch.)
