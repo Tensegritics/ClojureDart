@@ -8,8 +8,6 @@
 (def ^:dart to-map)
 (def ^:dart to-list)
 
-(def empty-persistent-vector nil)
-
 (def ^{:clj true} =)
 (def ^{:clj true} assoc)
 (def ^{:dart true} butlast)
@@ -43,7 +41,7 @@
 #_(def ^{:dart true} seq)
 (def ^{:dart true} seq?)
 (def ^{:dart true} set)
-(def ^{:dart true} some)
+#_(def ^{:dart true} some)
 #_(def ^{:clj true} str)
 (def ^{:dart true} string?)
 (def ^{:clj true} subvec)
@@ -532,6 +530,7 @@
   [& body])
 
 (def empty-list nil)
+(def empty-persistent-vector nil)
 
 #_(defn nth [x i default]
   (if (.< i (.-length x))
@@ -1733,7 +1732,6 @@
     (let [cnt-1 (dec cnt)]
       (cond
         (zero? cnt) (throw (ArgumentError. "Can't pop empty vector"))
-        ;; TODO empty-persistent-vector
         (== 1 cnt) (-with-meta [] meta)
         :else
         (let [new-tail-length (dec (- cnt (tail-off coll)))]
