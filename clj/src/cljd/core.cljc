@@ -1678,26 +1678,6 @@
 (def ^:dart tv-editable-root nil)
 (deftype TransientVector [])
 
-
-(defn- pop-tail [pv level node]
-  (let [n (- (.-cnt pv) 2)
-        subidx (bit-and (u32-bit-shift-right n level) 31)
-      ]
-    (loop [level level
-           new-root? false]
-      (let [subidx ]))
-    #_(cond
-      (> level 5) (let [new-child (pop-tail pv (- level 5) (pv-aget node subidx))]
-                    (if (and (nil? new-child) (zero? subidx))
-                      nil
-                      (let [ret (pv-clone-node node)]
-                        (pv-aset ret subidx new-child)
-                        ret)))
-      (zero? subidx) nil
-      :else (let [ret (pv-clone-node node)]
-              (pv-aset ret subidx nil)
-              ret))))
-
 (defn aresize [a n fill]
   (let [a' (.filled List n fill)]
     (dotimes [i n]
