@@ -60,7 +60,7 @@
 
 ;; syntax quote support at bootstrap
 ;; the :cljd nil is most certainly going to bite us once we run the compiler on dart vm
-(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
+#_(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
 (def ^:clj ^:bootstrap concat #?(:cljd nil :clj clojure.core/concat))
 (def ^:dart ^:bootstrap first #?(:cljd nil :clj clojure.core/first))
 (def ^:clj ^:bootstrap hash-map #?(:cljd nil :clj clojure.core/hash-map))
@@ -542,6 +542,11 @@
   (-seq [o]
     "Returns a seq of o, or nil if o is empty."))
 
+(defn seqable?
+  "Return true if the seq function is supported for x."
+  [x]
+  (satisfies? ISeqable x))
+
 (defn seq
   "Returns a seq on the collection. If the collection is
     empty, returns nil.  (seq nil) returns nil. seq also works on
@@ -653,7 +658,29 @@
      returns the result of applying f to the first 2 items in coll, then
      applying f to that result and the 3rd item, etc."))
 
-(def ^:dart reduced? nil)
+(deftype Reduced [val]
+  IDeref
+  (-deref [o] val))
+
+(defn reduced
+  "Wraps x in a way such that a reduce will terminate with the value x"
+  [x]
+  (Reduced. x))
+
+(defn reduced?
+  "Returns true if x is the result of a call to reduced"
+  [r]
+  (dart/is? r Reduced))
+
+(defn ensure-reduced
+  "If x is already reduced?, returns it, else returns (reduced x)"
+  [x]
+  (if (reduced? x) x (reduced x)))
+
+(defn unreduced
+  "If x is reduced?, returns (deref x), else returns x"
+  [x]
+  (if (reduced? x) (-deref x) x))
 
 (extend-type fallback
   IReduce
@@ -676,6 +703,10 @@
         acc))))
 
 (defn reduce
+  {:inline-arities #{2 3}
+   :inline (fn
+             ([f coll] `(-reduce ~coll ~f))
+             ([f init coll] `(-reduce ~coll ~f ~init)))}
   ([f coll] (-reduce coll f))
   ([f init coll] (-reduce coll f init)))
 
@@ -691,12 +722,20 @@
   (-count [coll]
     "Calculates the count of coll in constant time."))
 
+(defn counted?
+  "Returns true if coll implements count in constant time."
+  [coll]
+  (satisfies? ICounted coll))
+
 (extend-type fallback
   ICounted
   (-count [coll]
     (reduce (fn [n _] (inc n)) 0 coll)))
 
-(defn ^int count [coll]
+(defn ^int count
+  {:inline (fn [coll] `(-count ~coll))
+   :inline-arities #{1}}
+  [coll]
   (-count coll))
 
 (defprotocol IChunk
@@ -777,10 +816,6 @@
     "Adds value val to tcoll and returns tcoll.")
   (-persistent! [tcoll]
     "Creates a persistent data structure from tcoll and returns it."))
-
-(defn ^bool pos? [a] (.< 0 a))
-
-(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
 
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:bootstrap ^:private nary-inline
@@ -905,6 +940,21 @@
        (recur y (first more) (next more))
        (> y (first more)))
      false)))
+
+(defn ^bool pos?
+  {:inline-arities #{1}
+   :inline (fn [n] `(< 0 ~n))}
+  [n] (< 0 n))
+
+(defn ^bool neg?
+  {:inline-arities #{1}
+   :inline (fn [n] `(> 0 ~n))}
+  [n] (> 0 n))
+
+(defn ^bool zero?
+  {:inline-arities #{1}
+   :inline (fn [n] `(== 0 ~n))}
+  [n] (== 0 n))
 
 (defn ^num inc
   {:inline (fn [x] `(.+ ~x 1))
@@ -1209,30 +1259,6 @@
   ([a b c d & more]
    (cons a (cons b (cons c (cons d (spread more)))))))
 
-(deftype Reduced [val]
-  IDeref
-  (-deref [o] val))
-
-(defn reduced
-  "Wraps x in a way such that a reduce will terminate with the value x"
-  [x]
-  (Reduced. x))
-
-(defn reduced?
-  "Returns true if x is the result of a call to reduced"
-  [r]
-  (dart/is? r Reduced))
-
-(defn ensure-reduced
-  "If x is already reduced?, returns it, else returns (reduced x)"
-  [x]
-  (if (reduced? x) x (reduced x)))
-
-(defn unreduced
-  "If x is reduced?, returns (deref x), else returns x"
-  [x]
-  (if (reduced? x) (-deref x) x))
-
 (deftype PersistentList [meta first rest ^int count ^:mutable ^int __hash]
   ;; invariant: first is nil when count is zero
   Object
@@ -1297,8 +1323,6 @@
     (satisfies? ISeq coll) (Cons. nil x coll -1)
     true                   (Cons. nil x (seq coll) -1)))
 
-(def ^:dart seq-iterator nil)
-
 (deftype IteratorSeq [value iter ^:mutable _rest]
   ISeqable
   (-seq [this] this)
@@ -1317,7 +1341,7 @@
 
 (extend-type Iterable
   ISeqable
-  (-seq [coll] (seq-iterator (.-iterator ^Iterable coll)))) ; TODO infer argument type in extend-type
+  (-seq [coll] (seq-iterator (.-iterator coll))))
 
 (deftype StringSeq [string i meta ^:mutable ^int __hash]
   #_Object
