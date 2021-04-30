@@ -1122,17 +1122,15 @@
 
 (defn emit-symbol [x env]
   (let [[tag v] (resolve-symbol x env)]
-    (->
-      (case tag
-        :local v
-        :def
-        (let [{dart-name :dart/name the-ns :ns} v]
+    (case tag
+      :local v
+      :def
+      (let [{dart-name :dart/name the-ns :ns} v]
           (if (= (:current-ns @nses) the-ns)
             dart-name
             (symbol (str (ensure-import the-ns) "." dart-name))))
-        :dart (vary-meta v assoc :dart/fn-type :native)
-        (throw (Exception. (str "Unknown symbol: " x))))
-      (vary-meta merge (dart-meta x)))))
+      :dart (vary-meta v assoc :dart/fn-type :native)
+      (throw (Exception. (str "Unknown symbol: " x))))))
 
 (defn emit-quoted [[_ x] env]
   (cond
