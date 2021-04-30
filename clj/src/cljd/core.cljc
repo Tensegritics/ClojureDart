@@ -1702,6 +1702,16 @@
         (when (< 0 subidx) (VectorNode. nil (aresize (.-arr node) subidx nil))))
       (< 0 subidx) (VectorNode. nil (aresize (.-arr node) subidx nil)))))
 
+(defn- do-assoc [^int level ^VectorNode node ^int n val]
+  (let [cloned-node (aclone (.-arr node))]
+    (if (zero? level)
+      (do (aset cloned-node (bit-and n 31) val)
+          (VectorNode. nil cloned-node))
+      (let [subidx (bit-and (u32-bit-shift-right n level) 31)
+            new-child (do-assoc (- level 5) (aget (.-arr node) subidx) n val)]
+        (aset cloned-node subidx new-child)
+        (VectorNode. nil cloned-node)))))
+
 (deftype PersistentVector [meta ^int cnt ^int shift root tail ^:mutable ^int __hash]
   Object
   #_(toString [coll]
@@ -1791,11 +1801,13 @@
     (if (or (<= cnt n) (< n 0))
       not-found
       (aget (unchecked-array-for coll n) (bit-and n 31))))
-  #_#_#_ILookup
-  (-lookup [coll k] (-lookup coll k nil))
-  (-lookup [coll k not-found] (if (number? k)
-                                (-nth coll k not-found)
-                                not-found))
+  ILookup
+  (-lookup [coll k]
+    (-lookup coll k nil))
+  (-lookup [coll k not-found]
+    (if (dart/is? k int)
+      (-nth coll k not-found)
+      not-found))
   IAssociative
   (-assoc [coll k v]
     (if (dart/is? k int)
@@ -1818,17 +1830,7 @@
         (let [new-tail (aclone tail)]
           (aset new-tail (bit-and n 31) val)
           (PersistentVector. meta cnt shift root new-tail -1))
-        ;; TODO : extract this one
-        (let [new-root-fn (fn new-root-fn [^int level ^VectorNode node ^int n val]
-                            (let [cloned-node (aclone (.-arr node))]
-                              (if (zero? level)
-                                (do (aset cloned-node (bit-and n 31) val)
-                                    (VectorNode. nil cloned-node))
-                                (let [subidx (bit-and (u32-bit-shift-right n level) 31)
-                                      new-child (new-root-fn (- level 5) (aget (.-arr node) subidx) n val)]
-                                  (aset cloned-node subidx new-child)
-                                  (VectorNode. nil cloned-node)))))]
-          (PersistentVector. meta cnt shift (new-root-fn shift root n val) tail -1)))
+        (PersistentVector. meta cnt shift (do-assoc shift root n val) tail -1))
       (== n cnt) (-conj coll val)
       :else (throw (ArgumentError. (str "Index " n " out of bounds  [0," cnt "]")))))
   IReduce
@@ -1862,7 +1864,7 @@
              i 0
              arr (unchecked-array-for pv 0)]
         (if (< i cnt)
-          (let [val ^dynamic (f acc i (aget arr (bit-and i 31)))
+          (let [val (f acc i (aget arr (bit-and i 31)))
                 i' (inc i)]
             (if (reduced? val)
               (deref val)
