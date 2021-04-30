@@ -408,62 +408,73 @@
      (when (or (not ghost-only) (some-> v meta :ns (= gns)))
        v))))
 
-(defn inline-expand [env form]
-  (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
-    (let [f-name (name f)
-          [f-type f-v] (resolve-symbol f env)
-          {:keys [inline-arities inline]} (or
-               #_(when-some [v (when *bootstrap* (ghost-resolve f true))]
-                 (when (-> v meta :inline-arities) (meta v)))
-               ; TODO SELFHOST
-               (case f-type ; wishful coding for the compiler running on dart
-                 :def (:meta f-v)
-                 nil))]
-      (cond
-        (env f) form
-        (and inline-arities (inline-arities (count args))) (apply inline args)
-        :else form))
-    form))
+(defn- propagate-hints [expansion form]
+  (if-let [tag (and (not (identical? form expansion))
+                 (or (seq? expansion) (symbol? expansion))
+                 (:tag (meta form)))]
+    (vary-meta expansion assoc :tag tag)
+    expansion))
+
+(defn inline-expand-1 [env form]
+  (->
+    (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
+      (let [f-name (name f)
+            [f-type f-v] (resolve-symbol f env)
+            {:keys [inline-arities inline]} (or
+                                              #_(when-some [v (when *bootstrap* (ghost-resolve f true))]
+                                                  (when (-> v meta :inline-arities) (meta v)))
+                                              ; TODO SELFHOST
+                                              (case f-type ; wishful coding for the compiler running on dart
+                                                :def (:meta f-v)
+                                                nil))]
+        (cond
+          (env f) form
+          (and inline-arities (inline-arities (count args))) (apply inline args)
+          :else form))
+      form)
+    (propagate-hints form)))
 
 (defn macroexpand-1 [env form]
-  (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
-    (let [f-name (name f)
-          [f-type f-v] (resolve-symbol f env)
-          macro-fn (or
-                     (when-some [v (when *bootstrap* (ghost-resolve f))]
-                       (when (-> v meta :macro) @v))
-                     ; TODO SELFHOST
-                     (case f-type ; wishful coding for the compiler running on dart
-                       :def (when (-> f-v :meta :macro) (-> f-v :runtime-value))
-                       nil))]
-      (cond
-        (env f) form
-        #?@(:clj ; macro overrides
-            [(= 'ns f) form
-             (= 'reify f)
-             (let [[opts specs] (roll-leading-opts args)]
-               (list* 'reify* opts specs))
-             (= 'defprotocol f) (apply expand-defprotocol args)
-             (= 'case f) (apply expand-case args)
-             (= 'extend-type f) (apply expand-extend-type args)])
-        (= '. f) form
-        macro-fn
-        (apply macro-fn form env (next form))
-        (.endsWith f-name ".")
-        (list* 'new
-               (symbol (namespace f) (subs f-name 0 (dec (count f-name))))
-               args)
-        (.startsWith f-name ".")
-        (list* '. (first args) (symbol (subs f-name 1)) (next args))
-        :else form))
-    form))
+  (->
+    (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
+      (let [f-name (name f)
+            [f-type f-v] (resolve-symbol f env)
+            macro-fn (or
+                       (when-some [v (when *bootstrap* (ghost-resolve f))]
+                         (when (-> v meta :macro) @v))
+                       ; TODO SELFHOST
+                       (case f-type ; wishful coding for the compiler running on dart
+                         :def (when (-> f-v :meta :macro) (-> f-v :runtime-value))
+                         nil))]
+        (cond
+          (env f) form
+          #?@(:clj ; macro overrides
+              [(= 'ns f) form
+               (= 'reify f)
+               (let [[opts specs] (roll-leading-opts args)]
+                 (list* 'reify* opts specs))
+               (= 'defprotocol f) (apply expand-defprotocol args)
+               (= 'case f) (apply expand-case args)
+               (= 'extend-type f) (apply expand-extend-type args)])
+          (= '. f) form
+          macro-fn
+          (apply macro-fn form env (next form))
+          (.endsWith f-name ".")
+          (list* 'new
+            (symbol (namespace f) (subs f-name 0 (dec (count f-name))))
+            args)
+          (.startsWith f-name ".")
+          (list* '. (first args) (symbol (subs f-name 1)) (next args))
+          :else form))
+      form)
+    (propagate-hints form)))
 
 (defn macroexpand [env form]
   (let [ex (macroexpand-1 env form)]
     (cond->> ex (not (identical? ex form)) (recur env))))
 
 (defn macroexpand-and-inline [env form]
-  (let [ex (->> form (macroexpand env) (inline-expand env))]
+  (let [ex (->> form (macroexpand-1 env) (inline-expand-1 env))]
     (cond->> ex (not (identical? ex form)) (recur env))))
 
 (declare emit infer-type)
@@ -1279,7 +1290,7 @@
           (coll? x) (emit-coll x env)
           :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
     (cond-> dart-x
-      (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type dart-x)))))
+      (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type (vary-meta dart-x merge (dart-meta x)))))))
 
 (defn bootstrap-eval
   [x]
