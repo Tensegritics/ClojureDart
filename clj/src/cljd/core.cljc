@@ -765,6 +765,19 @@
     "Returns a new collection of coll with a mapping from key k to
      value v added to it."))
 
+(defprotocol ITransientAssociative
+  "Protocol for adding associativity to transient collections."
+  (-assoc! [tcoll key val]
+    "Returns a new transient collection of tcoll with a mapping from key to
+     val added to it."))
+
+(defprotocol ITransientVector
+  "Protocol for adding vector functionality to transient collections."
+  (-assoc-n! [tcoll n val]
+    "Returns tcoll with value val added at position n.")
+  (-pop! [tcoll]
+    "Returns tcoll with the last item removed from it."))
+
 (defprotocol IEquiv
   "Protocol for adding value comparison functionality to a type."
   (-equiv [o other]
@@ -1649,58 +1662,63 @@
 
 ;;; PersistentVector
 
+;; declarations
+(deftype PersistentVector [])
+(deftype TransientVector [])
+
+(defn aresize [a from to pad]
+  (let [a' (.filled List to pad)]
+    (dotimes [i from]
+      (aset a' i (aget a i)))
+    a'))
+
+(defn ashrink [a to]
+  (let [a' (.filled List to ^dynamic (do nil))]
+    (dotimes [i to]
+      (aset a' i (aget a i)))
+    a'))
+
 (deftype VectorNode [edit ^List arr])
 
-(defn push-tail [pv ^int level ^VectorNode parent ^VectorNode tailnode]
-  (let [^int subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
-        ^List arr-parent (.-arr parent)
+(defn push-tail [^PersistentVector pv ^int level ^VectorNode parent ^VectorNode tailnode]
+  (let [subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
+        arr-parent (.-arr parent)
         level (- level 5)
         new-node (cond
                    (zero? level) tailnode ; fast path
                    (< subidx (.-length arr-parent)) ;some? is for transients
                    (if-some [child (. arr-parent "[]" subidx)]
                      (push-tail pv level child tailnode)
-                     (new-path nil level tailnode))
+                     (new-path level tailnode))
                    :else
-                   (new-path nil level tailnode))
-        arr (.filled List (inc subidx) new-node)]
-    (dotimes [n subidx]
-      (. arr "[]=" n (. arr-parent "[]" n)))
-    (VectorNode. (.-edit parent) arr)))
+                   (new-path level tailnode))]
+    (VectorNode. nil (aresize arr-parent subidx (inc subidx) new-node))))
 
-(defn new-path [edit ^int level ^VectorNode node]
+(defn new-path [^int level ^VectorNode node]
   (loop [ll level
          ret node]
     (if (zero? ll)
       ret
-      (recur (- ll 5) (VectorNode. edit (.filled List 1 ret))))))
+      (recur (- ll 5) (VectorNode. nil (.filled List 1 ret))))))
 
-(defn ^int tail-off [pv]
-  (let [^int cnt (.-cnt pv)]
-    (if (pos? cnt)
-      (bit-and-not (dec cnt) 31)
-      0)))
+(defn unchecked-array-for
+  "Returns the array where i is located."
+  [^VectorNode root ^int shift ^int i]
+  (loop [node root
+         level shift]
+    (if (< 0 level)
+      (recur (aget (.-arr node) (bit-and (u32-bit-shift-right i level) 31)) (- level 5))
+      (.-arr node))))
 
-;; declare dependencies
-(def ^:dart tv-editable-tail nil)
-(def ^:dart tv-editable-root nil)
-(deftype TransientVector [])
-
-(defn aresize [a n fill]
-  (let [a' (.filled List n fill)]
-    (dotimes [i n]
-      (aset a' i (aget a i)))
-    a'))
-
-(defn- pop-tail [pv ^int level ^VectorNode node]
+(defn- pop-tail [^PersistentVector pv ^int level ^VectorNode node]
   (let [n (- (.-cnt pv) 2)
         subidx (bit-and (u32-bit-shift-right n level) 31)]
     (cond
       (< 5 level)
       (if-some [new-child (pop-tail pv (- level 5) (aget (.-arr node) subidx))]
-        (VectorNode. nil (aresize (.-arr node) (inc subidx) new-child))
-        (when (< 0 subidx) (VectorNode. nil (aresize (.-arr node) subidx nil))))
-      (< 0 subidx) (VectorNode. nil (aresize (.-arr node) subidx nil)))))
+        (VectorNode. nil (aresize (.-arr node) subidx (inc subidx) new-child))
+        (when (< 0 subidx) (VectorNode. nil (ashrink (.-arr node) subidx))))
+      (< 0 subidx) (VectorNode. nil (ashrink (.-arr node) subidx)))))
 
 (defn- do-assoc [^int level ^VectorNode node ^int n val]
   (let [cloned-node (aclone (.-arr node))]
@@ -1712,7 +1730,7 @@
         (aset cloned-node subidx new-child)
         (VectorNode. nil cloned-node)))))
 
-(deftype PersistentVector [meta ^int cnt ^int shift root tail ^:mutable ^int __hash]
+(deftype PersistentVector [meta ^int cnt ^int shift ^VectorNode root tail ^:mutable ^int __hash]
   Object
   #_(toString [coll]
       (pr-str* coll))
@@ -1727,40 +1745,37 @@
   (-peek [coll]
     (when (< 0 cnt) (aget tail (bit-and (dec cnt) 31))))
   (-pop [coll]
+    (when (zero? cnt)
+      (throw (ArgumentError. "Can't pop empty vector")))
     (let [cnt-1 (dec cnt)]
-      (cond
-        (zero? cnt) (throw (ArgumentError. "Can't pop empty vector"))
-        (== 1 cnt) (-with-meta [] meta)
-        :else
-        (let [new-tail-length (dec (- cnt (tail-off coll)))]
+      (if (zero? cnt-1)
+        (-with-meta [] meta)
+        (let [new-tail-length (- cnt-1 (bit-and-not cnt-1 31))]
           (cond
             (< 0 new-tail-length)
-            (PersistentVector. meta cnt-1 shift root (aresize tail new-tail-length nil) -1)
+            (PersistentVector. meta cnt-1 shift root (ashrink tail new-tail-length) -1)
             (== 5 shift)
-            (let [new-arr-length (dec (u32-bit-shift-right cnt-1 5))
+            (let [new-root-length (dec (u32-bit-shift-right cnt-1 5))
                   arr (.-arr root)]
-              (PersistentVector. meta cnt-1 5 (VectorNode. nil (aresize arr new-arr-length nil)) (.-arr (aget arr new-arr-length)) -1))
+              (PersistentVector. meta cnt-1 5 (VectorNode. nil (ashrink arr new-root-length)) (.-arr (aget arr new-root-length)) -1))
             ;; root-underflow
             (== (- cnt-1 32) (u32-bit-shift-left 1 shift))
-            (PersistentVector. meta cnt-1 (- shift 5) (aget (.-arr root) 0) (unchecked-array-for coll (dec cnt-1)) -1)
+            (PersistentVector. meta cnt-1 (- shift 5) (aget (.-arr root) 0) (unchecked-array-for root shift (dec cnt-1)) -1)
             :else
-            (PersistentVector. meta cnt-1 shift (pop-tail coll shift root) (unchecked-array-for coll (dec cnt-1)) -1))))))
+            (PersistentVector. meta cnt-1 shift (pop-tail coll shift root) (unchecked-array-for root shift (dec cnt-1)) -1))))))
   ICollection
   (-conj [coll o]
-    (if (< (- cnt (tail-off coll)) 32)
-      (let [len (.-length tail)
-            new-tail (.filled List (inc len) o)]
-        (dotimes [n len]
-          (. new-tail "[]=" n (. tail "[]" n)))
-        (PersistentVector. meta (inc cnt) shift root new-tail -1))
-      (let [root-overflow? (< (u32-bit-shift-left 1 shift) (u32-bit-shift-right cnt 5))
-            new-shift (if root-overflow? (+ shift 5) shift)
-            new-root (if root-overflow?
-                       (let [n-r (VectorNode. nil (.filled List 2 (new-path nil shift (VectorNode. nil tail))))]
-                         (aset (.-arr n-r) 0 root)
-                         n-r)
-                       (push-tail coll shift root (VectorNode. nil tail)))]
-        (PersistentVector. meta (inc cnt) new-shift new-root (.filled List 1 o) -1))))
+    (let [tail-len (bit-and cnt 31)]
+      (if (or (pos? tail-len) (zero? cnt))
+        (PersistentVector. meta (inc cnt) shift root (aresize tail tail-len (inc tail-len) o) -1)
+        (let [root-overflow? (< (u32-bit-shift-left 1 shift) (u32-bit-shift-right cnt 5))
+              new-shift (if root-overflow? (+ shift 5) shift)
+              new-root (if root-overflow?
+                         (let [n-r (VectorNode. nil (.filled List 2 (new-path shift (VectorNode. nil tail))))]
+                           (aset (.-arr n-r) 0 root)
+                           n-r)
+                         (push-tail coll shift root (VectorNode. nil tail)))]
+          (PersistentVector. meta (inc cnt) new-shift new-root (.filled List 1 o) -1)))))
   #_#_IEmptyableCollection
   (-empty [coll] (-with-meta (.-EMPTY PersistentVector) meta))
   ISequential
@@ -1793,14 +1808,15 @@
   (-count [coll] cnt)
   IIndexed
   (-nth [coll n]
-    ;; TODO : cast n to int ?
-    (if (or (<= cnt n) (< n 0))
-      (throw (ArgumentError. (str "No item " n " in vector of length " cnt)))
-      (aget (unchecked-array-for coll n) (bit-and n 31))))
+    (when (or (<= cnt n) (< n 0))
+      (throw (ArgumentError. (str "No item " n " in vector of length " cnt))))
+    (let [arr (if (<= (bit-and-not (dec cnt) 31) n) tail (unchecked-array-for root shift n))]
+      (aget arr (bit-and n 31))))
   (-nth [coll n not-found]
     (if (or (<= cnt n) (< n 0))
       not-found
-      (aget (unchecked-array-for coll n) (bit-and n 31))))
+      (let [arr (if (<= (bit-and-not (dec cnt) 31) n) tail (unchecked-array-for root shift n))]
+        (aget arr (bit-and n 31)))))
   ILookup
   (-lookup [coll k]
     (-lookup coll k nil))
@@ -1824,52 +1840,77 @@
   #_APersistentVector
   IVector
   (-assoc-n [coll n val]
+    (when (or (< cnt n) (< n 0))
+      (throw (ArgumentError. (str "Index " n " out of bounds  [0," cnt "]"))))
     (cond
-      (and (<= 0 n) (< n cnt))
-      (if (<= (tail-off coll) n)
-        (let [new-tail (aclone tail)]
-          (aset new-tail (bit-and n 31) val)
-          (PersistentVector. meta cnt shift root new-tail -1))
-        (PersistentVector. meta cnt shift (do-assoc shift root n val) tail -1))
-      (== n cnt) (-conj coll val)
-      :else (throw (ArgumentError. (str "Index " n " out of bounds  [0," cnt "]")))))
+      (== n cnt)
+      (-conj coll val)
+      (<= (bit-and-not (dec cnt) 31) n)
+      (let [new-tail (aclone tail)]
+        (aset new-tail (bit-and n 31) val)
+        (PersistentVector. meta cnt shift root new-tail -1))
+      :else
+      (PersistentVector. meta cnt shift (do-assoc shift root n val) tail -1)))
   IReduce
   (-reduce [pv f]
     (if (zero? cnt)
       (f)
-      (loop [acc (aget tail 0)
-             idx 1]
-        (if (< idx cnt)
-          (let [val (f acc (-nth pv idx))]
-            (if (reduced? val)
-              (deref val)
-              (recur val (inc idx))))
-          acc))))
+      (let [tail-off (bit-and-not (dec cnt) 31)
+            arr (if (zero? tail-off) tail (unchecked-array-for root shift 0))]
+        (loop [acc (aget arr 0)
+               i 1
+               arr arr]
+          (if (< i cnt)
+            (let [val (f acc (aget arr (bit-and i 31)))
+                  i' (inc i)]
+              (if (reduced? val)
+                (deref val)
+                (recur val i' (cond
+                                (< 0 (bit-and i' 31)) arr
+                                (== tail-off i') tail
+                                ;; stoppage
+                                (== i' cnt) nil
+                                :else (unchecked-array-for root shift i')))))
+            acc)))))
   (-reduce [pv f init]
     (if (zero? cnt)
       init
-      (loop [acc init
-             idx 0]
-        (if (< idx cnt)
-          (let [val (f acc (-nth pv idx))]
-            (if (reduced? val)
-              (deref val)
-              (recur val (inc idx))))
-          acc))))
+      (let [tail-off (bit-and-not (dec cnt) 31)]
+        (loop [acc init
+               i 0
+               arr (if (zero? tail-off) tail (unchecked-array-for root shift 0))]
+          (if (< i cnt)
+            (let [val (f acc (aget arr (bit-and i 31)))
+                  i' (inc i)]
+              (if (reduced? val)
+                (deref val)
+                (recur val i' (cond
+                                (< 0 (bit-and i' 31)) arr
+                                (== tail-off i') tail
+                                ;; stoppage
+                                (== i' cnt) nil
+                                :else (unchecked-array-for root shift i')))))
+            acc)))))
   IKVReduce
   (-kv-reduce [pv f init]
     (if (zero? cnt)
       init
-      (loop [acc init
-             i 0
-             arr (unchecked-array-for pv 0)]
-        (if (< i cnt)
-          (let [val (f acc i (aget arr (bit-and i 31)))
-                i' (inc i)]
-            (if (reduced? val)
-              (deref val)
-              (recur val i' (if (< 0 (bit-and i' 31)) arr (unchecked-array-for pv i')))))
-          acc))))
+      (let [tail-off (bit-and-not (dec cnt) 31)]
+        (loop [acc init
+               i 0
+               arr (if (zero? tail-off) tail (unchecked-array-for root shift 0))]
+          (if (< i cnt)
+            (let [val (f acc i (aget arr (bit-and i 31)))
+                  i' (inc i)]
+              (if (reduced? val)
+                (deref val)
+                (recur val i' (cond
+                                (< 0 (bit-and i' 31)) arr
+                                (== tail-off i') tail
+                                ;; stoppage
+                                (== i' cnt) nil
+                                :else (unchecked-array-for root shift i')))))
+            acc)))))
   IFn
   (-invoke [coll k]
     (-nth coll k))
@@ -1877,7 +1918,8 @@
     (-nth coll k not-found))
   IEditableCollection
   (-as-transient [coll]
-    (TransientVector. cnt shift (tv-editable-root root) (tv-editable-tail tail)))
+    (TransientVector. cnt shift (Object.) root (aresize tail (.-length tail) 32 nil)))
+
   #_#_IReversible
   (-rseq [coll]
     (when (pos? cnt)
@@ -1886,52 +1928,36 @@
   (-iterator [this]
     (ranged-iterator this 0 cnt)))
 
-(defn unchecked-array-for
-  "Returns the array where i is located."
-  [^PersistentVector pv ^int i]
-  (if (<= (bit-and-not (dec (.-cnt pv)) 31) i)
-    (.-tail pv)
-    (loop [node (.-root pv)
-           level (.-shift pv)]
-      (if (< 0 level)
-        (recur (aget (.-arr node) (bit-and (u32-bit-shift-right i level) 31)) (- level 5))
-        (.-arr node)))))
-
 (def empty-persistent-vector (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1))
 
 (defn ^VectorNode tv-ensure-editable [edit node]
   (if (identical? edit (.-edit node))
     node
-    (let [^"List<dart:core.dynamic>" ret (.filled List 32 nil)
-          arr (.-arr node)]
-      (dotimes [n (.-length arr)]
-        (aset ret n (aget arr n)))
-      (VectorNode. edit ret))))
+    (let [arr (.-arr node)]
+      (VectorNode. edit (aresize arr (.-length arr) 32 nil)))))
 
-(defn- tv-editable-root [^VectorNode node]
-  (let [^"List<VectorNode>" ret (.filled List 32 nil)
-        arr (.-arr node)]
-    (dotimes [n (.-length arr)]
-      (aset ret n (aget arr n)))
-    (VectorNode. (Object.) ret)))
-
-(defn- tv-editable-tail [tl]
-  (let [^"List<dart:core.dynamic>" ret (.filled List 32 nil)]
-    (dotimes [n (.-length tl)]
-      (aset ret n (aget tl n)))
-    ret))
+(defn tv-editable-array-for
+  "Returns the editable array where i is located."
+  [^TransientVector tv ^int i]
+  (loop [node (set! (.-root tv) (tv-ensure-editable (.-edit tv) (.-root tv)))
+         level (.-shift tv)]
+    (if (< 0 level)
+      (let [arr (.-arr node)
+            j (bit-and (u32-bit-shift-right i level) 31)]
+        (recur (aset arr j (tv-ensure-editable (.-edit tv) (aget arr j))) (- level 5)))
+      (.-arr node))))
 
 (defn tv-new-path [edit ^int level ^VectorNode node]
   (loop [ll level
          ret node]
     (if (zero? ll)
       ret
-      (let [^"List<dart:core.dynamic>" arr (.filled List 32 nil)]
+      (let [arr (.filled List 32 ^dynamic (do nil))]
         (aset arr 0 ret)
         (recur (- ll 5) (VectorNode. edit arr))))))
 
-(defn tv-push-tail [tv level parent tail-node]
-  (let [edit (.-edit (.-root tv))
+(defn tv-push-tail [^TransientVector tv ^int level ^VectorNode parent tail-node]
+  (let [edit (.-edit tv)
         ret (tv-ensure-editable edit parent)
         subidx (bit-and (u32-bit-shift-right (dec (.-cnt tv)) level) 31)
         level (- level 5)]
@@ -1944,119 +1970,125 @@
             (tv-new-path edit level tail-node)))))
     ret))
 
+(defn- tv-pop-tail! [^TransientVector tv ^int level ^VectorNode node]
+  (let [n (- (.-cnt tv) 2)
+        subidx (bit-and (u32-bit-shift-right n level) 31)]
+    (cond
+      (< 5 level)
+      (or (tv-pop-tail! tv (- level 5) (aget (.-arr node) subidx))
+        (when (< 0 subidx) (aset (.-arr node) nil) true))
+      (< 0 subidx) (do (aset (.-arr node) subidx nil) true))))
+
 (deftype TransientVector [^int ^:mutable cnt
                           ^int ^:mutable shift
-                          ^:mutable root
+                          ^some ^:mutable edit
+                          ^VectorNode ^:mutable root
                           ^:mutable tail]
   ITransientCollection
   (-conj! [tcoll o]
-    (if-some [edit ^some (.-edit root)]
-      (if (< (- cnt (tail-off tcoll)) 32)
-        (do (aset tail (bit-and cnt 31) o)
-            (set! cnt (inc cnt))
-            tcoll)
+    (when-not edit
+      (throw (ArgumentError. "conj! after persistent!")))
+    (let [tail-len (bit-and cnt 31)]
+      (if (or (pos? tail-len) (zero? cnt))
+        (aset tail tail-len o)
         (let [tail-node (VectorNode. edit tail)
-              ^"List<dart:core.dynamic>" new-tail (.filled List 32 nil)]
+              new-tail (.filled List 32 ^dynamic (do nil))]
           (aset new-tail 0 o)
           (set! tail new-tail)
           (if (< (u32-bit-shift-left 1 shift) (u32-bit-shift-right cnt 5))
-            (let [^"List<VectorNode>" new-root-array (.filled List 32 nil)
+            (let [new-root-array (.filled List 32 ^dynamic (do nil))
                   new-shift (+ shift 5)]
               (aset new-root-array 0 root)
               (aset new-root-array 1 (tv-new-path edit shift tail-node))
               (set! root (VectorNode. edit new-root-array))
               (set! shift new-shift))
-            (set! root (tv-push-tail tcoll shift root tail-node)))
-          (set! cnt (inc cnt))
-          tcoll))
-      (throw (ArgumentError. "conj! after persistent!"))))
-  #_(-persistent! [tcoll]
-      (if ^boolean (.-edit root)
-        (do (set! (.-edit root) nil)
-            (let [len (- cnt (tail-off tcoll))
-                  trimmed-tail (make-array len)]
-              (array-copy tail 0 trimmed-tail 0 len)
-              (PersistentVector. nil cnt shift root trimmed-tail nil)))
-        (throw (js/Error. "persistent! called twice"))))
-  #_#_ITransientAssociative
-  (-assoc! [tcoll key val]
-    (if (number? key)
-      (-assoc-n! tcoll key val)
-      (throw (js/Error. "TransientVector's key for assoc! must be a number."))))
-  #_#_ITransientVector
-  (-assoc-n! [tcoll n val]
-    (if ^boolean (.-edit root)
+            (set! root (tv-push-tail tcoll shift root tail-node)))))
+      (set! cnt (inc cnt))
+      tcoll))
+  (-persistent! [tcoll]
+    (when-not edit
+      (throw (ArgumentError. "persistent! called twice")))
+    (set! edit nil)
+    (let [cnt32 (bit-and cnt 31)]
       (cond
-        (and (<= 0 n) (< n cnt))
-        (if (<= (tail-off tcoll) n)
-          (do (aset tail (bit-and n 0x01f) val)
-              tcoll)
-          (let [new-root
-                ((fn go [level node]
-                   (let [node (tv-ensure-editable (.-edit root) node)]
-                     (if (zero? level)
-                       (do (pv-aset node (bit-and n 0x01f) val)
-                           node)
-                       (let [subidx (bit-and (bit-shift-right-zero-fill n level)
-                                      0x01f)]
-                         (pv-aset node subidx
-                           (go (- level 5) (pv-aget node subidx)))
-                         node))))
-                 shift root)]
-            (set! root new-root)
-            tcoll))
-        (== n cnt) (-conj! tcoll val)
-        :else
-        (throw
-          (js/Error.
-            (str "Index " n " out of bounds for TransientVector of length" cnt))))
-      (throw (js/Error. "assoc! after persistent!"))))
-  #_(-pop! [tcoll]
-      (if ^boolean (.-edit root)
-        (cond
-          (zero? cnt) (throw (js/Error. "Can't pop empty vector"))
-          (== 1 cnt)                       (do (set! cnt 0) tcoll)
-          (pos? (bit-and (dec cnt) 0x01f)) (do (set! cnt (dec cnt)) tcoll)
-          :else
-          (let [new-tail (unchecked-editable-array-for tcoll (- cnt 2))
-                new-root (let [nr (tv-pop-tail tcoll shift root)]
-                           (if-not (nil? nr)
-                             nr
-                             (VectorNode. (.-edit root) (make-array 32))))]
-            (if (and (< 5 shift) (nil? (pv-aget new-root 1)))
-              (let [new-root (tv-ensure-editable (.-edit root) (pv-aget new-root 0))]
-                (set! root  new-root)
-                (set! shift (- shift 5))
-                (set! cnt   (dec cnt))
-                (set! tail  new-tail)
-                tcoll)
-              (do (set! root new-root)
-                  (set! cnt  (dec cnt))
-                  (set! tail new-tail)
-                  tcoll))))
-        (throw (js/Error. "pop! after persistent!"))))
+        (pos? cnt32)
+        (PersistentVector. nil cnt shift root (ashrink tail (inc (bit-and cnt 31))) -1)
+        (zero? cnt) []
+        :else (PersistentVector. nil cnt shift root tail -1))))
+  ITransientAssociative
+  (-assoc! [tcoll key val]
+    (when-not (dart/is? key int)
+      (throw (ArgumentError. "TransientVector's key for assoc! must be a number.")))
+    (-assoc-n! tcoll key val))
+  ITransientVector
+  (-assoc-n! [tcoll n val]
+    (when-not edit
+      (throw (ArgumentError. "assoc! after persistent!")))
+    (when-not (and (<= 0 n) (<= n cnt))
+      (throw (ArgumentError. (str "Index " n " out of bounds  [0," cnt "]"))))
+    (cond
+      (== n cnt) (-conj! tcoll val)
+      (<= (bit-and-not (dec cnt) 31) n) (aset tail (bit-and n 31) val)
+      :else
+      (loop [arr (.-arr (set! root (tv-ensure-editable edit root)))
+             level shift]
+        (let [subidx (bit-and (u32-bit-shift-right n shift) 31)]
+          (if (pos? level)
+            (let [child (tv-ensure-editable edit (aget arr subidx))]
+              (recur (.-arr (aset arr subidx child)) (- shift 5)))
+            (aset arr (bit-and n 31) val)))))
+    tcoll)
+  (-pop! [tcoll]
+    (when-not edit
+      (throw (ArgumentError. "pop! after persistent!")))
+    (when (zero? cnt)
+      (throw (ArgumentError. "Can't pop empty vector")))
+    (let [cnt-1 (dec cnt)
+          subidx (bit-and cnt-1 31)]
+      (if (or (pos? subidx) (zero? cnt-1))
+        (aset tail subidx nil)
+        ; pop tail
+        (let [new-tail-length (- cnt-1 (bit-and-not cnt-1 31))]
+          (set! tail (tv-editable-array-for tcoll cnt-1))
+          (cond
+            (== 5 shift)
+            (aset (.-arr root) (u32-bit-shift-right (dec cnt-1) 5) nil)
+            (== (- cnt-1 32) (u32-bit-shift-left 1 shift))
+            (do (set! root (aget (.-arr root) 0))
+                (set! shift (- shift 5)))
+            :else
+            (tv-pop-tail! tcoll shift root)))))
+    (set! cnt (dec cnt))
+    tcoll)
   ICounted
   (-count [coll]
-    (if ^some (.-edit root)
-      cnt
-      (throw (ArgumentError. "count after persistent!"))))
-  #_#_#_IIndexed
+    (when-not edit
+      (throw (ArgumentError. "count after persistent!")))
+    cnt)
+  IIndexed
   (-nth [coll n]
-    (if ^boolean (.-edit root)
-      (aget (array-for coll n) (bit-and n 0x01f))
-      (throw (js/Error. "nth after persistent!"))))
+    (when-not edit
+      (throw (ArgumentError. "nth after persistent!")))
+    (when (or (<= cnt n) (< n 0))
+      (throw (ArgumentError. (str "No item " n " in vector of length " cnt))))
+    (let [arr (if (<= (bit-and-not (dec cnt) 31) n) tail (unchecked-array-for root shift n))]
+      (aget arr (bit-and n 31))))
   (-nth [coll n not-found]
-    (if (and (<= 0 n) (< n cnt))
-      (-nth coll n)
-      not-found))
-  #_#_ILookup
+    (when-not edit
+      (throw (ArgumentError. "nth after persistent!")))
+    (if (or (<= cnt n) (< n 0))
+      not-found
+      (let [arr (if (<= (bit-and-not (dec cnt) 31) n) tail (unchecked-array-for root shift n))]
+        (aget arr (bit-and n 31)))))
+  ILookup
   (-lookup [coll k] (-lookup coll k nil))
-  #_(-lookup [coll k not-found]
-      (cond
-        (not ^boolean (.-edit root)) (throw (js/Error. "lookup after persistent!"))
-        (number? k) (-nth coll k not-found)
-        :else not-found))
-  #_#_#_IFn
+  (-lookup [coll k not-found]
+    (when-not edit
+      (throw (ArgumentError. "lookup after persistent!")))
+    (if (dart/is? k int)
+      (-nth coll k not-found)
+      not-found))
+  IFn
   (-invoke [coll k]
     (-lookup coll k))
   (-invoke [coll k not-found]
@@ -2819,10 +2851,12 @@
     (dart:core/print (.-shift pv1))
     (dart:core/print (.-shift  (-pop pv1))))
 
+  (dart:core/print "peek")
   (let [pv []]
     (dart:core/print (-peek (-assoc pv 0 1)))
     ; throw
-    #_(dart:core/print (-peek (-assoc pv 10 1)))
+    (dart:core/print (count (-conj (-conj pv 10) 11)))
+    (dart:core/print (-peek (-conj (-conj pv 10) 11)))
     (dart:core/print (-peek (-assoc (-conj (-conj pv 10) 11) 1 1)))
     ; throw
     #_(dart:core/print (-assoc (-conj (-conj pv 10) 11) "a" 1)))
@@ -2840,6 +2874,7 @@
                pv
                (recur (-conj pv idx) (inc idx))))]
     (dart:core/print (reduce + 0 pv)))
+  (dart:core/print "end reduce +")
 
   (let [pv (loop [pv []
                   idx 0]
