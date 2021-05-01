@@ -1708,7 +1708,8 @@
                     (if (symbol? target)
                       target
                       (let [[op obj fld] target]
-                        (case op dart/.- (str obj "." fld)))))))
+                        ;; TODO lift it
+                        (case op dart/.- (str (with-out-str (write obj expr-locus)) "." fld)))))))
       dart/.-
       (let [[_ obj fld] x]
         (print (:pre locus))
