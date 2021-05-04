@@ -1369,9 +1369,7 @@
 
 (defn write-top-dartfn [sym x]
   (case (first x)
-    dart/fn (do
-              (print (-> sym meta (:dart/type "dc.dynamic")) (name sym))
-              (write x expr-locus))
+    dart/fn (write x (named-fn-locus sym))
     (write x (var-locus (emit-type 'cljd.core/IFn$iface) (name sym)))))
 
 (defn write-top-field [sym x]
