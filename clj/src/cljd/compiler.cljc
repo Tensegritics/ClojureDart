@@ -686,9 +686,14 @@
   (let [[dart-bindings env]
         (reduce
          (fn [[dart-bindings env] [k v]]
-           (let [tmp (dart-local k)]
-             [(conj dart-bindings [tmp (emit v env)])
-              (assoc env k tmp)]))
+           (let [dart-v (emit v env)
+                 {:dart/keys [type]} (infer-type dart-v)
+                 decl (dart-local k)
+                 usage (if (-> decl meta :dart/type)
+                         decl
+                         (vary-meta decl merge (select-keys (infer-type dart-v) [:dart/type :dart/truth])))]
+             [(conj dart-bindings [decl dart-v])
+              (assoc env k usage)]))
          [[] env] (partition 2 bindings))]
     (list 'dart/loop dart-bindings (emit (list* 'let* [] body) env))))
 
