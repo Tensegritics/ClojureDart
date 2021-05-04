@@ -1288,7 +1288,7 @@
           (coll? x) (emit-coll x env)
           :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
     (cond-> dart-x
-      (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type (vary-meta dart-x merge (dart-meta x)))))))
+      (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type dart-x (dart-meta x))))))
 
 (defn bootstrap-eval
   [x]
@@ -1503,47 +1503,51 @@
    "-" widen-num-op
    "/" widen-num-op})
 
-(defn infer-type [x]
-  (let [m (meta x)]
-    (->
-     (cond
-       (:dart/inferred m) m
-       ;; TODO use mirrors
-       (= 'dc.identical x) {:dart/fn-type :native :dart/type "dc.Function" :dart/nat-type "dc.Function"
-                            :dart/ret-type "dc.bool" :dart/ret-truth :boolean}
-       (boolean? x) {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
-       (string? x) {:dart/type "dc.String" :dart/nat-type "dc.String" :dart/truth :some}
-       (double? x) {:dart/type "dc.double" :dart/nat-type "dc.double" :dart/truth :some}
-       (integer? x) {:dart/type "dc.int" :dart/nat-type "dc.int" :dart/truth :some}
-       (seq? x)
-       (case (first x)
-         dart/let (infer-type (last x))
-         dart/fn {:dart/fn-type :native :dart/type "dc.Function" :dart/nat-type "dc.Function"}
-         dart/new {:dart/type (second x)
-                   :dart/nat-type (second x)
-                   :dart/truth (dart-type-truthiness (second x))}
-         dart/.
-         (let [[_ a meth b & bs] x]
-           (case (name meth)
-             ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "^^" "||")
-             {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
-             ("~" "&" "|" "^" "<<" ">>" "~/")
-             {:dart/type "dc.int" :dart/nat-type "dc.int" :dart/truth :some}
-             ("+" "*" "-" "/")
-             (let [type (reduce (inferences meth) (map (comp :dart/type infer-type) (list* a b bs)))]
-               {:dart/type type
-                :dart/nat-type type
-                :dart/truth (dart-type-truthiness type)})
-             nil))
-         dart/is {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
-         dart/as (let [[_ _ type] x] {:dart/type type
-                                      :dart/truth (dart-type-truthiness type)})
-         (when-some [{:keys [dart/ret-type dart/ret-truth]} (infer-type (first x))]
-           {:dart/type ret-type
-            :dart/truth (or ret-truth (dart-type-truthiness ret-type))}))
-       :else nil)
-     (merge m)
-     (assoc :dart/inferred true))))
+(defn infer-type
+  ([dart-x user-dart-meta]
+   (infer-type (cond-> dart-x
+                 (seq user-dart-meta) (-> (vary-meta dissoc :dart/inferred) (vary-meta merge user-dart-meta)))))
+  ([dart-x]
+   (let [m (meta dart-x)]
+     (->
+       (cond
+         (:dart/inferred m) m
+         ;; TODO use mirrors
+         (= 'dc.identical dart-x) {:dart/fn-type :native :dart/type "dc.Function" :dart/nat-type "dc.Function"
+                              :dart/ret-type "dc.bool" :dart/ret-truth :boolean}
+         (boolean? dart-x) {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
+         (string? dart-x) {:dart/type "dc.String" :dart/nat-type "dc.String" :dart/truth :some}
+         (double? dart-x) {:dart/type "dc.double" :dart/nat-type "dc.double" :dart/truth :some}
+         (integer? dart-x) {:dart/type "dc.int" :dart/nat-type "dc.int" :dart/truth :some}
+         (seq? dart-x)
+         (case (first dart-x)
+           dart/let (infer-type (last dart-x))
+           dart/fn {:dart/fn-type :native :dart/type "dc.Function" :dart/nat-type "dc.Function"}
+           dart/new {:dart/type (second dart-x)
+                     :dart/nat-type (second dart-x)
+                     :dart/truth (dart-type-truthiness (second dart-x))}
+           dart/.
+           (let [[_ a meth b & bs] dart-x]
+             (case (name meth)
+               ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "^^" "||")
+               {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
+               ("~" "&" "|" "^" "<<" ">>" "~/")
+               {:dart/type "dc.int" :dart/nat-type "dc.int" :dart/truth :some}
+               ("+" "*" "-" "/")
+               (let [type (reduce (inferences meth) (map (comp :dart/type infer-type) (list* a b bs)))]
+                 {:dart/type type
+                  :dart/nat-type type
+                  :dart/truth (dart-type-truthiness type)})
+               nil))
+           dart/is {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
+           dart/as (let [[_ _ type] dart-x] {:dart/type type
+                                        :dart/truth (dart-type-truthiness type)})
+           (when-some [{:keys [dart/ret-type dart/ret-truth]} (infer-type (first dart-x))]
+             {:dart/type ret-type
+              :dart/truth (or ret-truth (dart-type-truthiness ret-type))}))
+         :else nil)
+       (merge m)
+       (assoc :dart/inferred true)))))
 
 (defn write
   "Takes a dartsexp and a locus.
