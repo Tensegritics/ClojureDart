@@ -2,7 +2,7 @@
   (:require ["dart:math" :as math]))
 
 (definterface IProtocol
-  (extension [x])
+  (extensions [x])
   (satisfies [x]))
 
 (def empty-list nil)
