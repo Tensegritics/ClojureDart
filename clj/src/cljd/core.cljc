@@ -986,6 +986,37 @@
   [num]
   (== 0 num))
 
+(defn quick-bench* [run]
+  (let [sw (Stopwatch.)
+        _ (dart:core/print "Calibrating")
+        n (loop [n 1]
+            (doto sw .reset .start)
+            (run n)
+            (.stop sw)
+            (if (< (.-elapsedMicroseconds sw) 100000)
+              (recur (* 2 n))
+              n))]
+    (dart:core/print (str "Running (batch size: " n ")"))
+    (loop [cnt 0 mean 0.0 m2 0.0 rem (* 2 60 1000 1000)]
+      (doto sw .reset .start)
+      (run n)
+      (.stop sw)
+      (let [t (.-elapsedMicroseconds sw)
+            rem (- rem t)
+            cnt (inc cnt)
+            delta (- t mean)
+            mean (+ mean (/ delta cnt))
+            delta' (- t mean)
+            m2 (+ m2 (* delta delta'))]
+        (if (or (< 0 rem) (< cnt 2))
+          (recur cnt mean m2 rem)
+          (let [sd (math/sqrt (/ m2 (dec cnt)))]
+            ; pretty sure that dividing sd is wrong TODO find the right formula
+            (dart:core/print (str (/ mean n) " (+/-" (/ sd n) ") us"))))))))
+
+(defmacro quick-bench [& body]
+  `(quick-bench* (fn [n#] (dotimes [_ n#] ~@body))))
+
 ;; array ops
 (defn aget
   "Returns the value at the index/indices. Works on Java arrays of all
@@ -2790,7 +2821,7 @@
 
 
   (dart:core/print "Started PV test")
-  (let [sw (Stopwatch.)
+  #_(let [sw (Stopwatch.)
         _ (.start sw)
         pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)
         pv1
@@ -2806,27 +2837,27 @@
     (dart:core/print (-nth pv1 10000))
     (dart:core/print (-nth pv1 100000000 "default")))
 
-  (dart:core/print "Started TranscientVector test")
-  (let [sw (Stopwatch.)
-        _ (.start sw)
-        pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)
-        pv1
-        (loop [pv2 pv
-               idx 0]
-          (if (== idx 2)
-            pv2
-            (recur (-conj pv2 idx) (inc idx))))
-        tv (-as-transient pv1)
-        tv1 (loop [t tv
-                   idx 0]
-              (if (== idx 1000000)
-                t
-                (recur (-conj! t idx) (inc idx))))]
-    (.stop sw)
-    (dart:core/print (.-elapsedMilliseconds sw))
-    (dart:core/print "ms")
-    (dart:core/print (count tv1)))
+  (let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)]
+    (quick-bench
+      (loop [pv pv, idx 1000000]
+        (if (pos? idx)
+          (recur (-conj pv idx) (dec idx))
+          pv))))
 
+  (let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 ^dynamic (do nil))) (.filled List 0 ^dynamic (do nil)) -1)]
+    (quick-bench
+      (loop [pv pv, idx 1000000]
+        (if (pos? idx)
+          (recur (-conj pv idx) (dec idx))
+          pv))))
+
+  (dart:core/print "Started TransientVector test")
+  (let [tv (-as-transient [])]
+    (quick-bench
+      (loop [tv tv, idx 1000000]
+        (if (pos? idx)
+          (recur (-conj! tv idx) (dec idx))
+          tv))))
 
   (let [sw (Stopwatch.)
         _ (.start sw)
