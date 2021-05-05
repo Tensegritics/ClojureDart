@@ -1038,6 +1038,11 @@
   ([array idx idx2 & idxv]
    (apply aset (aget array idx) idx2 idxv)))
 
+(defn ^int alength
+  {:inline (fn [array] `(.-length ~array))
+   :inline-arities #{1}}
+  [array] (.-length array))
+
 (defn aclone
   {:inline (fn [arr] `(.from dart:core/List ~arr .& :growable false))
    :inline-arities #{1}}
@@ -1604,7 +1609,7 @@
   ([arr off end]
    (ArrayChunk. arr off end)))
 
-(deftype ChunkBuffer [^:mutable arr ^:mutable end]
+(deftype ChunkBuffer [^:mutable ^List arr ^:mutable ^int end]
   Object
   (add [_ o]
     (. arr "[]=" end o)
@@ -1617,7 +1622,7 @@
   (-count [_] end))
 
 (defn chunk-buffer [capacity]
-  (ChunkBuffer. (.filled dart:core/List capacity nil) 0))
+  (ChunkBuffer. (.filled dart:core/List capacity ^dynamic (do nil)) 0))
 
 (deftype ChunkedCons [chunk more meta ^:mutable ^int __hash]
   Object
@@ -1696,6 +1701,7 @@
 ;; declarations
 (deftype PersistentVector [])
 (deftype TransientVector [])
+(deftype ChunkedSeq [])
 
 (defn aresize [a from to pad]
   (let [a' (.filled List to pad)]
@@ -1760,6 +1766,39 @@
             new-child (do-assoc (- level 5) (aget (.-arr node) subidx) n val)]
         (aset cloned-node subidx new-child)
         (VectorNode. nil cloned-node)))))
+
+(defn- pv-reduce
+  ([^PersistentVector pv f ^int from]
+   (let [cnt (.-cnt pv)
+         tail (.-tail pv)
+         root (.-root pv)
+         shift (.-shift pv)]
+     (if (<= cnt from)
+       (f)
+       (let [tail-off (bit-and-not (dec cnt) 31)
+             arr (if (<= tail-off from) tail (unchecked-array-for root shift from))]
+         (pv-reduce pv f (inc from) (aget arr (bit-and from 31)))))))
+  ([^PersistentVector pv f ^int from init]
+   (let [cnt (.-cnt pv)
+         tail (.-tail pv)
+         root (.-root pv)
+         shift (.-shift pv)]
+     (if (<= cnt from)
+       init
+       (let [tail-off (bit-and-not (dec cnt) 31)]
+         (loop [acc init
+                i from
+                arr (if (<= tail-off from) tail (unchecked-array-for root shift from))]
+           (let [acc (f acc (aget arr (bit-and i 31)))
+                 i' (inc i)]
+             (cond
+               (reduced? acc) (deref acc)
+               (< i' cnt)
+               (recur acc i' (cond
+                               (< 0 (bit-and i' 31)) arr
+                               (== tail-off i') tail
+                               :else (unchecked-array-for root shift i')))
+               :else acc))))))))
 
 (deftype PersistentVector [meta ^int cnt ^int shift ^VectorNode root tail ^:mutable ^int __hash]
   Object
@@ -1830,11 +1869,10 @@
   (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
   ISeqable
   (-seq [coll]
-    nil
-    #_(cond
-        (zero? cnt) nil
-        (<= cnt 32) (IndexedSeq. tail 0 nil)
-        :else (chunked-seq coll (first-array-for-longvec coll) 0 0)))
+    (cond
+      (zero? cnt) nil
+      (<= cnt 32) (-seq tail)
+      :else (ChunkedSeq. coll (unchecked-array-for root shift 0) 0 0 nil -1)))
   ICounted
   (-count [coll] cnt)
   IIndexed
@@ -1883,45 +1921,8 @@
       :else
       (PersistentVector. meta cnt shift (do-assoc shift root n val) tail -1)))
   IReduce
-  (-reduce [pv f]
-    (if (zero? cnt)
-      (f)
-      (let [tail-off (bit-and-not (dec cnt) 31)
-            arr (if (zero? tail-off) tail (unchecked-array-for root shift 0))]
-        (loop [acc (aget arr 0)
-               i 1
-               arr arr]
-          (if (< i cnt)
-            (let [val (f acc (aget arr (bit-and i 31)))
-                  i' (inc i)]
-              (if (reduced? val)
-                (deref val)
-                (recur val i' (cond
-                                (< 0 (bit-and i' 31)) arr
-                                (== tail-off i') tail
-                                ;; stoppage
-                                (== i' cnt) nil
-                                :else (unchecked-array-for root shift i')))))
-            acc)))))
-  (-reduce [pv f init]
-    (if (zero? cnt)
-      init
-      (let [tail-off (bit-and-not (dec cnt) 31)]
-        (loop [acc init
-               i 0
-               arr (if (zero? tail-off) tail (unchecked-array-for root shift 0))]
-          (if (< i cnt)
-            (let [val (f acc (aget arr (bit-and i 31)))
-                  i' (inc i)]
-              (if (reduced? val)
-                (deref val)
-                (recur val i' (cond
-                                (< 0 (bit-and i' 31)) arr
-                                (== tail-off i') tail
-                                ;; stoppage
-                                (== i' cnt) nil
-                                :else (unchecked-array-for root shift i')))))
-            acc)))))
+  (-reduce [pv f] (pv-reduce pv f 0))
+  (-reduce [pv f init] (pv-reduce pv f 0 init))
   IKVReduce
   (-kv-reduce [pv f init]
     (if (zero? cnt)
@@ -1960,6 +1961,57 @@
     (ranged-iterator this 0 cnt)))
 
 (def empty-persistent-vector (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1))
+
+(deftype ChunkedSeq [^PersistentVector vec ^List arr ^int i ^int off meta ^:mutable ^int __hash]
+  Object
+  #_(toString [coll]
+      (pr-str* coll))
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (ChunkedSeq. vec arr i off new-meta -1)))
+  IMeta
+  (-meta [coll] meta)
+  ISeqable
+  (-seq [coll] coll)
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+  ISeq
+  (-first [coll]
+    (aget arr off))
+  (-rest [coll]
+    (if (< (inc off) (alength arr))
+      (ChunkedSeq. vec arr i (inc off) nil -1)
+      (-chunked-rest coll)))
+  (-next [coll]
+    (if (< (inc off) (alength arr))
+      (ChunkedSeq. vec arr i (inc off) nil -1)
+      (-chunked-next coll)))
+  ICollection
+  (-conj [coll o]
+    (cons o coll))
+  #_#_IEmptyableCollection
+  (-empty [coll]
+    ())
+  IChunkedSeq
+  (-chunked-first [coll]
+    (array-chunk arr off))
+  (-chunked-rest [coll]
+    (or ^some (-chunked-next coll) ()))
+  (-chunked-next [coll]
+    (let [end (+ i (alength arr))]
+      (when (< end (-count vec))
+        (ChunkedSeq. vec (if (< end (bit-and-not end 31))
+                           (unchecked-array-for (.-root vec) (.-shift vec) end)
+                           (.-tail vec))
+          end 0 nil -1))))
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+  IReduce
+  (-reduce [coll f] (pv-reduce vec f (+ i off)))
+  (-reduce [coll f start] (pv-reduce vec f (+ i off) start)))
 
 (defn ^VectorNode tv-ensure-editable [edit node]
   (if (identical? edit (.-edit node))
@@ -2409,12 +2461,11 @@
    (lazy-seq
     (when-let [s (seq coll)]
       (if (chunked-seq? s)
-        (let [c (chunk-first s)
-              size (count c)
-              b (chunk-buffer size)]
-          (dotimes [i size]
-            (chunk-append b (f (-nth c i))))
-          (chunk-cons (chunk b) (map f (chunk-rest s))))
+        (let [c (chunk-first s)]
+          (chunk-cons
+            (chunk (reduce #(doto %1 (chunk-append (f %2)))
+                     (chunk-buffer (count c)) c))
+            (map f (chunk-rest s))))
         (cons (f (first s)) (map f (rest s)))))))
   ([f c1 c2]
    (lazy-seq
@@ -2456,14 +2507,13 @@
    (lazy-seq
     (when-let [s (seq coll)]
       (if (chunked-seq? s)
-        (let [c (chunk-first s)
-              size (count c)
-              b (chunk-buffer size)]
-          (dotimes [i size]
-            (let [x (f (-nth c i))]
-              (when-not (nil? x)
-                (chunk-append b x))))
-          (chunk-cons (chunk b) (keep f (chunk-rest s))))
+        (let [c (chunk-first s)]
+          (chunk-cons
+            (chunk (reduce #(if-some [x (f %2)]
+                              (doto %1 (chunk-append x))
+                              %1)
+                     (chunk-buffer (count c)) c))
+            (keep f (chunk-rest s))))
         (let [x (f (first s))]
           (if (nil? x)
             (keep f (rest s))
@@ -2521,14 +2571,13 @@
    (lazy-seq
     (when-let [s (seq coll)]
       (if (chunked-seq? s)
-        (let [c (chunk-first s)
-              size (count c)
-              b (chunk-buffer size)]
-          (dotimes [i size]
-            (let [v (-nth c i)]
-              (when (pred v)
-                (chunk-append b v))))
-          (chunk-cons (chunk b) (filter pred (chunk-rest s))))
+        (let [c (chunk-first s)]
+          (chunk-cons
+            (chunk (reduce #(if-let [x (pred %2)]
+                              (doto %1 (chunk-append x))
+                              %1)
+                     (chunk-buffer (count c)) c))
+            (filter pred (chunk-rest s))))
         (let [f (first s) r (rest s)]
           (if (pred f)
             (cons f (filter pred r))
@@ -2837,21 +2886,21 @@
     (dart:core/print (-nth pv1 10000))
     (dart:core/print (-nth pv1 100000000 "default")))
 
-  (let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)]
+  #_(let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)]
     (quick-bench
       (loop [pv pv, idx 1000000]
         (if (pos? idx)
           (recur (-conj pv idx) (dec idx))
           pv))))
 
-  (let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 ^dynamic (do nil))) (.filled List 0 ^dynamic (do nil)) -1)]
+  #_(let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 ^dynamic (do nil))) (.filled List 0 ^dynamic (do nil)) -1)]
     (quick-bench
       (loop [pv pv, idx 1000000]
         (if (pos? idx)
           (recur (-conj pv idx) (dec idx))
           pv))))
 
-  (dart:core/print "Started TransientVector test")
+  #_#_(dart:core/print "Started TransientVector test")
   (let [tv (-as-transient [])]
     (quick-bench
       (loop [tv tv, idx 1000000]
@@ -2859,7 +2908,7 @@
           (recur (-conj! tv idx) (dec idx))
           tv))))
 
-  (let [sw (Stopwatch.)
+  #_(let [sw (Stopwatch.)
         _ (.start sw)
         N 1000000
         pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)
@@ -2882,7 +2931,7 @@
     (dart:core/print (.-shift pv1))
     (dart:core/print (.-shift  (-pop pv1))))
 
-  (dart:core/print "peek")
+  #_#_(dart:core/print "peek")
   (let [pv []]
     (dart:core/print (-peek (-assoc pv 0 1)))
     ; throw
@@ -2892,13 +2941,14 @@
     ; throw
     #_(dart:core/print (-assoc (-conj (-conj pv 10) 11) "a" 1)))
 
-  (let [pv (loop [pv []
+  #_(let [pv (loop [pv []
                   idx 0]
              (if (== idx 10000000)
                pv
                (recur (-conj pv idx) (inc idx))))]
     (dart:core/print (-nth (-assoc pv 11111 "coucou") 11111)))
 
+  (dart:core/print "Start reduce +")
   (let [pv (loop [pv []
                   idx 0]
              (if (== idx 100000)
@@ -2906,6 +2956,34 @@
                (recur (-conj pv idx) (inc idx))))]
     (dart:core/print (reduce + 0 pv)))
   (dart:core/print "end reduce +")
+
+  (dart:core/print "Start reduce on chunked-seq form []+")
+  (let [pv (loop [pv []
+                  idx 0]
+             (if (== idx 100000)
+               pv
+               (recur (-conj pv idx) (inc idx))))]
+    (dart:core/print (first (seq pv)))
+    (dart:core/print (reduce + 0 (seq pv)))
+    (dart:core/print (reduce + 0 (next (next (seq pv))))))
+  (dart:core/print "end reduce +")
+
+  (dart:core/print "map on chunked")
+  (let [pv (loop [pv []
+                  idx 0]
+             (if (== idx 100000)
+               pv
+               (recur (-conj pv idx) (inc idx))))]
+    (dart:core/print (first (map (fn [o] (dart:core/print o) o) (seq pv)))))
+
+  (dart:core/print "keep on chunked")
+  (let [pv (loop [pv []
+                  idx 0]
+             (if (== idx 100000)
+               pv
+               (recur (-conj pv idx) (inc idx))))]
+    (dart:core/print (first (keep (fn [o] (dart:core/print o)
+                                    (when (.-isOdd o) o)) (seq pv)))))
 
   (let [pv (loop [pv []
                   idx 0]
