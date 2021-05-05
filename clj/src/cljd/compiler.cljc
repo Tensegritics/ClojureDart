@@ -258,9 +258,10 @@
   ([] (dart-local ""))
   ([hint]
    (let [dart-hint (munge hint)
-         {n dart-hint} (set! *locals-gen* (assoc *locals-gen* dart-hint (inc (*locals-gen* dart-hint 0))))]
-     (with-meta (symbol (str dart-hint "$" n))
-       (dart-meta hint)))))
+         {n dart-hint} (set! *locals-gen* (assoc *locals-gen* dart-hint (inc (*locals-gen* dart-hint 0))))
+         {:dart/keys [type] :as dart-meta} (dart-meta hint)
+         dart-meta (cond-> dart-meta type (assoc :dart/nat-type type))] ; nat type of a local is its type
+     (with-meta (symbol (str dart-hint "$" n)) dart-meta))))
 
 (defn- parse-dart-params [params]
   (let [[fixed-params [delim & opt-params]] (split-with (complement '#{.& ...}) params)]
@@ -691,7 +692,8 @@
                  decl (dart-local k)
                  usage (if (-> decl meta :dart/type)
                          decl
-                         (vary-meta decl merge (select-keys (infer-type dart-v) [:dart/type :dart/truth])))]
+                         (vary-meta decl merge (select-keys (infer-type dart-v) [:dart/type :dart/truth])))
+                 decl (if (-> decl meta :dart/type) decl (vary-meta decl assoc :dart/type "dc.dynamic"))]
              [(conj dart-bindings [decl dart-v])
               (assoc env k usage)]))
          [[] env] (partition 2 bindings))]
