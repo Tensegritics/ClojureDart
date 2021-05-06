@@ -1023,9 +1023,9 @@
   types."
   {:inline (fn [array idx] `(. ~array "[]" ~idx))
    :inline-arities #{2}}
-  ([array idx]
+  ([^List array ^int idx]
    (. array "[]" idx))
-  ([array idx & idxs]
+  ([^List array ^int idx & idxs]
    (apply aget (aget array idx) idxs)))
 
 (defn aset
@@ -1033,20 +1033,20 @@
   reference types. Returns val."
   {:inline (fn [a i v] `(let [v# ~v] (. ~a "[]=" ~i v#) v#))
    :inline-arities #{3}}
-  ([array idx val]
+  ([^List array ^int idx val]
    (. array "[]=" idx val) val)
-  ([array idx idx2 & idxv]
+  ([^List array ^int idx ^int idx2 & idxv]
    (apply aset (aget array idx) idx2 idxv)))
 
 (defn ^int alength
   {:inline (fn [array] `(.-length ~array))
    :inline-arities #{1}}
-  [array] (.-length array))
+  [^List array] (.-length array))
 
 (defn aclone
   {:inline (fn [arr] `(.from dart:core/List ~arr .& :growable false))
    :inline-arities #{1}}
-  [arr]
+  [^List arr]
   (.from List arr .& :growable false))
 
 ;; bit ops
@@ -1554,162 +1554,20 @@
   [& body]
   `(new cljd.core/LazySeq nil (fn [] ~@body) nil -1))
 
-;; chunks
-
-(defn chunked-seq?
-  "Return true if x satisfies IChunkedSeq."
-  [x] (satisfies? IChunkedSeq x))
-
-(deftype ArrayChunk [arr off end]
-  ICounted
-  (-count [_] (- end off))
-  IIndexed
-  (-nth [coll i]
-    ;; TODO check out of bound exceptions
-    (. arr "[]" (+ off i)))
-  (-nth [coll i not-found]
-    (if (< i 0)
-      not-found
-      (if (< i (- end off))
-        (. arr "[]" (+ off i))
-        not-found)))
-  IChunk
-  (-drop-first [coll]
-    (if (== off end)
-      (throw (ArgumentError. "-drop-first of empty chunk"))
-      (ArrayChunk. arr (inc off) end)))
-  IReduce
-  (-reduce [coll f]
-    ;; TODO check out of bound exceptions
-    (let [x (. arr "[]" off)
-          off' (inc off)]
-      (if (< off' end)
-        (loop [acc x idx off']
-          (if (< idx end)
-            (let [val (f acc (. arr "[]" idx))]
-              (if (reduced? val)
-                (deref val)
-                (recur val (inc idx))))
-            acc))
-        x)))
-  (-reduce [coll f start]
-    (loop [acc start idx off]
-      (if (< idx end)
-        (let [val (f acc (. arr "[]" idx))]
-          (if (reduced? val)
-            (deref val)
-            (recur val (inc idx))))
-        acc))))
-
-(defn array-chunk
-  ([arr]
-   (ArrayChunk. arr 0 (.-length arr)))
-  ([arr off]
-   (ArrayChunk. arr off (.-length arr)))
-  ([arr off end]
-   (ArrayChunk. arr off end)))
-
-(deftype ChunkBuffer [^:mutable ^List arr ^:mutable ^int end]
-  Object
-  (add [_ o]
-    (. arr "[]=" end o)
-    (set! end (inc end)))
-  (chunk [_]
-    (let [ret (ArrayChunk. arr 0 end)]
-      (set! arr nil)
-      ret))
-  ICounted
-  (-count [_] end))
-
-(defn chunk-buffer [capacity]
-  (ChunkBuffer. (.filled dart:core/List capacity ^dynamic (do nil)) 0))
-
-(deftype ChunkedCons [chunk more meta ^:mutable ^int __hash]
-  Object
-  #_(^String toString [coll]
-      (pr-str* coll))
-  IWithMeta
-  (-with-meta [coll new-meta]
-    (if (identical? new-meta meta)
-      coll
-      (ChunkedCons. chunk more new-meta __hash)))
-  IMeta
-  (-meta [coll] meta)
-  ISequential
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
-  ISeqable
-  (-seq [coll] coll)
-  ISeq
-  (-first [coll] (-nth chunk 0))
-  (-rest [coll]
-    (if (< 1 (-count chunk))
-      (ChunkedCons. (-drop-first chunk) more nil -1)
-      (if (nil? more)
-        empty-list
-        more)))
-  (-next [coll]
-    (if (< 1 (-count chunk))
-      (ChunkedCons. (-drop-first chunk) more nil -1)
-      (when-not (nil? more)
-        (-seq more))))
-  IChunkedSeq
-  (-chunked-first [coll] chunk)
-  (-chunked-rest [coll]
-    (if (nil? more)
-      empty-list
-      more))
-  (-chunked-next [coll]
-    (if (nil? more)
-      nil
-      more))
-  ICollection
-  (-conj [this o] (cons o this))
-  #_#_IEmptyableCollection
-  (-empty [coll] (.-EMPTY List))
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash)))
-
-(defn chunk-cons [chunk rest]
-  (if (< 0 (-count chunk))
-    (ChunkedCons. chunk rest nil -1)
-    rest))
-
-(defn chunk-append [b x]
-  (.add b x))
-
-(defn chunk [b]
-  (.chunk b))
-
-(defn chunk-first [s]
-  (-chunked-first s))
-
-(defn chunk-rest [s]
-  (-chunked-rest s))
-
-(defn chunk-next [s]
-  ;; TODO : check when it is supposed to not be used in a chunk context
-  (-chunked-next s)
-  #_(if (implements? IChunkedNext s)
-    (-chunked-next s)
-    (seq (-chunked-rest s))))
-
-;;;
-
 ;;; PersistentVector
 
 ;; declarations
 (deftype PersistentVector [])
 (deftype TransientVector [])
-(deftype ChunkedSeq [])
+(deftype PVChunkedSeq [])
 
-(defn aresize [a from to pad]
+(defn aresize [^List a ^int from ^int to pad]
   (let [a' (.filled List to pad)]
     (dotimes [i from]
       (aset a' i (aget a i)))
     a'))
 
-(defn ashrink [a to]
+(defn ashrink [^List a ^int to]
   (let [a' (.filled List to ^dynamic (do nil))]
     (dotimes [i to]
       (aset a' i (aget a i)))
@@ -1800,7 +1658,7 @@
                                :else (unchecked-array-for root shift i')))
                :else acc))))))))
 
-(deftype PersistentVector [meta ^int cnt ^int shift ^VectorNode root tail ^:mutable ^int __hash]
+(deftype PersistentVector [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
   Object
   #_(toString [coll]
       (pr-str* coll))
@@ -1872,7 +1730,7 @@
     (cond
       (zero? cnt) nil
       (<= cnt 32) (-seq tail)
-      :else (ChunkedSeq. coll (unchecked-array-for root shift 0) 0 0 nil -1)))
+      :else (PVChunkedSeq. coll (unchecked-array-for root shift 0) 0 0 nil -1)))
   ICounted
   (-count [coll] cnt)
   IIndexed
@@ -1960,9 +1818,135 @@
   (-iterator [this]
     (ranged-iterator this 0 cnt)))
 
-(def empty-persistent-vector (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1))
+(def empty-persistent-vector (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
 
-(deftype ChunkedSeq [^PersistentVector vec ^List arr ^int i ^int off meta ^:mutable ^int __hash]
+;; chunks
+
+(defn chunked-seq?
+  "Return true if x satisfies IChunkedSeq."
+  [x] (satisfies? IChunkedSeq x))
+
+(deftype ArrayChunk [^List arr ^int off ^int end]
+  ICounted
+  (-count [_] (- end off))
+  IIndexed
+  (-nth [coll i]
+    (aget arr (+ off ^int i)))
+  (-nth [coll i not-found]
+    (if (< i 0)
+      not-found
+      (if (< i (- end off))
+        (aget arr (+ off ^int i))
+        not-found)))
+  IChunk
+  (-drop-first [coll]
+    (if (== off end)
+      (throw (ArgumentError. "-drop-first of empty chunk"))
+      (ArrayChunk. arr (inc off) end)))
+  IReduce
+  (-reduce [coll f]
+    (let [x (aget arr off)
+          off' (inc off)]
+      (if (< off' end)
+        (loop [acc x ^int idx off']
+          (if (< idx end)
+            (let [val (f acc (aget arr idx))]
+              (if (reduced? val)
+                (deref val)
+                (recur val (inc idx))))
+            acc))
+        x)))
+  (-reduce [coll f start]
+    (loop [acc start ^int idx off]
+      (if (< idx end)
+        (let [val (f acc (aget arr idx))]
+          (if (reduced? val)
+            (deref val)
+            (recur val (inc idx))))
+        acc))))
+
+(deftype ChunkBuffer [^:mutable arr ^:mutable ^int end]
+  Object
+  (add [_ o]
+    (aset ^List arr end o)
+    (set! end (inc end)))
+  (chunk [_]
+    (let [ret (ArrayChunk. ^List arr 0 end)]
+      (set! arr nil)
+      ret))
+  ICounted
+  (-count [_] end))
+
+(defn chunk-buffer [capacity]
+  (ChunkBuffer. (.filled dart:core/List capacity ^dynamic (do nil)) 0))
+
+(deftype ChunkedCons [chunk more meta ^:mutable ^int __hash]
+  Object
+  #_(^String toString [coll]
+      (pr-str* coll))
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (ChunkedCons. chunk more new-meta __hash)))
+  IMeta
+  (-meta [coll] meta)
+  ISequential
+  #_#_IEquiv
+  (-equiv [coll other] (equiv-sequential coll other))
+  ISeqable
+  (-seq [coll] coll)
+  ISeq
+  (-first [coll] (-nth chunk 0))
+  (-rest [coll]
+    (if (< 1 (-count chunk))
+      (ChunkedCons. (-drop-first chunk) more nil -1)
+      (if (nil? more)
+        empty-list
+        more)))
+  (-next [coll]
+    (if (< 1 (-count chunk))
+      (ChunkedCons. (-drop-first chunk) more nil -1)
+      (when-not (nil? more)
+        (-seq more))))
+  IChunkedSeq
+  (-chunked-first [coll] chunk)
+  (-chunked-rest [coll]
+    (if (nil? more)
+      empty-list
+      more))
+  (-chunked-next [coll]
+    (if (nil? more)
+      nil
+      more))
+  ICollection
+  (-conj [this o] (cons o this))
+  #_#_IEmptyableCollection
+  (-empty [coll] (.-EMPTY List))
+  #_#_IHash
+  (-hash [coll] (caching-hash coll hash-ordered-coll __hash)))
+
+(defn chunk-cons [chunk rest]
+  (if (< 0 (-count chunk))
+    (ChunkedCons. chunk rest nil -1)
+    rest))
+
+(defn chunk-append [b x]
+  (.add b x))
+
+(defn chunk [b]
+  (.chunk b))
+
+(defn chunk-first [s]
+  (-chunked-first s))
+
+(defn chunk-rest [s]
+  (-chunked-rest s))
+
+(defn chunk-next [s]
+  (-chunked-next s))
+
+(deftype PVChunkedSeq [^PersistentVector vec ^List arr ^int i ^int off meta ^:mutable ^int __hash]
   Object
   #_(toString [coll]
       (pr-str* coll))
@@ -1970,7 +1954,7 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (ChunkedSeq. vec arr i off new-meta -1)))
+      (PVChunkedSeq. vec arr i off new-meta -1)))
   IMeta
   (-meta [coll] meta)
   ISeqable
@@ -1983,11 +1967,11 @@
     (aget arr off))
   (-rest [coll]
     (if (< (inc off) (alength arr))
-      (ChunkedSeq. vec arr i (inc off) nil -1)
+      (PVChunkedSeq. vec arr i (inc off) nil -1)
       (-chunked-rest coll)))
   (-next [coll]
     (if (< (inc off) (alength arr))
-      (ChunkedSeq. vec arr i (inc off) nil -1)
+      (PVChunkedSeq. vec arr i (inc off) nil -1)
       (-chunked-next coll)))
   ICollection
   (-conj [coll o]
@@ -1997,13 +1981,13 @@
     ())
   IChunkedSeq
   (-chunked-first [coll]
-    (array-chunk arr off))
+    (ArrayChunk. arr off (alength arr)))
   (-chunked-rest [coll]
     (or ^some (-chunked-next coll) ()))
   (-chunked-next [coll]
     (let [end (+ i (alength arr))]
       (when (< end (-count vec))
-        (ChunkedSeq. vec (if (< end (bit-and-not end 31))
+        (PVChunkedSeq. vec (if (< end (bit-and-not end 31))
                            (unchecked-array-for (.-root vec) (.-shift vec) end)
                            (.-tail vec))
           end 0 nil -1))))
@@ -2012,6 +1996,10 @@
   IReduce
   (-reduce [coll f] (pv-reduce vec f (+ i off)))
   (-reduce [coll f start] (pv-reduce vec f (+ i off) start)))
+
+;;; end chunks
+
+;; transients
 
 (defn ^VectorNode tv-ensure-editable [edit node]
   (if (identical? edit (.-edit node))
@@ -2886,12 +2874,13 @@
     (dart:core/print (-nth pv1 10000))
     (dart:core/print (-nth pv1 100000000 "default")))
 
-  #_(let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)]
+  #_(let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1)]
     (quick-bench
       (loop [pv pv, idx 1000000]
         (if (pos? idx)
           (recur (-conj pv idx) (dec idx))
           pv))))
+  #_(dart:core/print "Ended PV test")
 
   #_(let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 ^dynamic (do nil))) (.filled List 0 ^dynamic (do nil)) -1)]
     (quick-bench
@@ -2948,14 +2937,14 @@
                (recur (-conj pv idx) (inc idx))))]
     (dart:core/print (-nth (-assoc pv 11111 "coucou") 11111)))
 
-  (dart:core/print "Start reduce +")
+  #_#_(dart:core/print "Start reduce +")
   (let [pv (loop [pv []
                   idx 0]
              (if (== idx 100000)
                pv
                (recur (-conj pv idx) (inc idx))))]
     (dart:core/print (reduce + 0 pv)))
-  (dart:core/print "end reduce +")
+  #_(dart:core/print "end reduce +")
 
   (dart:core/print "Start reduce on chunked-seq form []+")
   (let [pv (loop [pv []
@@ -2968,15 +2957,15 @@
     (dart:core/print (reduce + 0 (next (next (seq pv))))))
   (dart:core/print "end reduce +")
 
-  (dart:core/print "map on chunked")
-  (let [pv (loop [pv []
+  #_(dart:core/print "map on chunked")
+  #_(let [pv (loop [pv []
                   idx 0]
              (if (== idx 100000)
                pv
                (recur (-conj pv idx) (inc idx))))]
     (dart:core/print (first (map (fn [o] (dart:core/print o) o) (seq pv)))))
 
-  (dart:core/print "keep on chunked")
+  #_#_(dart:core/print "keep on chunked")
   (let [pv (loop [pv []
                   idx 0]
              (if (== idx 100000)
@@ -2985,7 +2974,7 @@
     (dart:core/print (first (keep (fn [o] (dart:core/print o)
                                     (when (.-isOdd o) o)) (seq pv)))))
 
-  (let [pv (loop [pv []
+  #_(let [pv (loop [pv []
                   idx 0]
              (if (== idx 100000)
                pv
@@ -2999,7 +2988,7 @@
                                        (-conj acc (-conj (-conj [] i) item)))
                                      [])))))
 
-  (let [pv (-conj [] 100)]
+  #_(let [pv (-conj [] 100)]
     (dart:core/print (pv 0)))
 
   #_(dart:core/print "Started Vector test")
