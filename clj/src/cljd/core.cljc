@@ -2197,7 +2197,7 @@
 
 ;;; Mapentry
 
-#_(deftype MapEntry [key val ^:mutable __hash]
+(deftype MapEntry [key val ^:mutable __hash]
   IMapEntry
   (-key [node] key)
   (-val [node] val)
@@ -2222,7 +2222,7 @@
   (-empty [node] nil)
   ISequential
   ISeqable
-  (-seq [node] (-seq #dart [key val]))
+  (-seq [node] (-seq (doto (.filled List 2 val) (aset 0 key))))
   #_#_IReversible
   (-rseq [node] (IndexedSeq. 'js [val key] 0 nil))
   ICounted
@@ -2239,35 +2239,31 @@
   ILookup
   (-lookup [node k] (-nth node k nil))
   (-lookup [node k not-found] (-nth node k not-found))
-
   IAssociative
   (-assoc [node k v]
-    (assoc [key val] k v))
+    (assoc (doto (.filled List 2 val) (aset 0 key)) k v))
   (-contains-key? [node k]
     (or (== k 0) (== k 1)))
-
   IFind
   (-find [node k]
-    (case k
-      0 (MapEntry. 0 key nil)
-      1 (MapEntry. 1 val nil)
-      nil))
-
+    ;; TODO : replace with case
+    (cond
+      (== k 0) (MapEntry. 0 key -1)
+      (== k 1) (MapEntry. 1 val -1)))
   IVector
   (-assoc-n [node n v]
     (-assoc-n [key val] n v))
-
   IReduce
   (-reduce [node f]
-    (ci-reduce node f))
-
+    (unreduced (f key val)))
   (-reduce [node f start]
-    (ci-reduce node f start))
-
+    (let [r (f start key)]
+      (if (reduced? r)
+        (deref r)
+        (unreduced (f r val)))))
   IFn
   (-invoke [node k]
     (-nth node k))
-
   (-invoke [node k not-found]
     (-nth node k not-found)))
 
