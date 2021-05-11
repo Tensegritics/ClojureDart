@@ -124,28 +124,37 @@
        [:def info])
      nil)))
 
-(defn emit-type [tag]
+(defn non-nullable [tag]
+  (if-some [[_ base] (re-matches #"(.+)[?]" (name tag))]
+    (cond->> base (symbol? tag) (symbol (namespace tag)))
+    tag))
+
+(defn emit-type
+  [tag]
   (cond
     (string? tag)
     (let [nses @nses
           {:keys [mappings] :as current-ns} (nses (:current-ns nses))]
-      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+)( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
+      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+?)[?]?( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
         (fn [[_ alias type identifier]]
           (cond->
               (if (and (nil? alias) (#{"Function" "void"} type))
                 type
-                (name (emit-type (symbol alias type))))
+                (emit-type (symbol alias type)))
             identifier (str identifier)))))
     (= 'some tag) "dc.dynamic"
     :else
-    (let [[t info] (resolve-symbol tag {})]
-      (case t
-        :dart (name info)
-        :def (case (:type info)
-               ; TODO XNS should be "namespaced" by dart alias if needed
-               :class (name (:dart/name info))
-               (throw (Exception. (str "Not a type: " tag))))
-        (throw (Exception. (str "Can't resolve type: " tag)))))))
+    (let [tag! (non-nullable tag)
+          [t info] (or (resolve-symbol tag! {}) (when *bootstrap* (resolve-symbol (symbol (name tag!)) {})))]
+      (cond->
+          (case t
+            :dart (name info)
+            :def (case (:type info)
+                   ; TODO XNS should be "namespaced" by dart alias if needed
+                   :class (name (:dart/name info))
+                   (throw (Exception. (str "Not a type: " tag!))))
+            (throw (Exception. (str "Can't resolve type: " tag!))))
+        (not= tag tag!) (str "?")))))
 
 (defn dart-type-truthiness [type]
   (case type
@@ -348,12 +357,12 @@
                     `(~all-args
                       `(let [~~@(interleave locals all-args)]
                          (if (dart/is? ~'~this ~'~iface)
-                           (. ~'~(vary-meta this assoc :tag iface) ~'~name ~~@args) ; TODO cast to iface
+                           (. ~'~(vary-meta this assoc :tag iface) ~'~name ~~@args)
                            (. (.extensions ~'~proto ~'~this) ~'~name ~'~this ~~@args))))))}
              ~@(for [{:keys [dart/name] [this & args :as all-args] :args} (vals arity-mapping)]
                  `(~all-args
                    (if (dart/is? ~this ~iface)
-                     (. ~this ~name ~@args) ; TODO cast to iface
+                     (. ~(vary-meta this assoc :tag iface) ~name ~@args)
                      (. (.extensions ~proto ~this) ~name ~@all-args))))))
         (list proto)))))
 
@@ -563,7 +572,7 @@
         ifn-call (let [dart-f (if fn-type
                                 dart-f
                                 ; cast when unknown
-                                (list 'dart/as dart-f (emit 'cljd.core/IFn$iface env)))]
+                                (list 'dart/as dart-f (emit-type 'cljd.core/IFn$iface)))]
                    (if (< (count dart-args) *threshold*)
                      (list* 'dart/. dart-f
                        (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count dart-args)))
@@ -628,6 +637,10 @@
           op (if prop 'dart/.- 'dart/.)
           [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
           {:dart/keys [type nat-type]} (infer-type dart-obj)
+          type (some-> type non-nullable)
+          dart-obj (if (not= type nat-type)
+                     (list 'dart/as dart-obj type)
+                     dart-obj)
           ;; TODO SELFHOST with mirrors one can check membership
           #_#_dart-obj (if (not= type nat-type)
                      (list 'dart/as dart-obj type)
@@ -1234,7 +1247,7 @@
                        exprs (if st exprs body)
                        env (cond-> (assoc env e (dart-local e))
                              st (assoc st (dart-local st)))]]
-             [(emit-type classname) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
+             [(emit-type classname true) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
            (some-> finally-body (conj 'do) (emit-no-recur env)))))
 
 (defn emit-throw [[_ expr] env]
@@ -1881,7 +1894,7 @@
   [filename]
   (first
    (for [dir *clj-path*
-         :let [file (java.io.File. dir filename)]
+         :let [file (java.io.File. ^String dir ^String filename)]
          :when (.exists file)]
      file)))
 

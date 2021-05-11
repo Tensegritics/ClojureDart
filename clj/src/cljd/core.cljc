@@ -1506,6 +1506,14 @@
          (recur (next xs))))
      (.toString sb))))
 
+(defn ^String subs
+  "Returns the substring of s beginning at start inclusive, and ending
+  at end (defaults to length of string), exclusive."
+  {:added "1.0"
+   :static true}
+  ([^String s start] (. s (substring start)))
+  ([^String s start end] (. s (substring start end))))
+
 (defn ^bool not
   "Returns true if x is logical false, false otherwise."
   {:inline (fn [x] `(if ~x false true))
@@ -2074,7 +2082,7 @@
                           ^int ^:mutable shift
                           ^some ^:mutable edit
                           ^VectorNode ^:mutable root
-                          ^:mutable tail]
+                          ^:mutable ^List tail]
   ITransientCollection
   (-conj! [tcoll o]
     (when-not edit
@@ -2519,7 +2527,7 @@
   (let [i (first bindings)
         n (second bindings)]
     ;; TODO : re-think about `long`
-    `(let [n# ^int ~n]
+    `(let [^int n# ~n]
        (loop [~i 0]
          (when (< ~i n#)
            ~@body
