@@ -1396,25 +1396,21 @@
     (satisfies? ISeq coll) (Cons. nil x coll -1)
     true                   (Cons. nil x (seq coll) -1)))
 
-(deftype IteratorSeq [value iter ^:mutable _rest]
+(deftype IteratorSeq [value ^Iterator iter ^:mutable ^some _rest]
   ISeqable
   (-seq [this] this)
   ISeq
   (-first [coll] value)
-  (-rest [coll]
-    (when (nil? _rest) (set! _rest (seq-iterator iter)))
-    (if (nil? _rest) empty-list _rest))
-  (-next [coll]
-    (when (nil? _rest) (set! _rest (seq-iterator iter)))
-    _rest))
+  (-rest [coll] (or _rest (set! _rest (or (iterator-seq iter) ()))))
+  (-next [coll] (-seq (-rest coll))))
 
-(defn seq-iterator [^Iterator iter]
+(defn ^some iterator-seq [^Iterator iter]
   (when (.moveNext iter)
     (IteratorSeq. (.-current iter) iter nil)))
 
 (extend-type Iterable
   ISeqable
-  (-seq [coll] (seq-iterator (.-iterator coll))))
+  (-seq [coll] (iterator-seq (.-iterator coll))))
 
 (deftype StringSeq [string i meta ^:mutable ^int __hash]
   #_Object
