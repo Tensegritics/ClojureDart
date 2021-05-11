@@ -377,7 +377,6 @@
       (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
     `(let* [test# ~expr] (~'case test# ~@clauses))))
 
-
 (defn expand-extend-type [type & specs]
   (let [proto+meths (reduce
                       (fn [proto+meths x]
@@ -628,6 +627,8 @@
     (cond->> (list* 'dart/new dart-type dart-args)
       (seq bindings) (list 'dart/let bindings))))
 
+(def -interops (atom {}))
+
 (defn emit-dot [[_ obj member & args] env]
   (if (seq? member)
     (recur (list* '. obj member) env)
@@ -652,6 +653,7 @@
                            (println "Dynamic invocation warning. Reference to" (if prop "field" "method")
                              member "can't be resolved." obj)))
                        dart-obj))]
+      (swap! -interops update type (fnil conj #{}) member)
       (cond->> (list* op dart-obj name dart-args)
         (seq bindings) (list 'dart/let bindings)))))
 
