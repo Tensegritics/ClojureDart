@@ -1,5 +1,6 @@
 (ns cljd.core
-  (:require ["dart:math" :as math]))
+  (:require ["dart:math" :as math]
+            ["dart:collection" :as collection]))
 
 (definterface IProtocol
   (extensions [x])
@@ -1143,14 +1144,14 @@
 (defn ^int u32-bit-count [^int v]
   (let [v (- v (bit-and (bit-shift-right v 1) 0x55555555))
         v (+ (bit-and v 0x33333333) (bit-and (bit-shift-right v 2) 0x33333333))]
-    (bit-and 31 (bit-shift-right (* (bit-and (+ v (bit-shift-right v 4)) 0xF0F0F0F) 0x1010101) 24))))
+    (bit-and 63 (bit-shift-right (* (bit-and (+ v (bit-shift-right v 4)) 0xF0F0F0F) 0x1010101) 24))))
 
 (defn ^int u32x2-bit-count [^int hi ^int lo]
   (let [hi (- hi (bit-and (bit-shift-right hi 1) 0x55555555))
         lo (- lo (bit-and (bit-shift-right lo 1) 0x55555555))
         v (+ (bit-and hi 0x33333333) (bit-and (bit-shift-right hi 2) 0x33333333)
-             (bit-and lo 0x33333333) (bit-and (bit-shift-right lo 2) 0x33333333))]
-    (bit-and 63 (bit-shift-right (* (+ (bit-and 0xF0F0F0F v) (bit-and 0xF0F0F0F (bit-shift-right v 4))) 0x1010101) 24))))
+            (bit-and lo 0x33333333) (bit-and (bit-shift-right lo 2) 0x33333333))]
+    (bit-and 127 (bit-shift-right (* (+ (bit-and 0xF0F0F0F v) (bit-and 0xF0F0F0F (bit-shift-right v 4))) 0x1010101) 24))))
 
 (defn ^int mod
   "Modulus of num and div. Truncates toward negative infinity."
@@ -2244,7 +2245,7 @@
     (assoc (doto (.filled List 2 val) (aset 0 key)) k v))
   (-contains-key? [node k]
     (or (== k 0) (== k 1)))
-  IFind
+  #_#_IFind
   (-find [node k]
     ;; TODO : replace with case
     (cond
@@ -2267,21 +2268,52 @@
   (-invoke [node k not-found]
     (-nth node k not-found)))
 
-;; bitmap de 64
-;; shift 5
-;; h = hash k
-;; decalage en fonction du shift
-;; 1 2n
-;; 100000000
-;; 011111111
+;; decl
+(deftype BitmapNode [])
 
-;; (bitmap shift-right 2n) and 3
-;; 0 vide
-;; 3 kv
-;; 1 node partagé
-;; 2 node à moi
+(deftype BitmapIterator [^:mutable ^List mask-list ^:mutable ^List bn-list]
+  Iterator
+  (^:getter current [iter]
+   (let [^BitmapNode node (.-last bn-list)
+         ^int mask (.-last mask-list)
+         bitmap-hi (.-bitmap_hi node)
+         bitmap-lo (.-bitmap_lo node)
+         kv-mask (bit-and mask bitmap-hi bitmap-lo)
+         bit (u32-bit-shift-left 1 (dec (.-bitLength kv-mask)))
+         mask' (dec bit)
+         idx (u32x2-bit-count (bit-and mask' bitmap-hi) (bit-and mask' bitmap-lo))
+         arr (.-arr node)]
+     (.removeLast mask-list)
+     (.add mask-list (bit-xor mask bit))
+     (MapEntry. (aget arr idx) (aget arr (inc idx)) -1)))
+  (^bool moveNext [iter]
+    (loop []
+      (let [^int mask (.-last mask-list)]
+        (cond
+          (and (zero? mask) (== 1 (alength bn-list)))
+          false
+          (zero? mask)
+          (do (.removeLast bn-list) (.removeLast mask-list) (recur))
+          :else
+          (let [^BitmapNode node (.-last bn-list)
+                bitmap-hi (.-bitmap_hi node)
+                bitmap-lo (.-bitmap_lo node)
+                bn-mask (bit-and mask (bit-xor bitmap-hi bitmap-lo))]
+            (if (zero? bn-mask)
+              true
+              (let [bit (u32-bit-shift-left 1 (dec (.-bitLength bn-mask)))
+                    mask' (dec bit)
+                    idx (u32x2-bit-count (bit-and mask' bitmap-hi) (bit-and mask' bitmap-lo))
+                    ^BitmapNode next-bn (aget (.-arr node) idx)]
+                (.removeLast mask-list)
+                (.add mask-list (bit-xor mask bit))
+                (.add bn-list next-bn)
+                (.add mask-list (bit-or (.-bitmap_hi next-bn) (.-bitmap_lo next-bn)))
+                (recur)))))))))
 
- ;; u32-bit-count
+(defn create-bitmap-iterator [^BitmapNode node]
+  (BitmapIterator. #dart [(bit-or (.-bitmap_hi node) (.-bitmap_lo node))] #dart [node]))
+
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
   Object
   (inode_without [node shift h k]
@@ -2378,20 +2410,21 @@
               (BitmapNode. cnt bitmap-hi bitmap-lo (doto (aclone arr) (aset (inc idx) v)))))))
       (throw (Exception. "Collision!!!!")))))
 
-(deftype PersistentHashMap [meta ^BitmapNode root ^:mutable ^int __hash]
+(deftype PersistentHashMap [meta ^BitmapNode root ^:mutable ^int __hash ^BitmapIterator iterator]
+  :extends (collection/IterableBase.)
   IAssociative
   (-assoc [coll k v]
     (let [^BitmapNode new-root (.inode_assoc root 0 (hash k) k v)]
       (if (identical? new-root root)
         coll
-        (PersistentHashMap. meta new-root -1))))
+        (PersistentHashMap. meta new-root -1 (create-bitmap-iterator new-root)))))
   (-contains-key? [coll k]
     (not (identical? (-lookup coll k coll) coll)))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (PersistentHashMap. new-meta root __hash)))
+      (PersistentHashMap. new-meta root __hash iterator)))
   IMeta
   (-meta [coll] meta)
   #_#_ICollection
@@ -2414,11 +2447,7 @@
   (-hash [coll] (caching-hash coll hash-unordered-coll __hash))
   #_#_ISeqable
   (-seq [coll]
-    (when (pos? cnt)
-      (let [s (if-not (nil? root) (.inode-seq root))]
-        (if has-nil?
-          (cons (MapEntry. nil nil-val nil) s)
-          s))))
+    #_(create-bitmap-seq root (.empty List) 0))
   ICounted
   (-count [coll] (.-cnt root))
   ILookup
@@ -2446,7 +2475,7 @@
             (let [arr (.-arr node)
                   k' (aget arr idx)]
               ;; TODO use = instead of ==
-              (if (==  k' k) (aget arr (inc idx)) not-found)))))))
+              (if (== k' k) (aget arr (inc idx)) not-found)))))))
   #_#_IFind
   (-find [coll k]
     (cond
@@ -2454,11 +2483,11 @@
       (nil? root) nil
       :else (.inode-find root 0 (hash k) k nil)))
   IMap
-   (-dissoc [coll k]
+  (-dissoc [coll k]
     (let [new-root (.inode_without root 0 (hash k) k)]
       (if (identical? new-root root)
         coll
-        (PersistentHashMap. meta new-root -1))))
+        (PersistentHashMap. meta new-root -1 (create-bitmap-iterator new-root)))))
   #_#_IKVReduce
   (-kv-reduce [coll f init]
     (let [init (if has-nil? (f init nil nil-val) init)]
@@ -3314,10 +3343,24 @@
     (dart:core/print "ms"))
 
   (dart:core/print "PersistentHashMap")
-  (let [h (PersistentHashMap. nil (BitmapNode. 0 0 0 (.empty List)) -1)
-        h' (reduce (fn [acc item] (-assoc acc item item)) h (.generate List 100000 #(+ % 0)))]
-    (dart:core/print (-lookup h' 500 222))
-    (dart:core/print (-lookup (-dissoc h' 500) 500 222))
+  (let [node (BitmapNode. 0 0 0 (.empty List))
+        h (PersistentHashMap. nil node -1 (create-bitmap-iterator node))
+        h' (reduce (fn [acc item] (-assoc acc item item)) h (.generate List 50 #(+ % 0)))
+        h' (-seq h')]
+    (loop [n h']
+      (when ^some n
+        (do (dart:core/print (ffirst n)) (recur (-next n)))))
+
+    #_(dart:core/print (-lookup h' 500 222))
+    #_#_#_(dart:core/print (-lookup (-dissoc h' 500) 500 222))
+    (dart:core/print (-peek (-first (-seq h'))))
+    (dart:core/print (-peek (-first (-next (-seq h')))))
+    #_(dart:core/print (count (-seq h')))
+    #_(loop [h' (-seq h')]
+      (when h'
+        (dart:core/print (-peek (-first h')))
+        (recur (-next h'))))
+    #_(dart:core/print (-peek (last (-seq h'))))
     #_(dart:core/print (-lookup (-assoc (-assoc h 3342 1) 2 2) 2)))
 
 
