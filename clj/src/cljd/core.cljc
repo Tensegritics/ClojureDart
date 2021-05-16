@@ -1,6 +1,5 @@
 (ns cljd.core
-  (:require ["dart:math" :as math]
-            ["dart:collection" :as collection]))
+  (:require ["dart:math" :as math]))
 
 (definterface IProtocol
   (extensions [x])
@@ -818,6 +817,10 @@
 (defprotocol IHash
   "Protocol for adding hashing functionality to a type."
   (-hash [o] "Returns the hash code of o."))
+
+(defprotocol IFind
+  "Protocol for implementing entry finding in collections."
+  (-find [coll k] "Returns the map entry for key, or nil if key not present."))
 
 (defprotocol IMapEntry
   "Protocol for examining a map entry."
@@ -2311,9 +2314,6 @@
                 (.add mask-list (bit-or (.-bitmap_hi next-bn) (.-bitmap_lo next-bn)))
                 (recur)))))))))
 
-(defn create-bitmap-iterator [^BitmapNode node]
-  (BitmapIterator. #dart [(bit-or (.-bitmap_hi node) (.-bitmap_lo node))] #dart [node]))
-
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
   Object
   (inode_without [node shift h k]
@@ -2410,21 +2410,20 @@
               (BitmapNode. cnt bitmap-hi bitmap-lo (doto (aclone arr) (aset (inc idx) v)))))))
       (throw (Exception. "Collision!!!!")))))
 
-(deftype PersistentHashMap [meta ^BitmapNode root ^:mutable ^int __hash ^BitmapIterator iterator]
-  :extends (collection/IterableBase.)
+(deftype PersistentHashMap [meta ^BitmapNode root ^:mutable ^int __hash]
   IAssociative
   (-assoc [coll k v]
     (let [^BitmapNode new-root (.inode_assoc root 0 (hash k) k v)]
       (if (identical? new-root root)
         coll
-        (PersistentHashMap. meta new-root -1 (create-bitmap-iterator new-root)))))
+        (PersistentHashMap. meta new-root -1))))
   (-contains-key? [coll k]
     (not (identical? (-lookup coll k coll) coll)))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (PersistentHashMap. new-meta root __hash iterator)))
+      (PersistentHashMap. new-meta root __hash)))
   IMeta
   (-meta [coll] meta)
   #_#_ICollection
@@ -2445,9 +2444,9 @@
   (-equiv [coll other] (equiv-map coll other))
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-unordered-coll __hash))
-  #_#_ISeqable
+  ISeqable
   (-seq [coll]
-    #_(create-bitmap-seq root (.empty List) 0))
+    (iterator-seq (BitmapIterator. #dart [(bit-or (.-bitmap_hi root) (.-bitmap_lo root))] #dart [root])))
   ICounted
   (-count [coll] (.-cnt root))
   ILookup
@@ -2476,25 +2475,29 @@
                   k' (aget arr idx)]
               ;; TODO use = instead of ==
               (if (== k' k) (aget arr (inc idx)) not-found)))))))
-  #_#_IFind
+  IFind
   (-find [coll k]
-    (cond
-      (nil? k) (when has-nil? (MapEntry. nil nil-val nil))
-      (nil? root) nil
-      :else (.inode-find root 0 (hash k) k nil)))
+    (when-some [v (-lookup coll k nil)]
+      (MapEntry. k v -1)))
   IMap
   (-dissoc [coll k]
     (let [new-root (.inode_without root 0 (hash k) k)]
       (if (identical? new-root root)
         coll
-        (PersistentHashMap. meta new-root -1 (create-bitmap-iterator new-root)))))
-  #_#_IKVReduce
+        (PersistentHashMap. meta new-root -1))))
+  IKVReduce
   (-kv-reduce [coll f init]
-    (let [init (if has-nil? (f init nil nil-val) init)]
-      (cond
-        (reduced? init)          @init
-        (not (nil? root)) (unreduced (.kv-reduce root f init))
-        :else                    init)))
+    (if (zero? (.-cnt ^BitmapNode (.-root coll)))
+      init
+      (loop [s (-seq coll)
+             acc init]
+        (if (nil? s)
+          acc
+          (let [^MapEntry me (-first s)
+                acc (f acc (-key me) (-val me))]
+            (if (reduced? acc)
+              (-deref acc)
+              (recur (-next s) acc)))))))
   IFn
   (-invoke [coll k]
     (-lookup coll k))
@@ -3344,12 +3347,18 @@
 
   (dart:core/print "PersistentHashMap")
   (let [node (BitmapNode. 0 0 0 (.empty List))
-        h (PersistentHashMap. nil node -1 (create-bitmap-iterator node))
-        h' (reduce (fn [acc item] (-assoc acc item item)) h (.generate List 50 #(+ % 0)))
-        h' (-seq h')]
-    (loop [n h']
-      (when ^some n
-        (do (dart:core/print (ffirst n)) (recur (-next n)))))
+        h (PersistentHashMap. nil node -1)
+        h1 (reduce (fn [acc item] (-assoc acc item item)) h (.generate List 100000 #(+ % 0)))
+        h' (-seq h1)]
+
+    (dart:core/print (ffirst (-next h')))
+    (dart:core/print (ffirst (-next h')))
+    (dart:core/print (-seq h))
+
+    (let [ooo (-kv-reduce h1 (fn [acc k v] (-conj acc (-conj (-conj empty-persistent-vector k) v))) empty-persistent-vector)]
+      (dart:core/print (count ooo))
+      (dart:core/print (count h1))
+      (dart:core/print (-count h')))
 
     #_(dart:core/print (-lookup h' 500 222))
     #_#_#_(dart:core/print (-lookup (-dissoc h' 500) 500 222))
