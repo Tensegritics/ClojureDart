@@ -2426,18 +2426,17 @@
       (PersistentHashMap. new-meta root __hash)))
   IMeta
   (-meta [coll] meta)
-  #_#_ICollection
+  ICollection
   (-conj [coll entry]
-    (if (vector? entry)
+    (if (and (satisfies? IVector entry) (== (-count entry) 2))
       (-assoc coll (-nth entry 0) (-nth entry 1))
-      (loop [ret coll es (seq entry)]
-        (if (nil? es)
+      (loop [ret coll s (seq entry)]
+        (if (nil? s)
           ret
-          (let [e (first es)]
-            (if (vector? e)
-              (recur (-assoc ret (-nth e 0) (-nth e 1))
-                (next es))
-              (throw (js/Error. "conj on a map takes map entries or seqables of map entries"))))))))
+          (let [e (first s)]
+            (if (satisfies? IVector e)
+              (recur (-assoc ret (-nth e 0) (-nth e 1)) (-next s))
+              (throw (ArgumentError. "conj on a map takes map entries or seqables of map entries"))))))))
   #_#_IEmptyableCollection
   (-empty [coll] (-with-meta (.-EMPTY PersistentHashMap) meta))
   #_#_IEquiv
