@@ -135,7 +135,7 @@
     (string? tag)
     (let [nses @nses
           {:keys [mappings] :as current-ns} (nses (:current-ns nses))]
-      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+?)[?]?( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
+      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+)[?]?( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
         (fn [[_ alias type identifier]]
           (cond->
               (if (and (nil? alias) (#{"Function" "void"} type))
