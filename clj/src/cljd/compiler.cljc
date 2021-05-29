@@ -1249,7 +1249,7 @@
                        exprs (if st exprs body)
                        env (cond-> (assoc env e (dart-local e))
                              st (assoc st (dart-local st)))]]
-             [(emit-type classname true) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
+             [(emit-type classname) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
            (some-> finally-body (conj 'do) (emit-no-recur env)))))
 
 (defn emit-throw [[_ expr] env]
