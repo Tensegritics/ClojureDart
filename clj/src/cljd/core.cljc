@@ -1529,7 +1529,7 @@
 
 (defn ^bool not
   "Returns true if x is logical false, false otherwise."
-  {:inline (fn [x] `(if ~x false true))
+  {:inline (fn [x] `^bool (if ~x false true))
    :inline-arities #{1}}
   [x] (if x false true))
 
@@ -2290,45 +2290,44 @@
 ;; decl
 (deftype BitmapNode [])
 
-#_(deftype BitmapIterator [^:mutable ^List mask-list ^:mutable ^List bn-list]
+(deftype BitmapIterator [^:mutable ^BitmapNode node ^:mutable ^int idx ^:mutable ^int mask ^:mutable ^int kvs
+                         ^:mutable ^int depth
+                         ^#type (List int) masks ^#type (List BitmapNode) nodes]
   Iterator
   (^:getter current [iter]
-   (let [^BitmapNode node (.-last bn-list)
-         ^int mask (.-last mask-list)
-         bitmap-hi (.-bitmap_hi node)
-         bitmap-lo (.-bitmap_lo node)
-         kv-mask (bit-and mask bitmap-hi bitmap-lo)
-         bit (u32-bit-shift-left 1 (dec (.-bitLength kv-mask)))
-         mask' (dec bit)
-         idx (u32x2-bit-count (bit-and mask' bitmap-hi) (bit-and mask' bitmap-lo))
-         arr (.-arr node)]
-     (.removeLast mask-list)
-     (.add mask-list (bit-xor mask bit))
-     (MapEntry. (aget arr idx) (aget arr (inc idx)) -1)))
+   (let [arr (.-arr node)]
+     (MapEntry. (aget arr (- idx 2)) (aget arr (dec idx)) -1)))
   (^bool moveNext [iter]
-    (loop []
-      (let [^int mask (.-last mask-list)]
-        (cond
-          (and (zero? mask) (== 1 (alength bn-list)))
-          false
-          (zero? mask)
-          (do (.removeLast bn-list) (.removeLast mask-list) (recur))
-          :else
-          (let [^BitmapNode node (.-last bn-list)
-                bitmap-hi (.-bitmap_hi node)
-                bitmap-lo (.-bitmap_lo node)
-                bn-mask (bit-and mask (bit-xor bitmap-hi bitmap-lo))]
-            (if (zero? bn-mask)
-              true
-              (let [bit (u32-bit-shift-left 1 (dec (.-bitLength bn-mask)))
-                    mask' (dec bit)
-                    idx (u32x2-bit-count (bit-and mask' bitmap-hi) (bit-and mask' bitmap-lo))
-                    ^BitmapNode next-bn (aget (.-arr node) idx)]
-                (.removeLast mask-list)
-                (.add mask-list (bit-xor mask bit))
-                (.add bn-list next-bn)
-                (.add mask-list (bit-or (.-bitmap_hi next-bn) (.-bitmap_lo next-bn)))
-                (recur)))))))))
+   (cond
+     (not (zero? mask))
+     (let [bit (bit-and mask (- mask))]
+       (set! mask (bit-xor mask bit))
+       (if (zero? (bit-and kvs bit))
+         (let [^BitmapNode node' (aget (.-arr node) idx)
+               hi (.-bitmap_hi node')
+               lo (.-bitmap_lo node')]
+           (aset nodes depth node)
+           (aset masks depth mask)
+           (set! node node')
+           (set! idx 0)
+           (set! mask (bit-or hi lo))
+           (set! kvs (bit-and hi lo))
+           (set! depth (inc depth))
+           (recur))
+         (do
+           (set! idx (+ 2 idx))
+           true)))
+     (pos? depth)
+     (let [^BitmapNode node' (aget nodes (set! depth (dec depth)))
+           hi (.-bitmap_hi node')
+           lo (.-bitmap_lo node')]
+       (set! node node')
+       (set! mask (aget masks depth))
+       (set! idx (u32x2-bit-count (bit-and-not hi mask) (bit-and-not lo mask)))
+       (set! kvs (bit-and hi lo))
+       (recur))
+     :else
+     false)))
 
 (deftype BitmapIterator [^:mutable ^int current-mask
                          ^:mutable ^BitmapNode current-bn
@@ -2712,11 +2711,9 @@
   (-hash [coll] (caching-hash coll hash-unordered-coll __hash))
   ISeqable
   (-seq [coll]
-    (let [current-mask (bit-or (.-bitmap_hi root) (.-bitmap_lo root))
-          current-bn root
-          ^{:tag "List<int>"} mask-list (.filled List 8 current-mask)
-          ^{:tag "List<BitmapNode>"} bn-list (.filled List 8 current-bn)]
-      (iterator-seq (BitmapIterator. current-mask current-bn mask-list bn-list 0))))
+    (iterator-seq
+      (BitmapIterator. root 0 0 0
+        1 (.filled List 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root))) (.filled List 7 root))))
   ICounted
   (-count [coll] (.-cnt root))
   ILookup
