@@ -145,8 +145,8 @@
     (= 'some tag) "dc.dynamic"
     :else
     (let [tag! (non-nullable tag)
-          [t info] (or (resolve-symbol tag! {}) (when *bootstrap* (resolve-symbol (symbol (name tag!)) {})))]
-      (cond->
+          [t info] (or (resolve-symbol tag! {}) (when *bootstrap* (resolve-symbol (symbol (name tag!)) {})))
+          typename
           (case t
             :dart (name info)
             :def (case (:type info)
@@ -154,6 +154,9 @@
                    :class (name (:dart/name info))
                    (throw (Exception. (str "Not a type: " tag!))))
             (throw (Exception. (str "Can't resolve type: " tag!))))
+          type-params (-> tag meta (get :type-params))]
+      (cond-> typename
+        (seq type-params) (str "<" (str/join ", " (map emit-type type-params)) ">")
         (not= tag tag!) (str "?")))))
 
 (defn dart-type-truthiness [type]
@@ -612,14 +615,27 @@
      (cond->> fn-call (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-dart-literal [x env]
-  (if (vector? x)
+  (cond
+    (not (vector? x)) (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))
+    (:fixed (meta x))
+    (let [item-tag (:tag (meta x) 'dart:core/dynamic)
+          list-tag (vary-meta 'dart:core/List assoc :type-params [item-tag])]
+      (->
+        (if-some [[item] (seq x)]
+          (let [lsym `fl#]
+            `(let [~lsym (. List filled ~(count x) ~(vary-meta (list 'do item) assoc :tag item-tag))]
+               ~@(map-indexed (fn [i x] `(. ~lsym "[]=" ~(inc i) ~x)) (next x))
+               ~lsym))
+          `(.empty ~list-tag))
+        (vary-meta assoc :tag list-tag)
+        (emit env)))
+    :else
     (let [[bindings items]
           (reduce (fn [[bindings fn-call] x]
                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item")]
                       [(concat bindings' bindings) (cons x' fn-call)]))
-                  [nil ()] (rseq x))]
-     (cond->> (vec items) (seq bindings) (list 'dart/let bindings)))
-    (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))))
+            [nil ()] (rseq x))]
+     (cond->> (vec items) (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class)
@@ -1065,8 +1081,12 @@
                       (or (:dart/name (meta class-name)) (munge class-name))
                       (select-keys (meta class-name) [:abstract])) ; TODO shouldn't it be dne by munge?
         env (into {} (for [f fields
-                           :let [{:keys [mutable]} (meta f)]]
-                       [f (vary-meta (munge f) assoc :dart/mutable mutable)]))
+                           :let [{:keys [mutable]} (meta f)
+                                 {:keys [dart/type] :as m} (dart-meta f)
+                                 m (cond-> m
+                                     mutable (assoc :dart/mutable true)
+                                     type (assoc :dart/nat-type type))]]
+                       [f (vary-meta (munge f) merge m)]))
         _ (swap! nses do-def class-name {:dart/name mclass-name :type :class})
         class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
@@ -1557,6 +1577,7 @@
              nil))
          dart/is {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
          dart/as (let [[_ _ type] x] {:dart/type type
+                                      :dart/nat-type type
                                       :dart/truth (dart-type-truthiness type)})
          (when-some [{:keys [dart/ret-type dart/ret-truth]} (infer-type (first x))]
            {:dart/type ret-type
@@ -1834,9 +1855,21 @@
           :when code]
     (println code)))
 
+(defn dart-type-reader [x]
+  (if (symbol? x)
+    x
+    (let [[type & params] x]
+      (cond-> type
+        params
+        (vary-meta assoc :type-params (map dart-type-reader params))))))
+
+(def dart-data-readers
+  {'dart #(tagged-literal 'dart %)
+   'type dart-type-reader})
+
 (defn load-input [in]
   #?(:clj
-     (binding [*data-readers* (assoc *data-readers* 'dart #(tagged-literal 'dart %))
+     (binding [*data-readers* (into *data-readers* dart-data-readers)
                *reader-resolver*
                (reify clojure.lang.LispReader$Resolver
                  (currentNS [_] (:current-ns @nses))
@@ -1858,7 +1891,7 @@
 
 (defn bootstrap-load-input [in]
   #?(:clj
-     (binding [*data-readers* (assoc *data-readers* 'dart #(tagged-literal 'dart %))
+     (binding [*data-readers* (into *data-readers* dart-data-readers)
                *reader-resolver*
                (reify clojure.lang.LispReader$Resolver
                  (currentNS [_] (:current-ns @nses))
