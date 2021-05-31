@@ -1273,6 +1273,10 @@
       (.== (.-nan double) o) 2146959360
       true (m3-hash-int (.-hashCode o)))))
 
+(extend-type Null
+  IHash
+  (-hash [o] 0))
+
 (extend-type Object
   IHash
   (-hash [o] (m3-hash-int (.-hashCode o))))
@@ -2274,7 +2278,7 @@
 ;; decl
 (deftype BitmapNode [])
 
-(deftype BitmapIterator [^:mutable ^List mask-list ^:mutable ^List bn-list]
+#_(deftype BitmapIterator [^:mutable ^List mask-list ^:mutable ^List bn-list]
   Iterator
   (^:getter current [iter]
    (let [^BitmapNode node (.-last bn-list)
@@ -2313,6 +2317,48 @@
                 (.add bn-list next-bn)
                 (.add mask-list (bit-or (.-bitmap_hi next-bn) (.-bitmap_lo next-bn)))
                 (recur)))))))))
+
+(deftype BitmapIterator [^:mutable ^int current-mask
+                         ^:mutable ^BitmapNode current-bn
+                         ^:mutable ^{:tag "List<int>"} mask-list
+                         ^:mutable ^{:tag "List<BitmapNode>"} bn-list
+                         ^:mutable ^int list-idx]
+  Iterator
+  (^:getter ^MapEntry current [iter]
+   (let [bitmap-hi (.-bitmap_hi current-bn)
+         bitmap-lo (.-bitmap_lo current-bn)
+         kv-mask (bit-and current-mask bitmap-hi bitmap-lo)
+         bit (bit-and kv-mask (- kv-mask))
+         mask' (dec bit)
+         idx (u32x2-bit-count (bit-and mask' bitmap-hi) (bit-and mask' bitmap-lo))
+         arr (.-arr current-bn)]
+     (set! current-mask (bit-xor current-mask bit))
+     (MapEntry. (aget arr idx) (aget arr (inc idx)) -1)))
+  (^bool moveNext [iter]
+   (loop []
+     (let [bitmap-hi (.-bitmap_hi current-bn)
+           bitmap-lo (.-bitmap_lo current-bn)
+           kv-mask (bit-and current-mask bitmap-hi bitmap-lo)]
+       (cond
+         (< 0 kv-mask) true
+         (and (zero? current-mask) (zero? list-idx)) false
+         (zero? current-mask)
+         (do (set! list-idx (dec list-idx))
+             (set! current-mask (aget mask-list list-idx))
+             (set! current-bn (aget bn-list list-idx))
+             (recur))
+         :else
+         (let [bn-mask (bit-and current-mask (bit-xor bitmap-hi bitmap-lo))
+               bit (bit-and bn-mask (- bn-mask))
+               mask (dec bit)
+               idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
+               ^BitmapNode next-bn (aget (.-arr current-bn) idx)]
+           (aset mask-list list-idx (bit-xor current-mask bit))
+           (aset bn-list list-idx current-bn)
+           (set! list-idx (inc list-idx))
+           (set! current-mask (bit-or (.-bitmap_hi next-bn) (.-bitmap_lo next-bn)))
+           (set! current-bn next-bn)
+           (recur)))))))
 
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
   Object
@@ -2408,7 +2454,94 @@
               (identical? v v') node
               :else
               (BitmapNode. cnt bitmap-hi bitmap-lo (doto (aclone arr) (aset (inc idx) v)))))))
+      (throw (Exception. "Collision!!!!"))))
+  (inode_assoc_transient [node shift h k v]
+    (if (< shift 32)
+      (let  [n (bit-and (u32-bit-shift-right h shift) 31)
+             bit (u32-bit-shift-left 1 n)
+             mask (dec bit)
+             idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
+             hi (bit-and bitmap-hi bit)
+             lo (bit-and bitmap-lo bit)]
+        (cond
+          (zero? (bit-or hi lo)) ; nothing
+          (let [idx' (inc idx)]
+            (loop [i 63 j 61]
+              (when (< idx' i)
+                (aset arr i (aget arr j))
+                (recur (dec i) (dec j))))
+            (aset arr idx k)
+            (aset arr idx' v)
+            (set! cnt (inc cnt))
+            (set! bitmap-hi (bit-or bitmap-hi bit))
+            (set! bitmap-lo (bit-or bitmap-lo bit)))
+          (zero? (bit-and hi lo)) ; node
+          (let [^BitmapNode child (aget arr idx)
+                ^BitmapNode child (if (zero? hi)
+                                    ; if node is shared with a Persistent node
+                                    (let [new-child-arr (.filled List 64 ^dynamic (do nil))
+                                          child-arr (.-arr child)]
+                                      (set! bitmap-hi (bit-xor bit bitmap-hi))
+                                      (set! bitmap-lo (bit-xor bit bitmap-lo))
+                                      (dotimes [i (alength child-arr)]
+                                        (aset new-child-arr i (aget child-arr i)))
+                                      (let [child-node
+                                            (BitmapNode. (.-cnt child)
+                                              (.-bitmap_hi child)
+                                              (.-bitmap_lo child)
+                                              new-child-arr)]
+                                        (aset arr idx child-node)))
+                                    child)
+                ; we store cnt from child as mutability kicks in
+                old-cnt-child (.-cnt child)]
+            (.inode_assoc_transient child (+ shift 5) h k v)
+            (set! cnt (+ cnt (- (.-cnt child) old-cnt-child))))
+          :else ; kv
+          (let [k' (aget arr idx)
+                v' (aget arr (inc idx))]
+            (cond
+              ;; TODO not=u
+              (not (== k' k))
+              (let [size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
+                    shift' (+ 5 ^int shift)
+                    n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
+                    bit' (u32-bit-shift-left 1 n')
+                    new-node (-> (BitmapNode. 1 bit' bit' (doto (.filled List 64 ^dynamic (do nil)) (aset 0 k') (aset 1 v')))
+                               (.inode_assoc_transient shift' h k v))]
+                (aset arr idx new-node)
+                (loop [i (inc idx) j (+ 2 idx)]
+                  (when (< j 64)
+                    (aset arr i (aget arr j))
+                    (recur (inc i) (inc j))))
+                (set! cnt (inc cnt))
+                (set! bitmap-lo (bit-xor bitmap-lo lo)))
+              (identical? v v') node
+              :else
+              (aset arr (inc idx) v))))
+        node)
       (throw (Exception. "Collision!!!!")))))
+
+;; decl
+(deftype PersistentHashMap [])
+
+(deftype TransientHashMap [^:mutable ^bool editable ^:mutable ^BitmapNode root]
+  ITransientCollection
+  (-conj! [tcoll o])
+  (-persistent! [tcoll]
+    (when-not editable
+      (throw (ArgumentError. "persistent! called twice")))
+    (set! editable false)
+    (let [bitmap-hi (.-bitmap_hi root)
+          bitmap-lo (.-bitmap_lo root)]
+      (set! (.-bitmap_hi root) bitmap-lo)
+      (set! (.-bitmap_lo root) bitmap-hi)
+      (PersistentHashMap. nil root -1)))
+  ITransientAssociative
+  (-assoc! [tcoll k v]
+    (when-not editable
+      (throw (ArgumentError. "assoc! after persistent!")))
+    (set! root (.inode_assoc_transient root 0 (hash k) k v))
+    tcoll))
 
 (deftype PersistentHashMap [meta ^BitmapNode root ^:mutable ^int __hash]
   IAssociative
@@ -2445,7 +2578,11 @@
   (-hash [coll] (caching-hash coll hash-unordered-coll __hash))
   ISeqable
   (-seq [coll]
-    (iterator-seq (BitmapIterator. #dart [(bit-or (.-bitmap_hi root) (.-bitmap_lo root))] #dart [root])))
+    (let [current-mask (bit-or (.-bitmap_hi root) (.-bitmap_lo root))
+          current-bn root
+          ^{:tag "List<int>"} mask-list (.filled List 8 current-mask)
+          ^{:tag "List<BitmapNode>"} bn-list (.filled List 8 current-bn)]
+      (iterator-seq (BitmapIterator. current-mask current-bn mask-list bn-list 0))))
   ICounted
   (-count [coll] (.-cnt root))
   ILookup
@@ -2502,9 +2639,13 @@
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
-  #_#_IEditableCollection
+  IEditableCollection
   (-as-transient [coll]
-    (TransientHashMap. (js-obj) root cnt has-nil? nil-val)))
+    (let [new-arr (.filled List 64 ^dynamic (do nil))
+          arr (.-arr root)]
+      (dotimes [i (alength arr)]
+        (aset new-arr i (aget arr i)))
+      (TransientHashMap. true (BitmapNode. (.-cnt root) (.-bitmap_hi root) (.-bitmap_lo root) new-arr)))))
 
 (defn ^List to-array
   [coll]
@@ -3345,16 +3486,15 @@
     (dart:core/print "ms"))
 
   (dart:core/print "PersistentHashMap")
-  (let [node (BitmapNode. 0 0 0 (.empty List))
+  #_(let [node (BitmapNode. 0 0 0 (.empty List))
         h (PersistentHashMap. nil node -1)
-        h1 (reduce (fn [acc item] (-assoc acc item item)) h (.generate List 100000 #(+ % 0)))
+        li (.generate List 100000 #(+ % 0))
+        h1 (reduce (fn [acc item] (-assoc acc item item)) h li)
         h' (-seq h1)]
 
-    (dart:core/print (ffirst (-next h')))
-    (dart:core/print (ffirst (-next h')))
-    (dart:core/print (-seq h))
+    (quick-bench (count h'))
 
-    (let [ooo (-kv-reduce h1 (fn [acc k v] (-conj acc (-conj (-conj empty-persistent-vector k) v))) empty-persistent-vector)]
+    #_(let [ooo (-kv-reduce h1 (fn [acc k v] (-conj acc (-conj (-conj empty-persistent-vector k) v))) empty-persistent-vector)]
       (dart:core/print (count ooo))
       (dart:core/print (count h1))
       (dart:core/print (-count h')))
@@ -3370,6 +3510,53 @@
         (recur (-next h'))))
     #_(dart:core/print (-peek (last (-seq h'))))
     #_(dart:core/print (-lookup (-assoc (-assoc h 3342 1) 2 2) 2)))
+
+  (let [node (BitmapNode. 0 0 0 (.empty List))
+        h (PersistentHashMap. nil node -1)
+        li (.generate List 100 #(+ % 0))
+        h1 (reduce (fn [acc item] (-assoc acc item item)) h li)
+        tran (-as-transient h #_h1)]
+    #_  (dotimes [i 1000]
+          (-assoc! tran i i))
+    (let [hm (loop [tv tran, idx 100000]
+               (if (pos? idx)
+                 (recur (-assoc! tv idx idx) (dec idx))
+                 (-persistent! tv)))]
+
+      (dart:core/print (-count hm))
+      (dart:core/print (-lookup hm 9999))
+      (loop [hm hm, idx 10000]
+        (if (pos? idx)
+          (recur (-assoc hm idx 0) (dec idx))
+          (dart:core/print (-count hm))))
+      )
+
+    #_(quick-bench
+      (loop [phm h, idx 100000]
+        (if (pos? idx)
+          (recur (-assoc phm idx idx) (dec idx))
+          phm)))
+
+
+
+    #_(let [ooo (-kv-reduce h1 (fn [acc k v] (-conj acc (-conj (-conj empty-persistent-vector k) v))) empty-persistent-vector)]
+        (dart:core/print (count ooo))
+        (dart:core/print (count h1))
+        (dart:core/print (-count h')))
+
+    #_(dart:core/print (-lookup h' 500 222))
+    #_#_#_(dart:core/print (-lookup (-dissoc h' 500) 500 222))
+    (dart:core/print (-peek (-first (-seq h'))))
+    (dart:core/print (-peek (-first (-next (-seq h')))))
+    #_(dart:core/print (count (-seq h')))
+    #_(loop [h' (-seq h')]
+        (when h'
+          (dart:core/print (-peek (-first h')))
+          (recur (-next h'))))
+    #_(dart:core/print (-peek (last (-seq h'))))
+    #_(dart:core/print (-lookup (-assoc (-assoc h 3342 1) 2 2) 2)))
+
+
 
 
   )
