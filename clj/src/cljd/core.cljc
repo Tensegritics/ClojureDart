@@ -2485,10 +2485,12 @@
                                       (set! bitmap-lo (bit-xor bit bitmap-lo))
                                       (dotimes [i (alength child-arr)]
                                         (aset new-child-arr i (aget child-arr i)))
-                                      (let [child-node
+                                      (let [child-bitmap-hi (.-bitmap_hi child)
+                                            child-bitmap-lo (.-bitmap_lo child)
+                                            child-node
                                             (BitmapNode. (.-cnt child)
-                                              (.-bitmap_hi child)
-                                              (.-bitmap_lo child)
+                                              (bit-and child-bitmap-hi child-bitmap-lo)
+                                              (bit-or child-bitmap-hi child-bitmap-lo)
                                               new-child-arr)]
                                         (aset arr idx child-node)))
                                     child)
@@ -2513,11 +2515,76 @@
                   (when (< j 64)
                     (aset arr i (aget arr j))
                     (recur (inc i) (inc j))))
+                (aset arr 63 nil)
                 (set! cnt (inc cnt))
                 (set! bitmap-lo (bit-xor bitmap-lo lo)))
               (identical? v v') node
               :else
               (aset arr (inc idx) v))))
+        node)
+      (throw (Exception. "Collision!!!!"))))
+  (inode_without_transient [node shift h k]
+    (if (< shift 32)
+      (let [n (bit-and (u32-bit-shift-right h shift) 31)
+            bit (u32-bit-shift-left 1 n)
+            mask (dec bit)
+            idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
+            hi (bit-and bitmap-hi bit)
+            lo (bit-and bitmap-lo bit)]
+        (cond
+          ; nothing
+          (zero? (bit-or hi lo)) node
+          ; a node
+          (zero? (bit-and hi lo))
+          (let [^BitmapNode child (aget arr idx)
+                ^BitmapNode child (if (zero? hi)
+                                    ; if node is shared with a Persistent node
+                                    (let [new-child-arr (.filled List 64 ^dynamic (do nil))
+                                          child-arr (.-arr child)]
+                                      (set! bitmap-hi (bit-xor bit bitmap-hi))
+                                      (set! bitmap-lo (bit-xor bit bitmap-lo))
+                                      (dotimes [i (alength child-arr)]
+                                        (aset new-child-arr i (aget child-arr i)))
+                                      (let [child-node
+                                            (BitmapNode. (.-cnt child)
+                                              (.-bitmap_hi child)
+                                              (.-bitmap_lo child)
+                                              new-child-arr)]
+                                        (aset arr idx child-node)))
+                                    child)
+                ^int old-child-cnt (.-cnt child)
+                ^BitmapNode new-child (.inode_without_transient child (+ shift 5) h k)
+                ^int new-child-cnt (.-cnt new-child)]
+            (cond
+              (== new-child-cnt old-child-cnt) node
+              (and (== 1 new-child-cnt) (zero? (bit-xor (.-bitmap_hi new-child) (.-bitmap_lo new-child))))
+              (let [k (aget (.-arr new-child) 0)
+                    v (aget (.-arr new-child) 1)]
+                (loop [i (+ idx 2) j (inc idx)]
+                  (when (< i 64)
+                    (aset arr i (aget arr j))
+                    (recur (inc i) (inc j))))
+                (aset arr idx k)
+                (aset arr idx v)
+                (aset cnt (dec cnt))
+                (aset bitmap-hi (bit-or bitmap-hi bit))
+                (aset bitmap-lo (bit-or bitmap-lo bit)))
+              :else
+              (do (aset cnt (dec cnt))
+                  (aset arr idx new-child))))
+          ; a kv pair but not the right k
+          (not (== k (aget arr idx))) node
+          ; the right kv pair
+          :else
+          (do (loop [i idx j (+ 2 idx)]
+                (when (< j 64)
+                  (aset arr i (aget arr j))
+                  (recur (inc i) (inc j))))
+              (aset arr i 62 nil)
+              (aset arr i 63 nil)
+              (aset cnt (dec cnt))
+              (aset bitmap-hi (bit-xor bitmap-hi bit))
+              (aset bitmap-lo (bit-xor bitmap-lo bit))))
         node)
       (throw (Exception. "Collision!!!!")))))
 
