@@ -18,6 +18,12 @@
    Defaults to \"cljd-out/\"."
   "cljd-out/")
 
+(def ^:dynamic *source-info* {})
+(defn source-info []
+  (let [{:keys [line column]} *source-info*]
+    (when line
+      (str " at line: " line ", column: " column))))
+
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
 
@@ -1172,7 +1178,7 @@
             dart-name
             (symbol (str (ensure-import the-ns) "." dart-name))))
       :dart (vary-meta v assoc :dart/fn-type :native)
-      (throw (Exception. (str "Unknown symbol: " x " at line " (some-> x meta #_:line)))))))
+      (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -1325,7 +1331,11 @@
                        defprotocol* emit-defprotocol*
                        extend-type-protocol* emit-extend-type-protocol*
                        emit-fn-call)]
-            (emit x env))
+            (binding [*source-info* (let [{:keys [line column file]} (meta x)]
+                                      (if line
+                                        {:line line :column column :file file}
+                                        *source-info*))]
+              (emit x env)))
           (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
           (coll? x) (emit-coll x env)
           :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
