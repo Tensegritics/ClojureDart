@@ -629,7 +629,7 @@
       (->
         (if-some [[item] (seq x)]
           (let [lsym `fl#]
-            `(let [~lsym (. List filled ~(count x) ~(vary-meta (list 'do item) assoc :tag item-tag))]
+            `(let [~lsym (. ~list-tag filled ~(count x) ~item)]
                ~@(map-indexed (fn [i x] `(. ~lsym "[]=" ~(inc i) ~x)) (next x))
                ~lsym))
           `(.empty ~list-tag))
@@ -661,9 +661,11 @@
           [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
           {:dart/keys [type nat-type]} (infer-type dart-obj)
           type (some-> type non-nullable)
-          dart-obj (if (not= type nat-type)
+          dart-obj (cond
+                     (:type-params (meta obj)) (symbol (emit-type obj)) ; this symbol is not readable
+                     (not= type nat-type)
                      (list 'dart/as dart-obj type)
-                     dart-obj)
+                     :else dart-obj)
           ;; TODO SELFHOST with mirrors one can check membership
           #_#_dart-obj (if (not= type nat-type)
                      (list 'dart/as dart-obj type)
