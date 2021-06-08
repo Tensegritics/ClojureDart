@@ -18,6 +18,12 @@
    Defaults to \"cljd-out/\"."
   "cljd-out/")
 
+(def ^:dynamic *source-info* {})
+(defn source-info []
+  (let [{:keys [line column]} *source-info*]
+    (when line
+      (str " at line: " line ", column: " column))))
+
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
 
@@ -135,7 +141,7 @@
     (string? tag)
     (let [nses @nses
           {:keys [mappings] :as current-ns} (nses (:current-ns nses))]
-      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+?)[?]?( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
+      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+)[?]?( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
         (fn [[_ alias type identifier]]
           (cond->
               (if (and (nil? alias) (#{"Function" "void"} type))
@@ -145,8 +151,8 @@
     (= 'some tag) "dc.dynamic"
     :else
     (let [tag! (non-nullable tag)
-          [t info] (or (resolve-symbol tag! {}) (when *bootstrap* (resolve-symbol (symbol (name tag!)) {})))]
-      (cond->
+          [t info] (or (resolve-symbol tag! {}) (when *bootstrap* (resolve-symbol (symbol (name tag!)) {})))
+          typename
           (case t
             :dart (name info)
             :def (case (:type info)
@@ -154,6 +160,9 @@
                    :class (name (:dart/name info))
                    (throw (Exception. (str "Not a type: " tag!))))
             (throw (Exception. (str "Can't resolve type: " tag!))))
+          type-params (-> tag meta (get :type-params))]
+      (cond-> typename
+        (seq type-params) (str "<" (str/join ", " (map emit-type type-params)) ">")
         (not= tag tag!) (str "?")))))
 
 (defn dart-type-truthiness [type]
@@ -612,14 +621,27 @@
      (cond->> fn-call (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-dart-literal [x env]
-  (if (vector? x)
+  (cond
+    (not (vector? x)) (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))
+    (:fixed (meta x))
+    (let [item-tag (:tag (meta x) 'dart:core/dynamic)
+          list-tag (vary-meta 'dart:core/List assoc :type-params [item-tag])]
+      (->
+        (if-some [[item] (seq x)]
+          (let [lsym `fl#]
+            `(let [~lsym (. ~list-tag filled ~(count x) ~item)]
+               ~@(map-indexed (fn [i x] `(. ~lsym "[]=" ~(inc i) ~x)) (next x))
+               ~lsym))
+          `(.empty ~list-tag))
+        (vary-meta assoc :tag list-tag)
+        (emit env)))
+    :else
     (let [[bindings items]
           (reduce (fn [[bindings fn-call] x]
                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item")]
                       [(concat bindings' bindings) (cons x' fn-call)]))
-                  [nil ()] (rseq x))]
-     (cond->> (vec items) (seq bindings) (list 'dart/let bindings)))
-    (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))))
+            [nil ()] (rseq x))]
+     (cond->> (vec items) (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class)
@@ -639,9 +661,11 @@
           [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
           {:dart/keys [type nat-type]} (infer-type dart-obj)
           type (some-> type non-nullable)
-          dart-obj (if (not= type nat-type)
+          dart-obj (cond
+                     (:type-params (meta obj)) (symbol (emit-type obj)) ; this symbol is not readable
+                     (not= type nat-type)
                      (list 'dart/as dart-obj type)
-                     dart-obj)
+                     :else dart-obj)
           ;; TODO SELFHOST with mirrors one can check membership
           #_#_dart-obj (if (not= type nat-type)
                      (list 'dart/as dart-obj type)
@@ -1001,7 +1025,7 @@
         dart-methods (map #(emit-method % env) methods)]
     {:extends (emit base env)
      :implements (map #(emit % env) ifaces)
-     :with mixins
+     :with (map #(emit % env) mixins)
      :super-ctor
      {:method ctor-meth ; nil for new
       :args ctor-args}
@@ -1065,8 +1089,12 @@
                       (or (:dart/name (meta class-name)) (munge class-name))
                       (select-keys (meta class-name) [:abstract])) ; TODO shouldn't it be dne by munge?
         env (into {} (for [f fields
-                           :let [{:keys [mutable]} (meta f)]]
-                       [f (vary-meta (munge f) assoc :dart/mutable mutable)]))
+                           :let [{:keys [mutable]} (meta f)
+                                 {:keys [dart/type] :as m} (dart-meta f)
+                                 m (cond-> m
+                                     mutable (assoc :dart/mutable true)
+                                     type (assoc :dart/nat-type type))]]
+                       [f (vary-meta (munge f) merge m)]))
         _ (swap! nses do-def class-name {:dart/name mclass-name :type :class})
         class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
@@ -1152,7 +1180,7 @@
             dart-name
             (symbol (str (ensure-import the-ns) "." dart-name))))
       :dart (vary-meta v assoc :dart/fn-type :native)
-      (throw (Exception. (str "Unknown symbol: " x))))))
+      (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -1249,7 +1277,7 @@
                        exprs (if st exprs body)
                        env (cond-> (assoc env e (dart-local e))
                              st (assoc st (dart-local st)))]]
-             [(emit-type classname true) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
+             [(emit-type classname) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
            (some-> finally-body (conj 'do) (emit-no-recur env)))))
 
 (defn emit-throw [[_ expr] env]
@@ -1305,7 +1333,11 @@
                        defprotocol* emit-defprotocol*
                        extend-type-protocol* emit-extend-type-protocol*
                        emit-fn-call)]
-            (emit x env))
+            (binding [*source-info* (let [{:keys [line column file]} (meta x)]
+                                      (if line
+                                        {:line line :column column :file file}
+                                        *source-info*))]
+              (emit x env)))
           (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
           (coll? x) (emit-coll x env)
           :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
@@ -1557,6 +1589,7 @@
              nil))
          dart/is {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
          dart/as (let [[_ _ type] x] {:dart/type type
+                                      :dart/nat-type type
                                       :dart/truth (dart-type-truthiness type)})
          (when-some [{:keys [dart/ret-type dart/ret-truth]} (infer-type (first x))]
            {:dart/type ret-type
@@ -1834,9 +1867,21 @@
           :when code]
     (println code)))
 
+(defn dart-type-reader [x]
+  (if (symbol? x)
+    x
+    (let [[type & params] x]
+      (cond-> type
+        params
+        (vary-meta assoc :type-params (map dart-type-reader params))))))
+
+(def dart-data-readers
+  {'dart #(tagged-literal 'dart %)
+   'type dart-type-reader})
+
 (defn load-input [in]
   #?(:clj
-     (binding [*data-readers* (assoc *data-readers* 'dart #(tagged-literal 'dart %))
+     (binding [*data-readers* (into *data-readers* dart-data-readers)
                *reader-resolver*
                (reify clojure.lang.LispReader$Resolver
                  (currentNS [_] (:current-ns @nses))
@@ -1858,7 +1903,7 @@
 
 (defn bootstrap-load-input [in]
   #?(:clj
-     (binding [*data-readers* (assoc *data-readers* 'dart #(tagged-literal 'dart %))
+     (binding [*data-readers* (into *data-readers* dart-data-readers)
                *reader-resolver*
                (reify clojure.lang.LispReader$Resolver
                  (currentNS [_] (:current-ns @nses))
