@@ -1172,7 +1172,7 @@
             dart-name
             (symbol (str (ensure-import the-ns) "." dart-name))))
       :dart (vary-meta v assoc :dart/fn-type :native)
-      (throw (Exception. (str "Unknown symbol: " x))))))
+      (throw (Exception. (str "Unknown symbol: " x " at line " (some-> x meta #_:line)))))))
 
 (defn emit-quoted [[_ x] env]
   (cond

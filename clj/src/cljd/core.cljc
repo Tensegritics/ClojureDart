@@ -846,6 +846,11 @@
   (-persistent! [tcoll]
     "Creates a persistent data structure from tcoll and returns it."))
 
+(defprotocol ITransientMap
+  "Protocol for adding mapping functionality to transient collections."
+  (-dissoc! [tcoll key]
+   "Returns a new transient collection of tcoll without the mapping for key."))
+
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:bootstrap ^:private nary-inline
   ([op] (nary-inline nil nil op))
@@ -1854,6 +1859,9 @@
   (-iterator [this]
     (ranged-iterator this 0 cnt)))
 
+(defn vector? [x]
+  (satisfies? IVector x))
+
 (def empty-persistent-vector (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
 
 ;; chunks
@@ -2275,6 +2283,10 @@
   (-invoke [node k not-found]
     (-nth node k not-found)))
 
+(defn map-entry?
+  [x]
+  (satisfies? IMapEntry x))
+
 ;; decl
 (deftype BitmapNode [])
 
@@ -2362,6 +2374,29 @@
 
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
   Object
+  (inode_lookup [node k not-found]
+    ;; TODO collisions
+    (let [h (hash k)]
+      (loop [^BitmapNode node node
+             ^int shift 0]
+        (let [bitmap-hi (.-bitmap_hi node)
+              bitmap-lo (.-bitmap_lo node)
+              n (bit-and (u32-bit-shift-right h shift) 31)
+              bit (u32-bit-shift-left 1 n)
+              mask (dec bit)
+              idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
+              hi (bit-and bitmap-hi bit)
+              lo (bit-and bitmap-lo bit)]
+          (cond
+            (zero? (bit-or hi lo)) ; nothing
+            not-found
+            (zero? (bit-and hi lo))
+            (recur (aget (.-arr node) idx) (+ 5 shift))
+            :else ; kv
+            (let [arr (.-arr node)
+                  k' (aget arr idx)]
+              ;; TODO use = instead of ==
+              (if (== k' k) (aget arr (inc idx)) not-found)))))))
   (inode_without [node shift h k]
     (if (< shift 32)
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
@@ -2545,10 +2580,12 @@
                                       (set! bitmap-lo (bit-xor bit bitmap-lo))
                                       (dotimes [i (alength child-arr)]
                                         (aset new-child-arr i (aget child-arr i)))
-                                      (let [child-node
+                                      (let [child-bitmap-hi (.-bitmap_hi child)
+                                            child-bitmap-lo (.-bitmap_lo child)
+                                            child-node
                                             (BitmapNode. (.-cnt child)
-                                              (.-bitmap_hi child)
-                                              (.-bitmap_lo child)
+                                              (bit-and child-bitmap-hi child-bitmap-lo)
+                                              (bit-or child-bitmap-hi child-bitmap-lo)
                                               new-child-arr)]
                                         (aset arr idx child-node)))
                                     child)
@@ -2566,11 +2603,11 @@
                     (recur (inc i) (inc j))))
                 (aset arr idx k)
                 (aset arr idx v)
-                (aset cnt (dec cnt))
-                (aset bitmap-hi (bit-or bitmap-hi bit))
-                (aset bitmap-lo (bit-or bitmap-lo bit)))
+                (set! cnt (dec cnt))
+                (set! bitmap-hi (bit-or bitmap-hi bit))
+                (set! bitmap-lo (bit-or bitmap-lo bit)))
               :else
-              (do (aset cnt (dec cnt))
+              (do (set! cnt (dec cnt))
                   (aset arr idx new-child))))
           ; a kv pair but not the right k
           (not (== k (aget arr idx))) node
@@ -2580,11 +2617,11 @@
                 (when (< j 64)
                   (aset arr i (aget arr j))
                   (recur (inc i) (inc j))))
-              (aset arr i 62 nil)
-              (aset arr i 63 nil)
-              (aset cnt (dec cnt))
-              (aset bitmap-hi (bit-xor bitmap-hi bit))
-              (aset bitmap-lo (bit-xor bitmap-lo bit))))
+              (aset arr 62 nil)
+              (aset arr 63 nil)
+              (set! cnt (dec cnt))
+              (set! bitmap-hi (bit-xor bitmap-hi bit))
+              (set! bitmap-lo (bit-xor bitmap-lo bit))))
         node)
       (throw (Exception. "Collision!!!!")))))
 
@@ -2593,22 +2630,48 @@
 
 (deftype TransientHashMap [^:mutable ^bool editable ^:mutable ^BitmapNode root]
   ITransientCollection
-  (-conj! [tcoll o])
+  (-conj! [tcoll o]
+    (when-not editable
+      (throw (ArgumentError. "conj! after persistent!")))
+    (cond
+      (map-entry? o)
+      (-assoc tcoll (-key o) (-val o))
+      (vector? o)
+      (-assoc tcoll (-nth o 0) (-nth o 1))
+      :else
+      (reduce -conj! tcoll o)))
   (-persistent! [tcoll]
     (when-not editable
       (throw (ArgumentError. "persistent! called twice")))
     (set! editable false)
-    (let [bitmap-hi (.-bitmap_hi root)
-          bitmap-lo (.-bitmap_lo root)]
-      (set! (.-bitmap_hi root) bitmap-lo)
-      (set! (.-bitmap_lo root) bitmap-hi)
-      (PersistentHashMap. nil root -1)))
+    (PersistentHashMap. nil root -1))
   ITransientAssociative
   (-assoc! [tcoll k v]
     (when-not editable
       (throw (ArgumentError. "assoc! after persistent!")))
     (set! root (.inode_assoc_transient root 0 (hash k) k v))
-    tcoll))
+    tcoll)
+  ITransientMap
+  (-dissoc! [tcoll k]
+    (when-not editable
+      (throw (ArgumentError. "dissoc! after persistent!")))
+    (set! root (.inode_without_transient root 0 (hash k) k))
+    tcoll)
+  ICounted
+  (-count [coll]
+    (when-not editable
+      (throw (ArgumentError. "count after persistent!")))
+    (.-cnt root))
+  ILookup
+  (-lookup [tcoll k]
+    (-lookup tcoll k nil))
+  (-lookup [tcoll k not-found]
+    (.inode_lookup root k not-found))
+  IFn
+  (-invoke [tcoll k]
+    (-lookup tcoll k))
+  (-invoke [tcoll k not-found]
+    (-lookup tcoll k not-found)))
 
 (deftype PersistentHashMap [meta ^BitmapNode root ^:mutable ^int __hash]
   IAssociative
@@ -2656,28 +2719,7 @@
   (-lookup [coll k]
     (-lookup coll k nil))
   (-lookup [coll k not-found]
-    ;; TODO collisions
-    (let [h (hash k)]
-      (loop [^BitmapNode node root
-             ^int shift 0]
-        (let [bitmap-hi (.-bitmap_hi node)
-              bitmap-lo (.-bitmap_lo node)
-              n (bit-and (u32-bit-shift-right h shift) 31)
-              bit (u32-bit-shift-left 1 n)
-              mask (dec bit)
-              idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
-              hi (bit-and bitmap-hi bit)
-              lo (bit-and bitmap-lo bit)]
-          (cond
-            (zero? (bit-or hi lo)) ; nothing
-            not-found
-            (zero? (bit-and hi lo))
-            (recur (aget (.-arr node) idx) (+ 5 shift))
-            :else ; kv
-            (let [arr (.-arr node)
-                  k' (aget arr idx)]
-              ;; TODO use = instead of ==
-              (if (== k' k) (aget arr (inc idx)) not-found)))))))
+    (.inode_lookup root k not-found))
   IFind
   (-find [coll k]
     (when-some [v (-lookup coll k nil)]
@@ -2709,10 +2751,12 @@
   IEditableCollection
   (-as-transient [coll]
     (let [new-arr (.filled List 64 ^dynamic (do nil))
-          arr (.-arr root)]
+          arr (.-arr root)
+          bitmap-hi (.-bitmap_hi root)
+          bitmap-lo (.-bitmap_lo root)]
       (dotimes [i (alength arr)]
         (aset new-arr i (aget arr i)))
-      (TransientHashMap. true (BitmapNode. (.-cnt root) (.-bitmap_hi root) (.-bitmap_lo root) new-arr)))))
+      (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) new-arr)))))
 
 (defn ^List to-array
   [coll]
@@ -3585,17 +3629,17 @@
         tran (-as-transient h #_h1)]
     #_  (dotimes [i 1000]
           (-assoc! tran i i))
-    (let [hm (loop [tv tran, idx 100000]
+    (let [tv (loop [tv tran, idx 100000]
                (if (pos? idx)
                  (recur (-assoc! tv idx idx) (dec idx))
-                 (-persistent! tv)))]
-
-      (dart:core/print (-count hm))
-      (dart:core/print (-lookup hm 9999))
-      (loop [hm hm, idx 10000]
-        (if (pos? idx)
-          (recur (-assoc hm idx 0) (dec idx))
-          (dart:core/print (-count hm))))
+                 tv))]
+      (-> tv
+        (-dissoc! 1000)
+        (-dissoc! 999)
+        (-dissoc! 999))
+      (dart:core/print (-count tv))
+      (dart:core/print (tv 999))
+      (dart:core/print (-count (-persistent! tv)))
       )
 
     #_(quick-bench
