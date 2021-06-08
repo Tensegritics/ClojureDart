@@ -1025,7 +1025,7 @@
         dart-methods (map #(emit-method % env) methods)]
     {:extends (emit base env)
      :implements (map #(emit % env) ifaces)
-     :with mixins
+     :with (map #(emit % env) mixins)
      :super-ctor
      {:method ctor-meth ; nil for new
       :args ctor-args}

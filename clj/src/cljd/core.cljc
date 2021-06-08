@@ -1,5 +1,6 @@
 (ns cljd.core
-  (:require ["dart:math" :as math]))
+  (:require ["dart:math" :as math]
+            ["dart:collection" :as dart-coll]))
 
 (definterface IProtocol
   (extensions [x])
@@ -2293,6 +2294,7 @@
 ;; decl
 (deftype BitmapNode [])
 
+; cgrand's
 (deftype BitmapIterator [^:mutable ^BitmapNode node ^:mutable ^int idx ^:mutable ^int mask ^:mutable ^int kvs
                          ^:mutable ^int depth
                          ^#type (List int) masks ^#type (List BitmapNode) nodes]
@@ -2332,6 +2334,7 @@
      :else
      false)))
 
+; Baptiste's
 #_(deftype BitmapIterator [^:mutable ^int current-mask
                          ^:mutable ^BitmapNode current-bn
                          ^:mutable ^{:tag "List<int>"} mask-list
@@ -2680,6 +2683,18 @@
     (-lookup tcoll k not-found)))
 
 (deftype PersistentHashMap [meta ^BitmapNode root ^:mutable ^int __hash]
+  ^:mixin dart-coll/IterableMixin
+  (^:getter ^Iterator iterator [coll]
+   ; Baptiste's
+   #_(let [current-mask (bit-or (.-bitmap_hi root) (.-bitmap_lo root))
+           current-bn root
+           ^{:tag "List<int>"} mask-list (.filled List 8 current-mask)
+           ^{:tag "List<BitmapNode>"} bn-list (.filled List 8 current-bn)]
+       (BitmapIterator. current-mask current-bn mask-list bn-list 0))
+   ; cgrand's
+   (BitmapIterator. root 0 0 0 1
+        (.filled #type(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (.filled #type(List BitmapNode) 7 root)))
   IAssociative
   (-assoc [coll k v]
     (let [^BitmapNode new-root (.inode_assoc root 0 (hash k) k v)]
@@ -2713,11 +2728,7 @@
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-unordered-coll __hash))
   ISeqable
-  (-seq [coll]
-    (iterator-seq
-      (BitmapIterator. root 0 0 0 1
-        (.filled #type(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (.filled #type(List BitmapNode) 7 root))))
+  (-seq [coll] (iterator-seq (.-iterator coll)))
   ICounted
   (-count [coll] (.-cnt root))
   ILookup
@@ -3646,7 +3657,20 @@
       (dart:core/print (tv 999))
       (dart:core/print (-count (-persistent! tv)))
 
-      (dart:core/print (-count hm))
+      (let [node (BitmapNode. 0 0 0 (.empty List))
+            h (PersistentHashMap. nil node -1)
+            h (reduce
+                (fn [m i] (-assoc m i (- i)))
+                h
+                (.generate List 100000 #(+ % 0)))]
+        (dart:core/print (count (seq h)))
+        (quick-bench
+          (let [it (.-iterator h)]
+            (while (.moveNext it))))
+        (quick-bench
+          (count (seq h))))
+
+      #_#_#_#_(dart:core/print (-count hm))
       (dart:core/print (-count (seq hm)))
       (dart:core/print (-lookup hm 9999))
       (loop [hm hm, idx 10000]
