@@ -2664,8 +2664,12 @@
     (.-cnt root))
   ILookup
   (-lookup [tcoll k]
+    (when-not editable
+      (throw (ArgumentError. "lookup after persistent!")))
     (-lookup tcoll k nil))
   (-lookup [tcoll k not-found]
+    (when-not editable
+      (throw (ArgumentError. "lookup after persistent!")))
     (.inode_lookup root k not-found))
   IFn
   (-invoke [tcoll k]
