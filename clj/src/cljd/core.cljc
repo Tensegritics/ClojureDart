@@ -444,14 +444,15 @@
 
 (defmacro deftype [& args]
   (let [[class-name fields & args] args
-        [opts specs] (roll-leading-opts args)]
+        [opts specs] (roll-leading-opts args)
+        class-name-only (if (seq? class-name) (first class-name) class-name)]
     `(do
        (~'deftype* ~class-name ~fields ~opts ~@specs)
        ~(when-not (:type-only opts)
           `(defn
-             ~(symbol (str "->" class-name))
+             ~(symbol (str "->" class-name-only))
              [~@fields]
-             (new ~class-name ~@fields))))))
+             (new ~(vary-meta class-name-only dissoc :type-params) ~@fields))))))
 
 (defmacro definterface [iface & meths]
   `(deftype ~(vary-meta iface assoc :abstract true) []
@@ -2068,7 +2069,7 @@
          ret node]
     (if (zero? ll)
       ret
-      (let [arr (.filled #type(List dynamic) 32 nil)]
+      (let [arr (.filled #/(List dynamic) 32 nil)]
         (aset arr 0 ret)
         (recur (- ll 5) (VectorNode. edit arr))))))
 
@@ -2108,11 +2109,11 @@
       (if (or (pos? tail-len) (zero? cnt))
         (aset tail tail-len o)
         (let [tail-node (VectorNode. edit tail)
-              new-tail (.filled #type(List dynamic) 32 nil)]
+              new-tail (.filled #/(List dynamic) 32 nil)]
           (aset new-tail 0 o)
           (set! tail new-tail)
           (if (< (u32-bit-shift-left 1 shift) (u32-bit-shift-right cnt 5))
-            (let [new-root-array (.filled #type(List dynamic) 32 nil)
+            (let [new-root-array (.filled #/(List dynamic) 32 nil)
                   new-shift (+ shift 5)]
               (aset new-root-array 0 root)
               (aset new-root-array 1 (tv-new-path edit shift tail-node))
@@ -2214,10 +2215,13 @@
 
 ;;; Mapentry
 
-(deftype MapEntry [key val ^:mutable __hash]
+(deftype PersistentMapEntry [_k _v ^:mutable __hash]
+  MapEntry
+  (^:getter key [_] _k)
+  (^:getter value [_] _v)
   IMapEntry
-  (-key [node] key)
-  (-val [node] val)
+  (-key [node] _k)
+  (-val [node] _v)
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
   #_#_IEquiv
@@ -2227,28 +2231,28 @@
   IStack
   (-peek [node] val)
   (-pop [node]
-    (PersistentVector. meta 1 5 (VectorNode. nil (.empty List)) #dart ^:fixed [key] -1))
+    (PersistentVector. meta 1 5 (VectorNode. nil (.empty List)) #dart ^:fixed [_k] -1))
   ICollection
   (-conj [node o]
     (PersistentVector. meta 3 5 (VectorNode. nil (.empty List))
-      #dart ^:fixed [key val o]  -1))
+      #dart ^:fixed [_k _v o]  -1))
   #_#_IEmptyableCollection
   (-empty [node] nil)
   ISequential
   ISeqable
-  (-seq [node] (-seq #dart ^:fixed [key val]))
+  (-seq [node] (-seq #dart ^:fixed [_k _v]))
   #_#_IReversible
   (-rseq [node] (IndexedSeq. 'js [val key] 0 nil))
   ICounted
   (-count [node] 2)
   IIndexed
   (-nth [node n]
-    (cond (== n 0) key
-          (== n 1) val
+    (cond (== n 0) _k
+          (== n 1) _v
           :else    (throw (ArgumentError. "Index out of bounds"))))
   (-nth [node n not-found]
-    (cond (== n 0) key
-          (== n 1) val
+    (cond (== n 0) _k
+          (== n 1) _v
           :else    not-found))
   ILookup
   (-lookup [node k] (-nth node k nil))
@@ -2257,7 +2261,7 @@
   (-assoc [node k v]
     (->
       (PersistentVector. meta 2 5 (VectorNode. nil (.empty List))
-        #dart ^:fixed [key val]  -1)
+        #dart ^:fixed [_k _v]  -1)
       (-assoc k v)))
   (-contains-key? [node k]
     (or (== k 0) (== k 1)))
@@ -2271,7 +2275,7 @@
   (-assoc-n [node n v]
     (->
       (PersistentVector. meta 2 5 (VectorNode. nil (.empty List))
-        #dart ^:fixed [key val]  -1)
+        #dart ^:fixed [_k _v]  -1)
       (-assoc-n n v)))
   IReduce
   (-reduce [node f]
@@ -2295,13 +2299,14 @@
 (deftype BitmapNode [])
 
 ; cgrand's
-(deftype BitmapIterator [^:mutable ^BitmapNode node ^:mutable ^int idx ^:mutable ^int mask ^:mutable ^int kvs
-                         ^:mutable ^int depth
-                         ^#type (List int) masks ^#type (List BitmapNode) nodes]
-  Iterator
-  (^:getter current [iter]
+(deftype (BitmapIterator E) [^:mutable ^BitmapNode node ^:mutable ^int idx ^:mutable ^int mask ^:mutable ^int kvs
+                           ^:mutable ^int depth
+                           ^#/ (List int) masks ^#/ (List BitmapNode) nodes
+                           ^:dart mk-value]
+  #/(Iterator E)
+  (^:getter ^E current [iter]
    (let [arr (.-arr node)]
-     (MapEntry. (aget arr (- idx 2)) (aget arr (dec idx)) -1)))
+     (mk-value (aget arr (- idx 2)) (aget arr (dec idx)))))
   (^bool moveNext [iter]
    (cond
      (not (zero? mask))
@@ -2424,7 +2429,7 @@
               (let [k (aget (.-arr new-child) 0)
                     v (aget (.-arr new-child) 1)
                     size (inc (u32x2-bit-count bitmap-hi bitmap-lo))
-                    new-arr (.filled #type(List dynamic) size v)]
+                    new-arr (.filled #/(List dynamic) size v)]
                 (dotimes [i idx] (aset new-arr i (aget arr i)))
                 (aset new-arr idx k)
                 (loop [i (+ idx 2) j (inc idx)]
@@ -2439,7 +2444,7 @@
           ; the right kv pair
           :else
           (let [size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
-                new-arr (.filled #type (List dynamic) size nil)]
+                new-arr (.filled #/ (List dynamic) size nil)]
             (dotimes [i idx] (aset new-arr i (aget arr i)))
             (loop [i idx j (+ 2 idx)]
               (when (< i size)
@@ -2458,7 +2463,7 @@
         (cond
           (zero? (bit-or hi lo)) ; nothing
           (let [size (+ 2 (u32x2-bit-count bitmap-hi bitmap-lo))
-                new-arr (.filled #type(List dynamic) size v)]
+                new-arr (.filled #/(List dynamic) size v)]
             (dotimes [i idx] (aset new-arr i (aget arr i)))
             (aset new-arr idx k)
             (loop [i (+ 2 idx) j idx]
@@ -2484,7 +2489,7 @@
                     n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
                     bit' (u32-bit-shift-left 1 n')
                     new-node (-> (BitmapNode. 1 bit' bit' (doto (.filled List 2 v') (aset 0 k'))) (.inode_assoc shift' h k v))
-                    new-arr (.filled #type(List dynamic) size new-node)]
+                    new-arr (.filled #/(List dynamic) size new-node)]
                 (dotimes [i idx] (aset new-arr i (aget arr i)))
                 (loop [i (inc idx) j (+ 2 idx)]
                   (when (< i size)
@@ -2519,7 +2524,7 @@
           (let [^BitmapNode child (aget arr idx)
                 ^BitmapNode child (if (zero? hi)
                                     ; if node is shared with a Persistent node
-                                    (let [new-child-arr (.filled #type(List dynamic) 64 nil)
+                                    (let [new-child-arr (.filled #/(List dynamic) 64 nil)
                                           child-arr (.-arr child)]
                                       (set! bitmap-hi (bit-xor bit bitmap-hi))
                                       (set! bitmap-lo (bit-xor bit bitmap-lo))
@@ -2548,7 +2553,7 @@
                     shift' (+ 5 ^int shift)
                     n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
                     bit' (u32-bit-shift-left 1 n')
-                    new-node (-> (BitmapNode. 1 bit' bit' (doto (.filled #type(List dynamic) 64 nil) (aset 0 k') (aset 1 v')))
+                    new-node (-> (BitmapNode. 1 bit' bit' (doto (.filled #/(List dynamic) 64 nil) (aset 0 k') (aset 1 v')))
                                (.inode_assoc_transient shift' h k v))]
                 (aset arr idx new-node)
                 (loop [i (inc idx) j (+ 2 idx)]
@@ -2682,9 +2687,9 @@
   (-invoke [tcoll k not-found]
     (-lookup tcoll k not-found)))
 
-(deftype PersistentHashMap [meta ^BitmapNode root ^:mutable ^int __hash]
-  ^:mixin dart-coll/IterableMixin
-  (^:getter ^Iterator iterator [coll]
+(deftype #/(PersistentHashMap K V) [meta ^BitmapNode root ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/MapMixin K V)
+  (^:getter ^#/(Iterable (MapEntry K V)) entries [coll]
    ; Baptiste's
    #_(let [current-mask (bit-or (.-bitmap_hi root) (.-bitmap_lo root))
            current-bn root
@@ -2692,9 +2697,28 @@
            ^{:tag "List<BitmapNode>"} bn-list (.filled List 8 current-bn)]
        (BitmapIterator. current-mask current-bn mask-list bn-list 0))
    ; cgrand's
-   (BitmapIterator. root 0 0 0 1
-        (.filled #type(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (.filled #type(List BitmapNode) 7 root)))
+   (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
+     (^:getter ^#/(Iterator (MapEntry K V)) iterator [_]
+      (BitmapIterator. root 0 0 0 1
+        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (.filled #/(List BitmapNode) 7 root)
+        #(PersistentMapEntry. %1 %2 -1)))))
+  (^:getter ^#/(Iterable K) keys [coll]
+   (reify ^:mixin #/(dart-coll/IterableMixin K)
+     (^:getter ^#/(Iterator K) iterator [_]
+      (BitmapIterator. root 0 0 0 1
+        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (.filled #/(List BitmapNode) 7 root)
+        (fn [k _] k)))))
+  (^:getter ^#/(Iterable V) values [coll]
+   (reify ^:mixin #/(dart-coll/IterableMixin V)
+     (^:getter ^#/(Iterator V) iterator [_]
+      (BitmapIterator. root 0 0 0 1
+        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (.filled #/(List BitmapNode) 7 root)
+        (fn [_ v] v)))))
+  (^#/(PersistentHashMap RK RV) #/(cast RK RV) [coll]
+    (PersistentHashMap. meta root __hash))
   IAssociative
   (-assoc [coll k v]
     (let [^BitmapNode new-root (.inode_assoc root 0 (hash k) k v)]
@@ -2728,7 +2752,7 @@
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-unordered-coll __hash))
   ISeqable
-  (-seq [coll] (iterator-seq (.-iterator coll)))
+  (-seq [coll] (iterator-seq (.-iterator (.-entries coll))))
   ICounted
   (-count [coll] (.-cnt root))
   ILookup
@@ -2739,7 +2763,7 @@
   IFind
   (-find [coll k]
     (when-some [v (-lookup coll k nil)]
-      (MapEntry. k v -1)))
+      (PersistentMapEntry. k v -1)))
   IMap
   (-dissoc [coll k]
     (let [new-root (.inode_without root 0 (hash k) k)]
@@ -2754,7 +2778,7 @@
              acc init]
         (if (nil? s)
           acc
-          (let [^MapEntry me (-first s)
+          (let [^PersistentMapEntry me (-first s)
                 acc (f acc (-key me) (-val me))]
             (if (reduced? acc)
               (-deref acc)
@@ -2766,7 +2790,7 @@
     (-lookup coll k not-found))
   IEditableCollection
   (-as-transient [coll]
-    (let [new-arr (.filled #type(List dynamic) 64 nil)
+    (let [new-arr (.filled #/(List dynamic) 64 nil)
           arr (.-arr root)
           bitmap-hi (.-bitmap_hi root)
           bitmap-lo (.-bitmap_lo root)]
@@ -3665,7 +3689,7 @@
                 (.generate List 100000 #(+ % 0)))]
         (dart:core/print (count (seq h)))
         (quick-bench
-          (let [it (.-iterator h)]
+          (let [it (.-iterator (.-entries h))]
             (while (.moveNext it))))
         (quick-bench
           (count (seq h))))

@@ -136,7 +136,7 @@
     tag))
 
 (defn emit-type
-  [tag]
+  [tag env]
   (cond
     (string? tag)
     (let [nses @nses
@@ -146,15 +146,16 @@
           (cond->
               (if (and (nil? alias) (#{"Function" "void"} type))
                 type
-                (emit-type (symbol alias type)))
+                (emit-type (symbol alias type) env))
             identifier (str identifier)))))
     (= 'some tag) "dc.dynamic"
     :else
     (let [tag! (non-nullable tag)
-          [t info] (or (resolve-symbol tag! {}) (when *bootstrap* (resolve-symbol (symbol (name tag!)) {})))
+          type-env (:type-params env #{})
+          [t info] (or (resolve-symbol tag! type-env) (when *bootstrap* (resolve-symbol (symbol (name tag!)) type-env)))
           typename
           (case t
-            :dart (name info)
+            (:dart :local) (name info) ; local == type param
             :def (case (:type info)
                    ; TODO XNS should be "namespaced" by dart alias if needed
                    :class (name (:dart/name info))
@@ -162,7 +163,7 @@
             (throw (Exception. (str "Can't resolve type: " tag!))))
           type-params (-> tag meta (get :type-params))]
       (cond-> typename
-        (seq type-params) (str "<" (str/join ", " (map emit-type type-params)) ">")
+        (seq type-params) (str "<" (str/join ", " (map #(emit-type % env) type-params)) ">")
         (not= tag tag!) (str "?")))))
 
 (defn dart-type-truthiness [type]
@@ -173,9 +174,9 @@
 
 (defn dart-meta
   "Takes a clojure symbol and returns its dart metadata."
-  [sym]
+  [sym env]
   (let [{:keys [tag] :as m} (meta sym)
-        type (some-> tag emit-type)]
+        type (some-> tag (emit-type env))]
     (cond-> {}
       (:getter m) (assoc :dart/getter true)
       (:setter m) (assoc :dart/setter true)
@@ -223,8 +224,8 @@
    "?"    "$QMARK_"})
 
 (defn munge
-  ([sym] (munge sym nil))
-  ([sym suffix]
+  ([sym env] (munge sym nil env))
+  ([sym suffix env]
    (let [s (name sym)]
      (with-meta
        (or
@@ -244,7 +245,7 @@
                         (str/join "_$u" (map #(-> % int Long/toHexString .toUpperCase) x))
                         "_")))))
               suffix (str "$" suffix))))
-       (dart-meta sym)))))
+       (dart-meta sym env)))))
 
 (defn munge* [dart-names]
   (let [sb (StringBuilder. "$C$")]
@@ -266,18 +267,18 @@
 (defonce ^:private gens (atom 1))
 (defn dart-global
   ([] (dart-global ""))
-  ([prefix] (munge prefix (swap! gens inc))))
+  ([prefix] (munge prefix (swap! gens inc) {})))
 
 (def ^:dynamic *locals-gen*)
 (defn dart-local
   "Generates a unique (relative to the top-level being compiled) dart symbol.
    Hint is a string/symbol/keyword which gives a hint (duh) on how to name the
    dart symbol. Type tags when present are translated."
-  ([] (dart-local ""))
-  ([hint]
-   (let [dart-hint (munge hint)
+  ([env] (dart-local "" env))
+  ([hint env]
+   (let [dart-hint (munge hint env)
          {n dart-hint} (set! *locals-gen* (assoc *locals-gen* dart-hint (inc (*locals-gen* dart-hint 0))))
-         {:dart/keys [type] :as dart-meta} (dart-meta hint)
+         {:dart/keys [type] :as dart-meta} (dart-meta hint env)
          dart-meta (cond-> dart-meta type (assoc :dart/nat-type type))] ; nat type of a local is its type
      (with-meta (symbol (str dart-hint "$" n)) dart-meta))))
 
@@ -326,17 +327,17 @@
   (let [[doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
         method-mapping
         (into {} (map (fn [[m & arglists]]
-                        (let [dart-m (munge m)
+                        (let [dart-m (munge m {})
                               [doc-string & arglists] (if (string? (last arglists)) (reverse arglists) (list* nil arglists))]
                           [(with-meta m {:doc doc-string})
                            (into {} (map #(let [l (count %)] [l {:dart/name (symbol (str dart-m "$" (dec l)))
                                                                  :args %}]))
                              arglists)]))) methods)
-        iface (munge proto "iface")
+        iface (munge proto "iface" {})
         iface (with-meta iface {:dart/name iface})
-        iext (munge proto "ext")
+        iext (munge proto "ext" {})
         iext (with-meta iext {:dart/name iext})
-        impl (munge proto "iprot")
+        impl (munge proto "iprot" {})
         impl (with-meta impl {:dart/name impl})
         proto-map
         {:name proto
@@ -505,37 +506,37 @@
   [x]
   (some {'dart/recur true} (tree-seq seq? #(case (first %) (dart/loop dart/fn) nil %) x)))
 
-(defn- dart-binding [hint dart-expr]
-  (let [hint-hint (when (symbol? hint) (infer-type (with-meta 'SHOULD_NOT_APPEAR_IN_DART_CODE (dart-meta hint))))
-        tmp (-> hint dart-local (vary-meta merge (infer-type dart-expr) hint-hint))]
+(defn- dart-binding [hint dart-expr env]
+  (let [hint-hint (when (symbol? hint) (infer-type (with-meta 'SHOULD_NOT_APPEAR_IN_DART_CODE (dart-meta hint env))))
+        tmp (-> hint (dart-local env) (vary-meta merge (infer-type dart-expr) hint-hint))]
     [tmp dart-expr]))
 
 (defn liftable
   "Takes a dartsexp and returns a [bindings expr] where expr is atomic
    or nil if there are no bindings to lift."
-  [x]
+  [x env]
   (case (when (seq? x) (first x))
     dart/let
     (let [[_ bindings expr] x]
-      (if-some [[bindings' expr] (liftable expr)]
+      (if-some [[bindings' expr] (liftable expr env)]
          [(concat bindings bindings') expr]
          (if (atomic? expr)
            [bindings expr]
            ;; this case should not happen
-           (let [[tmp :as binding] (dart-binding "" expr)]
+           (let [[tmp :as binding] (dart-binding "" expr env)]
              [(conj (vec bindings) binding) tmp]))))
     (dart/if dart/try dart/case dart/loop) ; no ternary for now
-    (let [[tmp :as binding] (dart-binding (first x) x)]
+    (let [[tmp :as binding] (dart-binding (first x) x env)]
       [[binding]
        tmp])
     nil))
 
-(defn- lift-arg [must-lift x hint]
-  (or (liftable x)
+(defn- lift-arg [must-lift x hint env]
+  (or (liftable x env)
       (cond
         (atomic? x) [nil x]
         must-lift
-        (let [[tmp :as binding] (dart-binding hint x)]
+        (let [[tmp :as binding] (dart-binding hint x env)]
           [[binding] tmp])
         :else
         [nil x])))
@@ -553,13 +554,13 @@
          [bindings dart-args]
          (as-> [(when must-lift (list 'sentinel)) ()] acc
            (reduce (fn [[bindings dart-fn-args] [k x]]
-                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) k)]
+                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) k env)]
                        [(concat bindings' bindings) (list* k x' dart-fn-args)]))
              acc (reverse (partition 2 nameds)))
            (reduce (fn [[bindings dart-fn-args] x]
-                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "arg")
+                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "arg" env)
                            {:dart/keys [type nat-type]} (infer-type x')
-                           here-type (or (some-> x meta :tag emit-type) type)
+                           here-type (or (some-> x meta :tag (emit-type env)) type)
                            x' (if (and here-type (not= here-type nat-type))
                                 (list 'dart/as x' here-type)
                                 x')]
@@ -574,13 +575,13 @@
   (let [dart-f (emit f env)
         fn-type (if (some '#{.&} args) :native (:dart/fn-type (meta dart-f)))
         [bindings dart-args] (emit-args (nil? fn-type) args env)
-        [bindings' dart-f] (lift-arg (seq bindings) dart-f "f")
+        [bindings' dart-f] (lift-arg (seq bindings) dart-f "f" env)
         bindings (concat bindings' bindings)
         native-call (cons dart-f dart-args)
         ifn-call (let [dart-f (if fn-type
                                 dart-f
                                 ; cast when unknown
-                                (list 'dart/as dart-f (emit-type 'cljd.core/IFn$iface)))]
+                                (list 'dart/as dart-f (emit-type 'cljd.core/IFn$iface {})))]
                    (if (< (count dart-args) *threshold*)
                      (list* 'dart/. dart-f
                        (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count dart-args)))
@@ -595,7 +596,7 @@
           :ifn ifn-call
           (list 'dart/if (list 'dart/is dart-f "dc.Function")
             (cons (list 'dart/as dart-f 'dc.Function) dart-args)
-            (list 'dart/if (list 'dart/is dart-f (emit-type 'cljd.core/IFn$iface))
+            (list 'dart/if (list 'dart/is dart-f (emit-type 'cljd.core/IFn$iface {}))
               ifn-call
               (let [[meth & args] (nnext ifn-call)] ; "callables" must be handled by an extesion on dynamic or Object
                 (list* 'dart/. (list 'dart/. (emit 'cljd.core/IFn env) 'extensions dart-f) meth (cons dart-f args))))))]
@@ -608,7 +609,7 @@
    (let [items (into [] (comp (if (map? coll) cat identity) (map f)) coll)
          [bindings items]
          (reduce (fn [[bindings fn-call] x]
-                   (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item")]
+                   (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
                      [(concat bindings' bindings) (cons x' fn-call)]))
                  [nil ()] (rseq items))
          fn-sym (cond
@@ -638,13 +639,13 @@
     :else
     (let [[bindings items]
           (reduce (fn [[bindings fn-call] x]
-                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item")]
+                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
                       [(concat bindings' bindings) (cons x' fn-call)]))
             [nil ()] (rseq x))]
      (cond->> (vec items) (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-new [[_ class & args] env]
-  (let [dart-type (emit-type class)
+  (let [dart-type (emit-type class env)
         [bindings dart-args] (emit-args args env)]
     (cond->> (list* 'dart/new dart-type dart-args)
       (seq bindings) (list 'dart/let bindings))))
@@ -662,7 +663,7 @@
           {:dart/keys [type nat-type]} (infer-type dart-obj)
           type (some-> type non-nullable)
           dart-obj (cond
-                     (:type-params (meta obj)) (symbol (emit-type obj)) ; this symbol is not readable
+                     (:type-params (meta obj)) (symbol (emit-type obj env)) ; this symbol is not readable
                      (not= type nat-type)
                      (list 'dart/as dart-obj type)
                      :else dart-obj)
@@ -709,7 +710,7 @@
   (let [[dart-bindings env]
         (reduce
          (fn [[dart-bindings env] [k v]]
-           (let [[tmp :as binding] (dart-binding k (emit v env))]
+           (let [[tmp :as binding] (dart-binding k (emit v env) env)]
              [(conj dart-bindings binding)
               (assoc env k tmp)]))
          [[] env] (partition 2 bindings))
@@ -728,7 +729,7 @@
          (fn [[dart-bindings env] [k v]]
            (let [dart-v (emit v env)
                  {:dart/keys [type]} (infer-type dart-v)
-                 decl (dart-local k)
+                 decl (dart-local k env)
                  usage (if (-> decl meta :dart/type)
                          decl
                          (vary-meta decl merge (select-keys (infer-type dart-v) [:dart/type :dart/truth])))
@@ -746,7 +747,7 @@
     (or (coll? test) (symbol? test))
     (let [dart-test (emit test env)
           {:keys [dart/truth]} (infer-type dart-test)
-          [bindings test] (lift-arg (nil? truth) dart-test "test")
+          [bindings test] (lift-arg (nil? truth) dart-test "test" env)
           test (case truth
                  :boolean test
                  :some (list 'dart/. test "!=" nil)
@@ -773,7 +774,7 @@
         max-fixed-arity (some->> fixed-arities seq (reduce max))
         min-fixed-arity (some->> fixed-arities seq (reduce min))
         n (or base-vararg-arity max-fixed-arity)
-        mixin-name (munge (apply str "IFnMixin-" (map (fn [i] (cond (= i base-vararg-arity) "Z" (fixed-arities i) "X" :else "u")) (range (inc n)))))
+        mixin-name (munge (apply str "IFnMixin-" (map (fn [i] (cond (= i base-vararg-arity) "Z" (fixed-arities i) "X" :else "u")) (range (inc n)))) {})
         synth-params (mapv #(symbol (str "arg" (inc %))) (range (max n (dec *threshold*))))
         more-param (gensym 'more)
         this 'this
@@ -908,23 +909,24 @@
                                     ~@fixed-invokes
                                     ~@invoke-exts
                                     ~@(some-> vararg-invoke list))
-                              env))]
+                              env)
+                            env)]
     (list 'dart/let [binding] tmp)))
 
 (defn- emit-dart-fn [fn-name [params & body] env]
   (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
-        dart-fixed-params (map dart-local fixed-params)
+        dart-fixed-params (map #(dart-local % env) fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
                              :named p ; here p must be a valid dart identifier
-                             :positional (dart-local p))
+                             :positional (dart-local p env))
                            (emit d env)])
         env (into env (zipmap (concat fixed-params (map first opt-params))
                               (concat dart-fixed-params (map first dart-opt-params))))
         dart-body (emit (cons 'do body) env)
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         dart-fixed-params (if recur-params
-                            (map dart-local fixed-params)
+                            (map #(dart-local % env) fixed-params)
                             dart-fixed-params)
         dart-body (cond->> dart-body
                     recur-params
@@ -939,7 +941,7 @@
   (let [var-name (some-> fn-sym meta :var-name)
         name (when (symbol? (first bodies)) (first bodies))
         bodies (cond-> bodies name next)
-        env (cond-> env name (assoc name (dart-local name)))
+        env (cond-> env name (assoc name (dart-local name env)))
         [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)]
     (if (or more-bodies (variadic? body))
       (emit-ifn var-name name bodies env)
@@ -949,7 +951,10 @@
   ;; params destructuring will be added by a macro
   ;; opt-params need to have been fully expanded to a list of [symbol default]
   ;; by the macro
-  (let [dart-fixed-params (map dart-local fixed-params)
+  (let [mtype-params (:type-params (meta mname))
+        env (assoc env :type-params
+              (into (:type-params env #{}) mtype-params))
+        dart-fixed-params (map dart-local fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
                              :named p ; here p must be a valid dart identifier
@@ -966,13 +971,13 @@
         dart-body (cond->> dart-body
                     recur-params
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
-        mname (with-meta mname (dart-meta mname))]
-    [mname dart-fixed-params opt-kind dart-opt-params (nil? (seq body)) dart-body]))
+        mname (with-meta mname (dart-meta mname env))]
+    [mname mtype-params dart-fixed-params opt-kind dart-opt-params (nil? (seq body)) dart-body]))
 
 (defn closed-overs [emitted env]
   (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
 
-(defn method-closed-overs [[mname dart-fixed-params opt-kind dart-opt-params _ dart-body] env]
+(defn method-closed-overs [[mname type-params dart-fixed-params opt-kind dart-opt-params _ dart-body] env]
   (reduce disj (closed-overs dart-body env) (cons 'this (concat dart-fixed-params (map second dart-opt-params)))))
 
 (declare write-class)
@@ -1024,8 +1029,8 @@
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
         dart-methods (map #(emit-method % env) methods)]
     {:extends (emit base env)
-     :implements (map #(emit % env) ifaces)
-     :with (map #(emit % env) mixins)
+     :implements (map #(emit-type % env) ifaces)
+     :with (map #(emit-type % env) mixins)
      :super-ctor
      {:method ctor-meth ; nil for new
       :args ctor-args}
@@ -1038,22 +1043,26 @@
         positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param"))
         named-ctor-params (map dart-local (take-nth 2 named-ctor-args))
         class-name (if-some [var-name (:var-name opts)]
-                     (munge var-name "ifn")
-                     (dart-global (or (:name-hint opts) "Reify")))
+                       (munge var-name "ifn" env)
+                       (dart-global (or (:name-hint opts) "Reify")))
+        mclass-name (vary-meta class-name assoc :type-params (:type-params env))
         closed-overs (transduce (map #(method-closed-overs % env)) into #{}
                        (:methods class))
+        _ (swap! nses do-def class-name {:dart/name mclass-name :type :class})
         class (-> class
-                  (assoc :name class-name
-                         :fields closed-overs
-                         :ctor-params
-                         (concat
-                          (map #(list '. %) closed-overs)
-                          positional-ctor-params
-                          named-ctor-params))
-                  (assoc-in [:super-ctor :args]
-                            (concat positional-ctor-params
-                                    (interleave (take-nth 2 named-ctor-args)
-                                                named-ctor-params))))
+                (assoc
+                  :name (emit-type mclass-name env)
+                  :ctor class-name
+                  :fields closed-overs
+                  :ctor-params
+                  (concat
+                    (map #(list '. %) closed-overs)
+                    positional-ctor-params
+                    named-ctor-params))
+                (assoc-in [:super-ctor :args]
+                  (concat positional-ctor-params
+                    (interleave (take-nth 2 named-ctor-args)
+                      named-ctor-params))))
         reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))
         reify-ctor-call (list*
                          'new class-name
@@ -1069,15 +1078,15 @@
 (defn- ensure-dart-expr
   "If dart-expr is suitable as an expression (ie liftable returns nil),
    its emission is returned as is, otherwise a IIFE (thunk invocation) is returned."
-  [dart-expr]
-  (if-some [[bindings dart-expr] (liftable dart-expr)]
+  [dart-expr env]
+  (if-some [[bindings dart-expr] (liftable dart-expr env)]
     (list (list 'dart/fn () :positional () (list 'dart/let bindings dart-expr)))
     dart-expr))
 
 (declare write-top-dartfn write-top-field)
 
 (defn emit-defprotocol* [[_ pname spec] env]
-  (let [dartname (munge pname)]
+  (let [dartname (munge pname env)]
     (swap! nses do-def pname
       (assoc spec
         :dart/name dartname
@@ -1085,27 +1094,34 @@
         :type :protocol))))
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
-  (let [mclass-name (with-meta
-                      (or (:dart/name (meta class-name)) (munge class-name))
-                      (select-keys (meta class-name) [:abstract])) ; TODO shouldn't it be dne by munge?
-        env (into {} (for [f fields
-                           :let [{:keys [mutable]} (meta f)
-                                 {:keys [dart/type] :as m} (dart-meta f)
-                                 m (cond-> m
-                                     mutable (assoc :dart/mutable true)
-                                     type (assoc :dart/nat-type type))]]
-                       [f (vary-meta (munge f) merge m)]))
+  (let [abstract (:abstract (meta class-name))
+        [class-name & type-params] (if (seq? class-name) class-name (cons class-name (:type-params (meta class-name))))
+        mclass-name (with-meta
+                      (or (:dart/name (meta class-name)) (munge class-name env))
+                      {:type-params type-params}) ; TODO shouldn't it be dne by munge?
+        env {:type-params (set type-params)}
+        env (into env
+              (for [f fields
+                    :let [{:keys [mutable]} (meta f)
+                          {:keys [dart/type] :as m} (dart-meta f env)
+                          m (cond-> m
+                              mutable (assoc :dart/mutable true)
+                              type (assoc :dart/nat-type type))]]
+                [f (vary-meta (munge f env) merge m)]))
+        dart-fields (map env fields)
         _ (swap! nses do-def class-name {:dart/name mclass-name :type :class})
         class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         class (-> class
-                (assoc :name mclass-name
-                  :fields (vals env)
-                  :ctor-params (map #(list '. %) (vals env)))
+                (assoc :name (emit-type mclass-name env)
+                  :ctor mclass-name
+                  :abstract abstract
+                  :fields dart-fields
+                  :ctor-params (map #(list '. %) dart-fields))
                 (assoc-in [:super-ctor :args]
-                  (concat (map #(-> % (emit env) ensure-dart-expr) positional-ctor-args)
+                  (concat (map #(-> % (emit env) (ensure-dart-expr env)) positional-ctor-args)
                     (->> named-ctor-args (partition 2)
-                      (mapcat (fn [[name arg]] [name (-> arg (emit env) ensure-dart-expr)]))))))]
+                      (mapcat (fn [[name arg]] [name (-> arg (emit env) (ensure-dart-expr env))]))))))]
     (swap! nses alter-def class-name assoc :dart/code (with-out-str (write-class class)))
     (emit class-name env)))
 
@@ -1139,7 +1155,7 @@
         expr (if (= 'fn* (first expr))
                (cons (vary-meta (first expr) assoc :var-name sym) (next expr))
                expr)
-        dartname (cond-> (munge sym) kind (vary-meta (fn [{:dart/keys [type truth] :as m}]
+        dartname (cond-> (munge sym env) kind (vary-meta (fn [{:dart/keys [type truth] :as m}]
                                                        (-> m (dissoc :dart/type :dart/nat-type :dart/truth)
                                                          (assoc :dart/ret-type type :dart/ret-truth truth)))))
         dart-fn
@@ -1155,7 +1171,7 @@
                 (and (seq? dart-fn) (= 'dart/let (first dart-fn))
                   (let [[_ [[x e] & more-bindings] x'] dart-fn]
                     (and (nil? more-bindings) (= x x') e)))
-                (ensure-dart-expr dart-fn)))
+                (ensure-dart-expr dart-fn env)))
             (write-top-field dartname dart-fn)))]
     (swap! nses alter-def sym assoc :dart/code dart-code)
     (emit sym env)))
@@ -1250,7 +1266,7 @@
                                   (if-some [{:keys [lib]} (@nses lib)] lib)
                                   (if (= ns-sym lib) ns-lib)
                                   (compile-namespace lib))
-                        to-dart-sym (if clj-ns munge identity)]]
+                        to-dart-sym (if clj-ns #(munge % {}) identity)]]
               (fn [ns-map]
                 (-> ns-map
                   (cond-> (nil? (get (:imports ns-map) dartlib))
@@ -1275,9 +1291,9 @@
            (for [[_ classname e & [maybe-st & exprs :as body]] catches
                  :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
                        exprs (if st exprs body)
-                       env (cond-> (assoc env e (dart-local e))
-                             st (assoc st (dart-local st)))]]
-             [(emit-type classname) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
+                       env (cond-> (assoc env e (dart-local e env))
+                             st (assoc st (dart-local st env)))]]
+             [(emit-type classname env) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
            (some-> finally-body (conj 'do) (emit-no-recur env)))))
 
 (defn emit-throw [[_ expr] env]
@@ -1288,9 +1304,9 @@
   #_(when (or (not (symbol? type)) (env type))
     (throw (ex-info (str "The second argument to dart/is? must be a literal type. Got: " (pr-str type)) {:type type})))
   (let [x (emit x env)]
-    (if-some [[bindings x] (liftable x)]
-      (list 'dart/let bindings (list 'dart/is x (emit-type type)))
-      (list 'dart/is x (emit-type type)))))
+    (if-some [[bindings x] (liftable x env)]
+      (list 'dart/let bindings (list 'dart/is x (emit-type type env)))
+      (list 'dart/is x (emit-type type env)))))
 
 (defn- ensure-new-special [x]
   (case (and (symbol? x) (name x))
@@ -1342,7 +1358,7 @@
           (coll? x) (emit-coll x env)
           :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
     (cond-> dart-x
-      (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type (vary-meta dart-x merge (dart-meta x)))))))
+      (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type (vary-meta dart-x merge (dart-meta x env)))))))
 
 (defn bootstrap-eval
   [x]
@@ -1424,10 +1440,10 @@
 (defn write-top-dartfn [sym x]
   (case (first x)
     dart/fn (write x (named-fn-locus sym))
-    (write x (var-locus (emit-type 'cljd.core/IFn$iface) (name sym)))))
+    (write x (var-locus (emit-type 'cljd.core/IFn$iface {}) (name sym)))))
 
 (defn write-top-field [sym x]
-  (write (ensure-dart-expr x) (var-locus (name sym))))
+  (write (ensure-dart-expr x {}) (var-locus (name sym))))
 
 (defn- write-args [args]
   (let [[positionals nameds] (split-with (complement keyword?) args)]
@@ -1484,52 +1500,55 @@
     (print (case opt-kind :positional "]" "}")))
   (print ")"))
 
-(defn write-class [{class-name :name :keys [extends implements with fields ctor-params super-ctor methods nsm]}]
-  (let [abstract (-> class-name meta :abstract)]
-    (when abstract (print "abstract "))
-    (print "class" class-name)
-    (some->> extends (print " extends"))
-    (some->> with seq (str/join ", ") (print " with"))
-    (some->> implements seq (str/join ", ") (print " implements"))
-    (print " {\n")
-    (doseq [field fields
-            :let [{:dart/keys [mutable type]} (meta field)]]
-      (print (str (cond (not mutable) "final " (not type) "var ") (some-> type (str " ")) field ";\n")))
+(defn write-class [{class-name :name :keys [abstract extends implements with fields ctor ctor-params super-ctor methods nsm]}]
+  (when abstract (print "abstract "))
+  (print "class" class-name)
+  (some->> extends (print " extends"))
+  (some->> with seq (str/join ", ") (print " with"))
+  (some->> implements seq (str/join ", ") (print " implements"))
+  (print " {\n")
+  (doseq [field fields
+          :let [{:dart/keys [mutable type]} (meta field)]]
+    (print (str (cond (not mutable) "final " (not type) "var ") (some-> type (str " ")) field ";\n")))
 
-    (when-not abstract
-      (newline)
-      (print (str class-name "("))
-      (doseq [p ctor-params]
-        (print (if (seq? p) (str "this." (second p)) p))
-        (print ", "))
-      (print "):super")
-      (some->> super-ctor :method (str ".") print)
-      (write-args (:args super-ctor))
-      (print ";\n"))
+  (when-not abstract
+    (newline)
+    (print (str (or ctor class-name) "("))
+    (doseq [p ctor-params]
+      (print (if (seq? p) (str "this." (second p)) p))
+      (print ", "))
+    (print "):super")
+    (some->> super-ctor :method (str ".") print)
+    (write-args (:args super-ctor))
+    (print ";\n"))
 
-    (doseq [[mname fixed-params opt-kind opt-params no-explicit-body body] methods
-            :let [{:dart/keys [getter setter type]} (meta mname)]]
-      (newline)
-      (when-not setter
-        (print (or type "dc.dynamic"))
-        (print " "))
-      (cond
-        getter (print "get ")
-        setter (print "set "))
-      (print mname)
-      (when-not getter (write-params fixed-params opt-kind opt-params))
-      (if (and abstract no-explicit-body)
-        (print ";\n")
-        (do
-          (print "{\n")
-          (write body return-locus)
-          (print "}\n"))))
+  (doseq [[mname type-params fixed-params opt-kind opt-params no-explicit-body body] methods
+          :let [{:dart/keys [getter setter type]} (meta mname)]]
+    (newline)
+    (when-not setter
+      (print (or type "dc.dynamic"))
+      (print " "))
+    (cond
+      getter (print "get ")
+      setter (print "set "))
+    (print mname)
+    (when (seq type-params)
+      (print "<")
+      (print (str/join ", " type-params))
+      (print ">"))
+    (when-not getter (write-params fixed-params opt-kind opt-params))
+    (if (and abstract no-explicit-body)
+      (print ";\n")
+      (do
+        (print "{\n")
+        (write body return-locus)
+        (print "}\n"))))
 
-    (when nsm
-      (newline)
-      (print "dc.dynamic noSuchMethod(i)=>super.noSuchMethod(i);\n"))
+  (when nsm
+    (newline)
+    (print "dc.dynamic noSuchMethod(i)=>super.noSuchMethod(i);\n"))
 
-    (print "}\n")))
+  (print "}\n"))
 
 (def ^:private ^:dynamic *caught-exception-symbol* nil)
 
@@ -1867,17 +1886,17 @@
           :when code]
     (println code)))
 
-(defn dart-type-reader [x]
+(defn dart-type-params-reader [x]
   (if (symbol? x)
     x
     (let [[type & params] x]
       (cond-> type
         params
-        (vary-meta assoc :type-params (map dart-type-reader params))))))
+        (vary-meta assoc :type-params (map dart-type-params-reader params))))))
 
 (def dart-data-readers
   {'dart #(tagged-literal 'dart %)
-   'type dart-type-reader})
+   '/ dart-type-params-reader})
 
 (defn load-input [in]
   #?(:clj
