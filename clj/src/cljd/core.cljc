@@ -561,7 +561,11 @@
 
 (extend-type Null
   ISeqable
-  (-seq [coll] nil))
+  (-seq [coll] nil)
+  ISeq
+  (-first [coll] nil)
+  (-rest [coll] ())
+  (-next [coll] nil))
 
 (defprotocol ISeq
   "Protocol for collections to provide access to their items as sequences."
@@ -582,26 +586,19 @@
   "Returns the first item in the collection. Calls seq on its
    argument. If coll is nil, returns nil."
   [coll]
-  (let [s (seq coll)]
-    (when s (-first s))))
+  (-first (seq coll)))
 
 (defn next
   "Returns a seq of the items after the first. Calls seq on its
   argument.  If there are no more items, returns nil."
   [coll]
-  #_(some-> (seq coll) -next)
-  (let [s (seq coll)]
-    (when s (-next s))))
+  (-next (seq coll)))
 
 (defn rest
   "Returns a possibly empty seq of the items after the first. Calls seq on its
   argument."
   [coll]
-  (if (satisfies? ISeq coll)
-    (-rest coll)
-    #_(some-> (seq coll) -rest)
-    (let [s (seq coll)]
-      (when s (-rest s)))))
+  (-rest (seq coll)))
 
 (defprotocol ISequential
   "Marker interface indicating a persistent collection of sequential items")
