@@ -2214,8 +2214,8 @@
 
 (deftype PersistentMapEntry [_k _v ^:mutable __hash]
   MapEntry
-  (^:getter key [_] _k)
-  (^:getter value [_] _v)
+  (key [_] _k)
+  (value [_] _v)
   IMapEntry
   (-key [node] _k)
   (-val [node] _v)
@@ -2298,10 +2298,10 @@
 ; cgrand's
 (deftype (BitmapIterator E) [^:mutable ^BitmapNode node ^:mutable ^int idx ^:mutable ^int mask ^:mutable ^int kvs
                            ^:mutable ^int depth
-                           ^#/ (List int) masks ^#/ (List BitmapNode) nodes
+                           ^#/(List int) masks ^#/(List BitmapNode) nodes
                            ^:dart mk-value]
   #/(Iterator E)
-  (^:getter ^E current [iter]
+  (^E current [iter]
    (let [arr (.-arr node)]
      (mk-value (aget arr (- idx 2)) (aget arr (dec idx)))))
   (^bool moveNext [iter]
@@ -2686,7 +2686,7 @@
 
 (deftype #/(PersistentHashMap K V) [meta ^BitmapNode root ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/MapMixin K V)
-  (^:getter ^#/(Iterable (MapEntry K V)) entries [coll]
+  (^#/(Iterable (MapEntry K V)) entries [coll]
    ; Baptiste's
    #_(let [current-mask (bit-or (.-bitmap_hi root) (.-bitmap_lo root))
            current-bn root
@@ -2695,21 +2695,21 @@
        (BitmapIterator. current-mask current-bn mask-list bn-list 0))
    ; cgrand's
    (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
-     (^:getter ^#/(Iterator (MapEntry K V)) iterator [_]
+     (^#/(Iterator (MapEntry K V)) iterator [_]
       (BitmapIterator. root 0 0 0 1
         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (.filled #/(List BitmapNode) 7 root)
         #(PersistentMapEntry. %1 %2 -1)))))
-  (^:getter ^#/(Iterable K) keys [coll]
+  (^#/(Iterable K) keys [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin K)
-     (^:getter ^#/(Iterator K) iterator [_]
+     (^#/(Iterator K) iterator [_]
       (BitmapIterator. root 0 0 0 1
         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (.filled #/(List BitmapNode) 7 root)
         (fn [k _] k)))))
-  (^:getter ^#/(Iterable V) values [coll]
+  (^#/(Iterable V) values [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin V)
-     (^:getter ^#/(Iterator V) iterator [_]
+     (^#/(Iterator V) iterator [_]
       (BitmapIterator. root 0 0 0 1
         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (.filled #/(List BitmapNode) 7 root)

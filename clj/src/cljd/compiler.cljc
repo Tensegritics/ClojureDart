@@ -2,6 +2,9 @@
   (:refer-clojure :exclude [macroexpand macroexpand-1 munge])
   (:require [clojure.string :as str]))
 
+(def dart-libs-info
+  (-> "core-libs.edn" clojure.java.io/resource clojure.java.io/reader clojure.lang.LineNumberingPushbackReader. clojure.edn/read))
+
 (def bootstrap-nses '#{cljd.compiler cljd.core})
 
 (def ^:dynamic *bootstrap* false)
@@ -125,7 +128,9 @@
        (let [{:keys [ns dart-alias]} (imports lib)]
          (if ns
            (recur (with-meta (symbol (name ns) (name sym)) (meta sym)) env)
-           [:dart (symbol (str dart-alias "." (name sym)))])))
+           [:dart {:qname (symbol (str dart-alias "." (name sym)))
+                   :lib lib
+                   :name (name sym)}])))
      (if-some [info (some-> sym namespace symbol nses (get (symbol (name sym))))]
        [:def info])
      nil)))
@@ -155,7 +160,8 @@
           [t info] (or (resolve-symbol tag! type-env) (when *bootstrap* (resolve-symbol (symbol (name tag!)) type-env)))
           typename
           (case t
-            (:dart :local) (name info) ; local == type param
+            :dart (:qname info)
+            :local (name info) ; local == type param
             :def (case (:type info)
                    ; TODO XNS should be "namespaced" by dart alias if needed
                    :class (name (:dart/name info))
@@ -322,6 +328,22 @@
         (get-in protocol [:sigs mname args-count :dart/name] mname)
         (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " pname ".")))))))
 
+(defn resolve-dart-method
+  [class-name mname args]
+  (let [[tag info] (resolve-symbol class-name {})]
+    (case tag
+      :dart
+      (let [class-info (get-in dart-libs-info [(:lib info) (:name info)])]
+        (if-some [method-info (get class-info (name mname))] ; TODO are there special cases for operators? eg unary-
+          (case (:kind method-info)
+            :field
+            (let [mname (vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true)]
+              mname)
+            :method
+            mname)
+          #_(TODO WARN)))
+      nil)))
+
 (defn- expand-defprotocol [proto & methods]
   ;; TODO do something with docstrings
   (let [[doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
@@ -479,11 +501,15 @@
           macro-fn
           (apply macro-fn form env (next form))
           (.endsWith f-name ".")
-          (list* 'new
-            (symbol (namespace f) (subs f-name 0 (dec (count f-name))))
-            args)
+          (with-meta
+            (list* 'new
+              (symbol (namespace f) (subs f-name 0 (dec (count f-name))))
+              args)
+            (meta form))
           (.startsWith f-name ".")
-          (list* '. (first args) (symbol (subs f-name 1)) (next args))
+          (with-meta
+            (list* '. (first args) (symbol (subs f-name 1)) (next args))
+            (meta form))
           :else form))
       form)
     (propagate-hints form)))
@@ -652,7 +678,7 @@
 
 (def -interops (atom {}))
 
-(defn emit-dot [[_ obj member & args] env]
+(defn emit-dot [[_ obj member & args :as form] env]
   (if (seq? member)
     (recur (list* '. obj member) env)
     (let [member (name member)
@@ -678,7 +704,7 @@
                            (println "Dynamic invocation warning. Reference to" (if prop "field" "method")
                              member "can't be resolved." obj)))
                        dart-obj))]
-      (swap! -interops update type (fnil conj #{}) member)
+      (swap! -interops update-in [type member] (fnil conj #{}) (:line (meta form)))
       (cond->> (list* op dart-obj name dart-args)
         (seq bindings) (list 'dart/let bindings)))))
 
@@ -1002,6 +1028,7 @@
         (if (seq? spec)
           (let [[mname arglist & body] spec
                 mname (or (some-> @last-seen-type (resolve-dart-mname mname (count arglist)))
+                        (some-> @last-seen-type (resolve-dart-method mname arglist))
                         mname)]
             ;; TODO: OBSOLETE mname resolution against protocol ifaces
             (list* mname (parse-dart-params arglist) body))
@@ -1195,7 +1222,7 @@
           (if (= (:current-ns @nses) the-ns)
             dart-name
             (symbol (str (ensure-import the-ns) "." dart-name))))
-      :dart (vary-meta v assoc :dart/fn-type :native)
+      :dart (vary-meta (:qname v) assoc :dart/fn-type :native)
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
 
 (defn emit-quoted [[_ x] env]
