@@ -560,14 +560,6 @@
    :inline-arities #{1}}
   [coll] (-seq coll))
 
-(extend-type Null
-  ISeqable
-  (-seq [coll] nil)
-  ISeq
-  (-first [coll] nil)
-  (-rest [coll] ())
-  (-next [coll] nil))
-
 (defprotocol ISeq
   "Protocol for collections to provide access to their items as sequences."
   (-first [coll]
@@ -582,6 +574,14 @@
      rest, it should return nil if there are no more items, e.g.
      (next []) => nil
      (next nil) => nil"))
+
+(extend-type Null
+  ISeqable
+  (-seq [coll] nil)
+  ISeq
+  (-first [coll] nil)
+  (-rest [coll] ())
+  (-next [coll] nil))
 
 (defn first
   "Returns the first item in the collection. Calls seq on its
@@ -1629,12 +1629,12 @@
                    (new-path level tailnode))]
     (VectorNode. nil (aresize arr-parent subidx (inc subidx) new-node))))
 
-(defn new-path [^int level ^VectorNode node]
-  (loop [ll level
-         ret node]
+(defn ^VectorNode new-path [^int level ^VectorNode node]
+  (loop [^int ll level
+         ^VectorNode ret node]
     (if (zero? ll)
       ret
-      (recur (- ll 5) (VectorNode. nil (.filled List 1 ret))))))
+      (recur (- ll 5) (VectorNode. nil #dart ^:fixed ^VectorNode [ret])))))
 
 (defn unchecked-array-for
   "Returns the array where i is located."
@@ -1739,11 +1739,12 @@
         (let [root-overflow? (< (u32-bit-shift-left 1 shift) (u32-bit-shift-right cnt 5))
               new-shift (if root-overflow? (+ shift 5) shift)
               new-root (if root-overflow?
-                         (let [n-r (VectorNode. nil (.filled List 2 (new-path shift (VectorNode. nil tail))))]
+                         #_(let [n-r (VectorNode. nil (.filled List 2 (new-path shift (VectorNode. nil tail))))]
                            (aset (.-arr n-r) 0 root)
                            n-r)
+                         (VectorNode. nil #dart ^:fixed ^VectorNode [root (new-path shift (VectorNode. nil tail))])
                          (push-tail coll shift root (VectorNode. nil tail)))]
-          (PersistentVector. meta (inc cnt) new-shift new-root (.filled List 1 o) -1)))))
+          (PersistentVector. meta (inc cnt) new-shift new-root #dart ^:fixed [o] -1)))))
   #_#_IEmptyableCollection
   (-empty [coll] (-with-meta (.-EMPTY PersistentVector) meta))
   ISequential
@@ -2212,10 +2213,10 @@
 
 ;;; Mapentry
 
-(deftype PersistentMapEntry [_k _v ^:mutable __hash]
-  MapEntry
-  (key [_] _k)
-  (value [_] _v)
+(deftype #/(PersistentMapEntry K V) [_k _v ^:mutable __hash]
+  #/(MapEntry K V)
+  (^K key [_] _k)
+  (^V value [_] _v)
   IMapEntry
   (-key [node] _k)
   (-val [node] _v)
@@ -2485,7 +2486,7 @@
                     shift' (+ 5 ^int shift)
                     n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
                     bit' (u32-bit-shift-left 1 n')
-                    new-node (-> (BitmapNode. 1 bit' bit' (doto (.filled List 2 v') (aset 0 k'))) (.inode_assoc shift' h k v))
+                    new-node (-> (BitmapNode. 1 bit' bit' #dart ^:fixed [k' v']) (.inode_assoc shift' h k v))
                     new-arr (.filled #/(List dynamic) size new-node)]
                 (dotimes [i idx] (aset new-arr i (aget arr i)))
                 (loop [i (inc idx) j (+ 2 idx)]
@@ -2581,7 +2582,7 @@
           (let [^BitmapNode child (aget arr idx)
                 ^BitmapNode child (if (zero? hi)
                                     ; if node is shared with a Persistent node
-                                    (let [new-child-arr (.filled List 64 ^dynamic (do nil))
+                                    (let [new-child-arr (.filled #/(List dynamic) 64)
                                           child-arr (.-arr child)]
                                       (set! bitmap-hi (bit-xor bit bitmap-hi))
                                       (set! bitmap-lo (bit-xor bit bitmap-lo))
@@ -3565,7 +3566,7 @@
                (recur (-conj pv idx) (inc idx))))]
     (dart:core/print (-nth (-assoc pv 11111 "coucou") 11111)))
 
-  #_#_(dart:core/print "Start reduce +")
+  (dart:core/print "Start reduce +")
   (let [pv (loop [pv []
                   idx 0]
              (if (== idx 100000)
@@ -3659,7 +3660,7 @@
     #_(dart:core/print (-peek (last (-seq h'))))
     #_(dart:core/print (-lookup (-assoc (-assoc h 3342 1) 2 2) 2)))
 
-  (let [node (BitmapNode. 0 0 0 (.empty List))
+  #_(let [node (BitmapNode. 0 0 0 (.empty List))
         h (PersistentHashMap. nil node -1)
         li (.generate List 100 #(+ % 0))
         h1 (reduce (fn [acc item] (-assoc acc item item)) h li)
