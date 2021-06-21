@@ -2302,10 +2302,10 @@
                            ^#/(List int) masks ^#/(List BitmapNode) nodes
                            ^:dart mk-value]
   #/(Iterator E)
-  (^E current [iter]
+  (current [iter]
    (let [arr (.-arr node)]
      (mk-value (aget arr (- idx 2)) (aget arr (dec idx)))))
-  (^bool moveNext [iter]
+  (moveNext [iter]
    (cond
      (not (zero? mask))
      (let [bit (bit-and mask (- mask))]
@@ -2687,7 +2687,7 @@
 
 (deftype #/(PersistentHashMap K V) [meta ^BitmapNode root ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/MapMixin K V)
-  (^#/(Iterable (MapEntry K V)) entries [coll]
+  (entries [coll]
    ; Baptiste's
    #_(let [current-mask (bit-or (.-bitmap_hi root) (.-bitmap_lo root))
            current-bn root
@@ -2696,21 +2696,21 @@
        (BitmapIterator. current-mask current-bn mask-list bn-list 0))
    ; cgrand's
    (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
-     (^:getter ^#/(Iterator (MapEntry K V)) iterator [_]
+     (iterator [_]
       (BitmapIterator. root 0 0 0 1
         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (.filled #/(List BitmapNode) 7 root)
         #(PersistentMapEntry. %1 %2 -1)))))
-  (^#/(Iterable K) keys [coll]
+  (keys [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin K)
-     (^:getter ^#/(Iterator K) iterator [_]
+     (iterator [_]
       (BitmapIterator. root 0 0 0 1
         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (.filled #/(List BitmapNode) 7 root)
         (fn [k _] k)))))
-  (^#/(Iterable V) values [coll]
+  (values [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin V)
-     (^:getter ^#/(Iterator V) iterator [_]
+     (iterator [_]
       (BitmapIterator. root 0 0 0 1
         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (.filled #/(List BitmapNode) 7 root)
