@@ -109,6 +109,29 @@
 (def nses (atom {:current-ns 'user
                  'user ns-prototype}))
 
+(declare resolve-type)
+
+(defn- resolve-dart-type
+  [sym env]
+  (let [nses @nses
+        {:keys [mappings imports aliases] :as current-ns} (nses (:current-ns nses))]
+    (else->>
+      (if (contains? (:type-vars env #{}) sym)
+        {:type (name sym) :is-param true})
+      (if-some [v (mappings sym)]
+        (recur (with-meta v (meta sym)) env))
+      (let [lib (get aliases (namespace sym))])
+      (if-some [dart-alias (:dart-alias (get imports lib))]
+        {:qname (symbol (str dart-alias "." (name sym)))
+         :lib lib
+         :type (name sym)
+         :type-parameters
+         (vec
+           (for [t (:type-params (meta sym))]
+             (or (resolve-type t env)
+               (throw (Exception. (pr-str 'CANT t env))))))})
+      nil)))
+
 (defn resolve-symbol
   "Returns either a pair [tag value] or nil when the symbol can't be resolved.
    tag can be :local, :def or :dart respectively indicating the symbol refers
@@ -121,19 +144,42 @@
   (let [nses @nses
         {:keys [mappings aliases imports] :as current-ns} (nses (:current-ns nses))]
     (else->>
-     (if-some [v (env sym)] [:local v])
-     (if-some [v (current-ns sym)] [:def v])
-     (if-some [v (mappings sym)] (recur v env))
-     (if-some [lib (get aliases (namespace sym))]
-       (let [{:keys [ns dart-alias]} (imports lib)]
-         (if ns
-           (recur (with-meta (symbol (name ns) (name sym)) (meta sym)) env)
-           [:dart {:qname (symbol (str dart-alias "." (name sym)))
-                   :lib lib
-                   :name (name sym)}])))
-     (if-some [info (some-> sym namespace symbol nses (get (symbol (name sym))))]
-       [:def info])
-     nil)))
+      (if-some [v (env sym)] [:local v])
+      (if-some [v (current-ns sym)] [:def v])
+      (let [lib (get aliases (namespace sym))])
+      (if-some [ns (some-> lib imports :ns)]
+        (recur (with-meta (symbol (name ns) (name sym)) (meta sym)) env))
+      (if-some [info (some-> sym namespace symbol nses (get (symbol (name sym))))]
+        [:def info])
+      (if-some [atype (resolve-dart-type sym env)]
+        [:dart atype]))))
+
+(defn resolve-type [sym env]
+  (when-some [[tag info] (resolve-symbol sym env)]
+    (case tag
+      :dart info
+      :def (case (:type info)
+             :class
+             {:qname (:dart/name info) ; TODO XNS add prefix
+              :lib (-> @nses (get (:ns info)) :lib)
+              :type (name sym)
+              :type-parameters [#_TODO]})
+      (throw (ex-info (str "oops " sym) {:env env})))))
+
+(defn unresolve-type [atype]
+  (if (:is-param atype)
+    (symbol (:type atype))
+    (let [{:keys [current-ns] :as nses} @nses
+          {:keys [lib type type-parameters]} atype]
+      (when (some nil? type-parameters)
+        (throw (Exception. (pr-str 'NIL atype)))
+        )
+      (with-meta
+        (symbol
+          (when-not (= lib (:lib (nses current-ns)))
+            (get-in nses [current-ns :imports lib :clj-alias]))
+          type)
+        {:type-params (mapv unresolve-type type-parameters)}))))
 
 (defn non-nullable [tag]
   (if-some [[_ base] (re-matches #"(.+)[?]" (name tag))]
@@ -146,7 +192,7 @@
     (string? tag)
     (let [nses @nses
           {:keys [mappings] :as current-ns} (nses (:current-ns nses))]
-      (replace-all (str tag) #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+)[?]?( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
+      (replace-all tag #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+)[?]?( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
         (fn [[_ alias type identifier]]
           (cond->
               (if (and (nil? alias) (#{"Function" "void"} type))
@@ -156,17 +202,9 @@
     (= 'some tag) "dc.dynamic"
     :else
     (let [tag! (non-nullable tag)
-          type-env (:type-params env #{})
-          [t info] (or (resolve-symbol tag! type-env) (when *bootstrap* (resolve-symbol (symbol (name tag!)) type-env)))
+          atype (or (resolve-type tag! env) (when *bootstrap* (resolve-type (symbol (name tag!)) env)))
           typename
-          (case t
-            :dart (:qname info)
-            :local (name info) ; local == type param
-            :def (case (:type info)
-                   ; TODO XNS should be "namespaced" by dart alias if needed
-                   :class (name (:dart/name info))
-                   (throw (Exception. (str "Not a type: " tag!))))
-            (throw (Exception. (str "Can't resolve type: " tag!))))
+          (if (:is-param atype) (:type atype) (name (:qname atype)))
           type-params (-> tag meta (get :type-params))]
       (cond-> typename
         (seq type-params) (str "<" (str/join ", " (map #(emit-type % env) type-params)) ">")
@@ -317,32 +355,77 @@
       (recur more (assoc opts k v))
       [opts body])))
 
-(defn resolve-dart-mname
+(defn resolve-protocol-mname-to-dart-mname
   "Takes two symbols (a protocol and one of its method) and the number
   of arguments passed to this method.
   Returns the name (as symbol) of the dart method backing this clojure method."
-  [pname mname args-count]
-  (let [[tag protocol] (resolve-symbol pname {})]
+  [pname mname args-count type-env]
+  (let [[tag protocol] (resolve-symbol pname {:type-vars type-env})]
     (when (and (= :def tag) (= :protocol (:type protocol)))
       (or
         (get-in protocol [:sigs mname args-count :dart/name] mname)
         (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " pname ".")))))))
 
+(defn dart-member-lookup [class member]
+  (when-some [class-info (get-in dart-libs-info [(:lib class) (:type class)])]
+    (when-some [[type-env' member-info]
+                (or
+                  (when-some [member-info (class-info member)]
+                    [identity member-info])
+                  (some #(dart-member-lookup % member) (:mixins class-info))
+                  (some #(dart-member-lookup % member) (:interfaces class-info))
+                  (some-> (:super class-info) (dart-member-lookup member)))]
+      (let [type-args (:type-parameters class)
+            type-params (:type-parameters class-info)
+            nargs (count type-args)
+            nparams (count type-params)
+            type-env (cond
+                       (= nargs nparams)
+                       (zipmap (map :name type-params) (:type-parameters class))
+                       (zero? nargs)
+                       (zipmap (map :name type-params)
+                         (repeat (resolve-type 'dart:core/dynamic {})))
+                       :else
+                       (throw (Exception. (str "Expecting " nparams " type arguments to " class ", got " nargs "."))))]
+          [#(let [v (type-env' %)]
+              (or (when (:is-param v) (type-env (:type v))) v))
+           member-info]))))
+
+(declare actual-parameters)
+
+(defn actual-type [analyzer-type type-env]
+  (case (:type analyzer-type)
+    "Function"
+    (-> analyzer-type
+      (update :return-type actual-type type-env)
+      (update :parameters actual-parameters type-env))
+    (if (:is-param analyzer-type)
+      (type-env analyzer-type)
+      (update analyzer-type :type-parameters (fn [ps] (map #(actual-type % type-env) ps))))))
+
+(defn actual-parameters [parameters type-env]
+  (map #(update % :type actual-type type-env) parameters))
+
+(defn actual-member [[type-env member-info]]
+  (case (:kind member-info)
+    :method
+    (-> member-info
+      (update :return-type actual-type type-env)
+      (update :parameters actual-parameters type-env))
+    :field
+    (update member-info :type actual-type type-env)))
+
 (defn resolve-dart-method
-  [class-name mname args]
-  (let [[tag info] (resolve-symbol class-name {})]
-    (case tag
-      :dart
-      (let [class-info (get-in dart-libs-info [(:lib info) (:name info)])]
-        (if-some [method-info (get class-info (name mname))] ; TODO are there special cases for operators? eg unary-
-          (case (:kind method-info)
-            :field
-            (let [mname (vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true)]
-              mname)
-            :method
-            mname)
-          #_(TODO WARN)))
-      nil)))
+  [class-name mname args type-env]
+  (when-some [type (resolve-type class-name {:type-vars type-env})] ; TODO pass type-vars
+    (let [class-info (get-in dart-libs-info [(:lib type) (:type type)])]
+      (if-some [member-info (some-> (dart-member-lookup type (name mname)) actual-member)] ; TODO are there special cases for operators? eg unary-
+        (case (:kind member-info)
+          :field
+          (vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info)))
+          :method
+          (vary-meta mname assoc :tag (unresolve-type (:return-type member-info))))
+        #_(TODO WARN)))))
 
 (defn- expand-defprotocol [proto & methods]
   ;; TODO do something with docstrings
@@ -610,10 +693,10 @@
                                 (list 'dart/as dart-f (emit-type 'cljd.core/IFn$iface {})))]
                    (if (< (count dart-args) *threshold*)
                      (list* 'dart/. dart-f
-                       (resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count dart-args)))
+                       (resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc (count dart-args)) (:type-vars env))
                        dart-args)
                      (list* 'dart/. dart-f
-                       (resolve-dart-mname 'cljd.core/IFn '-invoke-more (inc *threshold*))
+                       (resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke-more (inc *threshold*) (:type-vars env))
                        (conj (subvec (vec dart-args) 0 (dec *threshold*))
                          (subvec (vec dart-args) (dec *threshold*))))))
         dart-fn-call
@@ -859,21 +942,21 @@
               fixed-arities-expr
               (for [args+1 (next (reductions conj (vec base-args)
                                              (cond->> opt-args base-vararg-arity (take (- base-vararg-arity base-arity)))))]
-                [args+1 `(. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (count args+1)) ~@(pop args+1))])]
+                [args+1 `(. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (count args+1) #{}) ~@(pop args+1))])]
           `((~'call [~this ~@base-args ... ~@(interleave opt-args (repeat default-value))]
              (cond
                ~@(mapcat (fn [[args+1 expr]] `((.== ~(peek args+1) ~default-value) ~expr)) fixed-arities-expr)
                true ~(if base-vararg-arity
                        (if-some [[first-rest-arg :as rest-args] (seq (drop base-vararg-arity call-args))]
                          `(if (.== ~first-rest-arg ~default-value)
-                            (. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
+                            (. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)) #{})
                                ~@fixed-args)
                             (. ~this ~vararg-mname ~@fixed-args
                                (.toList
                                 (.takeWhile ~(tagged-literal 'dart (vec rest-args))
                                             (fn [e#] (.!= e# ~default-value))))))
                          `(. ~this ~vararg-mname ~@fixed-args nil))
-                       `(. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
+                       `(. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)) #{})
                                ~@fixed-args))))
             (~'-apply [~this ~more-param]
              (let [~more-param (seq ~more-param)]
@@ -884,7 +967,7 @@
                                     ~more-param (next ~more-param)]
                                ~body)))
                         `(if (nil? ~more-param)
-                           (. ~this ~(resolve-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)))
+                           (. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)) #{})
                               ~@fixed-args)
                            ~(if base-vararg-arity
                               `(. ~this ~vararg-mname ~@fixed-args ~more-param)
@@ -978,8 +1061,8 @@
   ;; opt-params need to have been fully expanded to a list of [symbol default]
   ;; by the macro
   (let [mtype-params (:type-params (meta mname))
-        env (assoc env :type-params
-              (into (:type-params env #{}) mtype-params))
+        env (assoc env :type-vars
+              (into (:type-vars env #{}) mtype-params))
         dart-fixed-params (map dart-local fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
@@ -1021,14 +1104,14 @@
   (let [the-ns (:current-ns nses)]
     (apply update-in nses [the-ns sym] f args)))
 
-(defn- resolve-methods-specs [specs]
+(defn- resolve-methods-specs [specs type-env]
   (let [last-seen-type (atom nil)]
     (map
       (fn [spec]
         (if (seq? spec)
           (let [[mname arglist & body] spec
-                mname (or (some-> @last-seen-type (resolve-dart-mname mname (count arglist)))
-                        (some-> @last-seen-type (resolve-dart-method mname arglist))
+                mname (or (some-> @last-seen-type (resolve-protocol-mname-to-dart-mname mname (count arglist) type-env))
+                        (some-> @last-seen-type (resolve-dart-method mname arglist type-env))
                         mname)]
             ;; TODO: OBSOLETE mname resolution against protocol ifaces
             (list* mname (parse-dart-params arglist) body))
@@ -1037,7 +1120,7 @@
 
 (defn- emit-class-specs [opts specs env]
   (let [{:keys [extends] :or {extends 'Object}} opts
-        specs (resolve-methods-specs specs)
+        specs (resolve-methods-specs specs (:type-vars env #{}))
         [ctor-op base & ctor-args :as ctor]
         (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
@@ -1072,7 +1155,7 @@
         class-name (if-some [var-name (:var-name opts)]
                        (munge var-name "ifn" env)
                        (dart-global (or (:name-hint opts) "Reify")))
-        mclass-name (vary-meta class-name assoc :type-params (:type-params env))
+        mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
         closed-overs (transduce (map #(method-closed-overs % env)) into #{}
                        (:methods class))
         _ (swap! nses do-def class-name {:dart/name mclass-name :type :class})
@@ -1126,7 +1209,7 @@
         mclass-name (with-meta
                       (or (:dart/name (meta class-name)) (munge class-name env))
                       {:type-params type-params}) ; TODO shouldn't it be dne by munge?
-        env {:type-params (set type-params)}
+        env {:type-vars (set type-params)}
         env (into env
               (for [f fields
                     :let [{:keys [mutable]} (meta f)
@@ -1297,7 +1380,7 @@
               (fn [ns-map]
                 (-> ns-map
                   (cond-> (nil? (get (:imports ns-map) dartlib))
-                    (assoc-in [:imports dartlib] {:dart-alias dart-alias :ns clj-ns}))
+                    (assoc-in [:imports dartlib] {:dart-alias dart-alias :clj-alias clj-alias :ns clj-ns}))
                   (assoc-in [:aliases clj-alias] dartlib)
                   (update :mappings into (for [[from to] (concat (zipmap refer refer) rename)]
                                             [from (with-meta (symbol clj-alias (name to))
@@ -2017,7 +2100,7 @@
               *lib-path* "lib"]
       (compile-namespace 'cljd.core)))
 
-  (-> @nses (get-in '[cljd.core]
+  (-> @nses (get-in '[cljd.core :lib]
               ))
 
   )

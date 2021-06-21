@@ -58,7 +58,8 @@ String emitType(DartType t) {
 }
 
 String emitTypeParameter(TypeParameterElement tp) =>
-M({':name': tp.displayName, ':bound': fnil(emitType,tp.bound,null)});
+M({':name': "\"${tp.displayName}\"",
+    ':bound': fnil(emitType,tp.bound,null)});
 
 String emitParameter(ParameterElement p) {
     final name = p.displayName;
