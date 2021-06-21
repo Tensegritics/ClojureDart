@@ -2582,7 +2582,7 @@
           (let [^BitmapNode child (aget arr idx)
                 ^BitmapNode child (if (zero? hi)
                                     ; if node is shared with a Persistent node
-                                    (let [new-child-arr (.filled #/(List dynamic) 64)
+                                    (let [new-child-arr (.filled #/(List dynamic) 64 nil)
                                           child-arr (.-arr child)]
                                       (set! bitmap-hi (bit-xor bit bitmap-hi))
                                       (set! bitmap-lo (bit-xor bit bitmap-lo))
@@ -2696,21 +2696,21 @@
        (BitmapIterator. current-mask current-bn mask-list bn-list 0))
    ; cgrand's
    (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
-     (^#/(Iterator (MapEntry K V)) iterator [_]
+     (^:getter ^#/(Iterator (MapEntry K V)) iterator [_]
       (BitmapIterator. root 0 0 0 1
         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (.filled #/(List BitmapNode) 7 root)
         #(PersistentMapEntry. %1 %2 -1)))))
   (^#/(Iterable K) keys [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin K)
-     (^#/(Iterator K) iterator [_]
+     (^:getter ^#/(Iterator K) iterator [_]
       (BitmapIterator. root 0 0 0 1
         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (.filled #/(List BitmapNode) 7 root)
         (fn [k _] k)))))
   (^#/(Iterable V) values [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin V)
-     (^#/(Iterator V) iterator [_]
+     (^:getter ^#/(Iterator V) iterator [_]
       (BitmapIterator. root 0 0 0 1
         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (.filled #/(List BitmapNode) 7 root)
