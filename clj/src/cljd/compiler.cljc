@@ -1044,7 +1044,7 @@
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
         methods (remove symbol? specs)  ; crude
-        mixins(filter (comp :mixin meta) classes)
+        mixins (filter (comp :mixin meta) classes)
         ifaces-or-protocols (remove (comp :mixin meta) classes)
         ifaces (map #(let [[tag x] (resolve-symbol % env)]
                        (case tag
@@ -1055,7 +1055,7 @@
                          (throw (Exception. (str "Can't resolve " %))))) ifaces-or-protocols)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
         dart-methods (map #(emit-method % env) methods)]
-    {:extends (emit base env)
+    {:extends (emit-type base env)
      :implements (map #(emit-type % env) ifaces)
      :with (map #(emit-type % env) mixins)
      :super-ctor
