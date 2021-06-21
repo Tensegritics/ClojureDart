@@ -2691,29 +2691,29 @@
    ; Baptiste's
    #_(let [current-mask (bit-or (.-bitmap_hi root) (.-bitmap_lo root))
            current-bn root
-           ^{:tag "List<int>"} mask-list (.filled List 8 current-mask)
-           ^{:tag "List<BitmapNode>"} bn-list (.filled List 8 current-bn)]
+           ^{:tag "List<int>"} mask-list (List/filled 8 current-mask)
+           ^{:tag "List<BitmapNode>"} bn-list (List/filled 8 current-bn)]
        (BitmapIterator. current-mask current-bn mask-list bn-list 0))
    ; cgrand's
    (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
      (iterator [_]
       (BitmapIterator. root 0 0 0 1
-        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (.filled #/(List BitmapNode) 7 root)
+        (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (List/filled 7 root)
         #(PersistentMapEntry. %1 %2 -1)))))
   (keys [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin K)
      (iterator [_]
       (BitmapIterator. root 0 0 0 1
-        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (.filled #/(List BitmapNode) 7 root)
+        (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (List/filled 7 root)
         (fn [k _] k)))))
   (values [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin V)
      (iterator [_]
       (BitmapIterator. root 0 0 0 1
-        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (.filled #/(List BitmapNode) 7 root)
+        (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (List/filled 7 root)
         (fn [_ v] v)))))
   (^#/(PersistentHashMap RK RV) #/(cast RK RV) [coll]
     (PersistentHashMap. meta root __hash))
@@ -3489,7 +3489,7 @@
   (dart:core/print "Started PV test")
   #_(let [sw (Stopwatch.)
         _ (.start sw)
-        pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)
+        pv (PersistentVector. nil 0 5 (VectorNode. nil (List/filled 0 nil)) (List/filled 0 nil) -1)
         pv1
         (loop [pv2 pv
                idx 0]
@@ -3511,7 +3511,7 @@
           pv))))
   #_(dart:core/print "Ended PV test")
 
-  #_(let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 ^dynamic (do nil))) (.filled List 0 ^dynamic (do nil)) -1)]
+  #_(let [pv (PersistentVector. nil 0 5 (VectorNode. nil (List/filled 0 ^dynamic (do nil))) (List/filled 0 ^dynamic (do nil)) -1)]
     (quick-bench
       (loop [pv pv, idx 1000000]
         (if (pos? idx)
@@ -3529,7 +3529,7 @@
   #_(let [sw (Stopwatch.)
         _ (.start sw)
         N 1000000
-        pv (PersistentVector. nil 0 5 (VectorNode. nil (.filled List 0 nil)) (.filled List 0 nil) -1)
+        pv (PersistentVector. nil 0 5 (VectorNode. nil (List/filled 0 nil)) (List/filled 0 nil) -1)
         pv1
         (loop [pv2 pv
                idx 0]
@@ -3625,7 +3625,7 @@
         _ (.start sw)
 
         pv1
-        (loop [v (.filled List 1000000 1)
+        (loop [v (List/filled 1000000 1)
                idx 0]
           (if (== idx 1000000)
             (.elementAt v 11111)

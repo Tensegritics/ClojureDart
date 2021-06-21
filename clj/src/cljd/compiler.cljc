@@ -558,6 +558,11 @@
       form)
     (propagate-hints form)))
 
+(defn static-member? [sym]
+  (when-let [ns-sym (some-> sym namespace symbol)]
+    (let [{:keys [current-ns] :as nses} @nses]
+      (get-in nses [current-ns :mappings ns-sym]))))
+
 (defn macroexpand-1 [env form]
   (->
     (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
@@ -592,6 +597,10 @@
           (.startsWith f-name ".")
           (with-meta
             (list* '. (first args) (symbol (subs f-name 1)) (next args))
+            (meta form))
+          (static-member? f)
+          (with-meta
+            (list* '. (symbol (namespace f)) (symbol f-name) args)
             (meta form))
           :else form))
       form)
