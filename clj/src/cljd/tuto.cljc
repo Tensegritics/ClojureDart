@@ -51,7 +51,7 @@
        (if (.-isOdd i)
          (material/Divider.)
          (let [index (. i "~/" 2)]
-           (when (<= (.-length suggestions) #_(count suggestions) index)
+           (when (<= #_(.-length suggestions) (count suggestions) index)
              (.addAll suggestions (.take (en/generateWordPairs.) 10)))
            (.buildRow this (aget suggestions index)))))))
 

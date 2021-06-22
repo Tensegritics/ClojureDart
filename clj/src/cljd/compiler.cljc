@@ -157,13 +157,20 @@
       (if-some [atype (resolve-dart-type sym env)]
         [:dart atype]))))
 
+(defn dart-alias-for-ns [ns]
+  (let [{:keys [current-ns] :as nses} @nses
+        lib (get-in nses [ns :lib])
+        alias (get-in nses [current-ns :imports lib :dart-alias])]
+    alias))
+
 (defn resolve-type [sym env]
   (when-some [[tag info] (resolve-symbol sym env)]
     (case tag
       :dart info
       :def (case (:type info)
              :class
-             {:qname (:dart/name info) ; TODO XNS add prefix
+             {:qname (symbol (str (dart-alias-for-ns (:ns info))
+                               "."(:dart/name info)))
               :lib (-> @nses (get (:ns info)) :lib)
               :type (name sym)
               :type-parameters [#_TODO]})
@@ -203,7 +210,8 @@
     ('#{void dart:core/void} tag) "void"
     :else
     (let [tag! (non-nullable tag)
-          atype (or (resolve-type tag! env) (when *bootstrap* (resolve-type (symbol (name tag!)) env)))
+          atype (or (resolve-type tag! env) (when *bootstrap* (resolve-type (symbol (name tag!)) env))
+                  (throw (Exception. (str "Can't resolve type " tag! "."))))
           typename
           (if (:is-param atype) (:type atype) (name (:qname atype)))
           type-params (-> tag meta (get :type-params))]
@@ -428,6 +436,9 @@
           (vary-meta mname assoc :tag (unresolve-type (:return-type member-info))))
         #_(TODO WARN)))))
 
+(defn- assoc-ns [sym ns]
+  (with-meta (symbol ns (name sym)) (meta sym)))
+
 (defn- expand-defprotocol [proto & methods]
   ;; TODO do something with docstrings
   (let [[doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
@@ -450,7 +461,10 @@
          :iface iface
          :iext iext
          :impl impl
-         :sigs method-mapping}]
+         :sigs method-mapping}
+        the-ns (name (:current-ns @nses))
+        full-iface (assoc-ns iface the-ns)
+        full-proto (assoc-ns proto the-ns)]
     (list* 'do
       (list* 'definterface iface
         (for [[method arity-mapping] method-mapping
@@ -472,9 +486,9 @@
                         :let [[[_ this] & args :as locals] (map (fn [arg] (list 'quote (gensym arg))) all-args)]]
                     `(~all-args
                       `(let [~~@(interleave locals all-args)]
-                         (if (dart/is? ~'~this ~'~iface)
-                           (. ~'~(vary-meta this assoc :tag iface) ~'~name ~~@args)
-                           (. (.extensions ~'~proto ~'~this) ~'~name ~'~this ~~@args))))))}
+                         (if (dart/is? ~'~this ~'~full-iface)
+                           (. ~'~(vary-meta this assoc :tag full-iface) ~'~name ~~@args)
+                           (. (.extensions ~'~full-proto ~'~this) ~'~name ~'~this ~~@args))))))}
              ~@(for [{:keys [dart/name] [this & args :as all-args] :args} (vals arity-mapping)]
                  `(~all-args
                    (if (dart/is? ~this ~iface)
