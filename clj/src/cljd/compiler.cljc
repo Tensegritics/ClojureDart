@@ -114,12 +114,13 @@
 (defn- resolve-dart-type
   [sym env]
   (let [nses @nses
-        {:keys [mappings imports aliases] :as current-ns} (nses (:current-ns nses))]
+        {:keys [imports aliases] :as current-ns} (nses (:current-ns nses))]
     (else->>
+      (if ('#{void dart:core/void} sym)
+        {:type "void"
+         :qname 'void})
       (if (contains? (:type-vars env #{}) sym)
         {:type (name sym) :is-param true})
-      (if-some [v (mappings sym)]
-        (recur (with-meta v (meta sym)) env))
       (let [lib (get aliases (namespace sym))])
       (if-some [dart-alias (:dart-alias (get imports lib))]
         {:qname (symbol (str dart-alias "." (name sym)))
@@ -146,6 +147,8 @@
     (else->>
       (if-some [v (env sym)] [:local v])
       (if-some [v (current-ns sym)] [:def v])
+      (if-some [v (mappings sym)]
+        (recur (with-meta v (meta sym)) env))
       (let [lib (get aliases (namespace sym))])
       (if-some [ns (some-> lib imports :ns)]
         (recur (with-meta (symbol (name ns) (name sym)) (meta sym)) env))
@@ -2118,6 +2121,11 @@
     (binding [*clj-path* ["clj/src"]
               *lib-path* "lib"]
       (compile-namespace 'cljd.core)))
+
+  (time
+    (binding [*clj-path* ["clj/src"]
+              *lib-path* "lib"]
+      (compile-namespace 'cljd.tuto)))
 
   (-> @nses (get-in '[cljd.core :lib]
               ))
