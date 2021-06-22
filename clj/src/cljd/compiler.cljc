@@ -2145,7 +2145,7 @@
   (time
     (binding [*clj-path* ["clj/src"]
               *lib-path* "lib"]
-      (compile-namespace 'cljd.tuto)))
+      (compile-namespace 'cljd.main)))
 
   (-> @nses (get-in '[cljd.core :lib]
               ))

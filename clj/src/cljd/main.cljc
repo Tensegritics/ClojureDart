@@ -1,4 +1,4 @@
-(ns cljd.tuto
+(ns cljd.main
   (:require ["package:flutter/material.dart" :as material]
             ["package:flutter/widgets.dart" :as widgets]
             ["package:flutter/painting.dart" :as painting]
@@ -21,7 +21,7 @@
   (^widgets/Widget build [this ^widgets/BuildContext context]
    (material/Scaffold. .&
      :appBar (material/AppBar. .&
-               :title (widgets/Text. "Baptiste Name Generator")
+               :title (widgets/Text. "Yoyo Name Generator")
                :actions #dart [(material/IconButton. .&
                                  :icon (widgets/Icon. (.-list material/Icons))
                                  :onPressed #(.push (widgets/Navigator.of context)
