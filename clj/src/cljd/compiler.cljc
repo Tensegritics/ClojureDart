@@ -522,14 +522,18 @@
             (list 'extend-type-protocol* type (:ns info) (:name info)
               (symbol (name (:current-ns @nses)) (name extension-instance)))))))))
 
-(defn ghost-ns []
-  (create-ns (symbol (str (:current-ns @nses) "$ghost"))))
+(defn ghost-ns
+  ([]
+   (ghost-ns (:current-ns @nses)))
+  ([ns-sym]
+   (create-ns (symbol (str ns-sym "$ghost")))))
 
 (defn ghost-resolve
-  ([sym] (ghost-resolve sym false))
+  ([sym] (ghost-resolve sym false (ghost-ns)))
   ([sym ghost-only]
-   (let [gns (ghost-ns)
-         v (ns-resolve gns (if (= "clojure.core" (namespace sym)) (symbol "cljd.core" (name sym)) sym))]
+   (ghost-resolve sym ghost-resolve (ghost-ns)))
+  ([sym ghost-only gns]
+   (let [v (ns-resolve gns (if (= "clojure.core" (namespace sym)) (symbol "cljd.core" (name sym)) sym))]
      (when (or (not ghost-only) (some-> v meta :ns (= gns)))
        v))))
 
@@ -572,6 +576,11 @@
             macro-fn (or
                        (when-some [v (when *bootstrap* (ghost-resolve f))]
                          (when (-> v meta :macro) @v))
+                       ; TODO Delete this with X-compilation, usefull for hybrid case
+                       (case f-type
+                         :def (when-some [ns-sym (and (-> f-v :meta :macro) (bootstrap-nses (:ns f-v)))]
+                                (some-> (ghost-resolve f false (ghost-ns ns-sym)) deref))
+                         nil)
                        ; TODO SELFHOST
                        (case f-type ; wishful coding for the compiler running on dart
                          :def (when (-> f-v :meta :macro) (-> f-v :runtime-value))
