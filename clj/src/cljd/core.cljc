@@ -2297,10 +2297,14 @@
 (deftype BitmapNode [])
 
 ; cgrand's
-(deftype (BitmapIterator E) [^:mutable ^BitmapNode node ^:mutable ^int idx ^:mutable ^int mask ^:mutable ^int kvs
-                           ^:mutable ^int depth
-                           ^#/(List int) masks ^#/(List BitmapNode) nodes
-                           ^:dart mk-value]
+(deftype #/(BitmapIterator E) [^:mutable ^BitmapNode node
+                               ^:mutable ^int idx
+                               ^:mutable ^int mask
+                               ^:mutable ^int kvs
+                               ^:mutable ^int depth
+                               ^#/(List int) masks
+                               ^#/(List BitmapNode) nodes
+                               ^:dart mk-value]
   #/(Iterator E)
   (current [iter]
    (let [arr (.-arr node)]
