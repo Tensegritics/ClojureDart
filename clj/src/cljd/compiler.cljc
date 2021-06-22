@@ -129,7 +129,7 @@
          (vec
            (for [t (:type-params (meta sym))]
              (or (resolve-type t env)
-               (throw (Exception. (pr-str 'CANT t env))))))})
+               (throw (Exception. (str "Can't resolve type parameter" t " on type " sym "."))))))})
       nil)))
 
 (defn resolve-symbol
@@ -171,9 +171,6 @@
     (symbol (:type atype))
     (let [{:keys [current-ns] :as nses} @nses
           {:keys [lib type type-parameters]} atype]
-      (when (some nil? type-parameters)
-        (throw (Exception. (pr-str 'NIL atype)))
-        )
       (with-meta
         (symbol
           (when-not (= lib (:lib (nses current-ns)))
