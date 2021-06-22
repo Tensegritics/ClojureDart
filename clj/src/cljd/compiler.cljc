@@ -170,7 +170,7 @@
       :def (case (:type info)
              :class
              {:qname (symbol (str (dart-alias-for-ns (:ns info))
-                               "."(:dart/name info)))
+                               "." (:dart/name info)))
               :lib (-> @nses (get (:ns info)) :lib)
               :type (name sym)
               :type-parameters [#_TODO]})
@@ -1397,11 +1397,18 @@
                   spec specs]
               (f spec)))
           ns-lib (ns-to-lib ns-sym)
+          ns-map (-> ns-prototype
+                   (assoc :lib ns-lib)
+                   (assoc-in [:imports ns-lib] {:dart-alias "here"
+                                                :ns ns-sym
+                                                :clj-alias ns-sym}))
           ns-map
-          (reduce #(%2 %1)
-            (assoc ns-prototype :lib ns-lib)
+          (reduce #(%2 %1) ns-map
+
             (for [[lib & {:keys [as refer rename]}] require-specs
-                  :let [dart-alias (name (dart-global (or as "lib")))
+                  :let [dart-alias (if (= 'cljd.core lib)
+                                     "cljd"
+                                     (name (dart-global (or as "lib"))))
                         clj-ns (when-not (string? lib) lib)
                         clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
                         dartlib (else->>
@@ -1645,7 +1652,9 @@
 
 (defn write-class [{class-name :name :keys [abstract extends implements with fields ctor ctor-params super-ctor methods nsm]}]
   (when abstract (print "abstract "))
-  (print "class" class-name)
+  (let [[_ dart-alias local-class-name] (re-matches #"(?:([a-zA-Z0-9_$]+)\.)?(.+)" class-name)]
+    ; TODO assert dart-alias is current alias
+    (print "class" local-class-name))
   (some->> extends (print " extends"))
   (some->> with seq (str/join ", ") (print " with"))
   (some->> implements seq (str/join ", ") (print " implements"))
