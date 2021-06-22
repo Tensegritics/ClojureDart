@@ -200,6 +200,7 @@
                 (emit-type (symbol alias type) env))
             identifier (str identifier)))))
     (= 'some tag) "dc.dynamic"
+    ('#{void dart:core/void} tag) "void"
     :else
     (let [tag! (non-nullable tag)
           atype (or (resolve-type tag! env) (when *bootstrap* (resolve-type (symbol (name tag!)) env)))
