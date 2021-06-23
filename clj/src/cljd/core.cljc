@@ -444,15 +444,14 @@
 
 (defmacro deftype [& args]
   (let [[class-name fields & args] args
-        [opts specs] (roll-leading-opts args)
-        class-name-only (if (seq? class-name) (first class-name) class-name)]
+        [opts specs] (roll-leading-opts args)]
     `(do
        (~'deftype* ~class-name ~fields ~opts ~@specs)
        ~(when-not (:type-only opts)
           `(defn
-             ~(symbol (str "->" class-name-only))
+             ~(symbol (str "->" class-name))
              [~@fields]
-             (new ~(vary-meta class-name-only dissoc :type-params) ~@fields))))))
+             (new ~(vary-meta class-name dissoc :type-params) ~@fields))))))
 
 (defmacro definterface [iface & meths]
   `(deftype ~(vary-meta iface assoc :abstract true) []

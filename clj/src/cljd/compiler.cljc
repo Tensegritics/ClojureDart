@@ -196,16 +196,6 @@
 (defn emit-type
   [tag env]
   (cond
-    (string? tag)
-    (let [nses @nses
-          {:keys [mappings] :as current-ns} (nses (:current-ns nses))]
-      (replace-all tag #"(?:([^\s,()\[\]}<>]+)[./])?([a-zA-Z0-9_$]+)[?]?( +[a-zA-Z0-0_$]+)?" ; first group should match any clojure constituent char
-        (fn [[_ alias type identifier]]
-          (cond->
-              (if (and (nil? alias) (#{"Function" "void"} type))
-                type
-                (emit-type (symbol alias type) env))
-            identifier (str identifier)))))
     (= 'some tag) "dc.dynamic"
     ('#{void dart:core/void} tag) "void"
     :else
@@ -214,9 +204,14 @@
                   (throw (Exception. (str "Can't resolve type " tag! "."))))
           typename
           (if (:is-param atype) (:type atype) (name (:qname atype)))
-          type-params (-> tag meta (get :type-params))]
-      (cond-> typename
-        (seq type-params) (str "<" (str/join ", " (map #(emit-type % env) type-params)) ">")
+          type-params (->> tag meta :type-params (map #(emit-type % env)))]
+      (cond->
+          (if (seq type-params)
+            (case typename
+              "dc.Function"
+              (str (first type-params) " Function(" (str/join ", " (next type-params)) ")") ; TODO correct support of function and optionals (stop conflating type params and params types)
+              (str typename "<" (str/join ", " type-params) ">"))
+            typename)
         (not= tag tag!) (str "?")))))
 
 (defn dart-type-truthiness [type]
@@ -1238,7 +1233,7 @@
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
   (let [abstract (:abstract (meta class-name))
-        [class-name & type-params] (if (seq? class-name) class-name (cons class-name (:type-params (meta class-name))))
+        [class-name & type-params] (cons class-name (:type-params (meta class-name)))
         mclass-name (with-meta
                       (or (:dart/name (meta class-name)) (munge class-name env))
                       {:type-params type-params}) ; TODO shouldn't it be dne by munge?
@@ -2039,8 +2034,12 @@
     (println code)))
 
 (defn dart-type-params-reader [x]
-  (if (symbol? x)
-    x
+  (else->>
+    (if (symbol? x) x)
+    (let [[args [_ ret :as rets]] (split-with (complement '#{->}) x)])
+    (if (seq rets) ; TODO correct support of optionals (stop conflating type params and params types)
+      (with-meta 'dart:core/Function
+        {:type-params (map dart-type-params-reader (cons ret args))}))
     (let [[type & params] x]
       (cond-> type
         params
@@ -2146,6 +2145,11 @@
     (binding [*clj-path* ["clj/src"]
               *lib-path* "lib"]
       (compile-namespace 'cljd.main)))
+
+  (time
+    (binding [*clj-path* ["clj/src"]
+              *lib-path* "lib"]
+      (compile-namespace 'cljd.user)))
 
   (-> @nses (get-in '[cljd.core :lib]
               ))
