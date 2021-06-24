@@ -1176,7 +1176,9 @@
      :nsm need-nsm}))
 
 (defn emit-reify* [[_ opts & specs] env]
-  (let [class (emit-class-specs opts specs env)
+  (let [this-this (dart-local "this" env)
+        env (into env (keep (fn [[k v]] (when (= 'this v) [k this-this]))) env)
+        class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param"))
         named-ctor-params (map dart-local (take-nth 2 named-ctor-args))
@@ -1211,7 +1213,8 @@
            {:dart/name class-name
             :type :class
             :dart/code (with-out-str (write-class class))})
-    (emit reify-ctor-call (into env (zipmap closed-overs closed-overs)))))
+    (emit reify-ctor-call (into env (assoc (zipmap closed-overs closed-overs)
+                                      this-this 'this)))))
 
 (defn- ensure-dart-expr
   "If dart-expr is suitable as an expression (ie liftable returns nil),
