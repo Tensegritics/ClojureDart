@@ -574,6 +574,11 @@
      (next []) => nil
      (next nil) => nil"))
 
+(defn seq?
+  {:inline (fn [x] `(satisfies? ISeq ~x))
+   :inline-arities #{1}}
+  [x] (satisfies? ISeq x))
+
 (extend-type Null
   ISeqable
   (-seq [coll] nil)
@@ -803,14 +808,31 @@
     "Returns a new stack without the item on top of the stack. Is used
      by cljs.core/pop."))
 
+(defprotocol IMap
+  "Protocol for adding mapping functionality to collections."
+  (-dissoc [coll k]
+    "Returns a new collection of coll without the mapping for key k."))
+
 (defprotocol IWithMeta
   "Protocol for adding metadata to an object."
   (-with-meta [o meta]
     "Returns a new object with value of o and metadata meta added to it."))
 
+(defn with-meta
+  {:inline (fn [obj m] `(-with-meta ~obj ~m))
+   :inline-arities #{2}}
+  [obj m]
+  (-with-meta obj m))
+
 (defprotocol IMeta
   "Protocol for accessing the metadata of an object."
   (-meta [o] "Returns the metadata of object o."))
+
+(defn meta
+  {:inline (fn [obj] `(-meta ~obj))
+   :inline-arities #{1}}
+  [obj]
+  (-meta obj))
 
 (defprotocol IHash
   "Protocol for adding hashing functionality to a type."
@@ -826,11 +848,6 @@
     "Returns the key of the map entry.")
   (-val [coll]
     "Returns the value of the map entry."))
-
-(defprotocol IMap
-  "Protocol for adding mapping functionality to collections."
-  (-dissoc [coll k]
-    "Returns a new collection of coll without the mapping for key k."))
 
 (defprotocol IEditableCollection
   "Protocol for collections which can transformed to transients."
@@ -3107,6 +3124,23 @@
                      (cons (map first ss) (step (map rest ss)))))))]
      (map #(apply f %) (step (list* c1 c2 c3 colls))))))
 
+(defmacro doto
+  "Evaluates x then calls all of the methods and functions with the
+  value of x supplied at the front of the given arguments.  The forms
+  are evaluated in order.  Returns x."
+  {:added "1.0"}
+  [x & forms]
+  (let [gx (gensym)]
+    `(let [~gx ~x]
+       ~@(map (fn [f]
+                (with-meta
+                  (if (seq? f)
+                    `(~(first f) ~gx ~@(next f))
+                    `(~f ~gx))
+                  (meta f)))
+           forms)
+       ~gx)))
+
 (defn keep
   "Returns a lazy sequence of the non-nil results of (f item). Note,
   this means false return values will be included.  f must be free of
@@ -3336,9 +3370,6 @@
   #_([pred] (filter (complement pred)))
   ([pred coll]
    (filter (complement pred) coll)))
-
-
-
 
 (defn main []
 
