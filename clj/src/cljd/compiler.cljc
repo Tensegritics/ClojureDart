@@ -1097,7 +1097,9 @@
                              :named p ; here p must be a valid dart identifier
                              :positional (dart-local p))
                            (emit d env)])
-        env (into (assoc env this-param 'this)
+        super-param (:super (meta this-param))
+        env (into (cond-> (assoc env this-param 'this)
+                    super-param (assoc super-param 'super))
                   (zipmap (concat fixed-params (map first opt-params))
                           (concat dart-fixed-params (map first dart-opt-params))))
         dart-body (emit (cons 'do body) env)
@@ -1115,7 +1117,50 @@
   (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
 
 (defn method-closed-overs [[mname type-params dart-fixed-params opt-kind dart-opt-params _ dart-body] env]
-  (reduce disj (closed-overs dart-body env) (cons 'this (concat dart-fixed-params (map second dart-opt-params)))))
+  (reduce disj (closed-overs dart-body env) (list* 'this 'super (concat dart-fixed-params (map second dart-opt-params)))))
+
+(defn extract-super-calls [dart-body this-super]
+  (let [dart-fns (atom [])
+        dart-body
+        (clojure.walk/prewalk
+          (fn [x]
+            (or
+              (case (when (seq? x) (first x))
+                (dart/. dart/.-)
+                (when (= (second x) this-super)
+                  (let [args (drop 3 x)
+                        [bindings args]
+                        (reduce (fn [[bindings args] a]
+                                  (let [[bindings' a'] (lift-arg true a 'super-arg {})]
+                                    [(into bindings bindings')
+                                     (conj args a')]))
+                          [[] []] args)
+                        params (vec (into #{} (filter symbol?) args))
+                        meth (nth x 2)
+                        dart-fn-name (dart-local (with-meta (symbol (str "super-" meth)) {:dart true}) {})
+                        dart-fn (list 'dart/fn params :positional ()
+                                  (list* (first x) 'super meth args))]
+                    (swap! dart-fns conj [dart-fn-name dart-fn])
+                    (cond->> (cons dart-fn-name params)
+                      (seq bindings) (list 'dart/let bindings))))
+                dart/set!
+                (when-some [fld (when-some [[op o fld] (when (seq? (second x)) (second x))]
+                                  (when (and (= 'dart/.- op) (= o this-super))
+                                    fld))]
+                  (let [dart-fn-name (dart-local (with-meta (symbol (str "super-set-" fld)) {:dart true}) {})
+                        dart-fn (list 'dart/fn '[v] :positional ()
+                                  (list 'dart/set! (list 'dart/.- 'super fld) 'v))]
+                    (swap! dart-fns conj [dart-fn-name dart-fn])
+                    (list dart-fn-name (nth x 2))))
+                nil)
+              (when (= this-super x) (throw (Exception. "Rogue reference to super.")))
+              x))
+          dart-body)]
+    [@dart-fns dart-body]))
+
+(defn method-extract-super-call [method this-super]
+  (let [[bindings dart-body] (extract-super-calls (peek method) this-super)]
+    [bindings (conj (pop method) dart-body)]))
 
 (declare write-class)
 
@@ -1177,7 +1222,8 @@
 
 (defn emit-reify* [[_ opts & specs] env]
   (let [this-this (dart-local "this" env)
-        env (into env (keep (fn [[k v]] (when (= 'this v) [k this-this]))) env)
+        this-super (dart-local "super" env)
+        env (into env (keep (fn [[k v]] (case v this [k this-this] super [k this-super] nil))) env)
         class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
         positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param"))
@@ -1186,8 +1232,16 @@
                        (munge var-name "ifn" env)
                        (dart-global (or (:name-hint opts) "Reify")))
         mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
-        closed-overs (transduce (map #(method-closed-overs % env)) into #{}
-                       (:methods class))
+        [super-fn-bindings methods]
+        (reduce (fn [[bindings meths] meth]
+                  (let [[bindings' meth'] (method-extract-super-call meth this-super)]
+                    [(into bindings bindings') (conj meths meth')]))
+          [[] []] (:methods class))
+        class (assoc class :methods methods)
+        closed-overs (concat
+                       (transduce (map #(method-closed-overs % env)) into #{}
+                         (:methods class))
+                       (map first super-fn-bindings))
         _ (swap! nses do-def class-name {:dart/name mclass-name :type :class})
         class (-> class
                 (assoc
@@ -1203,18 +1257,23 @@
                   (concat positional-ctor-params
                     (interleave (take-nth 2 named-ctor-args)
                       named-ctor-params))))
-        reify-ctor (concat ['new class-name] positional-ctor-args (take-nth 2 (next named-ctor-args)))
         reify-ctor-call (list*
                          'new class-name
                          (concat closed-overs
-                                 positional-ctor-args
-                                 (take-nth 2 (next named-ctor-args))))]
+                           positional-ctor-args
+                           (take-nth 2 (next named-ctor-args))))
+        env-for-ctor-call
+        (-> env
+              (into (map (fn [v] [v v])) closed-overs)
+              (into (map (fn [[f]] [f f])) super-fn-bindings)
+              (assoc this-this 'this))]
     (swap! nses do-def class-name
            {:dart/name class-name
             :type :class
             :dart/code (with-out-str (write-class class))})
-    (emit reify-ctor-call (into env (assoc (zipmap closed-overs closed-overs)
-                                      this-this 'this)))))
+    (cond->> (emit reify-ctor-call env-for-ctor-call)
+      (seq super-fn-bindings)
+      (list 'dart/let super-fn-bindings))))
 
 (defn- ensure-dart-expr
   "If dart-expr is suitable as an expression (ie liftable returns nil),
