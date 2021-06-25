@@ -1004,7 +1004,8 @@
                          (concat
                           (for [args+1 (next (reductions conj [] base-args))]
                             [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
-                          fixed-arities-expr)))))))]
+                          fixed-arities-expr)))))))
+        [{:keys [current-ns]}] (swap-vals! nses assoc :current-ns 'cljd.core)]
     (emit
       `(deftype ~(vary-meta (dont-munge mixin-name nil) assoc :abstract true) []
          :type-only true
@@ -1015,7 +1016,8 @@
          ~@(some-> invoke-more list)
          ~@call+apply)
       {})
-    mixin-name))
+    (swap! nses assoc :current-ns current-ns)
+    (symbol "cljd.core" (name mixin-name))))
 
 (defn- emit-ifn [var-name name bodies env]
   (let [synth-params (into [] (map (fn [_] (gensym "arg"))) (range *threshold*)) ; param names used when no user-specified
