@@ -1394,7 +1394,8 @@
       (let [{dart-name :dart/name the-ns :ns} v]
           (if (= (:current-ns @nses) the-ns)
             dart-name
-            (symbol (str (ensure-import the-ns) "." dart-name))))
+            (with-meta (symbol (str (ensure-import the-ns) "." dart-name))
+              (meta dart-name))))
       :dart (vary-meta (:qname v) assoc :dart/fn-type :native)
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
 
