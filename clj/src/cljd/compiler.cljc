@@ -318,6 +318,7 @@
   ([prefix] (munge prefix (swap! gens inc) {})))
 
 (def ^:dynamic *locals-gen*)
+
 (defn dart-local
   "Generates a unique (relative to the top-level being compiled) dart symbol.
    Hint is a string/symbol/keyword which gives a hint (duh) on how to name the
@@ -1020,9 +1021,7 @@
     (symbol "cljd.core" (name mixin-name))))
 
 (defn- emit-ifn [var-name name bodies env]
-  (let [synth-params (into [] (map (fn [_] (gensym "arg"))) (range *threshold*)) ; param names used when no user-specified
-        more-param (gensym 'more)
-        fixed-bodies (remove variadic? bodies)
+  (let [fixed-bodies (remove variadic? bodies)
         fixed-arities (some->> fixed-bodies seq (map first) (map count))
         [vararg-params & vararg-body] (some #(when (variadic? %) %) bodies)
         base-vararg-arity (some->> vararg-params (take-while (complement #{'&})) count)
@@ -1052,20 +1051,26 @@
                             env)]
     (list 'dart/let [binding] tmp)))
 
+(defn- dart-fn-param
+  "Like dart-local but with no natural type as dart fns params must be dynamic."
+  ([env] (dart-fn-param "" env))
+  ([hint env]
+   (vary-meta (dart-local hint env) dissoc :dart/nat-type)))
+
 (defn- emit-dart-fn [fn-name [params & body] env]
   (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
-        dart-fixed-params (map #(dart-local % env) fixed-params)
+        dart-fixed-params (map #(dart-fn-param % env) fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
                              :named p ; here p must be a valid dart identifier
-                             :positional (dart-local p env))
+                             :positional (dart-fn-param p env))
                            (emit d env)])
         env (into env (zipmap (concat fixed-params (map first opt-params))
                               (concat dart-fixed-params (map first dart-opt-params))))
         dart-body (emit (cons 'do body) env)
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         dart-fixed-params (if recur-params
-                            (map #(dart-local % env) fixed-params)
+                            (map #(dart-fn-param % env) fixed-params)
                             dart-fixed-params)
         dart-body (cond->> dart-body
                     recur-params
@@ -1093,11 +1098,11 @@
   (let [mtype-params (:type-params (meta mname))
         env (assoc env :type-vars
               (into (:type-vars env #{}) mtype-params))
-        dart-fixed-params (map dart-local fixed-params)
+        dart-fixed-params (map #(dart-local % env) fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
                              :named p ; here p must be a valid dart identifier
-                             :positional (dart-local p))
+                             :positional (dart-local p env))
                            (emit d env)])
         super-param (:super (meta this-param))
         env (into (cond-> (assoc env this-param 'this)
@@ -1107,7 +1112,7 @@
         dart-body (emit (cons 'do body) env)
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         dart-fixed-params (if recur-params
-                            (map dart-local fixed-params)
+                            (map #(dart-local % env) fixed-params)
                             dart-fixed-params)
         dart-body (cond->> dart-body
                     recur-params
@@ -1228,8 +1233,8 @@
         env (into env (keep (fn [[k v]] (case v this [k this-this] super [k this-super] nil))) env)
         class (emit-class-specs opts specs env)
         [positional-ctor-args named-ctor-args] (-> class :super-ctor :args split-args)
-        positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param"))
-        named-ctor-params (map dart-local (take-nth 2 named-ctor-args))
+        positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param" env))
+        named-ctor-params (map #(dart-local % env) (take-nth 2 named-ctor-args))
         class-name (if-some [var-name (:var-name opts)]
                        (munge var-name "ifn" env)
                        (dart-global (or (:name-hint opts) "Reify")))
