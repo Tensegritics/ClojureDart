@@ -2111,19 +2111,27 @@
   {'dart #(tagged-literal 'dart %)
    '/ dart-type-params-reader})
 
+(def cljd-resolver
+  (reify clojure.lang.LispReader$Resolver
+    (currentNS [_] (:current-ns @nses))
+    (resolveClass [_ sym]
+      (let [{:keys [current-ns] :as nses} @nses]
+         (get-in nses [current-ns :mappings sym])))
+    (resolveAlias [_ sym]
+      (let [{:keys [current-ns] :as nses} @nses
+            {:keys [aliases imports]} (nses current-ns)]
+        (some-> (aliases (name sym)) imports :ns symbol)))
+    (resolveVar [_ sym] nil)))
+
+(defmacro with-cljd-reader [& body]
+  `(binding [*data-readers* (into *data-readers* dart-data-readers)
+             *reader-resolver* cljd-resolver]
+     ~@body))
+
 (defn load-input [in]
   #?(:clj
-     (binding [*data-readers* (into *data-readers* dart-data-readers)
-               *reader-resolver*
-               (reify clojure.lang.LispReader$Resolver
-                 (currentNS [_] (:current-ns @nses))
-                 (resolveClass [_ sym] nil) ; should check for imported classes
-                 (resolveAlias [_ sym]
-                   (let [{:keys [current-ns] :as nses} @nses
-                         {:keys [aliases imports]} (nses current-ns)]
-                     (some-> (aliases (name sym)) imports :ns symbol)))
-                 (resolveVar [_ sym] nil))]
-         (let [in (clojure.lang.LineNumberingPushbackReader. in)]
+     (with-cljd-reader
+       (let [in (clojure.lang.LineNumberingPushbackReader. in)]
            (loop []
              (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
                (when-not (identical? form in)
@@ -2135,22 +2143,13 @@
 
 (defn bootstrap-load-input [in]
   #?(:clj
-     (binding [*data-readers* (into *data-readers* dart-data-readers)
-               *reader-resolver*
-               (reify clojure.lang.LispReader$Resolver
-                 (currentNS [_] (:current-ns @nses))
-                 (resolveClass [_ sym] nil) ; should check for imported classes
-                 (resolveAlias [_ sym]
-                   (let [{:keys [current-ns] :as nses} @nses
-                         {:keys [aliases imports]} (nses current-ns)]
-                     (some-> (aliases (name sym)) imports :ns symbol)))
-                 (resolveVar [_ sym] nil))]
-         (let [in (clojure.lang.LineNumberingPushbackReader. in)]
-           (loop []
-             (let [form (read {:eof in :read-cond :allow} in)]
-               (when-not (identical? form in)
-                 (binding [*locals-gen* {}] (bootstrap-eval form))
-                 (recur))))))))
+     (with-cljd-reader
+       (let [in (clojure.lang.LineNumberingPushbackReader. in)]
+         (loop []
+           (let [form (read {:eof in :read-cond :allow} in)]
+             (when-not (identical? form in)
+               (binding [*locals-gen* {}] (bootstrap-eval form))
+               (recur))))))))
 
 (defn compile-input [in]
   (load-input in)
