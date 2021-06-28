@@ -625,6 +625,23 @@
      (conj [1 2 3 4] 5) => [1 2 3 4 5]
      (conj '(2 3 4 5) 1) => '(1 2 3 4 5)"))
 
+(defn conj
+  "conj[oin]. Returns a new collection with the xs
+    'added'. (conj nil item) returns (item).  The 'addition' may
+    happen at different 'places' depending on the concrete type."
+  {:inline-arities #{0 1 2}
+   :inline (fn
+             ([] [])
+             ([coll] coll)
+             ([coll x] `(-conj ~coll ~x)))}
+  ([] [])
+  ([coll] coll)
+  ([coll x] (-conj coll x))
+  ([coll x & xs]
+   (if xs
+     (recur (-conj coll x) (first xs) (next xs))
+     (-conj coll x))))
+
 (defprotocol IDeref
   "Protocol for adding dereference functionality to a reference."
   (-deref [o]
@@ -767,6 +784,18 @@
   (-assoc [coll k v]
     "Returns a new collection of coll with a mapping from key k to
      value v added to it."))
+
+(defn assoc
+  {:inline (fn [map key val] `(-assoc ~map ~key ~val))
+   :inline-arities #{3}}
+  ([map key val] (-assoc map key val))
+  ([map key val & kvs]
+   (let [ret (-assoc map key val)]
+     (if kvs
+       (if (next kvs)
+         (recur ret (first kvs) (second kvs) (nnext kvs))
+         (throw (ArgumentError. "assoc expects even number of arguments after map/vector, found odd number")))
+       ret))))
 
 (defprotocol ITransientAssociative
   "Protocol for adding associativity to transient collections."
