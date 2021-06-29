@@ -6,47 +6,28 @@
   (extensions [x])
   (satisfies [x]))
 
-(def empty-list nil)
+#_#_(def empty-list nil)
 (def empty-persistent-vector nil)
+
+(declare empty-list empty-persistent-vector)
 
 (def ^:dart to-map)
 (def ^:dart to-list)
 
 (def ^{:clj true} =)
-(def ^{:clj true} assoc)
 (def ^{:dart true} butlast)
-#_(def ^{:clj true} concat)
-(def ^{:clj true} conj)
-#_(def ^{:dart true} cons)
 (def ^{:dart true} contains?)
 (def ^{:clj true} dissoc)
-#_(def ^{:clj true} drop)
-#_(def ^{:dart true} first)
 (def ^{:clj true} gensym)
-(def ^{:clj true} get)
 (def ^{:dart true} ident?)
-#_(def ^{:clj true} interleave)
-#_(def ^{:dart true} inc)
 (def ^{:dart true} key)
 (def ^{:dart true} keys)
 (def ^{:clj true} keyword)
 (def ^{:dart true} keyword?)
-#_(def ^{:dart true} last)
-#_(def ^{:clj true} list)
-#_(def ^{:clj true} mapcat)
 (def ^{:dart true} map?)
-(def ^{:dart true} meta)
 (def ^{:dart true} name)
 (def ^{:dart true} namespace)
-#_(def ^{:dart true} next)
-#_(def ^{:dart true} nnext)
-#_(def ^{:clj true} partition)
-#_(def ^{:dart true} second)
-#_(def ^{:dart true} seq)
-(def ^{:dart true} seq?)
 (def ^{:dart true} set)
-#_(def ^{:dart true} some)
-#_(def ^{:clj true} str)
 (def ^{:dart true} string?)
 (def ^{:clj true} subvec)
 (def ^{:clj true} symbol)
@@ -57,11 +38,10 @@
 (def ^{:dart true} vec)
 (def ^{:clj true} vector)
 (def ^{:dart true} vector?)
-(def ^{:dart true} with-meta)
 
 ;; syntax quote support at bootstrap
 ;; the :cljd nil is most certainly going to bite us once we run the compiler on dart vm
-#_(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
+(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
 (def ^:clj ^:bootstrap concat #?(:cljd nil :clj clojure.core/concat))
 (def ^:dart ^:bootstrap first #?(:cljd nil :clj clojure.core/first))
 (def ^:clj ^:bootstrap hash-map #?(:cljd nil :clj clojure.core/hash-map))
@@ -235,6 +215,10 @@
                             (recur (next p) (cons (first p) d))
                             d))]
                (cons `defn decl))))
+
+(defmacro declare
+  "defs the supplied var names with no bindings, useful for making forward declarations."
+  [& names] `(do ~@(map #(list 'def % nil) names)))
 
 (defn ^bool satisfies?
   {:inline (fn [protocol x] `(.satisfies ~protocol ~x))
@@ -533,11 +517,6 @@
   {:added "1.0"}
   [& body])
 
-#_(defn nth [x i default]
-  (if (.< i (.-length x))
-    (. x "[]" i)
-    default))
-
 (defprotocol ISeqable
   "Protocol for adding the ability to a type to be transformed into a sequence."
   (-seq [o]
@@ -574,7 +553,7 @@
      (next []) => nil
      (next nil) => nil"))
 
-(defn seq?
+(defn ^bool seq?
   {:inline (fn [x] `(satisfies? ISeq ~x))
    :inline-arities #{1}}
   [x] (satisfies? ISeq x))
@@ -682,17 +661,17 @@
   IDeref
   (-deref [o] val))
 
-(defn reduced
+(defn ^Reduced reduced
   "Wraps x in a way such that a reduce will terminate with the value x"
   [x]
   (Reduced. x))
 
-(defn reduced?
+(defn ^bool reduced?
   "Returns true if x is the result of a call to reduced"
   [r]
   (dart/is? r Reduced))
 
-(defn ensure-reduced
+(defn ^Reduced ensure-reduced
   "If x is already reduced?, returns it, else returns (reduced x)"
   [x]
   (if (reduced? x) x (reduced x)))
@@ -821,11 +800,95 @@
     "Returns the value at the index n in the collection coll.
      Returns not-found if index n is out of bounds and not-found is supplied."))
 
+(extend-type List
+  IIndexed
+  (-nth [l n] (. l "[]" n))
+  (-nth [l n not-found]
+    (if (< -1 n (.-length l))
+      (. l "[]" n)
+      not-found)))
+
+(extend-type String
+  IIndexed
+  (-nth [l n] (. l "[]" n))
+  (-nth [l n not-found]
+    (if (< n (.-length l))
+      (. l "[]" n)
+      not-found)))
+
+(extend-type MapEntry
+  IIndexed
+  (-nth [me n]
+    (cond
+      (== 0 n) (.-key me)
+      (== 1 n) (.-value me)
+      :else (throw (IndexError. n me))))
+  (-nth [me n not-found]
+    (cond
+      (== 0 n) (.-key me)
+      (== 1 n) (.-value me)
+      :else not-found)))
+
+(extend-type Match
+  IIndexed
+  (-nth [m n]
+    (.group m n))
+  (-nth [m n not-found]
+    (if (<= 0 n (.-groupCount m))
+      (.group m n)
+      not-found)))
+
+(extend-type Null
+  IIndexed
+  (-nth [m n] nil)
+  (-nth [m n not-found] not-found))
+
+(extend-type fallback
+  IIndexed
+  (-nth [coll n]
+    (when (neg? n) (throw (IndexError. n coll)))
+    (loop [xs (seq coll) ^int i n]
+      (cond
+        (nil? xs) (throw (IndexError. n coll))
+        (zero? i) (first xs)
+        :else (recur (next xs) (.- i 1)))))
+  (-nth [coll n not-found]
+    (when (neg? n) not-found)
+    (loop [xs (seq coll) ^int i n]
+      (cond
+        (nil? xs) not-found
+        (zero? i) (first xs)
+        :else (recur (next xs) (.- i 1))))))
+
+(defn nth
+  {:inline-arities #{2 3}
+   :inline (fn
+             ([coll n] `(-nth ~coll ~n))
+             ([coll n not-found] `(-nth ~coll ~n ~not-found)))}
+  ([coll n] (-nth coll n))
+  ([coll n not-found] (-nth coll n not-found)))
+
 (defprotocol ILookup
   "Protocol for looking up a value in a data structure."
   (-lookup [o k] [o k not-found]
     "Use k to look up a value in o. If not-found is supplied and k is not
      a valid value that can be used for look up, not-found is returned."))
+
+(extend-type fallback
+  ILookup
+  (-lookup [o k]
+    (when (and (dart/is? k int) (satisfies? IIndexed o))
+      (-nth o k nil)))
+  (-lookup [o k not-found]
+    (when (and (dart/is? k int) (satisfies? IIndexed o))
+      (-nth o k not-found))))
+
+(defn get
+  "Returns the value mapped to key, not-found or nil if key not present."
+  ([map key]
+   (-lookup map key))
+  ([map key not-found]
+   (-lookup map key not-found)))
 
 (defprotocol IStack
   "Protocol for collections to provide access to their items as stacks. The top
@@ -1050,6 +1113,19 @@
    :inline-arities #{1}}
   [num]
   (== 0 num))
+
+(extend-type MapEntry
+  IIndexed
+  (-nth [me n]
+    (cond
+      (== 0 n) (.-key me)
+      (== 1 n) (.-value me)
+      :else (throw (IndexError. n me))))
+  (-nth [me n not-found]
+    (cond
+      (== 0 n) (.-key me)
+      (== 1 n) (.-value me)
+      :else not-found)))
 
 (defn quick-bench* [run]
   (let [sw (Stopwatch.)
