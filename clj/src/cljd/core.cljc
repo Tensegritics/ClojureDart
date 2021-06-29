@@ -1267,19 +1267,6 @@
   [num]
   (== 0 num))
 
-(extend-type MapEntry
-  IIndexed
-  (-nth [me n]
-    (cond
-      (== 0 n) (.-key me)
-      (== 1 n) (.-value me)
-      :else (throw (IndexError. n me))))
-  (-nth [me n not-found]
-    (cond
-      (== 0 n) (.-key me)
-      (== 1 n) (.-value me)
-      :else not-found)))
-
 (defn quick-bench* [run]
   (let [sw (Stopwatch.)
         _ (dart:core/print "Calibrating")
