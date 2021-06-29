@@ -992,7 +992,7 @@
 
 (extend-type fallback
   IMap
-  (-dissoc [coll]
+  (-dissoc [coll k]
     (when-not (nil? coll)
       (throw (Exception. (str "Dissoc not supported on " (.-runtimeType coll)))))))
 
