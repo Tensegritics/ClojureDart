@@ -33,7 +33,7 @@
 (def ^{:clj true} symbol)
 (def ^{:dart true} symbol?)
 (def ^{:dart true} take-nth)
-(def ^{:dart true} val)
+#_(def ^{:dart true} val)
 (def ^{:clj true} vary-meta)
 (def ^{:dart true} vec)
 (def ^{:clj true} vector)
@@ -456,9 +456,54 @@
 
 (defmacro when
   "Evaluates test. If logical true, evaluates body in an implicit do."
-  {:added "1.0"}
   [test & body]
   `(if ~test (do ~@body)))
+
+(defmacro when-not
+  "Evaluates test. If logical false, evaluates body in an implicit do."
+  [test & body]
+  `(if ~test nil (do ~@body)))
+
+(defmacro when-some
+  "bindings => binding-form test
+
+   When test is not nil, evaluates body with binding-form bound to the
+   value of test"
+  [bindings & body]
+  #_(assert-args
+    (vector? bindings) "a vector for its binding"
+    (= 2 (count bindings)) "exactly 2 forms in binding vector")
+  (let [form (bindings 0) tst (bindings 1)]
+    `(let [temp# ~tst]
+       (if (nil? temp#)
+         nil
+         (let [~form temp#]
+           ~@body)))))
+
+(defmacro when-let
+  "bindings => binding-form test
+
+  When test is true, evaluates body with binding-form bound to the value of test"
+  [bindings & body]
+  ;; TODO assert-args
+  #_(assert-args
+      (vector? bindings) "a vector for its binding"
+      (= 2 (count bindings)) "exactly 2 forms in binding vector")
+  (let [form (bindings 0) tst (bindings 1)]
+    `(let [temp# ~tst]
+       (when temp#
+         (let [~form temp#]
+           ~@body)))))
+
+(defmacro when-first
+  "bindings => x xs
+
+  Roughly the same as (when (seq xs) (let [x (first xs)] body)) but xs is evaluated only once"
+  [bindings & body]
+  (let [[x xs] bindings]
+    `(when-let [xs# (seq ~xs)]
+       (let [~x (first xs#)]
+         ~@body))))
 
 (defmacro or
   "Evaluates exprs one at a time, from left to right. If a form
@@ -782,12 +827,29 @@
     "Returns a new transient collection of tcoll with a mapping from key to
      val added to it."))
 
+(defn assoc!
+  "When applied to a transient map, adds mapping of key(s) to
+  val(s). When applied to a transient vector, sets the val at index.
+  Note - index must be <= (count vector). Returns coll."
+  ([coll key val] (-assoc! coll key val))
+  ([coll key val & kvs]
+   (let [ret (-assoc! coll key val)]
+     (if kvs
+       (recur ret (first kvs) (second kvs) (nnext kvs))
+       ret))))
+
 (defprotocol ITransientVector
   "Protocol for adding vector functionality to transient collections."
   (-assoc-n! [tcoll n val]
     "Returns tcoll with value val added at position n.")
   (-pop! [tcoll]
     "Returns tcoll with the last item removed from it."))
+
+(defn pop!
+  "Removes the last item from a transient vector. If
+  the collection is empty, throws an exception. Returns coll"
+  [coll]
+  (-pop! coll))
 
 (defprotocol IEquiv
   "Protocol for adding value comparison functionality to a type."
@@ -900,10 +962,51 @@
     "Returns a new stack without the item on top of the stack. Is used
      by cljs.core/pop."))
 
+(extend-type fallback
+  IStack
+  (-peek [coll]
+    (when-not (nil? coll)
+      (throw (Exception. (str "Peek not supported on " (.-runtimeType coll))))))
+  (-pop [coll]
+    (when-not (nil? coll)
+      (throw (Exception. (str "Pop not supported on " (.-runtimeType coll)))))))
+
+(defn peek
+  "For a list or queue, same as first, for a vector, same as, but much
+  more efficient than, last. If the collection is empty, returns nil."
+  [coll]
+  (-peek coll))
+
+(defn pop
+  "For a list or queue, returns a new list/queue without the first
+  item, for a vector, returns a new vector without the last item. If
+  the collection is empty, throws an exception.  Note - not the same
+  as next/butlast."
+  [coll]
+  (-pop coll))
+
 (defprotocol IMap
   "Protocol for adding mapping functionality to collections."
   (-dissoc [coll k]
     "Returns a new collection of coll without the mapping for key k."))
+
+(extend-type fallback
+  IMap
+  (-dissoc [coll]
+    (when-not (nil? coll)
+      (throw (Exception. (str "Dissoc not supported on " (.-runtimeType coll)))))))
+
+(defn dissoc
+  "dissoc[iate]. Returns a new map of the same (hashed/sorted) type,
+  that does not contain a mapping for key(s)."
+  ([map] map)
+  ([map key]
+   (-dissoc map key))
+  ([map key & ks]
+   (when-some [ret (-dissoc map key)]
+     (if ks
+       (recur ret (first ks) (next ks))
+       ret))))
 
 (defprotocol IWithMeta
   "Protocol for adding metadata to an object."
@@ -941,10 +1044,25 @@
   (-val [coll]
     "Returns the value of the map entry."))
 
+(defn key
+  "Returns the key of the map entry."
+  [^MapEntry e]
+  (.-key e))
+
+(defn val
+  "Returns the key of the map entry."
+  [^MapEntry e]
+  (.-value e))
+
 (defprotocol IEditableCollection
   "Protocol for collections which can transformed to transients."
   (-as-transient [coll]
     "Returns a new, transient version of the collection, in constant time."))
+
+(defn transient
+  "Returns a new, transient version of the collection, in constant time."
+  [coll]
+  (-as-transient coll))
 
 (defprotocol ITransientCollection
   "Protocol for adding basic functionality to transient collections."
@@ -953,10 +1071,34 @@
   (-persistent! [tcoll]
     "Creates a persistent data structure from tcoll and returns it."))
 
+(defn conj!
+  "Adds x to the transient collection, and return coll. The 'addition'
+  may happen at different 'places' depending on the concrete type."
+  ([] (transient []))
+  ([coll] coll)
+  ([coll x]
+   (-conj! coll x)))
+
+(defn persistent!
+  "Returns a new, persistent version of the transient collection, in
+  constant time. The transient collection cannot be used after this
+  call, any such use will throw an exception."
+  [coll]
+  (-persistent! coll))
+
 (defprotocol ITransientMap
   "Protocol for adding mapping functionality to transient collections."
   (-dissoc! [tcoll key]
-   "Returns a new transient collection of tcoll without the mapping for key."))
+    "Returns a new transient collection of tcoll without the mapping for key."))
+
+(defn dissoc!
+  "Returns a transient map that doesn't contain a mapping for key(s)."
+  ([tcoll key] (-dissoc! tcoll key))
+  ([tcoll key & ks]
+   (let [ntcoll (-dissoc! tcoll key)]
+     (if ks
+       (recur ntcoll (first ks) (next ks))
+       ntcoll))))
 
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:bootstrap ^:private nary-inline
@@ -1488,9 +1630,12 @@
     (if (<= count 1)
       nil
       rest))
-  #_#_#_IStack
+  IStack
   (-peek [coll] first)
-  (-pop [coll] (if (pos? count) rest (throw (js/Error. "Can't pop empty list"))))
+  (-pop [coll]
+    (if (pos? count)
+      rest
+      (throw (ArgumentError. "Can't pop empty list"))))
   ICollection
   (-conj [coll o] (PersistentList. meta o coll (inc count) -1))
   #_#_IEmptyableCollection
@@ -3897,7 +4042,9 @@
     #_(dart:core/print (-peek (last (-seq h'))))
     #_(dart:core/print (-lookup (-assoc (-assoc h 3342 1) 2 2) 2)))
 
-
+  (let [e (cljd.core/PersistentHashMap. nil (cljd.core/BitmapNode. 0 0 0 (.empty List)) -1)
+        m (assoc e "items" (reduce conj [] #dart ^String ["one" "two" "three" "four"]))]
+    (dart:core/print (val (first m))))
 
 
   )

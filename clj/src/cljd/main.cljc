@@ -47,7 +47,7 @@
     #(let [data (.-data state)
            favs (get data "favs")
            favs (if (get favs word)
-                  (-dissoc favs word)
+                  (dissoc favs word)
                   (assoc favs word true))
            data (assoc data "favs" favs)]
        (set! (.-data state) data)
