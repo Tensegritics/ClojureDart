@@ -1573,12 +1573,12 @@
   (-meta [coll] meta)
   ISeq
   (-first [coll] first)
-  (-rest [coll] (if (nil? rest) empty-list rest))
+  (-rest [coll] (if (nil? rest) () rest))
   (-next [coll] (if (nil? rest) nil (seq rest)))
   ICollection
   (-conj [coll o] (Cons. nil o coll -1))
   #_#_IEmptyableCollection
-  (-empty [coll] empty-list)
+  (-empty [coll] ())
   ISequential
   #_#_IEquiv
   (-equiv [coll other] (equiv-sequential coll other))
@@ -1622,7 +1622,7 @@
   (-first [coll] first)
   (-rest [coll]
     (if (<= count 1)
-      empty-list
+      ()
       rest))
   (-next [coll]
     (if (<= count 1)
@@ -1659,7 +1659,7 @@
   [& xs]
   ;; TODO : like to-array, find a more efficient way to not rebuild an intermediate array
   (let [arr (reduce (fn [acc item] (.add acc item) acc) #dart[] xs)]
-    (loop [i (.-length arr) r ^PersistentList empty-list]
+    (loop [i (.-length arr) r ^PersistentList ()]
       (if (< 0 i)
         (recur (dec i) (-conj ^PersistentList r (. arr "[]" (dec i))))
         r))))
@@ -1706,7 +1706,7 @@
   (-rest [_]
     (if (< (inc i) (.-length string))
       (StringSeq. string (inc i) nil -1)
-      empty-list))
+      ()))
   (-next [_]
     (if (< (inc i) (.-length string))
       (StringSeq. string (inc i) nil -1)
@@ -1835,7 +1835,7 @@
     (-seq coll)
     (if-not (nil? s)
       (rest s)
-      empty-list))
+      ()))
   (-next [coll]
     (-seq coll)
     (when-not (nil? s)
@@ -2210,7 +2210,7 @@
     (if (< 1 (-count chunk))
       (ChunkedCons. (-drop-first chunk) more nil -1)
       (if (nil? more)
-        empty-list
+        ()
         more)))
   (-next [coll]
     (if (< 1 (-count chunk))
@@ -2221,7 +2221,7 @@
   (-chunked-first [coll] chunk)
   (-chunked-rest [coll]
     (if (nil? more)
-      empty-list
+      ()
       more))
   (-chunked-next [coll]
     (if (nil? more)
@@ -3474,7 +3474,7 @@
 
 (defn interleave
   "Returns a lazy seq of the first item in each coll, then the second etc."
-  ([] empty-list)
+  ([] ())
   ([c1] (lazy-seq c1))
   ([c1 c2]
    (lazy-seq
