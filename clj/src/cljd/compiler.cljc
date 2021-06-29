@@ -1027,26 +1027,32 @@
         base-vararg-arity (some->> vararg-params (take-while (complement #{'&})) count)
         arities-mixin (ensure-ifn-arities-mixin fixed-arities base-vararg-arity)
         this (or name (gensym "this"))
-        invoke-exts (for [[params & body] fixed-bodies
-                          :let [n (count params)]
-                          :when (>= n *threshold*)]
-                      `(~(symbol (str "$_invoke$ext" n)) [~this ~@params] ~@body))
-        fixed-invokes (for [[params & body] fixed-bodies
-                            :when (< (count params) *threshold*)]
-                        `(~'-invoke [~this ~@params] ~@body))
-        vararg-mname '$_invoke$vararg
-        vararg-invoke
-        (when vararg-params
-          `(~vararg-mname [~this ~@(drop-last 2 vararg-params) ~(peek vararg-params)] ~@vararg-body))
+        methods
+        (cond->>
+            (for [[params & body] fixed-bodies
+                  :let [n (count params)
+                        mname
+                        (if (< n *threshold*)
+                          '-invoke
+                          (symbol (str "$_invoke$ext" n)))] ]
+              `(~mname [~this ~@params] ~@body))
+          vararg-params
+          (cons
+            `(~'$_invoke$vararg [~this ~@(-> vararg-params pop pop)
+                                 ~(peek vararg-params)]
+              ~@vararg-body)))
+        methods
+        (for [[mname [this & params] & body] methods]
+          (list mname (into [this] (map #(vary-meta % dissoc :tag) params))
+            `(let [~@(mapcat (fn [p] (when (:tag (meta p)) [p (vary-meta p dissoc :tag)])) params)]
+               ~@body)))
         [tmp :as binding] (dart-binding (with-meta (or name 'f) {:clj true})
                             (emit `(~'reify
                                     :var-name ~var-name
                                     :name-hint ~name
                                     ~(vary-meta arities-mixin assoc :mixin true)
                                     cljd.core/IFn
-                                    ~@fixed-invokes
-                                    ~@invoke-exts
-                                    ~@(some-> vararg-invoke list))
+                                    ~@methods)
                               env)
                             env)]
     (list 'dart/let [binding] tmp)))
@@ -1706,7 +1712,8 @@
 (defn write-params [fixed-params opt-kind opt-params]
   (when-not (seqable? opt-params) (throw (ex-info "fail" {:k opt-params})))
   (print "(")
-  (doseq [p fixed-params] (print p) (print ", "))
+  (doseq [p fixed-params :let [{:dart/keys [nat-type]} (meta p)]]
+    (print (or nat-type "dc.dynamic")) (print " ") (print p) (print ", "))
   (when (seq opt-params)
     (print (case opt-kind :positional "[" "{"))
     (doseq [[p d] opt-params]
