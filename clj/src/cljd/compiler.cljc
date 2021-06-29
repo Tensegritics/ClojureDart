@@ -1596,9 +1596,8 @@
                   {:keys [macro bootstrap]} (meta sym)]
               (when (or macro bootstrap) (binding [*ns* (ghost-ns)] (eval x)))
               (when-not macro
-                (let [v (macroexpand {} (last x))]
-                  (when-some [kind (fn-kind (macroexpand {} (last x)))]
-                    (emit-def (list 'def (with-meta sym {kind true}) nil) {})))))
+                (when-some [kind (fn-kind (macroexpand {} (last x)))]
+                    (emit-def (list 'def (with-meta sym {kind true}) nil) {}))))
         do (run! bootstrap-eval (next x))
         nil))))
 
