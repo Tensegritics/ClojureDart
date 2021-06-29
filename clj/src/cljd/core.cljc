@@ -1037,6 +1037,17 @@
   "Protocol for implementing entry finding in collections."
   (-find [coll k] "Returns the map entry for key, or nil if key not present."))
 
+(extend-type fallback
+  IFind
+  (-find [coll k]
+    (when-not (nil? coll)
+      (throw (Exception. (str "Find not supported on " (.-runtimeType coll)))))))
+
+(defn find
+  "Returns the map entry for key, or nil if key not present."
+  [map key]
+  (-find map key))
+
 (defprotocol IMapEntry
   "Protocol for examining a map entry."
   (-key [coll]
