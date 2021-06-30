@@ -471,7 +471,7 @@
                     (:opt-params actual))
                   :positional
                   (mapv transfer-tag (:opt-params actual) opts))]
-            [(vary-meta (symbol mname) assoc :tag (unresolve-type (:return-type member-info)))
+            [(vary-meta mname assoc :tag (unresolve-type (:return-type member-info)))
              (cond-> actual-fixeds
                (seq actual-opts)
                (-> (conj (case opt-kind :named '.& '...))
