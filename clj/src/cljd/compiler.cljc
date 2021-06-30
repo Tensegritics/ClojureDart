@@ -370,6 +370,10 @@
         (get-in protocol [:sigs mname args-count :dart/name] mname)
         (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " pname ".")))))))
 
+(defn resolve-protocol-method [pname mname args type-env]
+  (some-> (resolve-protocol-mname-to-dart-mname pname mname (count args) type-env)
+    (vector args)))
+
 (defn dart-member-lookup [class member]
   (when-some [class-info (get-in dart-libs-info [(:lib class) (:type class)])]
     (when-some [[type-env' member-info]
@@ -419,6 +423,28 @@
     :field
     (update member-info :type actual-type type-env)))
 
+(defn unresolve-params
+  "Takes a list of parameters from the analyzer and returns a pair
+   [fixed-args opt-args] where fixed-args is a vector of symbols (with :tag meta)
+   and opt-args is either a set (named) or a vector (positional) of tagged symbols."
+  [parameters]
+  (let [[fixed optionals]
+        (split-with (fn [{:keys [kind optional]}]
+                      (and (= kind :positional) (not optional))) parameters)
+        opts (case (:kind (first optionals))
+               :named #{}
+               [])
+        as-sym (fn [{:keys [name type]}]
+                 (with-meta (symbol name) {:tag (unresolve-type type)}))]
+    [(into [] (map as-sym) fixed)
+     (conj (into opts (map as-sym) optionals))]))
+
+(defn- transfer-tag [actual decl]
+  (let [m (meta actual)]
+    (cond-> actual
+      (nil? (:tag m))
+      (vary-meta assoc :tag (:tag (meta decl))))))
+
 (defn resolve-dart-method
   [class-name mname args type-env]
   (when-some [type (resolve-type class-name {:type-vars type-env})] ; TODO pass type-vars
@@ -426,9 +452,30 @@
       (if-some [member-info (some-> (dart-member-lookup type (name mname)) actual-member)] ; TODO are there special cases for operators? eg unary-
         (case (:kind member-info)
           :field
-          (vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info)))
+          [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args]
           :method
-          (vary-meta (symbol mname) assoc :tag (unresolve-type (:return-type member-info))))
+          (let [[fixeds opts] (unresolve-params (:parameters member-info))
+                {:as actual :keys [opt-kind] [this & fixed-opts] :fixed-params}
+                (parse-dart-params args)
+                _ (when-not (= (count fixeds) (count fixed-opts))
+                    (throw (Exception. (str "Fixed arity mismatch on " mname " for " class-name fixeds fixed-opts))))
+                _ (when-not (case opt-kind :named (set? opts) (vector? opts))
+                    (throw (Exception. (str "Optional mismatch on " mname " for " class-name))))
+                actual-fixeds
+                (into [this] (map transfer-tag fixed-opts fixeds))
+                actual-opts
+                (case opt-kind
+                  :named
+                  (into []
+                    (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d]))
+                    (:opt-params actual))
+                  :positional
+                  (mapv transfer-tag (:opt-params actual) opts))]
+            [(vary-meta (symbol mname) assoc :tag (unresolve-type (:return-type member-info)))
+             (cond-> actual-fixeds
+               (seq actual-opts)
+               (-> (conj (case opt-kind :named '.& '...))
+                 (into actual-opts)))]))
         #_(TODO WARN)))))
 
 (defn- assoc-ns [sym ns]
@@ -1195,10 +1242,11 @@
       (fn [spec]
         (if (seq? spec)
           (let [[mname arglist & body] spec
-                mname (or (some-> @last-seen-type (resolve-protocol-mname-to-dart-mname mname (count arglist) type-env))
-                        (some-> @last-seen-type (resolve-dart-method mname arglist type-env))
-                        mname)]
-            ;; TODO: OBSOLETE mname resolution against protocol ifaces
+                mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
+                [mname arglist]
+                (or (some-> @last-seen-type (resolve-protocol-method mname arglist type-env))
+                  (some-> @last-seen-type (resolve-dart-method mname arglist type-env))
+                  [mname arglist])]
             (list* mname (parse-dart-params arglist) body))
           (reset! last-seen-type spec)))
         specs)))

@@ -63,7 +63,7 @@ M({':name': "\"${tp.displayName}\"",
 
 String emitParameter(ParameterElement p) {
     final name = p.displayName;
-    return M({":name": name.isEmpty ? null : name, ":kind": p.isNamed ? ':named' : ':positional', ':type': emitType(p.type)});
+    return M({":name": name.isEmpty ? null : name, ":kind": p.isNamed ? ':named' : ':positional', ':type': emitType(p.type), ':optional': p.isOptional});
 }
 
 class TopLevelVisitor extends ThrowingElementVisitor {

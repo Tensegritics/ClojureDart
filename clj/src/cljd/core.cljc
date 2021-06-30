@@ -1613,7 +1613,7 @@
     (throw (UnsupportedError. "lenght= not supported on PersistentList")))
   (add [coll _]
     (throw (UnsupportedError. "add not supported on PersistentList")))
-  ("[]=" [coll val]
+  ("[]=" [coll idx val]
    (throw (UnsupportedError. "[]= not supported on PersistentList")))
   ("[]" [coll ^int idx]
    ;; @TODO : maybe clear this exception as it is already thrown by nth
@@ -1983,15 +1983,15 @@
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/ListMixin E)
   (length [coll] cnt)
-  (length [coll ^int val]
+  (length [coll val]
     (throw (UnsupportedError. "lenght= not supported on PersistentVector")))
   (add [coll _]
     (throw (UnsupportedError. "add not supported on PersistentVector")))
-  ("[]=" [coll val]
+  ("[]=" [coll idx val]
    (throw (UnsupportedError. "[]= not supported on PersistentVector")))
-  ("[]" [coll ^int idx] (-nth coll idx))
+  ("[]" [coll idx] (-nth coll idx))
   (^#/(PersistentVector R) #/(cast R) [coll]
-   (PersitentVector. meta cnt shift root tail __hash))
+   (PersistentVector. meta cnt shift root tail __hash))
   Object
   #_(toString [coll]
       (pr-str* coll))
@@ -2994,7 +2994,7 @@
         #(PersistentMapEntry. %1 %2 -1)))))
   ("[]" [coll k]
    (-lookup coll k nil))
-  ("[]=" [coll val]
+  ("[]=" [coll k val]
    (throw (UnsupportedError. "[]= not supported on PersistentHashMap")))
   (remove [coll val]
     (throw (UnsupportedError. "remove not supported on PersistentHashMap")))

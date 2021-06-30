@@ -37,7 +37,8 @@
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "message" {:kind :field
 :getter true
 :type {:type "String"
@@ -55,7 +56,8 @@
 :kind :positional
 :type {:type "Object"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "name" {:kind :field
 :getter true
 :type {:type "String"
@@ -84,7 +86,8 @@
 :kind :named
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "tryParse" {:kind :method
 :static true
 :return-type {:type "BigInt"
@@ -97,7 +100,8 @@
 :kind :named
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "abs" {:kind :method
 :return-type {:type "BigInt"
 :lib "dart:core"}}
@@ -386,7 +390,8 @@
 :lib "dart:core"}} {:name defaultValue
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "hasEnvironment" {:kind :constructor
 :parameters [{:name name
 :kind :positional
@@ -524,25 +529,32 @@
 :lib "dart:core"}} {:name month
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name day
+:lib "dart:core"}
+:optional true} {:name day
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name hour
+:lib "dart:core"}
+:optional true} {:name hour
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name minute
+:lib "dart:core"}
+:optional true} {:name minute
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name second
+:lib "dart:core"}
+:optional true} {:name second
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name millisecond
+:lib "dart:core"}
+:optional true} {:name millisecond
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name microsecond
+:lib "dart:core"}
+:optional true} {:name microsecond
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "utc" {:kind :constructor
 :parameters [{:name year
 :kind :positional
@@ -550,25 +562,32 @@
 :lib "dart:core"}} {:name month
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name day
+:lib "dart:core"}
+:optional true} {:name day
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name hour
+:lib "dart:core"}
+:optional true} {:name hour
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name minute
+:lib "dart:core"}
+:optional true} {:name minute
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name second
+:lib "dart:core"}
+:optional true} {:name second
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name millisecond
+:lib "dart:core"}
+:optional true} {:name millisecond
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name microsecond
+:lib "dart:core"}
+:optional true} {:name microsecond
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "now" {:kind :constructor}
 "fromMillisecondsSinceEpoch" {:kind :constructor
 :parameters [{:name millisecondsSinceEpoch
@@ -577,7 +596,8 @@
 :lib "dart:core"}} {:name isUtc
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "fromMicrosecondsSinceEpoch" {:kind :constructor
 :parameters [{:name microsecondsSinceEpoch
 :kind :positional
@@ -585,7 +605,8 @@
 :lib "dart:core"}} {:name isUtc
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "monday" {:kind :field
 :static true
 :getter true
@@ -859,7 +880,8 @@
 :parameters [{:name source
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}}]}
+:lib "dart:core"}}]}
+:optional true}]}
 "tryParse" {:kind :method
 :static true
 :return-type {:type "double"
@@ -1000,22 +1022,28 @@
 :parameters [{:name days
 :kind :named
 :type {:type "int"
-:lib "dart:core"}} {:name hours
+:lib "dart:core"}
+:optional true} {:name hours
 :kind :named
 :type {:type "int"
-:lib "dart:core"}} {:name minutes
+:lib "dart:core"}
+:optional true} {:name minutes
 :kind :named
 :type {:type "int"
-:lib "dart:core"}} {:name seconds
+:lib "dart:core"}
+:optional true} {:name seconds
 :kind :named
 :type {:type "int"
-:lib "dart:core"}} {:name milliseconds
+:lib "dart:core"}
+:optional true} {:name milliseconds
 :kind :named
 :type {:type "int"
-:lib "dart:core"}} {:name microseconds
+:lib "dart:core"}
+:optional true} {:name microseconds
 :kind :named
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "microsecondsPerMillisecond" {:kind :field
 :static true
 :getter true
@@ -1159,7 +1187,8 @@
 :kind :positional
 :type {:type "Object"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "message" {:kind :field
 :getter true
 :type {:type "Object"
@@ -1199,7 +1228,8 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]
+:lib "dart:core"}
+:optional true}]
 :type-parameters [{:name "T"}]}
 "toString" {:kind :method
 :return-type {:type "String"
@@ -1207,7 +1237,8 @@
 "" {:kind :constructor
 :parameters [{:name message
 :kind :positional
-:type {:type "dynamic"}}]}
+:type {:type "dynamic"}
+:optional true}]}
 "value" {:kind :constructor
 :parameters [{:name value
 :kind :positional
@@ -1215,15 +1246,18 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name message
+:lib "dart:core"}
+:optional true} {:name message
 :kind :positional
-:type {:type "dynamic"}}]}
+:type {:type "dynamic"}
+:optional true}]}
 "notNull" {:kind :constructor
 :parameters [{:name name
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "invalidValue" {:kind :field
 :getter true
 :type {:type "dynamic"}}
@@ -1256,11 +1290,13 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name message
+:lib "dart:core"}
+:optional true} {:name message
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "checkValidIndex" {:kind :method
 :static true
 :return-type {:type "int"
@@ -1274,15 +1310,18 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}} {:name message
+:lib "dart:core"}
+:optional true} {:name message
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "checkValidRange" {:kind :method
 :static true
 :return-type {:type "int"
@@ -1301,15 +1340,18 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name endName
+:lib "dart:core"}
+:optional true} {:name endName
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name message
+:lib "dart:core"}
+:optional true} {:name message
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "checkNotNegative" {:kind :method
 :static true
 :return-type {:type "int"
@@ -1321,11 +1363,13 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name message
+:lib "dart:core"}
+:optional true} {:name message
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name message
 :kind :positional
@@ -1338,11 +1382,13 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name message
+:lib "dart:core"}
+:optional true} {:name message
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "range" {:kind :constructor
 :parameters [{:name invalidValue
 :kind :positional
@@ -1359,11 +1405,13 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name message
+:lib "dart:core"}
+:optional true} {:name message
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "index" {:kind :constructor
 :parameters [{:name index
 :kind :positional
@@ -1374,15 +1422,18 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name message
+:lib "dart:core"}
+:optional true} {:name message
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "start" {:kind :field
 :getter true
 :type {:type "num"
@@ -1409,15 +1460,18 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name message
+:lib "dart:core"}
+:optional true} {:name message
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "indexable" {:kind :field
 :getter true
 :type {:type "dynamic"}}
@@ -1520,7 +1574,8 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "message" {:kind :field
 :getter true
 :type {:type "String"
@@ -1554,7 +1609,8 @@
 :kind :positional
 :type {:type "Object"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "modifiedObject" {:kind :field
 :getter true
 :type {:type "Object"
@@ -1602,7 +1658,8 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "variableName" {:kind :field
 :getter true
 :type {:type "String"
@@ -1615,7 +1672,8 @@
 "" {:kind :constructor
 :parameters [{:name message
 :kind :positional
-:type {:type "dynamic"}}]}}
+:type {:type "dynamic"}
+:optional true}]}}
 "FormatException"
 {:kind :class
 :super {:type "Object"
@@ -1629,13 +1687,16 @@
 :parameters [{:name message
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}} {:name source
+:lib "dart:core"}
+:optional true} {:name source
 :kind :positional
-:type {:type "dynamic"}} {:name offset
+:type {:type "dynamic"}
+:optional true} {:name offset
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "message" {:kind :field
 :getter true
 :type {:type "String"
@@ -1693,7 +1754,8 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "name" {:kind :field
 :getter true
 :type {:type "String"
@@ -1720,7 +1782,8 @@
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "Symbol"
-:lib "dart:core"} {:type "dynamic"}]}}]}
+:lib "dart:core"} {:type "dynamic"}]}
+:optional true}]}
 "==" {:kind :method
 :operator true
 :return-type {:type "bool"
@@ -1874,7 +1937,8 @@
 :kind :named
 :type {:type "int"
 :nullable true
-:lib "dart:core"}} {:name onError
+:lib "dart:core"}
+:optional true} {:name onError
 :kind :named
 :type {:type "Function"
 :return-type {:type "int"
@@ -1882,7 +1946,8 @@
 :parameters [{:name source
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}}]}
+:lib "dart:core"}}]}
+:optional true}]}
 "tryParse" {:kind :method
 :static true
 :return-type {:type "int"
@@ -1895,7 +1960,8 @@
 :kind :named
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "fromEnvironment" {:kind :constructor
 :parameters [{:name name
 :kind :positional
@@ -1903,7 +1969,8 @@
 :lib "dart:core"}} {:name defaultValue
 :kind :named
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "isEven" {:kind :field
 :getter true
 :type {:type "bool"
@@ -1944,7 +2011,8 @@
 :type-parameters [{:type "Symbol"
 :lib "dart:core"} {:type "Object"
 :nullable true
-:lib "dart:core"}]}}]}
+:lib "dart:core"}]}
+:optional true}]}
 "genericMethod" {:kind :constructor
 :parameters [{:name memberName
 :kind :positional
@@ -1970,7 +2038,8 @@
 :type-parameters [{:type "Symbol"
 :lib "dart:core"} {:type "Object"
 :nullable true
-:lib "dart:core"}]}}]}
+:lib "dart:core"}]}
+:optional true}]}
 "getter" {:kind :constructor
 :parameters [{:name name
 :kind :positional
@@ -2179,7 +2248,8 @@
 :parameters [{:name separator
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "any" {:kind :method
 :return-type {:type "bool"
 :lib "dart:core"}
@@ -2200,7 +2270,8 @@
 :parameters [{:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "toSet" {:kind :method
 :return-type {:type "Set"
 :lib "dart:core"
@@ -2267,7 +2338,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "lastWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -2283,7 +2355,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "singleWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -2299,7 +2372,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "elementAt" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -2323,7 +2397,8 @@
 :parameters [{:name index
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}}]}
+:lib "dart:core"}}]}
+:optional true}]}
 "empty" {:kind :constructor}
 "iterator" {:kind :field
 :getter true
@@ -2423,11 +2498,13 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]
+:lib "dart:core"}
+:optional true}]
 :type-parameters [{:name "T"}]}
 "writeIterable" {:kind :method
 :static true
@@ -2498,14 +2575,16 @@
 :is-param true}} {:name b
 :kind :positional
 :type {:type "E"
-:is-param true}}]}}]}
+:is-param true}}]}
+:optional true}]}
 "shuffle" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name random
 :kind :positional
 :type {:type "Random"
 :nullable true
-:lib "dart:math"}}]}
+:lib "dart:math"}
+:optional true}]}
 "indexOf" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -2515,7 +2594,8 @@
 :is-param true}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "indexWhere" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -2530,7 +2610,8 @@
 :is-param true}}]}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "lastIndexWhere" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -2546,7 +2627,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "lastIndexOf" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -2557,7 +2639,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "clear" {:kind :method
 :return-type {:type "void"}}
 "insert" {:kind :method
@@ -2655,7 +2738,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "getRange" {:kind :method
 :return-type {:type "Iterable"
 :lib "dart:core"
@@ -2684,7 +2768,8 @@
 :is-param true}]}} {:name skipCount
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "removeRange" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name start
@@ -2706,7 +2791,8 @@
 :kind :positional
 :type {:type "E"
 :nullable true
-:is-param true}}]}
+:is-param true}
+:optional true}]}
 "replaceRange" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name start
@@ -2740,7 +2826,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "filled" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -2751,12 +2838,14 @@
 :is-param true}} {:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "empty" {:kind :constructor
 :parameters [{:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "from" {:kind :constructor
 :parameters [{:name elements
 :kind :positional
@@ -2765,7 +2854,8 @@
 :type-parameters [{:type "dynamic"}]}} {:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "of" {:kind :constructor
 :parameters [{:name elements
 :kind :positional
@@ -2775,7 +2865,8 @@
 :is-param true}]}} {:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "generate" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -2791,7 +2882,8 @@
 :lib "dart:core"}}]}} {:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "unmodifiable" {:kind :constructor
 :parameters [{:name elements
 :kind :positional
@@ -2931,7 +3023,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "V"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "updateAll" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name update
@@ -3038,14 +3131,16 @@
 :is-param true}
 :parameters [{:name element
 :kind :positional
-:type {:type "dynamic"}}]}} {:name value
+:type {:type "dynamic"}}]}
+:optional true} {:name value
 :kind :named
 :type {:type "Function"
 :return-type {:type "V"
 :is-param true}
 :parameters [{:name element
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "fromIterables" {:kind :constructor
 :parameters [{:name keys
 :kind :positional
@@ -3307,7 +3402,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "toStringAsPrecision" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}
@@ -3333,7 +3429,8 @@
 :parameters [{:name input
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}}]}
+:lib "dart:core"}}]}
+:optional true}]}
 "tryParse" {:kind :method
 :static true
 :return-type {:type "num"
@@ -3411,7 +3508,8 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "matchAsPrefix" {:kind :method
 :return-type {:type "Match"
 :nullable true
@@ -3422,7 +3520,8 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor}}
 "Match"
 {:kind :class
@@ -3512,7 +3611,8 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "hasMatch" {:kind :method
 :return-type {:type "bool"
 :lib "dart:core"}
@@ -3535,16 +3635,20 @@
 :lib "dart:core"}} {:name multiLine
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}} {:name caseSensitive
+:lib "dart:core"}
+:optional true} {:name caseSensitive
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}} {:name unicode
+:lib "dart:core"}
+:optional true} {:name unicode
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}} {:name dotAll
+:lib "dart:core"}
+:optional true} {:name dotAll
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "pattern" {:kind :field
 :getter true
 :type {:type "String"
@@ -3611,7 +3715,8 @@
 :lib "dart:core"
 :type-parameters [{:type "R"
 :is-param true}]}
-:type-parameters [{:name "R"}]}}]
+:type-parameters [{:name "R"}]}
+:optional true}]
 :type-parameters [{:name "S"} {:name "T"}]}
 "cast" {:kind :method
 :return-type {:type "Set"
@@ -3906,7 +4011,8 @@
 :lib "dart:core"}} {:name index
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "indexOf" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -3916,7 +4022,8 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "lastIndexOf" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -3927,7 +4034,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "+" {:kind :method
 :operator true
 :return-type {:type "String"
@@ -3946,7 +4054,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "trim" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}}
@@ -3973,7 +4082,8 @@
 :lib "dart:core"}} {:name padding
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "padRight" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}
@@ -3983,7 +4093,8 @@
 :lib "dart:core"}} {:name padding
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "contains" {:kind :method
 :return-type {:type "bool"
 :lib "dart:core"}
@@ -3993,7 +4104,8 @@
 :lib "dart:core"}} {:name startIndex
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "replaceFirst" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}
@@ -4006,7 +4118,8 @@
 :lib "dart:core"}} {:name startIndex
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "replaceFirstMapped" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}
@@ -4024,7 +4137,8 @@
 :lib "dart:core"}}]}} {:name startIndex
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "replaceAll" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}
@@ -4086,14 +4200,16 @@
 :lib "dart:core"}
 :parameters [{:kind :positional
 :type {:type "Match"
-:lib "dart:core"}}]}} {:name onNonMatch
+:lib "dart:core"}}]}
+:optional true} {:name onNonMatch
 :kind :named
 :type {:type "Function"
 :return-type {:type "String"
 :lib "dart:core"}
 :parameters [{:kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}}]}
+:lib "dart:core"}}]}
+:optional true}]}
 "toLowerCase" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}}
@@ -4109,11 +4225,13 @@
 :lib "dart:core"}]}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "fromCharCode" {:kind :constructor
 :parameters [{:name charCode
 :kind :positional
@@ -4126,7 +4244,8 @@
 :lib "dart:core"}} {:name defaultValue
 :kind :named
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "length" {:kind :field
 :getter true
 :type {:type "int"
@@ -4189,7 +4308,8 @@
 :parameters [{:name rawIndex
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "moveNext" {:kind :method
 :return-type {:type "bool"
 :lib "dart:core"}}
@@ -4258,14 +4378,16 @@
 :type-parameters [{:type "dynamic"}]}} {:name separator
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "writeln" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name obj
 :kind :positional
 :type {:type "Object"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "clear" {:kind :method
 :return-type {:type "void"}}
 "toString" {:kind :method
@@ -4275,7 +4397,8 @@
 :parameters [{:name content
 :kind :positional
 :type {:type "Object"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "length" {:kind :field
 :getter true
 :type {:type "int"
@@ -4308,14 +4431,16 @@
 :type-parameters [{:type "dynamic"}]}} {:name separator
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "writeln" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name object
 :kind :positional
 :type {:type "Object"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "writeCharCode" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name charCode
@@ -4392,7 +4517,8 @@
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "==" {:kind :method
 :operator true
 :return-type {:type "bool"
@@ -4411,43 +4537,52 @@
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name userInfo
+:lib "dart:core"}
+:optional true} {:name userInfo
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name host
+:lib "dart:core"}
+:optional true} {:name host
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name port
+:lib "dart:core"}
+:optional true} {:name port
 :kind :named
 :type {:type "int"
 :nullable true
-:lib "dart:core"}} {:name path
+:lib "dart:core"}
+:optional true} {:name path
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name pathSegments
+:lib "dart:core"}
+:optional true} {:name pathSegments
 :kind :named
 :type {:type "Iterable"
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
-:lib "dart:core"}]}} {:name query
+:lib "dart:core"}]}
+:optional true} {:name query
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name queryParameters
+:lib "dart:core"}
+:optional true} {:name queryParameters
 :kind :named
 :type {:type "Map"
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
-:lib "dart:core"} {:type "dynamic"}]}} {:name fragment
+:lib "dart:core"} {:type "dynamic"}]}
+:optional true} {:name fragment
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "removeFragment" {:kind :method
 :return-type {:type "Uri"
 :lib "dart:core"}}
@@ -4478,11 +4613,13 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "tryParse" {:kind :method
 :static true
 :return-type {:type "Uri"
@@ -4494,11 +4631,13 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "encodeComponent" {:kind :method
 :static true
 :return-type {:type "String"
@@ -4517,7 +4656,8 @@
 :lib "dart:core"}} {:name encoding
 :kind :named
 :type {:type "Encoding"
-:lib "dart:convert"}}]}
+:lib "dart:convert"}
+:optional true}]}
 "decodeComponent" {:kind :method
 :static true
 :return-type {:type "String"
@@ -4536,7 +4676,8 @@
 :lib "dart:core"}} {:name encoding
 :kind :named
 :type {:type "Encoding"
-:lib "dart:convert"}}]}
+:lib "dart:convert"}
+:optional true}]}
 "encodeFull" {:kind :method
 :static true
 :return-type {:type "String"
@@ -4566,7 +4707,8 @@
 :lib "dart:core"}} {:name encoding
 :kind :named
 :type {:type "Encoding"
-:lib "dart:convert"}}]}
+:lib "dart:convert"}
+:optional true}]}
 "parseIPv4Address" {:kind :method
 :static true
 :return-type {:type "List"
@@ -4589,53 +4731,64 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name scheme
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name userInfo
+:lib "dart:core"}
+:optional true} {:name userInfo
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name host
+:lib "dart:core"}
+:optional true} {:name host
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name port
+:lib "dart:core"}
+:optional true} {:name port
 :kind :named
 :type {:type "int"
 :nullable true
-:lib "dart:core"}} {:name path
+:lib "dart:core"}
+:optional true} {:name path
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name pathSegments
+:lib "dart:core"}
+:optional true} {:name pathSegments
 :kind :named
 :type {:type "Iterable"
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
-:lib "dart:core"}]}} {:name query
+:lib "dart:core"}]}
+:optional true} {:name query
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name queryParameters
+:lib "dart:core"}
+:optional true} {:name queryParameters
 :kind :named
 :type {:type "Map"
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
-:lib "dart:core"} {:type "dynamic"}]}} {:name fragment
+:lib "dart:core"} {:type "dynamic"}]}
+:optional true} {:name fragment
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "http" {:kind :constructor
 :parameters [{:name authority
 :kind :positional
@@ -4649,7 +4802,8 @@
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
-:lib "dart:core"} {:type "dynamic"}]}}]}
+:lib "dart:core"} {:type "dynamic"}]}
+:optional true}]}
 "https" {:kind :constructor
 :parameters [{:name authority
 :kind :positional
@@ -4663,7 +4817,8 @@
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
-:lib "dart:core"} {:type "dynamic"}]}}]}
+:lib "dart:core"} {:type "dynamic"}]}
+:optional true}]}
 "file" {:kind :constructor
 :parameters [{:name path
 :kind :positional
@@ -4672,7 +4827,8 @@
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "directory" {:kind :constructor
 :parameters [{:name path
 :kind :positional
@@ -4681,7 +4837,8 @@
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "dataFromString" {:kind :constructor
 :parameters [{:name content
 :kind :positional
@@ -4690,21 +4847,25 @@
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name encoding
+:lib "dart:core"}
+:optional true} {:name encoding
 :kind :named
 :type {:type "Encoding"
 :nullable true
-:lib "dart:convert"}} {:name parameters
+:lib "dart:convert"}
+:optional true} {:name parameters
 :kind :named
 :type {:type "Map"
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
 :lib "dart:core"} {:type "String"
-:lib "dart:core"}]}} {:name base64
+:lib "dart:core"}]}
+:optional true} {:name base64
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "dataFromBytes" {:kind :constructor
 :parameters [{:name bytes
 :kind :positional
@@ -4714,17 +4875,20 @@
 :lib "dart:core"}]}} {:name mimeType
 :kind :named
 :type {:type "String"
-:lib "dart:core"}} {:name parameters
+:lib "dart:core"}
+:optional true} {:name parameters
 :kind :named
 :type {:type "Map"
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
 :lib "dart:core"} {:type "String"
-:lib "dart:core"}]}} {:name percentEncoded
+:lib "dart:core"}]}
+:optional true} {:name percentEncoded
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "base" {:kind :field
 :static true
 :getter true
@@ -4851,7 +5015,8 @@
 :kind :named
 :type {:type "Encoding"
 :nullable true
-:lib "dart:convert"}}]}
+:lib "dart:convert"}
+:optional true}]}
 "toString" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}}
@@ -4863,21 +5028,25 @@
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name encoding
+:lib "dart:core"}
+:optional true} {:name encoding
 :kind :named
 :type {:type "Encoding"
 :nullable true
-:lib "dart:convert"}} {:name parameters
+:lib "dart:convert"}
+:optional true} {:name parameters
 :kind :named
 :type {:type "Map"
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
 :lib "dart:core"} {:type "String"
-:lib "dart:core"}]}} {:name base64
+:lib "dart:core"}]}
+:optional true} {:name base64
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "fromBytes" {:kind :constructor
 :parameters [{:name bytes
 :kind :positional
@@ -4887,17 +5056,20 @@
 :lib "dart:core"}]}} {:name mimeType
 :kind :named
 :type {:type "String"
-:lib "dart:core"}} {:name parameters
+:lib "dart:core"}
+:optional true} {:name parameters
 :kind :named
 :type {:type "Map"
 :nullable true
 :lib "dart:core"
 :type-parameters [{:type "String"
 :lib "dart:core"} {:type "String"
-:lib "dart:core"}]}} {:name percentEncoded
+:lib "dart:core"}]}
+:optional true} {:name percentEncoded
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "fromUri" {:kind :constructor
 :parameters [{:name uri
 :kind :positional
@@ -5077,7 +5249,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "secure" {:kind :constructor}}
 "Rectangle"
 {:kind :class
@@ -6070,14 +6243,17 @@
 :kind :named
 :type {:type "Function"
 :nullable true
-:lib "dart:core"}} {:name onDone
+:lib "dart:core"}
+:optional true} {:name onDone
 :kind :named
 :type {:type "Function"
-:return-type {:type "void"}}} {:name cancelOnError
+:return-type {:type "void"}}
+:optional true} {:name cancelOnError
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "cast" {:kind :method
 :return-type {:type "Stream"
 :lib "dart:async"
@@ -6138,7 +6314,8 @@
 :type {:type "Future"
 :nullable true
 :lib "dart:async"
-:type-parameters [{:type "dynamic"}]}}]}
+:type-parameters [{:type "dynamic"}]}
+:optional true}]}
 "resume" {:kind :method
 :return-type {:type "void"}}
 "asFuture" {:kind :method
@@ -6150,7 +6327,8 @@
 :kind :positional
 :type {:type "E"
 :nullable true
-:is-param true}}]
+:is-param true}
+:optional true}]
 :type-parameters [{:name "E"}]}
 "" {:kind :constructor
 :parameters [{:name _source
@@ -6268,7 +6446,8 @@
 :parameters [{:name copy
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "length" {:kind :field
 :getter true
 :type {:type "int"
@@ -6613,7 +6792,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "V"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "updateAll" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name update
@@ -6795,7 +6975,8 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "fieldADI" {:kind :constructor
 :parameters [{:name fieldName
 :kind :positional
@@ -6838,7 +7019,8 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}}
+:lib "dart:core"}
+:optional true}]}}
 "EfficientLengthIterable"
 {:kind :class
 :type-parameters [{:name "T"}]
@@ -6922,7 +7104,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "lastWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -6938,7 +7121,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "singleWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -6954,14 +7138,16 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "join" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}
 :parameters [{:name separator
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "where" {:kind :method
 :return-type {:type "Iterable"
 :lib "dart:core"
@@ -7079,7 +7265,8 @@
 :parameters [{:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "toSet" {:kind :method
 :return-type {:type "Set"
 :lib "dart:core"
@@ -7152,7 +7339,8 @@
 :parameters [{:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name _iterable
 :kind :positional
@@ -7820,7 +8008,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "lastWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -7836,7 +8025,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "singleWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -7852,14 +8042,16 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "join" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}
 :parameters [{:name separator
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "where" {:kind :method
 :return-type {:type "Iterable"
 :lib "dart:core"
@@ -7977,7 +8169,8 @@
 :parameters [{:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "toSet" {:kind :method
 :return-type {:type "Set"
 :lib "dart:core"
@@ -8439,14 +8632,16 @@
 :is-param true}} {:name b
 :kind :positional
 :type {:type "E"
-:is-param true}}]}}]}
+:is-param true}}]}
+:optional true}]}
 "shuffle" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name random
 :kind :positional
 :type {:type "Random"
 :nullable true
-:lib "dart:math"}}]}
+:lib "dart:math"}
+:optional true}]}
 "clear" {:kind :method
 :return-type {:type "void"}}
 "removeAt" {:kind :method
@@ -8475,7 +8670,8 @@
 :is-param true}]}} {:name skipCount
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "removeRange" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name start
@@ -8511,7 +8707,8 @@
 :kind :positional
 :type {:type "E"
 :nullable true
-:is-param true}}]}
+:is-param true}
+:optional true}]}
 "" {:kind :constructor}
 "length" {:kind :field
 :setter true
@@ -8937,12 +9134,14 @@
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name allowInvalid
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "name" {:kind :field
 :getter true
 :type {:type "String"
@@ -8977,7 +9176,8 @@
 :parameters [{:name allowInvalid
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}}
+:lib "dart:core"}
+:optional true}]}}
 ; getter/setter base64
 ; getter/setter base64Url
 ; function base64Encode []
@@ -9010,11 +9210,13 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor}
 "urlSafe" {:kind :constructor}
 "encoder" {:kind :field
@@ -9072,11 +9274,13 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "startChunkedConversion" {:kind :method
 :return-type {:type "StringConversionSink"
 :lib "dart:convert"}
@@ -9393,19 +9597,24 @@
 :parameters [{:name name
 :kind :named
 :type {:type "String"
-:lib "dart:core"}} {:name escapeLtGt
+:lib "dart:core"}
+:optional true} {:name escapeLtGt
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}} {:name escapeQuot
+:lib "dart:core"}
+:optional true} {:name escapeQuot
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}} {:name escapeApos
+:lib "dart:core"}
+:optional true} {:name escapeApos
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}} {:name escapeSlash
+:lib "dart:core"}
+:optional true} {:name escapeSlash
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "escapeLtGt" {:kind :field
 :getter true
 :type {:type "bool"
@@ -9469,7 +9678,8 @@
 :parameters [{:name mode
 :kind :positional
 :type {:type "HtmlEscapeMode"
-:lib "dart:convert"}}]}
+:lib "dart:convert"}
+:optional true}]}
 "mode" {:kind :field
 :getter true
 :type {:type "HtmlEscapeMode"
@@ -9494,11 +9704,13 @@
 :kind :named
 :type {:type "Object"
 :nullable true
-:lib "dart:core"}} {:name partialResult
+:lib "dart:core"}
+:optional true} {:name partialResult
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "unsupportedObject" {:kind :field
 :getter true
 :type {:type "Object"
@@ -9554,7 +9766,8 @@
 :kind :positional
 :type {:type "Object"
 :nullable true
-:lib "dart:core"}}]}}]}
+:lib "dart:core"}}]}
+:optional true}]}
 "encode" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}
@@ -9570,7 +9783,8 @@
 :lib "dart:core"}
 :parameters [{:name object
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name reviver
 :kind :named
@@ -9586,7 +9800,8 @@
 :kind :positional
 :type {:type "Object"
 :nullable true
-:lib "dart:core"}}]}} {:name toEncodable
+:lib "dart:core"}}]}
+:optional true} {:name toEncodable
 :kind :named
 :type {:type "Function"
 :return-type {:type "Object"
@@ -9594,7 +9809,8 @@
 :lib "dart:core"}
 :parameters [{:name object
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "withReviver" {:kind :constructor
 :parameters [{:name reviver
 :kind :positional
@@ -9681,7 +9897,8 @@
 :lib "dart:core"}
 :parameters [{:name object
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "withIndent" {:kind :constructor
 :parameters [{:name indent
 :kind :positional
@@ -9695,7 +9912,8 @@
 :lib "dart:core"}
 :parameters [{:name object
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "indent" {:kind :field
 :getter true
 :type {:type "String"
@@ -9754,17 +9972,20 @@
 :kind :positional
 :type {:type "String"
 :nullable true
-:lib "dart:core"}} {:name toEncodable
+:lib "dart:core"}
+:optional true} {:name toEncodable
 :kind :positional
 :type {:type "Function"
 :return-type {:type "dynamic"}
 :parameters [{:name object
 :kind :positional
-:type {:type "dynamic"}}]}} {:name bufferSize
+:type {:type "dynamic"}}]}
+:optional true} {:name bufferSize
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "DEFAULT_BUFFER_SIZE" {:kind :field
 :static true
 :getter true
@@ -9821,7 +10042,8 @@
 :kind :positional
 :type {:type "Object"
 :nullable true
-:lib "dart:core"}}]}}]}}
+:lib "dart:core"}}]}
+:optional true}]}}
 ; getter/setter latin1
 ; var latin1
 "Latin1Codec"
@@ -9847,12 +10069,14 @@
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name allowInvalid
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "name" {:kind :field
 :getter true
 :type {:type "String"
@@ -9887,7 +10111,8 @@
 :parameters [{:name allowInvalid
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}}
+:lib "dart:core"}
+:optional true}]}}
 "LineSplitter"
 {:kind :class
 :super {:type "StreamTransformerBase"
@@ -9907,11 +10132,13 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "convert" {:kind :method
 :return-type {:type "List"
 :lib "dart:core"
@@ -10076,12 +10303,14 @@
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name allowMalformed
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "name" {:kind :field
 :getter true
 :type {:type "String"
@@ -10112,11 +10341,13 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "startChunkedConversion" {:kind :method
 :return-type {:type "StringConversionSink"
 :lib "dart:convert"}
@@ -10162,11 +10393,13 @@
 :lib "dart:core"}]}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "startChunkedConversion" {:kind :method
 :return-type {:type "ByteConversionSink"
 :lib "dart:convert"}
@@ -10209,7 +10442,8 @@
 :parameters [{:name allowMalformed
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}}
+:lib "dart:core"}
+:optional true}]}}
 }
 "dart:typed_data" {
 "ByteBuffer"
@@ -10222,165 +10456,195 @@
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt8List" {:kind :method
 :return-type {:type "Int8List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asUint8ClampedList" {:kind :method
 :return-type {:type "Uint8ClampedList"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asUint16List" {:kind :method
 :return-type {:type "Uint16List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt16List" {:kind :method
 :return-type {:type "Int16List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asUint32List" {:kind :method
 :return-type {:type "Uint32List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt32List" {:kind :method
 :return-type {:type "Int32List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asUint64List" {:kind :method
 :return-type {:type "Uint64List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt64List" {:kind :method
 :return-type {:type "Int64List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt32x4List" {:kind :method
 :return-type {:type "Int32x4List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asFloat32List" {:kind :method
 :return-type {:type "Float32List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asFloat64List" {:kind :method
 :return-type {:type "Float64List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asFloat32x4List" {:kind :method
 :return-type {:type "Float32x4List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asFloat64x2List" {:kind :method
 :return-type {:type "Float64x2List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asByteData" {:kind :method
 :return-type {:type "ByteData"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor}
 "lengthInBytes" {:kind :field
 :getter true
@@ -10473,7 +10737,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setInt16" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -10485,7 +10750,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getUint16" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -10495,7 +10761,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setUint16" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -10507,7 +10774,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getInt32" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -10517,7 +10785,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setInt32" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -10529,7 +10798,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getUint32" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -10539,7 +10809,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setUint32" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -10551,7 +10822,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getInt64" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -10561,7 +10833,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setInt64" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -10573,7 +10846,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getUint64" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -10583,7 +10857,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setUint64" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -10595,7 +10870,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getFloat32" {:kind :method
 :return-type {:type "double"
 :lib "dart:core"}
@@ -10605,7 +10881,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setFloat32" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -10617,7 +10894,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getFloat64" {:kind :method
 :return-type {:type "double"
 :lib "dart:core"}
@@ -10627,7 +10905,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setFloat64" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -10639,7 +10918,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -10652,11 +10932,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -10664,11 +10946,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}}
+:lib "dart:core"}
+:optional true}]}}
 "Int8List"
 {:kind :class
 :super {:type "Object"
@@ -10688,7 +10972,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -10708,11 +10993,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -10720,11 +11007,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -10761,7 +11050,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -10781,11 +11071,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -10793,11 +11085,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -10822,7 +11116,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -10842,11 +11137,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -10854,11 +11151,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -10883,7 +11182,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -10903,11 +11203,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -10915,11 +11217,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -10944,7 +11248,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -10964,11 +11269,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -10976,11 +11283,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -11005,7 +11314,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -11025,11 +11335,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -11037,11 +11349,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -11066,7 +11380,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -11086,11 +11401,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -11098,11 +11415,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -11127,7 +11446,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -11147,11 +11467,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -11159,11 +11481,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -11188,7 +11512,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -11208,11 +11533,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -11220,11 +11547,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -11249,7 +11578,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -11269,11 +11599,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -11281,11 +11613,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -11310,7 +11644,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -11330,11 +11665,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -11342,11 +11679,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -11383,7 +11722,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -11403,11 +11743,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -11415,11 +11757,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -11456,7 +11800,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -11476,11 +11821,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -11488,11 +11835,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -11529,7 +11878,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name length
 :kind :positional
@@ -11549,11 +11899,13 @@
 :lib "dart:typed_data"}} {:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "sublistView" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -11561,11 +11913,13 @@
 :lib "dart:typed_data"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name end
+:lib "dart:core"}
+:optional true} {:name end
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "bytesPerElement" {:kind :field
 :static true
 :getter true
@@ -14681,165 +15035,195 @@
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt8List" {:kind :method
 :return-type {:type "Int8List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asUint8ClampedList" {:kind :method
 :return-type {:type "Uint8ClampedList"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asUint16List" {:kind :method
 :return-type {:type "Uint16List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt16List" {:kind :method
 :return-type {:type "Int16List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asUint32List" {:kind :method
 :return-type {:type "Uint32List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt32List" {:kind :method
 :return-type {:type "Int32List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asUint64List" {:kind :method
 :return-type {:type "Uint64List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt64List" {:kind :method
 :return-type {:type "Int64List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asInt32x4List" {:kind :method
 :return-type {:type "Int32x4List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asFloat32List" {:kind :method
 :return-type {:type "Float32List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asFloat64List" {:kind :method
 :return-type {:type "Float64List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asFloat32x4List" {:kind :method
 :return-type {:type "Float32x4List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asFloat64x2List" {:kind :method
 :return-type {:type "Float64x2List"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "asByteData" {:kind :method
 :return-type {:type "ByteData"
 :lib "dart:typed_data"}
 :parameters [{:name offsetInBytes
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name length
+:lib "dart:core"}
+:optional true} {:name length
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -14896,7 +15280,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setInt16" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -14908,7 +15293,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getUint16" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -14918,7 +15304,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setUint16" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -14930,7 +15317,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getInt32" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -14940,7 +15328,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setInt32" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -14952,7 +15341,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getUint32" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -14962,7 +15352,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setUint32" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -14974,7 +15365,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getInt64" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -14984,7 +15376,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setInt64" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -14996,7 +15389,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getUint64" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -15006,7 +15400,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setUint64" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -15018,7 +15413,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getFloat32" {:kind :method
 :return-type {:type "double"
 :lib "dart:core"}
@@ -15028,7 +15424,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setFloat32" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -15040,7 +15437,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "getFloat64" {:kind :method
 :return-type {:type "double"
 :lib "dart:core"}
@@ -15050,7 +15448,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "setFloat64" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name byteOffset
@@ -15062,7 +15461,8 @@
 :lib "dart:core"}} {:name endian
 :kind :positional
 :type {:type "Endian"
-:lib "dart:typed_data"}}]}
+:lib "dart:typed_data"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name data
 :kind :positional
@@ -15404,7 +15804,8 @@
 :kind :named
 :type {:type "String"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "libraryName" {:kind :field
 :getter true
 :type {:type "String"
@@ -15457,14 +15858,16 @@
 :is-param true}]}]}} {:name eagerError
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}} {:name cleanUp
+:lib "dart:core"}
+:optional true} {:name cleanUp
 :kind :named
 :type {:type "Function"
 :return-type {:type "void"}
 :parameters [{:name successValue
 :kind :positional
 :type {:type "T"
-:is-param true}}]}}]
+:is-param true}}]}
+:optional true}]
 :type-parameters [{:name "T"}]}
 "any" {:kind :method
 :static true
@@ -15533,7 +15936,8 @@
 :kind :named
 :type {:type "Function"
 :nullable true
-:lib "dart:core"}}]
+:lib "dart:core"}
+:optional true}]
 :type-parameters [{:name "R"}]}
 "catchError" {:kind :method
 :return-type {:type "Future"
@@ -15551,7 +15955,8 @@
 :parameters [{:name error
 :kind :positional
 :type {:type "Object"
-:lib "dart:core"}}]}}]}
+:lib "dart:core"}}]}
+:optional true}]}
 "whenComplete" {:kind :method
 :return-type {:type "Future"
 :lib "dart:async"
@@ -15582,7 +15987,8 @@
 :return-type {:type "FutureOr"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}}]}
+:is-param true}]}}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name computation
 :kind :positional
@@ -15614,7 +16020,8 @@
 :nullable true
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}
+:is-param true}]}
+:optional true}]}
 "error" {:kind :constructor
 :parameters [{:name error
 :kind :positional
@@ -15623,7 +16030,8 @@
 :kind :positional
 :type {:type "StackTrace"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "delayed" {:kind :constructor
 :parameters [{:name duration
 :kind :positional
@@ -15634,7 +16042,8 @@
 :return-type {:type "FutureOr"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}}]}}
+:is-param true}]}}
+:optional true}]}}
 "TimeoutException"
 {:kind :class
 :super {:type "Object"
@@ -15653,7 +16062,8 @@
 :kind :positional
 :type {:type "Duration"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "message" {:kind :field
 :getter true
 :type {:type "String"
@@ -15677,7 +16087,8 @@
 :nullable true
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}
+:is-param true}]}
+:optional true}]}
 "completeError" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name error
@@ -15687,7 +16098,8 @@
 :kind :positional
 :type {:type "StackTrace"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor}
 "sync" {:kind :constructor}
 "future" {:kind :field
@@ -15733,7 +16145,8 @@
 :type {:type "StreamSubscription"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}} {:name onCancel
+:is-param true}]}}]}
+:optional true} {:name onCancel
 :kind :named
 :type {:type "Function"
 :return-type {:type "void"}
@@ -15742,7 +16155,8 @@
 :type {:type "StreamSubscription"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}}]}
+:is-param true}]}}]}
+:optional true}]}
 "listen" {:kind :method
 :return-type {:type "StreamSubscription"
 :lib "dart:async"
@@ -15759,14 +16173,17 @@
 :kind :named
 :type {:type "Function"
 :nullable true
-:lib "dart:core"}} {:name onDone
+:lib "dart:core"}
+:optional true} {:name onDone
 :kind :named
 :type {:type "Function"
-:return-type {:type "void"}}} {:name cancelOnError
+:return-type {:type "void"}}
+:optional true} {:name cancelOnError
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "where" {:kind :method
 :return-type {:type "Stream"
 :lib "dart:async"
@@ -15846,7 +16263,8 @@
 :lib "dart:core"}
 :parameters [{:name error
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "expand" {:kind :method
 :return-type {:type "Stream"
 :lib "dart:async"
@@ -15933,7 +16351,8 @@
 :parameters [{:name separator
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "contains" {:kind :method
 :return-type {:type "Future"
 :lib "dart:async"
@@ -16013,7 +16432,8 @@
 :kind :positional
 :type {:type "E"
 :nullable true
-:is-param true}}]
+:is-param true}
+:optional true}]
 :type-parameters [{:name "E"}]}
 "take" {:kind :method
 :return-type {:type "Stream"
@@ -16077,7 +16497,8 @@
 :is-param true}} {:name next
 :kind :positional
 :type {:type "T"
-:is-param true}}]}}]}
+:is-param true}}]}
+:optional true}]}
 "firstWhere" {:kind :method
 :return-type {:type "Future"
 :lib "dart:async"
@@ -16095,7 +16516,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "T"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "lastWhere" {:kind :method
 :return-type {:type "Future"
 :lib "dart:async"
@@ -16113,7 +16535,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "T"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "singleWhere" {:kind :method
 :return-type {:type "Future"
 :lib "dart:async"
@@ -16131,7 +16554,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "T"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "elementAt" {:kind :method
 :return-type {:type "Future"
 :lib "dart:async"
@@ -16158,7 +16582,8 @@
 :type {:type "EventSink"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}}]}
+:is-param true}]}}]}
+:optional true}]}
 "" {:kind :constructor}
 "empty" {:kind :constructor}
 "value" {:kind :constructor
@@ -16174,7 +16599,8 @@
 :kind :positional
 :type {:type "StackTrace"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "fromFuture" {:kind :constructor
 :parameters [{:name future
 :kind :positional
@@ -16210,7 +16636,8 @@
 :is-param true}]}}]}} {:name isBroadcast
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "periodic" {:kind :constructor
 :parameters [{:name period
 :kind :positional
@@ -16223,7 +16650,8 @@
 :parameters [{:name computationCount
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}}]}
+:lib "dart:core"}}]}
+:optional true}]}
 "eventTransformed" {:kind :constructor
 :parameters [{:name source
 :kind :positional
@@ -16314,7 +16742,8 @@
 :type {:type "Future"
 :nullable true
 :lib "dart:async"
-:type-parameters [{:type "void"}]}}]}
+:type-parameters [{:type "void"}]}
+:optional true}]}
 "resume" {:kind :method
 :return-type {:type "void"}}
 "asFuture" {:kind :method
@@ -16326,7 +16755,8 @@
 :kind :positional
 :type {:type "E"
 :nullable true
-:is-param true}}]
+:is-param true}
+:optional true}]
 :type-parameters [{:name "E"}]}
 "" {:kind :constructor}
 "isPaused" {:kind :field
@@ -16357,7 +16787,8 @@
 :kind :positional
 :type {:type "StackTrace"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "close" {:kind :method
 :return-type {:type "void"}}
 "" {:kind :constructor}}
@@ -16382,7 +16813,8 @@
 :type {:type "StreamSubscription"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}} {:name onCancel
+:is-param true}]}}]}
+:optional true} {:name onCancel
 :kind :named
 :type {:type "Function"
 :return-type {:type "void"}
@@ -16391,7 +16823,8 @@
 :type {:type "StreamSubscription"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}}]}
+:is-param true}]}}]}
+:optional true}]}
 "listen" {:kind :method
 :return-type {:type "StreamSubscription"
 :lib "dart:async"
@@ -16408,14 +16841,17 @@
 :kind :named
 :type {:type "Function"
 :nullable true
-:lib "dart:core"}} {:name onDone
+:lib "dart:core"}
+:optional true} {:name onDone
 :kind :named
 :type {:type "Function"
-:return-type {:type "void"}}} {:name cancelOnError
+:return-type {:type "void"}}
+:optional true} {:name cancelOnError
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name stream
 :kind :positional
@@ -16537,7 +16973,8 @@
 :type {:type "EventSink"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}} {:name handleError
+:is-param true}]}}]}
+:optional true} {:name handleError
 :kind :named
 :type {:type "Function"
 :return-type {:type "void"}
@@ -16552,7 +16989,8 @@
 :type {:type "EventSink"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}} {:name handleDone
+:is-param true}]}}]}
+:optional true} {:name handleDone
 :kind :named
 :type {:type "Function"
 :return-type {:type "void"}
@@ -16561,7 +16999,8 @@
 :type {:type "EventSink"
 :lib "dart:async"
 :type-parameters [{:type "T"
-:is-param true}]}}]}}]}
+:is-param true}]}}]}
+:optional true}]}
 "fromBind" {:kind :constructor
 :parameters [{:name bind
 :kind :positional
@@ -16642,7 +17081,8 @@
 :kind :positional
 :type {:type "StackTrace"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "closeSync" {:kind :method
 :return-type {:type "void"}}
 "" {:kind :constructor}}
@@ -16674,7 +17114,8 @@
 :kind :positional
 :type {:type "StackTrace"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "close" {:kind :method
 :return-type {:type "Future"
 :lib "dart:async"
@@ -16692,37 +17133,46 @@
 :kind :named
 :type {:type "bool"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor
 :parameters [{:name onListen
 :kind :named
 :type {:type "Function"
-:return-type {:type "void"}}} {:name onPause
+:return-type {:type "void"}}
+:optional true} {:name onPause
 :kind :named
 :type {:type "Function"
-:return-type {:type "void"}}} {:name onResume
+:return-type {:type "void"}}
+:optional true} {:name onResume
 :kind :named
 :type {:type "Function"
-:return-type {:type "void"}}} {:name onCancel
+:return-type {:type "void"}}
+:optional true} {:name onCancel
 :kind :named
 :type {:type "Function"
 :return-type {:type "FutureOr"
 :lib "dart:async"
-:type-parameters [{:type "void"}]}}} {:name sync
+:type-parameters [{:type "void"}]}}
+:optional true} {:name sync
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "broadcast" {:kind :constructor
 :parameters [{:name onListen
 :kind :named
 :type {:type "Function"
-:return-type {:type "void"}}} {:name onCancel
+:return-type {:type "void"}}
+:optional true} {:name onCancel
 :kind :named
 :type {:type "Function"
-:return-type {:type "void"}}} {:name sync
+:return-type {:type "void"}}
+:optional true} {:name sync
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "onListen" {:kind :field
 :getter true
 :setter true
@@ -16798,7 +17248,8 @@
 :kind :positional
 :type {:type "StackTrace"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "close" {:kind :method
 :return-type {:type "Future"
 :lib "dart:async"
@@ -16896,7 +17347,8 @@
 :lib "dart:core"}} {:name stackTrace
 :kind :positional
 :type {:type "StackTrace"
-:lib "dart:core"}}]}} {:name run
+:lib "dart:core"}}]}
+:optional true} {:name run
 :kind :named
 :type {:type "Function"
 :return-type {:type "R"
@@ -16915,7 +17367,8 @@
 :type {:type "Function"
 :return-type {:type "R"
 :is-param true}}}]
-:type-parameters [{:name "R"}]}} {:name runUnary
+:type-parameters [{:name "R"}]}
+:optional true} {:name runUnary
 :kind :named
 :type {:type "Function"
 :return-type {:type "R"
@@ -16941,7 +17394,8 @@
 :kind :positional
 :type {:type "T"
 :is-param true}}]
-:type-parameters [{:name "R"} {:name "T"}]}} {:name runBinary
+:type-parameters [{:name "R"} {:name "T"}]}
+:optional true} {:name runBinary
 :kind :named
 :type {:type "Function"
 :return-type {:type "R"
@@ -16973,7 +17427,8 @@
 :kind :positional
 :type {:type "T2"
 :is-param true}}]
-:type-parameters [{:name "R"} {:name "T1"} {:name "T2"}]}} {:name registerCallback
+:type-parameters [{:name "R"} {:name "T1"} {:name "T2"}]}
+:optional true} {:name registerCallback
 :kind :named
 :type {:type "Function"
 :return-type {:type "Function"
@@ -16993,7 +17448,8 @@
 :type {:type "Function"
 :return-type {:type "R"
 :is-param true}}}]
-:type-parameters [{:name "R"}]}} {:name registerUnaryCallback
+:type-parameters [{:name "R"}]}
+:optional true} {:name registerUnaryCallback
 :kind :named
 :type {:type "Function"
 :return-type {:type "Function"
@@ -17021,7 +17477,8 @@
 :kind :positional
 :type {:type "T"
 :is-param true}}]}}]
-:type-parameters [{:name "R"} {:name "T"}]}} {:name registerBinaryCallback
+:type-parameters [{:name "R"} {:name "T"}]}
+:optional true} {:name registerBinaryCallback
 :kind :named
 :type {:type "Function"
 :return-type {:type "Function"
@@ -17055,7 +17512,8 @@
 :kind :positional
 :type {:type "T2"
 :is-param true}}]}}]
-:type-parameters [{:name "R"} {:name "T1"} {:name "T2"}]}} {:name errorCallback
+:type-parameters [{:name "R"} {:name "T1"} {:name "T2"}]}
+:optional true} {:name errorCallback
 :kind :named
 :type {:type "Function"
 :return-type {:type "AsyncError"
@@ -17077,7 +17535,8 @@
 :kind :positional
 :type {:type "StackTrace"
 :nullable true
-:lib "dart:core"}}]}} {:name scheduleMicrotask
+:lib "dart:core"}}]}
+:optional true} {:name scheduleMicrotask
 :kind :named
 :type {:type "Function"
 :return-type {:type "void"}
@@ -17093,7 +17552,8 @@
 :lib "dart:async"}} {:name f
 :kind :positional
 :type {:type "Function"
-:return-type {:type "void"}}}]}} {:name createTimer
+:return-type {:type "void"}}}]}
+:optional true} {:name createTimer
 :kind :named
 :type {:type "Function"
 :return-type {:type "Timer"
@@ -17113,7 +17573,8 @@
 :lib "dart:core"}} {:name f
 :kind :positional
 :type {:type "Function"
-:return-type {:type "void"}}}]}} {:name createPeriodicTimer
+:return-type {:type "void"}}}]}
+:optional true} {:name createPeriodicTimer
 :kind :named
 :type {:type "Function"
 :return-type {:type "Timer"
@@ -17137,7 +17598,8 @@
 :parameters [{:name timer
 :kind :positional
 :type {:type "Timer"
-:lib "dart:async"}}]}}]}} {:name print
+:lib "dart:async"}}]}}]}
+:optional true} {:name print
 :kind :named
 :type {:type "Function"
 :return-type {:type "void"}
@@ -17153,7 +17615,8 @@
 :lib "dart:async"}} {:name line
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}} {:name fork
+:lib "dart:core"}}]}
+:optional true} {:name fork
 :kind :named
 :type {:type "Function"
 :return-type {:type "Zone"
@@ -17180,7 +17643,8 @@
 :nullable true
 :lib "dart:core"} {:type "Object"
 :nullable true
-:lib "dart:core"}]}}]}}]}
+:lib "dart:core"}]}}]}
+:optional true}]}
 "from" {:kind :constructor
 :parameters [{:name other
 :kind :positional
@@ -17204,7 +17668,8 @@
 :lib "dart:core"}} {:name stackTrace
 :kind :positional
 :type {:type "StackTrace"
-:lib "dart:core"}}]}} {:name run
+:lib "dart:core"}}]}
+:optional true} {:name run
 :kind :named
 :type {:type "Function"
 :return-type {:type "R"
@@ -17223,7 +17688,8 @@
 :type {:type "Function"
 :return-type {:type "R"
 :is-param true}}}]
-:type-parameters [{:name "R"}]}} {:name runUnary
+:type-parameters [{:name "R"}]}
+:optional true} {:name runUnary
 :kind :named
 :type {:type "Function"
 :return-type {:type "R"
@@ -17249,7 +17715,8 @@
 :kind :positional
 :type {:type "T"
 :is-param true}}]
-:type-parameters [{:name "R"} {:name "T"}]}} {:name runBinary
+:type-parameters [{:name "R"} {:name "T"}]}
+:optional true} {:name runBinary
 :kind :named
 :type {:type "Function"
 :return-type {:type "R"
@@ -17281,7 +17748,8 @@
 :kind :positional
 :type {:type "T2"
 :is-param true}}]
-:type-parameters [{:name "R"} {:name "T1"} {:name "T2"}]}} {:name registerCallback
+:type-parameters [{:name "R"} {:name "T1"} {:name "T2"}]}
+:optional true} {:name registerCallback
 :kind :named
 :type {:type "Function"
 :return-type {:type "Function"
@@ -17301,7 +17769,8 @@
 :type {:type "Function"
 :return-type {:type "R"
 :is-param true}}}]
-:type-parameters [{:name "R"}]}} {:name registerUnaryCallback
+:type-parameters [{:name "R"}]}
+:optional true} {:name registerUnaryCallback
 :kind :named
 :type {:type "Function"
 :return-type {:type "Function"
@@ -17329,7 +17798,8 @@
 :kind :positional
 :type {:type "T"
 :is-param true}}]}}]
-:type-parameters [{:name "R"} {:name "T"}]}} {:name registerBinaryCallback
+:type-parameters [{:name "R"} {:name "T"}]}
+:optional true} {:name registerBinaryCallback
 :kind :named
 :type {:type "Function"
 :return-type {:type "Function"
@@ -17363,7 +17833,8 @@
 :kind :positional
 :type {:type "T2"
 :is-param true}}]}}]
-:type-parameters [{:name "R"} {:name "T1"} {:name "T2"}]}} {:name errorCallback
+:type-parameters [{:name "R"} {:name "T1"} {:name "T2"}]}
+:optional true} {:name errorCallback
 :kind :named
 :type {:type "Function"
 :return-type {:type "AsyncError"
@@ -17385,7 +17856,8 @@
 :kind :positional
 :type {:type "StackTrace"
 :nullable true
-:lib "dart:core"}}]}} {:name scheduleMicrotask
+:lib "dart:core"}}]}
+:optional true} {:name scheduleMicrotask
 :kind :named
 :type {:type "Function"
 :return-type {:type "void"}
@@ -17401,7 +17873,8 @@
 :lib "dart:async"}} {:name f
 :kind :positional
 :type {:type "Function"
-:return-type {:type "void"}}}]}} {:name createTimer
+:return-type {:type "void"}}}]}
+:optional true} {:name createTimer
 :kind :named
 :type {:type "Function"
 :return-type {:type "Timer"
@@ -17421,7 +17894,8 @@
 :lib "dart:core"}} {:name f
 :kind :positional
 :type {:type "Function"
-:return-type {:type "void"}}}]}} {:name createPeriodicTimer
+:return-type {:type "void"}}}]}
+:optional true} {:name createPeriodicTimer
 :kind :named
 :type {:type "Function"
 :return-type {:type "Timer"
@@ -17445,7 +17919,8 @@
 :parameters [{:name timer
 :kind :positional
 :type {:type "Timer"
-:lib "dart:async"}}]}}]}} {:name print
+:lib "dart:async"}}]}}]}
+:optional true} {:name print
 :kind :named
 :type {:type "Function"
 :return-type {:type "void"}
@@ -17461,7 +17936,8 @@
 :lib "dart:async"}} {:name line
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}} {:name fork
+:lib "dart:core"}}]}
+:optional true} {:name fork
 :kind :named
 :type {:type "Function"
 :return-type {:type "Zone"
@@ -17488,7 +17964,8 @@
 :nullable true
 :lib "dart:core"} {:type "Object"
 :nullable true
-:lib "dart:core"}]}}]}}]}
+:lib "dart:core"}]}}]}
+:optional true}]}
 "handleUncaughtError" {:kind :field
 :getter true
 :type {:type "Function"
@@ -18045,7 +18522,8 @@
 :kind :named
 :type {:type "ZoneSpecification"
 :nullable true
-:lib "dart:async"}} {:name zoneValues
+:lib "dart:async"}
+:optional true} {:name zoneValues
 :kind :named
 :type {:type "Map"
 :nullable true
@@ -18054,7 +18532,8 @@
 :nullable true
 :lib "dart:core"} {:type "Object"
 :nullable true
-:lib "dart:core"}]}}]}
+:lib "dart:core"}]}
+:optional true}]}
 "run" {:kind :method
 :return-type {:type "R"
 :is-param true}
@@ -18417,20 +18896,23 @@
 :type {:type "K"
 :is-param true}} {:kind :positional
 :type {:type "K"
-:is-param true}}]}} {:name hashCode
+:is-param true}}]}
+:optional true} {:name hashCode
 :kind :named
 :type {:type "Function"
 :return-type {:type "int"
 :lib "dart:core"}
 :parameters [{:kind :positional
 :type {:type "K"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :named
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "identity" {:kind :constructor}
 "from" {:kind :constructor
 :parameters [{:name other
@@ -18458,14 +18940,16 @@
 :is-param true}
 :parameters [{:name element
 :kind :positional
-:type {:type "dynamic"}}]}} {:name value
+:type {:type "dynamic"}}]}
+:optional true} {:name value
 :kind :named
 :type {:type "Function"
 :return-type {:type "V"
 :is-param true}
 :parameters [{:name element
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "fromIterables" {:kind :constructor
 :parameters [{:name keys
 :kind :positional
@@ -18507,20 +18991,23 @@
 :type {:type "E"
 :is-param true}} {:kind :positional
 :type {:type "E"
-:is-param true}}]}} {:name hashCode
+:is-param true}}]}
+:optional true} {:name hashCode
 :kind :named
 :type {:type "Function"
 :return-type {:type "int"
 :lib "dart:core"}
 :parameters [{:kind :positional
 :type {:type "E"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :named
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "identity" {:kind :constructor}
 "from" {:kind :constructor
 :parameters [{:name elements
@@ -18689,7 +19176,8 @@
 :parameters [{:name separator
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "any" {:kind :method
 :return-type {:type "bool"
 :lib "dart:core"}
@@ -18710,7 +19198,8 @@
 :parameters [{:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "toSet" {:kind :method
 :return-type {:type "Set"
 :lib "dart:core"
@@ -18777,7 +19266,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "lastWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -18793,7 +19283,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "singleWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -18809,7 +19300,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "elementAt" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -18863,10 +19355,12 @@
 :type-parameters [{:type "dynamic"}]}} {:name leftDelimiter
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}} {:name rightDelimiter
+:lib "dart:core"}
+:optional true} {:name rightDelimiter
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "iterableToFullString" {:kind :method
 :static true
 :return-type {:type "String"
@@ -18878,10 +19372,12 @@
 :type-parameters [{:type "dynamic"}]}} {:name leftDelimiter
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}} {:name rightDelimiter
+:lib "dart:core"}
+:optional true} {:name rightDelimiter
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "" {:kind :constructor}}
 "HasNextIterator"
 {:kind :class
@@ -18922,20 +19418,23 @@
 :type {:type "K"
 :is-param true}} {:kind :positional
 :type {:type "K"
-:is-param true}}]}} {:name hashCode
+:is-param true}}]}
+:optional true} {:name hashCode
 :kind :named
 :type {:type "Function"
 :return-type {:type "int"
 :lib "dart:core"}
 :parameters [{:kind :positional
 :type {:type "K"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :named
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "identity" {:kind :constructor}
 "from" {:kind :constructor
 :parameters [{:name other
@@ -18963,14 +19462,16 @@
 :is-param true}
 :parameters [{:name element
 :kind :positional
-:type {:type "dynamic"}}]}} {:name value
+:type {:type "dynamic"}}]}
+:optional true} {:name value
 :kind :named
 :type {:type "Function"
 :return-type {:type "V"
 :is-param true}
 :parameters [{:name element
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "fromIterables" {:kind :constructor
 :parameters [{:name keys
 :kind :positional
@@ -19022,20 +19523,23 @@
 :type {:type "E"
 :is-param true}} {:kind :positional
 :type {:type "E"
-:is-param true}}]}} {:name hashCode
+:is-param true}}]}
+:optional true} {:name hashCode
 :kind :named
 :type {:type "Function"
 :return-type {:type "int"
 :lib "dart:core"}
 :parameters [{:kind :positional
 :type {:type "E"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :named
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "identity" {:kind :constructor}
 "from" {:kind :constructor
 :parameters [{:name elements
@@ -19285,7 +19789,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "lastWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -19301,7 +19806,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "singleWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -19317,14 +19823,16 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "join" {:kind :method
 :return-type {:type "String"
 :lib "dart:core"}
 :parameters [{:name separator
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "where" {:kind :method
 :return-type {:type "Iterable"
 :lib "dart:core"
@@ -19465,7 +19973,8 @@
 :parameters [{:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "toSet" {:kind :method
 :return-type {:type "Set"
 :lib "dart:core"
@@ -19539,14 +20048,16 @@
 :is-param true}} {:name b
 :kind :positional
 :type {:type "E"
-:is-param true}}]}}]}
+:is-param true}}]}
+:optional true}]}
 "shuffle" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name random
 :kind :positional
 :type {:type "Random"
 :nullable true
-:lib "dart:math"}}]}
+:lib "dart:math"}
+:optional true}]}
 "asMap" {:kind :method
 :return-type {:type "Map"
 :lib "dart:core"
@@ -19577,7 +20088,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "getRange" {:kind :method
 :return-type {:type "Iterable"
 :lib "dart:core"
@@ -19611,7 +20123,8 @@
 :kind :positional
 :type {:type "E"
 :nullable true
-:is-param true}}]}
+:is-param true}
+:optional true}]}
 "setRange" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name start
@@ -19628,7 +20141,8 @@
 :is-param true}]}} {:name skipCount
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "replaceRange" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name start
@@ -19653,7 +20167,8 @@
 :lib "dart:core"}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "indexWhere" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -19668,7 +20183,8 @@
 :is-param true}}]}} {:name start
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "lastIndexOf" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -19680,7 +20196,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "lastIndexWhere" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -19696,7 +20213,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "insert" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name index
@@ -19902,7 +20420,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "V"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "updateAll" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name update
@@ -20174,7 +20693,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "V"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "updateAll" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name update
@@ -20615,7 +21135,8 @@
 :parameters [{:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "add" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name value
@@ -20688,7 +21209,8 @@
 :kind :positional
 :type {:type "int"
 :nullable true
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "from" {:kind :constructor
 :parameters [{:name elements
 :kind :positional
@@ -20900,7 +21422,8 @@
 :parameters [{:name growable
 :kind :named
 :type {:type "bool"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "map" {:kind :method
 :return-type {:type "Iterable"
 :lib "dart:core"
@@ -21012,7 +21535,8 @@
 :parameters [{:name separator
 :kind :positional
 :type {:type "String"
-:lib "dart:core"}}]}
+:lib "dart:core"}
+:optional true}]}
 "any" {:kind :method
 :return-type {:type "bool"
 :lib "dart:core"}
@@ -21086,7 +21610,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "lastWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -21102,7 +21627,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "singleWhere" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -21118,7 +21644,8 @@
 :kind :named
 :type {:type "Function"
 :return-type {:type "E"
-:is-param true}}}]}
+:is-param true}}
+:optional true}]}
 "elementAt" {:kind :method
 :return-type {:type "E"
 :is-param true}
@@ -21358,14 +21885,16 @@
 :is-param true}} {:name key2
 :kind :positional
 :type {:type "K"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :positional
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:name potentialKey
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "from" {:kind :constructor
 :parameters [{:name other
 :kind :positional
@@ -21382,14 +21911,16 @@
 :is-param true}} {:name key2
 :kind :positional
 :type {:type "K"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :positional
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:name potentialKey
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "of" {:kind :constructor
 :parameters [{:name other
 :kind :positional
@@ -21408,14 +21939,16 @@
 :is-param true}} {:name key2
 :kind :positional
 :type {:type "K"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :positional
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:name potentialKey
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "fromIterable" {:kind :constructor
 :parameters [{:name iterable
 :kind :positional
@@ -21428,14 +21961,16 @@
 :is-param true}
 :parameters [{:name element
 :kind :positional
-:type {:type "dynamic"}}]}} {:name value
+:type {:type "dynamic"}}]}
+:optional true} {:name value
 :kind :named
 :type {:type "Function"
 :return-type {:type "V"
 :is-param true}
 :parameters [{:name element
 :kind :positional
-:type {:type "dynamic"}}]}} {:name compare
+:type {:type "dynamic"}}]}
+:optional true} {:name compare
 :kind :named
 :type {:type "Function"
 :return-type {:type "int"
@@ -21446,14 +21981,16 @@
 :is-param true}} {:name key2
 :kind :positional
 :type {:type "K"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :named
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:name potentialKey
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "fromIterables" {:kind :constructor
 :parameters [{:name keys
 :kind :positional
@@ -21476,14 +22013,16 @@
 :is-param true}} {:name key2
 :kind :positional
 :type {:type "K"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :positional
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:name potentialKey
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "isEmpty" {:kind :field
 :getter true
 :type {:type "bool"
@@ -21646,14 +22185,16 @@
 :is-param true}} {:name key2
 :kind :positional
 :type {:type "E"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :positional
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:name potentialKey
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "from" {:kind :constructor
 :parameters [{:name elements
 :kind :positional
@@ -21670,14 +22211,16 @@
 :is-param true}} {:name key2
 :kind :positional
 :type {:type "E"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :positional
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:name potentialKey
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "of" {:kind :constructor
 :parameters [{:name elements
 :kind :positional
@@ -21695,14 +22238,16 @@
 :is-param true}} {:name key2
 :kind :positional
 :type {:type "E"
-:is-param true}}]}} {:name isValidKey
+:is-param true}}]}
+:optional true} {:name isValidKey
 :kind :positional
 :type {:type "Function"
 :return-type {:type "bool"
 :lib "dart:core"}
 :parameters [{:name potentialKey
 :kind :positional
-:type {:type "dynamic"}}]}}]}
+:type {:type "dynamic"}}]}
+:optional true}]}
 "iterator" {:kind :field
 :getter true
 :type {:type "Iterator"
