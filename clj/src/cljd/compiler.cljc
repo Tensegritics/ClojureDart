@@ -458,7 +458,7 @@
                 {:as actual :keys [opt-kind] [this & fixed-opts] :fixed-params}
                 (parse-dart-params args)
                 _ (when-not (= (count fixeds) (count fixed-opts))
-                    (throw (Exception. (str "Fixed arity mismatch on " mname " for " class-name fixeds fixed-opts))))
+                    (throw (Exception. (str "Fixed arity mismatch on " mname " for " class-name))))
                 _ (when-not (case opt-kind :named (set? opts) (vector? opts))
                     (throw (Exception. (str "Optional mismatch on " mname " for " class-name))))
                 actual-fixeds
