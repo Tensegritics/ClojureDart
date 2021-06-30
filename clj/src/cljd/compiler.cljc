@@ -176,16 +176,15 @@
               :type-parameters [#_TODO]})
       (throw (ex-info (str "oops " sym) {:env env})))))
 
-(defn unresolve-type [atype]
-  (if (:is-param atype)
-    (symbol (:type atype))
-    (let [{:keys [current-ns] :as nses} @nses
-          {:keys [lib type type-parameters]} atype]
+(defn unresolve-type [{:keys [is-param lib type type-parameters nullable]}]
+  (if is-param
+    (symbol (cond-> type nullable (str "?")))
+    (let [{:keys [current-ns] :as nses} @nses]
       (with-meta
         (symbol
           (when-not (= lib (:lib (nses current-ns)))
             (get-in nses [current-ns :imports lib :clj-alias]))
-          type)
+          (cond-> type nullable (str "?")))
         {:type-params (mapv unresolve-type type-parameters)}))))
 
 (defn non-nullable [tag]
