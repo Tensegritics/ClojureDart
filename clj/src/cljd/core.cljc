@@ -431,7 +431,7 @@
         [opts specs] (roll-leading-opts args)]
     `(do
        (~'deftype* ~class-name ~fields ~opts ~@specs)
-       ~(when-not (:type-only opts)
+       ~(when-not (or (:type-only opts) (:abstract (meta class-name)))
           `(defn
              ~(symbol (str "->" class-name))
              [~@fields]
@@ -1560,7 +1560,24 @@
          h#)
        h#)))
 
-(deftype Cons [meta first rest ^:mutable ^int __hash]
+(deftype ^:abstract #/(SeqListMixin E)
+  []
+  ^:mixin #/(dart-coll/ListMixin E)
+  (length [coll ^int val]
+    (throw (UnsupportedError. "lenght= not supported on Cons")))
+  (add [coll _]
+    (throw (UnsupportedError. "add not supported on Cons")))
+  ("[]=" [coll ^int index ^E value]
+   (throw (UnsupportedError. "[]= not supported on Cons")))
+
+  ("[]" [coll idx] (-nth coll idx))
+  (length [coll] (-count coll)))
+
+(deftype #/(Cons E)
+  [meta _first rest ^:mutable ^int __hash]
+  ^:mixin #/(SeqListMixin E)
+  (^#/(Cons R) #/(cast R) [coll]
+   (Cons. meta _first rest __hash))
   Object
   #_(^String toString [coll] "TODO" #_(pr-str* coll))
   IList
@@ -1568,11 +1585,11 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (Cons. new-meta first rest __hash)))
+      (Cons. new-meta _first rest __hash)))
   IMeta
   (-meta [coll] meta)
   ISeq
-  (-first [coll] first)
+  (-first [coll] _first)
   (-rest [coll] (if (nil? rest) () rest))
   (-next [coll] (if (nil? rest) nil (seq rest)))
   ICollection
@@ -1606,24 +1623,13 @@
    (cons a (cons b (cons c (cons d (spread more)))))))
 
 (deftype #/(PersistentList E)
-  [meta first rest ^int count ^:mutable ^int __hash]
-  ^:mixin #/(dart-coll/ListMixin E)
-  (length [coll] count)
-  (length [coll ^int val]
-    (throw (UnsupportedError. "lenght= not supported on PersistentList")))
-  (add [coll _]
-    (throw (UnsupportedError. "add not supported on PersistentList")))
-  ("[]=" [coll idx val]
-   (throw (UnsupportedError. "[]= not supported on PersistentList")))
-  ("[]" [coll ^int idx]
-   ;; @TODO : maybe clear this exception as it is already thrown by nth
-   (when-not (or (pos? idx) (< idx count))
-     (throw (dart:core/RangeError.range idx 0 count)))
-   (-nth coll idx))
+  [meta _first rest ^int count ^:mutable ^int __hash]
+  ^:mixin #/(SeqListMixin E)
+  (^int ^:getter length [coll] count) ; TODO dart resolution through our own types
   (^#/(PersistentList R) #/(cast R) [coll]
-   (PersistentList. meta first rest count __hash))
+   (PersistentList. meta _first rest count __hash))
 
-  ;; invariant: first is nil when count is zero
+  ;; invariant: _first is nil when count is zero
   Object
   #_(^String toString [coll]
      #_(pr-str* coll))
@@ -1632,11 +1638,11 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (PersistentList. new-meta first rest count __hash)))
+      (PersistentList. new-meta _first rest count __hash)))
   IMeta
   (-meta [coll] meta)
   ISeq
-  (-first [coll] first)
+  (-first [coll] _first)
   (-rest [coll]
     (if (<= count 1)
       ()
@@ -1646,7 +1652,7 @@
       nil
       rest))
   IStack
-  (-peek [coll] first)
+  (-peek [coll] _first)
   (-pop [coll]
     (if (pos? count)
       rest
@@ -1689,7 +1695,11 @@
     (satisfies? ISeq coll) (Cons. nil x coll -1)
     true                   (Cons. nil x (seq coll) -1)))
 
-(deftype IteratorSeq [value ^Iterator iter ^:mutable ^some _rest]
+(deftype #/(IteratorSeq E)
+  [value ^Iterator iter ^:mutable ^some _rest]
+  ^:mixin #/(SeqListMixin E)
+  (^#/(IteratorSeq R) #/(cast R) [coll]
+   (IteratorSeq. value iter _rest))
   ISeqable
   (-seq [this] this)
   ISeq
@@ -1705,12 +1715,16 @@
   ISeqable
   (-seq [coll] (iterator-seq (.-iterator coll))))
 
-(deftype StringSeq [string i meta ^:mutable ^int __hash]
-  #_Object
+(deftype #/(StringSeq E)
+  [string i meta ^:mutable ^int __hash]
+  ^:mixin #/(SeqListMixin E)
+  (^#/(StringSeq R) #/(cast R) [coll]
+   (StringSeq. string i meta __hash))
+  Object
   #_(^String toString [coll]
-      (pr-str* coll))
+     (pr-str* coll))
   ISeqable
-  (-seq [this] (when (< i (.-length string)) this))
+  (-seq [coll] (when (< i (.-length string)) coll))
   IMeta
   (-meta [coll] meta)
   IWithMeta
@@ -1777,7 +1791,7 @@
           acc))))
   IHash
   (-hash [coll] (ensure-hash __hash (m3-hash-int (.-hashCode (.substring string i)))))
-; TODO : not reversible in clj (is in cljs)
+  ; TODO : not reversible in clj (is in cljs)
   #_#_IReversible
   (-rseq [coll]
     (let [c (-count coll)]
@@ -1802,8 +1816,6 @@
 (defn ^String subs
   "Returns the substring of s beginning at start inclusive, and ending
   at end (defaults to length of string), exclusive."
-  {:added "1.0"
-   :static true}
   ([^String s start] (. s (substring start)))
   ([^String s start end] (. s (substring start end))))
 
@@ -1813,10 +1825,14 @@
    :inline-arities #{1}}
   [x] (if x false true))
 
-(deftype LazySeq [meta ^:mutable ^some fn ^:mutable s ^:mutable ^int __hash]
+(deftype #/(LazySeq E)
+  [meta ^:mutable ^some fn ^:mutable s ^:mutable ^int __hash]
+  ^:mixin #/(SeqListMixin E)
+  (^#/(LazySeq R) #/(cast R) [coll]
+   (LazySeq. meta fn s __hash))
   Object
   #_(^String toString [coll]
-      (pr-str* coll))
+     (pr-str* coll))
   (sval [coll]
     (if (nil? fn)
       s
@@ -1981,15 +1997,7 @@
 
 (deftype #/(PersistentVector E)
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
-  ^:mixin #/(dart-coll/ListMixin E)
-  (length [coll] cnt)
-  (length [coll val]
-    (throw (UnsupportedError. "lenght= not supported on PersistentVector")))
-  (add [coll _]
-    (throw (UnsupportedError. "add not supported on PersistentVector")))
-  ("[]=" [coll idx val]
-   (throw (UnsupportedError. "[]= not supported on PersistentVector")))
-  ("[]" [coll idx] (-nth coll idx))
+  ^:mixin #/(SeqListMixin E)
   (^#/(PersistentVector R) #/(cast R) [coll]
    (PersistentVector. meta cnt shift root tail __hash))
   Object
@@ -2033,8 +2041,8 @@
               new-shift (if root-overflow? (+ shift 5) shift)
               new-root (if root-overflow?
                          #_(let [n-r (VectorNode. nil (.filled List 2 (new-path shift (VectorNode. nil tail))))]
-                           (aset (.-arr n-r) 0 root)
-                           n-r)
+                             (aset (.-arr n-r) 0 root)
+                             n-r)
                          (VectorNode. nil #dart ^:fixed ^VectorNode [root (new-path shift (VectorNode. nil tail))])
                          (push-tail coll shift root (VectorNode. nil tail)))]
           (PersistentVector. meta (inc cnt) new-shift new-root #dart ^:fixed [o] -1)))))
@@ -2202,7 +2210,7 @@
             (recur val (inc idx))))
         acc))))
 
-(deftype ChunkBuffer [^:mutable arr ^:mutable ^int end]
+(deftype ChunkBuffer [^:mutable ^List? arr ^:mutable ^int end]
   Object
   (add [_ o]
     (aset ^List arr end o)
@@ -2215,12 +2223,16 @@
   (-count [_] end))
 
 (defn chunk-buffer [capacity]
-  (ChunkBuffer. (.filled dart:core/List capacity ^dynamic (do nil)) 0))
+  (ChunkBuffer. (.filled #/(List dynamic) capacity nil) 0))
 
-(deftype ChunkedCons [chunk more meta ^:mutable ^int __hash]
+(deftype #/(ChunkedCons E)
+  [chunk more meta ^:mutable ^int __hash]
+  ^:mixin #/(SeqListMixin E)
+  (^#/(ChunkedCons R) #/(cast R) [coll]
+   (ChunkedCons. chunk more meta __hash))
   Object
   #_(^String toString [coll]
-      (pr-str* coll))
+     (pr-str* coll))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -2283,7 +2295,11 @@
 (defn chunk-next [s]
   (-chunked-next s))
 
-(deftype PVChunkedSeq [^PersistentVector vec ^List arr ^int i ^int off meta ^:mutable ^int __hash]
+(deftype #/(PVChunkedSeq E)
+  [^PersistentVector vec ^List arr ^int i ^int off meta ^:mutable ^int __hash]
+  ^:mixin #/(SeqListMixin E)
+  (^#/(PVChunkedSeq R) #/(cast R) [coll]
+   (PVChunkedSeq. vec arr i off meta __hash))
   Object
   #_(toString [coll]
       (pr-str* coll))
@@ -2325,8 +2341,8 @@
     (let [end (+ i (alength arr))]
       (when (< end (-count vec))
         (PVChunkedSeq. vec (if (< end (bit-and-not end 31))
-                           (unchecked-array-for (.-root vec) (.-shift vec) end)
-                           (.-tail vec))
+                             (unchecked-array-for (.-root vec) (.-shift vec) end)
+                             (.-tail vec))
           end 0 nil -1))))
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
@@ -2994,7 +3010,7 @@
         #(PersistentMapEntry. %1 %2 -1)))))
   ("[]" [coll k]
    (-lookup coll k nil))
-  ("[]=" [coll k val]
+  ("[]=" [coll key val]
    (throw (UnsupportedError. "[]= not supported on PersistentHashMap")))
   (remove [coll val]
     (throw (UnsupportedError. "remove not supported on PersistentHashMap")))

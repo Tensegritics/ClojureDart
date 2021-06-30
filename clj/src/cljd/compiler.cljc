@@ -1055,7 +1055,6 @@
         [{:keys [current-ns]}] (swap-vals! nses assoc :current-ns 'cljd.core)]
     (emit
       `(deftype ~(vary-meta (dont-munge mixin-name nil) assoc :abstract true) []
-         :type-only true
          cljd.core/IFn
          ~@fixed-invokes
          ~@invoke-exts
