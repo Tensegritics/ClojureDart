@@ -429,7 +429,7 @@
           :field
           (vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info)))
           :method
-          (vary-meta mname assoc :tag (unresolve-type (:return-type member-info))))
+          (vary-meta (symbol mname) assoc :tag (unresolve-type (:return-type member-info))))
         #_(TODO WARN)))))
 
 (defn- assoc-ns [sym ns]
@@ -1754,6 +1754,9 @@
     (cond
       getter (print "get ")
       setter (print "set "))
+    (when (#{">>" "[]=" "*" "%" "<=" "unary-" "|" "~" "/" "-" ">>>" "ˆ" "~/"
+             "[]" ">=" "&" "<" "<<" "==" "+" ">"} (name mname))
+      (print "operator "))
     (print mname)
     (when (seq type-params)
       (print "<")
