@@ -1605,11 +1605,28 @@
   ([a b c d & more]
    (cons a (cons b (cons c (cons d (spread more)))))))
 
-(deftype PersistentList [meta first rest ^int count ^:mutable ^int __hash]
+(deftype #/(PersistentList E)
+  [meta first rest ^int count ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/ListMixin E)
+  (length [coll] count)
+  (length [coll ^int val]
+    (throw (UnsupportedError. "lenght= not supported on PersistentList")))
+  (add [coll _]
+    (throw (UnsupportedError. "add not supported on PersistentList")))
+  ("[]=" [coll val]
+   (throw (UnsupportedError. "[]= not supported on PersistentList")))
+  ("[]" [coll ^int idx]
+   ;; @TODO : maybe clear this exception as it is already thrown by nth
+   (when-not (or (pos? idx) (< idx count))
+     (throw (dart:core/RangeError.range idx 0 count)))
+   (-nth coll idx))
+  (^#/(PersistentList R) #/(cast R) [coll]
+   (PersistentList. meta first rest count __hash))
+
   ;; invariant: first is nil when count is zero
   Object
   #_(^String toString [coll]
-    #_(pr-str* coll))
+     #_(pr-str* coll))
   IList
   IWithMeta
   (-with-meta [coll new-meta]
@@ -1962,7 +1979,19 @@
                                :else (unchecked-array-for root shift i')))
                :else acc))))))))
 
-(deftype PersistentVector [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
+(deftype #/(PersistentVector E)
+  [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/ListMixin E)
+  (length [coll] cnt)
+  (length [coll ^int val]
+    (throw (UnsupportedError. "lenght= not supported on PersistentVector")))
+  (add [coll _]
+    (throw (UnsupportedError. "add not supported on PersistentVector")))
+  ("[]=" [coll val]
+   (throw (UnsupportedError. "[]= not supported on PersistentVector")))
+  ("[]" [coll ^int idx] (-nth coll idx))
+  (^#/(PersistentVector R) #/(cast R) [coll]
+   (PersitentVector. meta cnt shift root tail __hash))
   Object
   #_(toString [coll]
       (pr-str* coll))
@@ -2953,22 +2982,24 @@
   (-invoke [tcoll k not-found]
     (-lookup tcoll k not-found)))
 
-(deftype #/(PersistentHashMap K V) [meta ^BitmapNode root ^:mutable ^int __hash]
+(deftype #/(PersistentHashMap K V)
+  [meta ^BitmapNode root ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/MapMixin K V)
   (entries [coll]
-   ; Baptiste's
-   #_(let [current-mask (bit-or (.-bitmap_hi root) (.-bitmap_lo root))
-           current-bn root
-           ^{:tag "List<int>"} mask-list (List/filled 8 current-mask)
-           ^{:tag "List<BitmapNode>"} bn-list (List/filled 8 current-bn)]
-       (BitmapIterator. current-mask current-bn mask-list bn-list 0))
-   ; cgrand's
-   (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
+    (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
      (iterator [_]
       (BitmapIterator. root 0 0 0 1
         (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
         (List/filled 7 root)
         #(PersistentMapEntry. %1 %2 -1)))))
+  ("[]" [coll k]
+   (-lookup coll k nil))
+  ("[]=" [coll val]
+   (throw (UnsupportedError. "[]= not supported on PersistentHashMap")))
+  (remove [coll val]
+    (throw (UnsupportedError. "remove not supported on PersistentHashMap")))
+  (clear [coll]
+   (throw (UnsupportedError. "clear not supported on PersistentHashMap")))
   (keys [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin K)
      (iterator [_]
