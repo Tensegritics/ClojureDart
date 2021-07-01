@@ -6,10 +6,7 @@
   (extensions [x])
   (satisfies [x]))
 
-#_#_(def empty-list nil)
-(def empty-persistent-vector nil)
-
-(declare empty-list empty-persistent-vector)
+(declare -EMPTY-LIST -EMPTY-MAP -EMPTY-VECTOR)
 
 (def ^:dart to-map)
 (def ^:dart to-list)
@@ -1569,9 +1566,23 @@
     (throw (UnsupportedError. "add not supported on Cons")))
   ("[]=" [coll ^int index ^E value]
    (throw (UnsupportedError. "[]= not supported on Cons")))
-
   ("[]" [coll idx] (-nth coll idx))
-  (length [coll] (-count coll)))
+  (length [coll] (-count coll))
+  IIndexed
+  (-nth [coll n]
+    (when (neg? n) (throw (IndexError. n coll)))
+    (loop [xs (-seq coll) ^int i n]
+      (cond
+        (nil? xs) (throw (IndexError. n coll))
+        (zero? i) (first xs)
+        :else (recur (next xs) (.- i 1)))))
+  (-nth [coll n not-found]
+    (when (neg? n) not-found)
+    (loop [xs (-seq coll) ^int i n]
+      (cond
+        (nil? xs) not-found
+        (zero? i) (first xs)
+        :else (recur (next xs) (.- i 1))))))
 
 (deftype #/(Cons E)
   [meta _first rest ^:mutable ^int __hash]
@@ -1625,6 +1636,7 @@
 
 (deftype #/(PersistentList E)
   [meta _first rest ^int count ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^int ^:getter length [coll] count) ; TODO dart resolution through our own types
   (^#/(PersistentList R) #/(cast R) [coll]
@@ -1676,7 +1688,7 @@
   (-reduce [coll f] (seq-reduce f coll))
   (-reduce [coll f start] (seq-reduce f start coll)))
 
-(def ^PersistentList empty-list (PersistentList. nil nil nil 0 -1))
+(def ^PersistentList -EMPTY-LIST (PersistentList. nil nil nil 0 -1))
 
 (defn list
   "Creates a new list containing the items."
@@ -1698,6 +1710,7 @@
 
 (deftype #/(IteratorSeq E)
   [value ^Iterator iter ^:mutable ^some _rest]
+  ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(IteratorSeq R) #/(cast R) [coll]
    (IteratorSeq. value iter _rest))
@@ -1718,6 +1731,7 @@
 
 (deftype #/(StringSeq E)
   [string i meta ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(StringSeq R) #/(cast R) [coll]
    (StringSeq. string i meta __hash))
@@ -1828,6 +1842,7 @@
 
 (deftype #/(LazySeq E)
   [meta ^:mutable ^some fn ^:mutable s ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(LazySeq R) #/(cast R) [coll]
    (LazySeq. meta fn s __hash))
@@ -1998,6 +2013,7 @@
 
 (deftype #/(PersistentVector E)
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(PersistentVector R) #/(cast R) [coll]
    (PersistentVector. meta cnt shift root tail __hash))
@@ -2164,7 +2180,7 @@
 (defn vector? [x]
   (satisfies? IVector x))
 
-(def empty-persistent-vector (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
+(def -EMPTY-VECTOR (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
 
 ;; chunks
 
@@ -2228,6 +2244,7 @@
 
 (deftype #/(ChunkedCons E)
   [chunk more meta ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(ChunkedCons R) #/(cast R) [coll]
    (ChunkedCons. chunk more meta __hash))
@@ -2298,6 +2315,7 @@
 
 (deftype #/(PVChunkedSeq E)
   [^PersistentVector vec ^List arr ^int i ^int off meta ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(PVChunkedSeq R) #/(cast R) [coll]
    (PVChunkedSeq. vec arr i off meta __hash))
@@ -3112,6 +3130,9 @@
         (aset new-arr i (aget arr i)))
       (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) new-arr)))))
 
+(def -EMPTY-MAP
+  (PersistentHashMap. nil (BitmapNode. 0 0 0 (.empty List)) -1))
+
 (defn ^List to-array
   [coll]
   ;; TODO : use more concrete implem of to-array for DS ?
@@ -3147,6 +3168,23 @@
      (if (satisfies? IFn f)
        (-apply f args)
        (.apply Function f (to-array args))))))
+
+(defn comp
+  "Takes a set of functions and returns a fn that is the composition
+  of those fns.  The returned fn takes a variable number of args,
+  applies the rightmost of fns to the args, the next
+  fn (right-to-left) to the result, etc."
+  ([] identity)
+  ([f] f)
+  ([f g]
+     (fn
+       ([] (f (g)))
+       ([x] (f (g x)))
+       ([x y] (f (g x y)))
+       ([x y z] (f (g x y z)))
+       ([x y z & args] (f (apply g x y z args)))))
+  ([f g & fs]
+     (reduce comp f (cons g fs))))
 
 (defmacro dotimes
   "bindings => name n
@@ -3501,12 +3539,30 @@
             (keep f (rest s))
             (cons x (keep f (rest s))))))))))
 
+(defn ^:private preserving-reduced
+  [rf]
+  #(let [ret (rf %1 %2)]
+     (if (reduced? ret)
+       (reduced ret)
+       ret)))
+
+(defn cat
+  "A transducer which concatenates the contents of each input, which must be a
+  collection, into the reduction."
+  [rf]
+  (let [rrf (preserving-reduced rf)]
+    (fn
+      ([] (rf))
+      ([result] (rf result))
+      ([result input]
+         (reduce rrf result input)))))
+
 (defn mapcat
   "Returns the result of applying concat to the result of applying map
   to f and colls.  Thus function f should return a collection. Returns
   a transducer when no collections are provided"
   ;; TODO tx version
-  #_([f] (comp (map f) cat))
+  ([f] (comp (map f) cat))
   ([f & colls]
    (apply concat (apply map f colls))))
 
@@ -3699,8 +3755,54 @@
   ([pred coll]
    (filter (complement pred) coll)))
 
-(defn main []
+(defn transduce
+  "reduce with a transformation of f (xf). If init is not
+  supplied, (f) will be called to produce it. f should be a reducing
+  step function that accepts both 1 and 2 arguments, if it accepts
+  only 2 you can add the arity-1 with 'completing'. Returns the result
+  of applying (the transformed) xf to init and the first item in coll,
+  then applying xf to that result and the 2nd item, etc. If coll
+  contains no items, returns init and f is not called. Note that
+  certain transforms may inject or skip items."
+  ([xform f coll] (transduce xform f (f) coll))
+  ([xform f init coll]
+   (let [f (xform f)]
+     (f (reduce f init coll)))))
 
+(defn into
+  "Returns a new coll consisting of to-coll with all of the items of
+  from-coll conjoined. A transducer may be supplied."
+  ([] [])
+  ([to] to)
+  ([to from]
+     (if (satisfies? IEditableCollection to)
+       (with-meta (persistent! (reduce conj! (transient to) from)) (meta to))
+       (reduce conj to from)))
+  ([to xform from]
+     (if (satisfies? IEditableCollection to)
+       (with-meta (persistent! (transduce xform conj! (transient to) from)) (meta to))
+       (transduce xform conj to from))))
+
+(defn vec [coll]
+  (into [] coll))
+
+(defn -map-lit [^List kvs]
+  (loop [tm (-as-transient {}) ^int i 0]
+    (if (< i (.-length kvs))
+      (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
+      (-persistent! tm))))
+
+(defn -list-lit [^List xs]
+  (loop [l () ^int i (.-length xs)]
+    (let [i (dec i)]
+      (if (neg? i)
+        l
+        (recur (-conj l (aget xs i)) i)))))
+
+(defn main []
+  (dart:core/print {1 2 3 [4 5 6 7]})
+  (dart:core/print [4 5 6 7])
+  (dart:core/print '(4 5 6 7))
   #_(let [one (cons 1 (cons 2 (cons 3 nil)))]
 
 
@@ -4091,6 +4193,5 @@
   (let [e (cljd.core/PersistentHashMap. nil (cljd.core/BitmapNode. 0 0 0 (.empty List)) -1)
         m (assoc e "items" (reduce conj [] #dart ^String ["one" "two" "three" "four"]))]
     (dart:core/print (val (first m))))
-
 
   )

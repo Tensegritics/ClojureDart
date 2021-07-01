@@ -790,20 +790,29 @@
 (defn emit-coll
   ([coll env] (emit-coll identity coll env))
   ([f coll env]
-   (let [items (into [] (comp (if (map? coll) cat identity) (map f)) coll)
-         [bindings items]
-         (reduce (fn [[bindings fn-call] x]
-                   (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
-                     [(concat bindings' bindings) (cons x' fn-call)]))
-                 [nil ()] (rseq items))
-         fn-sym (cond
-                  (map? coll) 'cljd.core/to-map ; is there a cljs equivalent?
-                  (vector? coll) 'cljd.core/vec
-                  (set? coll) 'cljd.core/set
-                  (seq? coll) 'cljd.core/to-list ; should we use apply list?
-                  :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
-         fn-call (list (emit fn-sym env) (vec items))]
-     (cond->> fn-call (seq bindings) (list 'dart/let bindings)))))
+   (if (seq coll)
+     (let [items (into [] (comp (if (map? coll) cat identity) (map f)) coll)
+           [bindings items]
+           (reduce (fn [[bindings fn-call] x]
+                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
+                       [(concat bindings' bindings) (cons x' fn-call)]))
+             [nil ()] (rseq items))
+           fn-sym (cond
+                    (map? coll) 'cljd.core/-map-lit
+                    (vector? coll) 'cljd.core/vec
+                    (set? coll) 'cljd.core/set
+                    (seq? coll) 'cljd.core/-list-lit
+                    :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
+           fn-call (list (emit fn-sym env) (vec items))]
+       (cond->> fn-call (seq bindings) (list 'dart/let bindings)))
+     (emit
+       (cond
+         (map? coll) 'cljd.core/-EMPTY-MAP
+         (vector? coll) 'cljd.core/-EMPTY-VECTOR
+         #_#_(set? coll) 'cljd.core/-EMPTY-SET
+         (seq? coll) 'cljd.core/-EMPTY-LIST ; should we use apply list?
+         :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
+       env))))
 
 (defn emit-dart-literal [x env]
   (cond
@@ -1591,9 +1600,7 @@
           (or (number? x) (boolean? x) (string? x)) x
           (keyword? x) (emit (list 'cljd.core/keyword (namespace x) (name x)) env)
           (nil? x) nil
-          (and (list? x) (nil? (seq x))) (emit 'cljd.core/empty-list env)
-          (and (vector? x) (nil? (seq x))) (emit 'cljd.core/empty-persistent-vector env)
-          (seq? x)
+          (and (seq? x) (seq x)) ; non-empty seqs only
           (let [emit (case (-> (first x) ensure-new-special)
                        . emit-dot
                        set! emit-set!
