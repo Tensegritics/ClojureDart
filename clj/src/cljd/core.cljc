@@ -1562,7 +1562,7 @@
 
 (deftype ^:abstract #/(SeqListMixin E)
   []
-  ^:mixin #/(dart-coll/ListMixin E)
+  #/(List E)
   (length [coll ^int val]
     (throw (UnsupportedError. "lenght= not supported on Cons")))
   (add [coll _]
@@ -1575,6 +1575,7 @@
 
 (deftype #/(Cons E)
   [meta _first rest ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(Cons R) #/(cast R) [coll]
    (Cons. meta _first rest __hash))
