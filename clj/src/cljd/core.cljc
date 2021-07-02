@@ -703,7 +703,7 @@
   IDeref
   (-deref [o] val))
 
-(defn ^Reduced reduced
+(defn reduced
   "Wraps x in a way such that a reduce will terminate with the value x"
   [x]
   (Reduced. x))
@@ -713,7 +713,7 @@
   [r]
   (dart/is? r Reduced))
 
-(defn ^Reduced ensure-reduced
+(defn ensure-reduced
   "If x is already reduced?, returns it, else returns (reduced x)"
   [x]
   (if (reduced? x) x (reduced x)))
@@ -1107,6 +1107,35 @@
      (if ks
        (recur ntcoll (first ks) (next ks))
        ntcoll))))
+
+(defprotocol IVolatile
+  "Protocol for adding volatile functionality."
+  (-vreset! [o new-value]
+    "Sets the value of volatile o to new-value without regard for the
+     current value. Returns new-value."))
+
+(deftype Volatile [^:mutable state]
+  IVolatile
+  (-vreset! [_ new-state]
+    (set! state new-state))
+
+  IDeref
+  (-deref [_] state))
+
+(defn volatile!
+  "Creates and returns a Volatile with an initial value of val."
+  [val]
+  (Volatile. val))
+
+(defn volatile?
+  "Returns true if x is a volatile."
+  [x] (satisfies? x Volatile))
+
+(defn vreset!
+  "Sets the value of volatile to newval without regard for the
+   current value. Returns newval."
+  [vol newval]
+  (-vreset! vol newval))
 
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:bootstrap ^:private nary-inline
@@ -3561,7 +3590,6 @@
   "Returns the result of applying concat to the result of applying map
   to f and colls.  Thus function f should return a collection. Returns
   a transducer when no collections are provided"
-  ;; TODO tx version
   ([f] (comp (map f) cat))
   ([f & colls]
    (apply concat (apply map f colls))))
@@ -3674,24 +3702,23 @@
   "Returns a lazy sequence of lists like partition, but may include
   partitions with fewer than n items at the end.  Returns a stateful
   transducer when no collection is provided."
-  ;; tx version
-  #_([^long n]
+  ([n]
    (fn [rf]
-     (let [a (java.util.ArrayList. n)]
+     (let [a #dart []]
        (fn
          ([] (rf))
          ([result]
-          (let [result (if (.isEmpty a)
+          (let [result (if (.-isEmpty a)
                          result
-                         (let [v (vec (.toArray a))]
+                         (let [v (vec a)]
                            ;;clear first!
                            (.clear a)
                            (unreduced (rf result v))))]
             (rf result)))
          ([result input]
           (.add a input)
-          (if (= n (.size a))
-            (let [v (vec (.toArray a))]
+          (if (== n (.-length a))
+            (let [v (vec a)]
               (.clear a)
               (rf result v))
             result))))))
@@ -3707,7 +3734,7 @@
   "Applies f to each value in coll, splitting it each time f returns a
    new value.  Returns a lazy seq of partitions.  Returns a stateful
    transducer when no collection is provided."
-  ;; TODO: tx version
+
   #_([f]
    (fn [rf]
      (let [a (java.util.ArrayList.)
@@ -3750,8 +3777,7 @@
   "Returns a lazy sequence of the items in coll for which
   (pred item) returns logical false. pred must be free of side-effects.
   Returns a transducer when no collection is provided."
-  ;; TODO tx version
-  #_([pred] (filter (complement pred)))
+  ([pred] (filter (complement pred)))
   ([pred coll]
    (filter (complement pred) coll)))
 
@@ -3787,13 +3813,13 @@
   (into [] coll))
 
 (defn -map-lit [^List kvs]
-  (loop [tm (-as-transient {}) ^int i 0]
+  (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
     (if (< i (.-length kvs))
       (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
       (-persistent! tm))))
 
 (defn -list-lit [^List xs]
-  (loop [l () ^int i (.-length xs)]
+  (loop [^PersistentList l () ^int i (.-length xs)]
     (let [i (dec i)]
       (if (neg? i)
         l
