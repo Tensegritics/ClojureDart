@@ -3301,8 +3301,7 @@
 (defn drop
   "Returns a lazy sequence of all but the first n items in coll.
   Returns a stateful transducer when no collection is provided."
-  ;; TODO tx version
-  #_([n]
+  ([n]
    (fn [rf]
      (let [nv (volatile! n)]
        (fn
@@ -3326,8 +3325,7 @@
   "Returns a lazy sequence of the items in coll starting from the
   first item for which (pred item) returns logical false.  Returns a
   stateful transducer when no collection is provided."
-  ;; TODO : tx version
-  #_([pred]
+  ([pred]
    (fn [rf]
      (let [dv (volatile! true)]
        (fn
@@ -3357,8 +3355,7 @@
   "Returns a lazy sequence of the first n items in coll, or all items if
   there are fewer than n.  Returns a stateful transducer when
   no collection is provided."
-  ;; TODO : tx version
-  #_([n]
+  ([n]
    (fn [rf]
      (let [nv (volatile! n)]
        (fn
@@ -3383,8 +3380,7 @@
   "Returns a lazy sequence of successive items from coll while
   (pred item) returns logical true. pred must be free of side-effects.
   Returns a transducer when no collection is provided."
-  ;; TODO : tx version
-  #_([pred]
+  ([pred]
    (fn [rf]
      (fn
        ([] (rf))
