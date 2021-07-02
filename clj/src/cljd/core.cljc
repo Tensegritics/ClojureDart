@@ -3734,17 +3734,17 @@
   "Applies f to each value in coll, splitting it each time f returns a
    new value.  Returns a lazy seq of partitions.  Returns a stateful
    transducer when no collection is provided."
-
-  #_([f]
+  ([f]
    (fn [rf]
-     (let [a (java.util.ArrayList.)
-           pv (volatile! ::none)]
+     (let [a #dart []
+           ;; TODO replace "none" by ::none
+           pv (volatile! "none")]
        (fn
          ([] (rf))
          ([result]
-          (let [result (if (.isEmpty a)
+          (let [result (if (.-isEmpty a)
                          result
-                         (let [v (vec (.toArray a))]
+                         (let [v (vec a)]
                            ;;clear first!
                            (.clear a)
                            (unreduced (rf result v))))]
@@ -3753,12 +3753,13 @@
           (let [pval @pv
                 val (f input)]
             (vreset! pv val)
-            (if (or (identical? pval ::none)
-                    (= val pval))
+            (if (or (identical? pval "none")
+                  ;; TODO replace == by =
+                  (== val pval))
               (do
                 (.add a input)
                 result)
-              (let [v (vec (.toArray a))]
+              (let [v (vec a)]
                 (.clear a)
                 (let [ret (rf result v)]
                   (when-not (reduced? ret)
@@ -3829,6 +3830,8 @@
   (dart:core/print {1 2 3 [4 5 6 7]})
   (dart:core/print [4 5 6 7])
   (dart:core/print '(4 5 6 7))
+  (dart:core/print (into [] (partition-all 2) [1 2 3 4 5]))
+    (dart:core/print (into [] (partition-by #(.-isOdd %)) [1 2 3 4 5]))
   #_(let [one (cons 1 (cons 2 (cons 3 nil)))]
 
 
