@@ -227,6 +227,7 @@
     (cond-> {}
       (:getter m) (assoc :dart/getter true)
       (:setter m) (assoc :dart/setter true)
+      (:const m) (assoc :dart/const true)
       (:dart m) (assoc :dart/fn-type :native)
       (:clj m) (assoc :dart/fn-type :ifn)
       type (assoc :dart/type type :dart/truth (dart-type-truthiness type))
@@ -1603,7 +1604,13 @@
           (symbol? x) (emit-symbol x env)
           #?@(:clj [(char? x) (str x)])
           (or (number? x) (boolean? x) (string? x)) x
-          (keyword? x) (emit (list 'cljd.core/keyword (namespace x) (name x)) env)
+          (keyword? x)
+          (let [ns (namespace x)
+                name (name x)
+                h (clojure.lang.Util/hashCombine
+                    (if ns (.hashCode ns) 0)
+                    (.hashCode name))]
+            (emit (with-meta (list 'cljd.core/Keyword. ns name h) {:const true}) env))
           (nil? x) nil
           (and (seq? x) (seq x)) ; non-empty seqs only
           (let [emit (case (-> (first x) ensure-new-special)
@@ -1657,6 +1664,14 @@
                 (when-some [kind (fn-kind (macroexpand {} (last x)))]
                     (emit-def (list 'def (with-meta sym {kind true}) nil) {}))))
         do (run! bootstrap-eval (next x))
+        deftype*
+        (let [_ (binding [*out* *err*] (prn x))
+              [_ class-name fields opts & specs] x
+              [class-name & type-params] (cons class-name (:type-params (meta class-name)))
+              mclass-name (with-meta
+                            (or (:dart/name (meta class-name)) (munge class-name {}))
+                            {:type-params type-params})] ; TODO shouldn't it be dne by munge?
+              (swap! nses do-def class-name {:dart/name mclass-name :type :class}))
         nil))))
 
 (defn emit-test [expr env]
@@ -2129,6 +2144,8 @@
       dart/new
       (let [[_ type & args] x]
         (print (:pre locus))
+        (when (:dart/const (meta x))
+          (print "const "))
         (print type)
         (write-args args)
         (print (:post locus))

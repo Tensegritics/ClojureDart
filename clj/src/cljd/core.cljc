@@ -4371,5 +4371,6 @@
         m (assoc e "items" (reduce conj [] #dart ^String ["one" "two" "three" "four"]))]
     (dart:core/print (val (first m))))
 
-  (dart:core/print (keyword "hello" "world"))
+  (dart:core/print :hello/world)
+  (dart:core/print (hash-string* "hello"))
   )
