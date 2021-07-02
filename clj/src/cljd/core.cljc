@@ -31,7 +31,7 @@
 (def ^{:dart true} symbol?)
 #_(def ^{:dart true} take-nth)
 #_(def ^{:dart true} val)
-#_(def ^{:clj true} vary-meta)
+(def ^{:clj true} vary-meta)
 #_(def ^{:dart true} vec)
 (def ^{:clj true} vector)
 (def ^{:dart true} vector?)
@@ -3260,6 +3260,14 @@
     (pred (first coll)) (recur pred (next coll))
     true false))
 
+(defn ^bool empty?
+  "Returns true if coll has no items - same as (not (seq coll)).
+  Please use the idiom (seq x) rather than (not (empty? x))"
+  {:inline (fn [coll] `^bool (not (seq ~coll)))
+   :inline-arities #{1}}
+  [coll]
+  (not (seq coll)))
+
 (defn complement
   "Takes a fn f and returns a fn that takes the same arguments as f,
   has the same effects, if any, and returns the opposite truth value."
@@ -3311,6 +3319,14 @@
     (if-not (nil? sn)
       (recur sn)
       (first s))))
+
+(defn butlast
+  "Return a seq of all but the last item in coll, in linear time"
+  [s]
+  (loop [ret [] s s]
+    (if (next s)
+      (recur (conj ret (first s)) (next s))
+      (seq ret))))
 
 (defn drop
   "Returns a lazy sequence of all but the first n items in coll.
@@ -3437,6 +3453,25 @@
       (recur (next s) (next lead))
       s)))
 
+;; TODO : take time to implement the Repeat. type like in clj/cljs
+(defn repeat
+  "Returns a lazy (infinite!, or length n if supplied) sequence of xs."
+  ([x] (lazy-seq (cons x (repeat x))))
+  ([n x] (take n (repeat x))))
+
+(defn repeatedly
+  "Takes a function of no args, presumably with side effects, and
+  returns an infinite (or length n if supplied) lazy sequence of calls
+  to it"
+  ([f] (lazy-seq (cons (f) (repeatedly f))))
+  ([n f] (take n (repeatedly f))))
+
+;; TODO : take time to implement the Iterate. type like in clj/cljs
+(defn iterate
+  "Returns a lazy sequence of x, (f x), (f (f x)) etc. f must be free of side-effects"
+  {:added "1.0"}
+  [f x] (cons x (lazy-seq (iterate f (f x)))))
+
 (defn nthrest
   "Returns the nth rest of coll, coll when n is 0."
   [coll n]
@@ -3537,7 +3572,6 @@
   second item in the first form, making a list of it if it is not a
   list already. If there are more forms, inserts the first form as the
   second item in second form, etc."
-  {:added "1.0"}
   [x & forms]
   (loop [x x, forms forms]
     (if forms
@@ -3553,7 +3587,6 @@
   last item in the first form, making a list of it if it is not a
   list already. If there are more forms, inserts the first form as the
   last item in second form, etc."
-  {:added "1.1"}
   [x & forms]
   (loop [x x, forms forms]
     (if forms
@@ -3563,6 +3596,17 @@
                        (list form x))]
         (recur threaded (next forms)))
       x)))
+
+(defmacro as->
+  "Binds name to expr, evaluates the first form in the lexical context
+  of that binding, then binds name to that result, repeating for each
+  successive form, returning the result of the last form."
+  [expr name & forms]
+  `(let [~name ~expr
+         ~@(interleave (repeat name) (butlast forms))]
+     ~(if (empty? forms)
+        name
+        (last forms))))
 
 (defn keep
   "Returns a lazy sequence of the non-nil results of (f item). Note,
