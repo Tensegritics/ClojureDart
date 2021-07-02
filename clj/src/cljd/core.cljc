@@ -12,9 +12,9 @@
 (def ^:dart to-list)
 
 (def ^{:clj true} =)
-(def ^{:dart true} butlast)
+#_(def ^{:dart true} butlast)
 (def ^{:dart true} contains?)
-(def ^{:clj true} dissoc)
+#_(def ^{:clj true} dissoc)
 (def ^{:clj true} gensym)
 (def ^{:dart true} ident?)
 (def ^{:dart true} key)
@@ -29,10 +29,10 @@
 (def ^{:clj true} subvec)
 (def ^{:clj true} symbol)
 (def ^{:dart true} symbol?)
-(def ^{:dart true} take-nth)
+#_(def ^{:dart true} take-nth)
 #_(def ^{:dart true} val)
-(def ^{:clj true} vary-meta)
-(def ^{:dart true} vec)
+#_(def ^{:clj true} vary-meta)
+#_(def ^{:dart true} vec)
 (def ^{:clj true} vector)
 (def ^{:dart true} vector?)
 
@@ -1114,6 +1114,23 @@
     "Sets the value of volatile o to new-value without regard for the
      current value. Returns new-value."))
 
+(defn volatile?
+  "Returns true if x is a volatile."
+  [x] (satisfies? IVolatile x))
+
+(defn vreset!
+  "Sets the value of volatile to newval without regard for the
+   current value. Returns newval."
+  [vol newval]
+  (-vreset! vol newval))
+
+(defmacro vswap!
+  "Non-atomically swaps the value of the volatile as if:
+   (apply f current-value-of-vol args). Returns the value that
+   was swapped in."
+  [vol f & args]
+  `(-vreset! ~vol (~f (-deref ~vol) ~@args)))
+
 (deftype Volatile [^:mutable state]
   IVolatile
   (-vreset! [_ new-state]
@@ -1126,16 +1143,6 @@
   "Creates and returns a Volatile with an initial value of val."
   [val]
   (Volatile. val))
-
-(defn volatile?
-  "Returns true if x is a volatile."
-  [x] (satisfies? x Volatile))
-
-(defn vreset!
-  "Sets the value of volatile to newval without regard for the
-   current value. Returns newval."
-  [vol newval]
-  (-vreset! vol newval))
 
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:bootstrap ^:private nary-inline
@@ -1194,6 +1201,13 @@
   ([x y] (. x "/" y))
   ([x y & more]
    (reduce / (/ x y) more)))
+
+;; TODO type hint
+(defn rem
+  {:inline (fn [num div] `(.remainder ~num ~div))
+   :inline-arities #{2}}
+  [num div]
+  (.remainder num div))
 
 (defn ^num +
   {:inline (nary-inline 0 identity "+")
@@ -3395,6 +3409,25 @@
       (when (pred (first s))
         (cons (first s) (take-while pred (rest s))))))))
 
+(defn take-nth
+  "Returns a lazy seq of every nth item in coll.  Returns a stateful
+  transducer when no collection is provided."
+  ([n]
+   (fn [rf]
+     (let [iv (volatile! -1)]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (let [i (vswap! iv inc)]
+            (if (zero? (rem i n))
+              (rf result input)
+              result)))))))
+  ([n coll]
+   (lazy-seq
+     (when-let [s (seq coll)]
+       (cons (first s) (take-nth n (drop n s)))))))
+
 (defn take-last
   "Returns a seq of the last n items in coll.  Depending on the type
   of coll may be no better than linear time.  For vectors, see also subvec."
@@ -3407,7 +3440,7 @@
 (defn nthrest
   "Returns the nth rest of coll, coll when n is 0."
   [coll n]
-  (loop [n n xs coll]
+  (loop [^int n n xs coll]
     (if-let [xs (and (pos? n) (seq xs))]
       (recur (dec n) (rest xs))
       xs)))
@@ -3487,7 +3520,6 @@
   "Evaluates x then calls all of the methods and functions with the
   value of x supplied at the front of the given arguments.  The forms
   are evaluated in order.  Returns x."
-  {:added "1.0"}
   [x & forms]
   (let [gx (gensym)]
     `(let [~gx ~x]
