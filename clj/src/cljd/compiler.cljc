@@ -372,7 +372,7 @@
 
 (defn resolve-protocol-method [pname mname args type-env]
   (some-> (resolve-protocol-mname-to-dart-mname pname mname (count args) type-env)
-    (vector args)))
+    (vector (into [] (map #(cond-> % (symbol? %) (vary-meta dissoc :tag))) args))))
 
 (defn dart-member-lookup [class member]
   (when-some [class-info (get-in dart-libs-info [(:lib class) (:type class)])]
@@ -1251,11 +1251,16 @@
         (if (seq? spec)
           (let [[mname arglist & body] spec
                 mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
-                [mname arglist]
+                [mname arglist']
                 (or (some-> @last-seen-type (resolve-protocol-method mname arglist type-env))
                   (some-> @last-seen-type (resolve-dart-method mname arglist type-env))
                   [mname arglist])]
-            (list* mname (parse-dart-params arglist) body))
+            `(~mname ~(parse-dart-params arglist')
+              (let [~@(mapcat (fn [a a']
+                                (when-some [t (:tag (meta a))]
+                                  (when-not (= t (:tag (meta a')))
+                                    [a a']))) arglist arglist')]
+                ~@body)))
           (reset! last-seen-type spec)))
         specs)))
 
