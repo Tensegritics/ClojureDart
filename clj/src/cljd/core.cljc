@@ -559,6 +559,28 @@
   {:added "1.0"}
   [& body])
 
+(defprotocol IPrint
+  (-print [o string-sink]))
+
+(extend-type fallback
+  IPrint
+  (-print [o sink]
+    (.write ^StringSink sink (.toString o))))
+
+(deftype ^:abstract ToStringMixin []
+  Object
+  (toString [o]
+    (let [sb (StringBuffer.)]
+      (-print o sb)
+      (.toString sb))))
+
+(defprotocol INamed
+  "Protocol for adding a name."
+  (-name [x]
+    "Returns the name String of x.")
+  (-namespace [x]
+    "Returns the namespace String of x."))
+
 (defprotocol ISeqable
   "Protocol for adding the ability to a type to be transformed into a sequence."
   (-seq [o]
@@ -1029,6 +1051,41 @@
 (defprotocol IHash
   "Protocol for adding hashing functionality to a type."
   (-hash [o] "Returns the hash code of o."))
+
+(deftype Keyword [^String? ns ^String name ^int _hash]
+  ^:mixin ToStringMixin
+  IPrint
+  (-print [o ^StringSink sink]
+    (.write sink ":")
+    (when ns (.write sink ns) (.write sink "/"))
+    (.write sink name))
+  IEquiv
+  (-equiv [this other]
+    (or (identical? this other)
+      (and (dart/is? other Keyword)
+        (.== ns (.-ns other)) (.== name (.-name other)))))
+  IFn
+  (-invoke [kw coll]
+    (get coll kw))
+  (-invoke [kw coll not-found]
+    (get coll kw not-found))
+
+  IHash
+  (-hash [this] _hash)
+
+  INamed
+  (-name [_] name)
+  (-namespace [_] ns))
+
+(defn keyword
+  "Returns a Keyword with the given namespace and name.  Do not use :
+  in the keyword strings, it will be added automatically."
+  ([s] (cond
+         (keyword? s) s
+         #_#_(symbol? s) (symbol (namespace s) (name s))
+         (string? s) (Keyword. nil s (hash-combine 0 (hash-string* s)))))
+  ([ns name]
+   (Keyword. ns name (hash-combine (hash-string* ns) (hash-string* name)))))
 
 (defprotocol IFind
   "Protocol for implementing entry finding in collections."
@@ -1542,6 +1599,25 @@
           k (m3-mix-k1 upper)
           h (m3-mix-h1 h k)]
       (m3-fmix h 8))))
+
+(defn hash-combine [^int seed ^int hash]
+  ; a la boost
+  (bit-xor seed
+    (+ hash 0x9e3779b9
+      (u32-bit-shift-left seed 6)
+      (u32-bit-shift-right seed 2))))
+
+;;http://hg.openjdk.java.net/jdk7u/jdk7u6/jdk/file/8c2c5d63a17e/src/share/classes/java/lang/String.java
+(defn hash-string* [^String? s]
+  (if-not (nil? s)
+    (let [len (.-length s)]
+      (if (pos? len)
+        (loop [i 0 hash 0]
+          (if (< i len)
+            (recur (inc i) (+ (u32-mul 31 hash) (.codeUnitAt s i)))
+            hash))
+        0))
+    0))
 
 (defn ^bool identical?
   {:inline (fn [x y] `(dart:core/identical ~x ~y))
@@ -4295,4 +4371,5 @@
         m (assoc e "items" (reduce conj [] #dart ^String ["one" "two" "three" "four"]))]
     (dart:core/print (val (first m))))
 
+  (dart:core/print (keyword "hello" "world"))
   )

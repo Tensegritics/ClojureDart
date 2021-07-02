@@ -1794,6 +1794,8 @@
 
   (when-not abstract
     (newline)
+    (when-not (some #(:dart/mutable (meta %)) fields)
+      (print "const "))
     (print (str (or ctor class-name) "("))
     (doseq [p ctor-params]
       (print (if (seq? p) (str "this." (second p)) p))
