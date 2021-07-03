@@ -3974,7 +3974,22 @@
         l
         (recur (-conj l (aget xs i)) i)))))
 
+(def ^math/Random RNG (math/Random.))
+
+(defn rand-int
+  "Returns a random integer between 0 (inclusive) and n (exclusive)."
+  [n] (.nextInt RNG n))
+
+(defn rand
+  "Returns a random floating point number between 0 (inclusive) and
+  n (default 1) (exclusive)."
+  ([] (.nextDouble RNG))
+  ([n] (* (.nextDouble RNG) n)))
+
+(def d6 (inc (rand-int 6)))
+
 (defn main []
+  (dart:core/print d6)
   (dart:core/print {1 2 3 [4 5 6 7]})
   (dart:core/print [4 5 6 7])
   (dart:core/print '(4 5 6 7))
