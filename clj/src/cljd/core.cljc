@@ -1421,7 +1421,7 @@
    :inline-arities #{1}}
   [^List array] (.-length array))
 
-(defn aclone
+(defn ^List aclone
   {:inline (fn [arr] `(.from dart:core/List ~arr .& :growable false))
    :inline-arities #{1}}
   [^List arr]
@@ -2033,13 +2033,13 @@
 (deftype TransientVector [])
 (deftype PVChunkedSeq [])
 
-(defn aresize [^List a ^int from ^int to pad]
+(defn ^List aresize [^List a ^int from ^int to pad]
   (let [a' (.filled List to pad)]
     (dotimes [i from]
       (aset a' i (aget a i)))
     a'))
 
-(defn ashrink [^List a ^int to]
+(defn ^List ashrink [^List a ^int to]
   (let [a' (.filled List to ^dynamic (do nil))]
     (dotimes [i to]
       (aset a' i (aget a i)))
@@ -3993,8 +3993,8 @@
   (dart:core/print {1 2 3 [4 5 6 7]})
   (dart:core/print [4 5 6 7])
   (dart:core/print '(4 5 6 7))
-  (dart:core/print (into [] (partition-all 2) [1 2 3 4 5]))
-    (dart:core/print (into [] (partition-by #(.-isOdd %)) [1 2 3 4 5]))
+  #_(dart:core/print (into [] (partition-all 2) [1 2 3 4 5]))
+  #_(dart:core/print (into [] (partition-by #(.-isOdd %)) [1 2 3 4 5]))
   #_(let [one (cons 1 (cons 2 (cons 3 nil)))]
 
 
@@ -4388,4 +4388,10 @@
 
   (dart:core/print :hello/world)
   (dart:core/print (hash-string* "hello"))
+
+  (dart:core/print (as-> [1 2 3] coucou
+                     (conj coucou 4)
+                     (conj coucou 5)
+                     (conj coucou "b")))
+
   )

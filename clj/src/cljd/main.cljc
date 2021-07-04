@@ -19,9 +19,8 @@
   :extends widgets/StatefulWidget
   (^RootStatefulWidgetState createState [this]
    (RootStatefulWidgetState. child
-     (let [e (cljd.core/PersistentHashMap. nil (cljd.core/BitmapNode. 0 0 0 (.empty List)) -1)
-           m (assoc e "items" (reduce conj [] #dart ^String ["one" "two" "three" "four"]))]
-       (assoc m "favs" e)))))
+     {"items" ["clj" "cljs" "cljr" "cljd"]
+      "favs" {}})))
 
 (deftype RootInheritedModel [child state data]
   :extends (widgets/InheritedModel. .& :child child)
@@ -29,10 +28,8 @@
    (dart:core/print deps)
    (let [before (.-data ^RootInheritedModel old-widget)
          after (.-data new-widget)
-         items-before (get before "items")
-         items-after (get after "items")
-         favs-before (get before "favs")
-         favs-after (get after "favs")]
+         {items-before "items" favs-before "favs"} before
+         {items-after "items" favs-after "favs"} after]
      (not (every? (fn [i] (== (get favs-before (nth items-before i nil))
                             (get favs-after (nth items-after i nil)))) deps))))
   (^bool updateShouldNotify [new-widget old-widget] true))
@@ -87,7 +84,7 @@
   (^widgets/Widget build [this ^widgets/BuildContext context]
    (material/Scaffold. .&
      :appBar (material/AppBar. .&
-               :title (widgets/Text "Startup Name Generator")
+               :title (widgets/Text "Clojure host list")
                #_#_:actions #dart [(material/IconButton. .&
                                      :icon (widgets/Icon. (.-list material/Icons))
                                      :onPressed (fn []
