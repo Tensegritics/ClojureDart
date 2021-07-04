@@ -2749,34 +2749,36 @@
    (let [arr (.-arr node)]
      (mk-value (aget arr (- idx 2)) (aget arr (dec idx)))))
   (moveNext [iter]
-   (cond
-     (not (zero? mask))
-     (let [bit (bit-and mask (- mask))]
-       (set! mask (bit-xor mask bit))
-       (if (zero? (bit-and kvs bit))
-         (let [^BitmapNode node' (aget (.-arr node) idx)
-               hi (.-bitmap_hi node')
-               lo (.-bitmap_lo node')]
-           (aset nodes depth node)
-           (aset masks depth mask)
-           (set! node node')
-           (set! idx 0)
-           (set! mask (bit-or hi lo))
-           (set! kvs (bit-and hi lo))
-           (set! depth (inc depth))
-           (recur))
-         (do
-           (set! idx (+ 2 idx))
-           true)))
-     (pos? depth)
-     (let [^BitmapNode node' (aget nodes (set! depth (dec depth)))
-           hi (.-bitmap_hi node')
-           lo (.-bitmap_lo node')]
-       (set! node node')
-       (set! mask (aget masks depth))
-       (set! idx (u32x2-bit-count (bit-and-not hi mask) (bit-and-not lo mask)))
-       (set! kvs (bit-and hi lo))
-       (recur))
+    (cond
+      (and (== depth 7) (< idx (* 2 (.-cnt node)))) ; collisions node
+      (do (set! idx (+ 2 idx)) true)
+      (not (zero? mask))
+      (let [bit (bit-and mask (- mask))]
+        (set! mask (bit-xor mask bit))
+        (if (zero? (bit-and kvs bit))
+          (let [^BitmapNode node' (aget (.-arr node) idx)
+                hi (.-bitmap_hi node')
+                lo (.-bitmap_lo node')]
+            (aset nodes depth node)
+            (aset masks depth mask)
+            (set! node node')
+            (set! idx 0)
+            (set! mask (bit-or hi lo))
+            (set! kvs (bit-and hi lo))
+            (set! depth (inc depth))
+            (recur))
+          (do
+            (set! idx (+ 2 idx))
+            true)))
+      (pos? depth)
+      (let [^BitmapNode node' (aget nodes (set! depth (dec depth)))
+            hi (.-bitmap_hi node')
+            lo (.-bitmap_lo node')]
+        (set! node node')
+        (set! mask (aget masks depth))
+        (set! idx (u32x2-bit-count (bit-and-not hi mask) (bit-and-not lo mask)))
+        (set! kvs (bit-and hi lo))
+        (recur))
      :else
      false)))
 
@@ -2826,28 +2828,37 @@
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
   Object
   (inode_lookup [node k not-found]
-    ;; TODO collisions
     (let [h (hash k)]
       (loop [^BitmapNode node node
              ^int shift 0]
-        (let [bitmap-hi (.-bitmap_hi node)
-              bitmap-lo (.-bitmap_lo node)
-              n (bit-and (u32-bit-shift-right h shift) 31)
-              bit (u32-bit-shift-left 1 n)
-              mask (dec bit)
-              idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
-              hi (bit-and bitmap-hi bit)
-              lo (bit-and bitmap-lo bit)]
-          (cond
-            (zero? (bit-or hi lo)) ; nothing
-            not-found
-            (zero? (bit-and hi lo))
-            (recur (aget (.-arr node) idx) (+ 5 shift))
-            :else ; kv
-            (let [arr (.-arr node)
-                  k' (aget arr idx)]
-              ;; TODO use = instead of ==
-              (if (== k' k) (aget arr (inc idx)) not-found)))))))
+        (if (< shift 32)
+          ; regular
+          (let [bitmap-hi (.-bitmap_hi node)
+                bitmap-lo (.-bitmap_lo node)
+                n (bit-and (u32-bit-shift-right h shift) 31)
+                bit (u32-bit-shift-left 1 n)
+                mask (dec bit)
+                idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
+                hi (bit-and bitmap-hi bit)
+                lo (bit-and bitmap-lo bit)]
+            (cond
+              (zero? (bit-or hi lo)) ; nothing
+              not-found
+              (zero? (bit-and hi lo))
+              (recur (aget (.-arr node) idx) (+ 5 shift))
+              :else ; kv
+              (let [arr (.-arr node)
+                    k' (aget arr idx)]
+                ;; TODO use = instead of ==
+                (if (== k' k) (aget arr (inc idx)) not-found))))
+          ; collisions node
+          (let [n (* 2 cnt)
+                arr (.-arr node)]
+            (loop [^int i 0]
+              (cond
+                (== i n) not-found
+                (== (aget arr i) k) (aget arr (inc i))
+                :else (recur (+ 2 i)))))))))
   (inode_without [node shift h k]
     (if (< shift 32)
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
@@ -2892,9 +2903,22 @@
                 (aset new-arr i (aget arr j))
                 (recur (inc i) (inc j))))
             (BitmapNode. (dec cnt) (bit-xor bitmap-hi bit) (bit-xor bitmap-lo bit) new-arr))))
-      (throw (Exception. "Collision!!!!"))))
+      ; collisions node
+      (let [n (* 2 cnt)]
+        (loop [^int i 0]
+          (cond
+            (== i n) node
+            (== (aget arr i) k)
+            (let [n (- n 2)
+                  new-arr (ashrink arr n)]
+              (when-not (== i n)
+                (aset new-arr i (aget arr n))
+                (aset new-arr (inc i) (aget arr (inc n))))
+              (BitmapNode. (dec cnt) 0 0 new-arr))
+            :else (recur (+ 2 i)))))))
   (inode_assoc [node shift h k v]
     (if (< shift 32)
+      ; regular node
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
             bit (u32-bit-shift-left 1 n)
             mask (dec bit)
@@ -2940,9 +2964,21 @@
               (identical? v v') node
               :else
               (BitmapNode. cnt bitmap-hi bitmap-lo (doto (aclone arr) (aset (inc idx) v)))))))
-      (throw (Exception. "Collision!!!!"))))
+      ; collisions node
+      (let [n (* 2 cnt)]
+        (loop [^int i 0]
+          (cond
+            (== i n)
+            (BitmapNode. (inc cnt) 0 0 (doto (aresize arr n (+ 2 n) v) (aset n k)))
+            (== (aget arr i) k)
+            (let [i+1 (inc i)]
+              (if (identical? (aget arr i+1) v)
+                node
+                (BitmapNode. cnt 0 0 (doto (aclone arr) (aset i+1 v)))))
+            :else (recur (+ 2 i)))))))
   (inode_assoc_transient [node shift h k v]
     (if (< shift 32)
+      ; regular node
       (let  [n (bit-and (u32-bit-shift-right h shift) 31)
              bit (u32-bit-shift-left 1 n)
              mask (dec bit)
@@ -3008,6 +3044,7 @@
               :else
               (aset arr (inc idx) v))))
         node)
+      ;; collisions node
       (throw (Exception. "Collision!!!!"))))
   (inode_without_transient [node shift h k]
     (if (< shift 32)
@@ -4383,4 +4420,5 @@
                      (conj coucou 5)
                      (conj coucou "b")))
 
+  (dart:core/print (-> {} (assoc 0 "zero") (assoc nil "NIL") (assoc 0 "zilch")))
   )
