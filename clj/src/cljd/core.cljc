@@ -2028,11 +2028,6 @@
 
 ;;; PersistentVector
 
-;; declarations
-(deftype PersistentVector [])
-(deftype TransientVector [])
-(deftype PVChunkedSeq [])
-
 (defn ^List aresize [^List a ^int from ^int to pad]
   (let [a' (.filled List to pad)]
     (dotimes [i from]
@@ -2740,9 +2735,6 @@
   [x]
   (satisfies? IMapEntry x))
 
-;; decl
-(deftype BitmapNode [])
-
 ; cgrand's
 (deftype #/(BitmapIterator E) [^:mutable ^BitmapNode node
                                ^:mutable ^int idx
@@ -3083,9 +3075,6 @@
               (set! bitmap-lo (bit-xor bitmap-lo bit))))
         node)
       (throw (Exception. "Collision!!!!")))))
-
-;; decl
-(deftype PersistentHashMap [])
 
 (deftype TransientHashMap [^:mutable ^bool editable ^:mutable ^BitmapNode root]
   ITransientCollection
