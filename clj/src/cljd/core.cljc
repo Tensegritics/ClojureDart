@@ -8,8 +8,8 @@
 
 (declare -EMPTY-LIST -EMPTY-MAP -EMPTY-VECTOR)
 
-(def ^:dart to-map)
-(def ^:dart to-list)
+(def ^:private ^:dart to-map)
+(def ^:private ^:dart to-list)
 
 (def ^{:clj true} =)
 #_(def ^{:dart true} butlast)
@@ -792,7 +792,7 @@
   (-count [coll]
     "Calculates the count of coll in constant time."))
 
-(defn counted?
+(defn ^bool counted?
   "Returns true if coll implements count in constant time."
   [coll]
   (satisfies? ICounted coll))
@@ -1192,7 +1192,7 @@
     "Sets the value of volatile o to new-value without regard for the
      current value. Returns new-value."))
 
-(defn volatile?
+(defn ^bool volatile?
   "Returns true if x is a volatile."
   [x] (satisfies? IVolatile x))
 
@@ -1437,6 +1437,18 @@
   ([^List array ^int idx ^int idx2 & idxv]
    (apply aset (aget array idx) idx2 idxv)))
 
+(defn ^List aresize [^List a ^int from ^int to pad]
+  (let [a' (.filled List to pad)]
+    (dotimes [i from]
+      (aset a' i (aget a i)))
+    a'))
+
+(defn ^List ashrink [^List a ^int to]
+  (let [a' (.filled List to ^dynamic (do nil))]
+    (dotimes [i to]
+      (aset a' i (aget a i)))
+    a'))
+
 (defn ^int alength
   {:inline (fn [array] `(.-length ~array))
    :inline-arities #{1}}
@@ -1621,7 +1633,7 @@
           h (m3-mix-h1 h k)]
       (m3-fmix h 8))))
 
-(defn hash-combine [^int seed ^int hash]
+(defn ^int hash-combine [^int seed ^int hash]
   ; a la boost
   (bit-xor seed
     (+ hash 0x9e3779b9
@@ -1629,7 +1641,7 @@
       (u32-bit-shift-right seed 2))))
 
 ;;http://hg.openjdk.java.net/jdk7u/jdk7u6/jdk/file/8c2c5d63a17e/src/share/classes/java/lang/String.java
-(defn hash-string* [^String? s]
+(defn ^int hash-string* [^String? s]
   (if-not (nil? s)
     (let [len (.-length s)]
       (if (pos? len)
@@ -1828,7 +1840,7 @@
   (-reduce [coll f] (seq-reduce f coll))
   (-reduce [coll f start] (seq-reduce f start coll)))
 
-(def ^PersistentList -EMPTY-LIST (PersistentList. nil nil nil 0 -1))
+(def ^:private ^PersistentList -EMPTY-LIST (PersistentList. nil nil nil 0 -1))
 
 (defn list
   "Creates a new list containing the items."
@@ -2049,21 +2061,16 @@
 
 ;;; PersistentVector
 
-(defn ^List aresize [^List a ^int from ^int to pad]
-  (let [a' (.filled List to pad)]
-    (dotimes [i from]
-      (aset a' i (aget a i)))
-    a'))
-
-(defn ^List ashrink [^List a ^int to]
-  (let [a' (.filled List to ^dynamic (do nil))]
-    (dotimes [i to]
-      (aset a' i (aget a i)))
-    a'))
-
 (deftype VectorNode [edit ^List arr])
 
-(defn push-tail [^PersistentVector pv ^int level ^VectorNode parent ^VectorNode tailnode]
+(defn- ^VectorNode new-path [^int level ^VectorNode node]
+  (loop [^int ll level
+         ^VectorNode ret node]
+    (if (zero? ll)
+      ret
+      (recur (- ll 5) (VectorNode. nil #dart ^:fixed ^VectorNode [ret])))))
+
+(defn- ^VectorNode push-tail [^PersistentVector pv ^int level ^VectorNode parent ^VectorNode tailnode]
   (let [subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
         arr-parent (.-arr parent)
         level (- level 5)
@@ -2077,14 +2084,7 @@
                    (new-path level tailnode))]
     (VectorNode. nil (aresize arr-parent subidx (inc subidx) new-node))))
 
-(defn ^VectorNode new-path [^int level ^VectorNode node]
-  (loop [^int ll level
-         ^VectorNode ret node]
-    (if (zero? ll)
-      ret
-      (recur (- ll 5) (VectorNode. nil #dart ^:fixed ^VectorNode [ret])))))
-
-(defn unchecked-array-for
+(defn- ^List unchecked-array-for
   "Returns the array where i is located."
   [^VectorNode root ^int shift ^int i]
   (loop [^VectorNode node root
@@ -2103,7 +2103,7 @@
         (when (< 0 subidx) (VectorNode. nil (ashrink (.-arr node) subidx))))
       (< 0 subidx) (VectorNode. nil (ashrink (.-arr node) subidx)))))
 
-(defn- do-assoc [^int level ^VectorNode node ^int n val]
+(defn- ^VectorNode do-assoc [^int level ^VectorNode node ^int n val]
   (let [cloned-node (aclone (.-arr node))]
     (if (zero? level)
       (do (aset cloned-node (bit-and n 31) val)
@@ -2312,14 +2312,14 @@
   (-iterator [this]
     (ranged-iterator this 0 cnt)))
 
-(defn vector? [x]
+(defn ^bool vector? [x]
   (satisfies? IVector x))
 
-(def -EMPTY-VECTOR (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
+(def ^:private -EMPTY-VECTOR (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
 
 ;; chunks
 
-(defn chunked-seq?
+(defn ^bool chunked-seq?
   "Return true if x satisfies IChunkedSeq."
   [x] (satisfies? IChunkedSeq x))
 
@@ -2374,7 +2374,7 @@
   ICounted
   (-count [_] end))
 
-(defn chunk-buffer [capacity]
+(defn ^ChunkBuffer chunk-buffer [capacity]
   (ChunkBuffer. (.filled #/(List dynamic) capacity nil) 0))
 
 (deftype #/(ChunkedCons E)
@@ -2508,33 +2508,33 @@
 
 ;; transients
 
-(defn ^VectorNode tv-ensure-editable [edit node]
+(defn- ^VectorNode tv-ensure-editable [edit ^VectorNode node]
   (if (identical? edit (.-edit node))
     node
     (let [arr (.-arr node)]
       (VectorNode. edit (aresize arr (.-length arr) 32 nil)))))
 
-(defn tv-editable-array-for
+(defn- tv-editable-array-for
   "Returns the editable array where i is located."
   [^TransientVector tv ^int i]
   (loop [node (set! (.-root tv) (tv-ensure-editable (.-edit tv) (.-root tv)))
-         level (.-shift tv)]
+         ^int level (.-shift tv)]
     (if (< 0 level)
       (let [arr (.-arr node)
             j (bit-and (u32-bit-shift-right i level) 31)]
         (recur (aset arr j (tv-ensure-editable (.-edit tv) (aget arr j))) (- level 5)))
       (.-arr node))))
 
-(defn tv-new-path [edit ^int level ^VectorNode node]
-  (loop [ll level
-         ret node]
+(defn- ^VectorNode tv-new-path [edit ^int level ^VectorNode node]
+  (loop [^int ll level
+         ^VectorNode ret node]
     (if (zero? ll)
       ret
       (let [arr (.filled #/(List dynamic) 32 nil)]
         (aset arr 0 ret)
         (recur (- ll 5) (VectorNode. edit arr))))))
 
-(defn tv-push-tail [^TransientVector tv ^int level ^VectorNode parent tail-node]
+(defn- ^VectorNode tv-push-tail [^TransientVector tv ^int level ^VectorNode parent tail-node]
   (let [edit (.-edit tv)
         ret (tv-ensure-editable edit parent)
         subidx (bit-and (u32-bit-shift-right (dec (.-cnt tv)) level) 31)
@@ -2557,10 +2557,10 @@
         (when (< 0 subidx) (aset (.-arr node) nil) true))
       (< 0 subidx) (do (aset (.-arr node) subidx nil) true))))
 
-(deftype TransientVector [^int ^:mutable cnt
-                          ^int ^:mutable shift
-                          ^some ^:mutable edit
-                          ^VectorNode ^:mutable root
+(deftype TransientVector [^:mutable ^int cnt
+                          ^:mutable ^int shift
+                          ^:mutable ^some edit
+                          ^:mutable ^VectorNode root
                           ^:mutable ^List tail]
   ITransientCollection
   (-conj! [tcoll o]
@@ -2676,7 +2676,7 @@
 
 ;;; Mapentry
 
-(deftype #/(PersistentMapEntry K V) [_k _v ^:mutable __hash]
+(deftype #/(PersistentMapEntry K V) [_k _v ^:mutable ^int __hash]
   #/(MapEntry K V)
   (^K key [_] _k)
   (^V value [_] _v)
@@ -2752,7 +2752,7 @@
   (-invoke [node k not-found]
     (-nth node k not-found)))
 
-(defn map-entry?
+(defn ^bool map-entry?
   [x]
   (satisfies? IMapEntry x))
 
@@ -3296,7 +3296,7 @@
         (aset new-arr i (aget arr i)))
       (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) new-arr)))))
 
-(def -EMPTY-MAP
+(def ^:private -EMPTY-MAP
   (PersistentHashMap. nil (BitmapNode. 0 0 0 (.empty List)) -1))
 
 (defn ^List to-array
@@ -4008,20 +4008,20 @@
 (defn vec [coll]
   (into [] coll))
 
-(defn -map-lit [^List kvs]
+(defn- -map-lit [^List kvs]
   (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
     (if (< i (.-length kvs))
       (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
       (-persistent! tm))))
 
-(defn -list-lit [^List xs]
+(defn- -list-lit [^List xs]
   (loop [^PersistentList l () ^int i (.-length xs)]
     (let [i (dec i)]
       (if (neg? i)
         l
         (recur (-conj l (aget xs i)) i)))))
 
-(def ^math/Random RNG (math/Random.))
+(def ^:private ^math/Random RNG (math/Random.))
 
 (defn rand-int
   "Returns a random integer between 0 (inclusive) and n (exclusive)."
@@ -4214,12 +4214,7 @@
           pv))))
   #_(dart:core/print "Ended PV test")
 
-  #_(let [pv (PersistentVector. nil 0 5 (VectorNode. nil (List/filled 0 ^dynamic (do nil))) (List/filled 0 ^dynamic (do nil)) -1)]
-    (quick-bench
-      (loop [pv pv, idx 1000000]
-        (if (pos? idx)
-          (recur (-conj pv idx) (dec idx))
-          pv))))
+
 
   #_#_(dart:core/print "Started TransientVector test")
   (let [tv (-as-transient [])]
@@ -4442,4 +4437,18 @@
                      (conj coucou "b")))
 
   (dart:core/print (-> {} (assoc 0 "zero") (assoc nil "NIL") (assoc 0 "zilch")))
+
+  (let [a (loop [pv [], idx 1000000]
+            (if (pos? idx)
+              (recur (conj pv (if (.-isOdd idx) idx "a")) (dec idx))
+              pv))
+        b
+        (loop [pv a idx 50000]
+          (if (pos? idx)
+            (recur (pop pv) (dec idx))
+            pv))]
+    (dart:core/print (last (map identity b)))
+    (dart:core/print (reduce (fn [acc i] (if (dart/is? i int) (inc acc) acc)) 0 b))
+    (into [] b))
+
   )
