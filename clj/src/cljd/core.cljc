@@ -8,8 +8,8 @@
 
 (declare -EMPTY-LIST -EMPTY-MAP -EMPTY-VECTOR)
 
-(def ^:private ^:dart to-map)
-(def ^:private ^:dart to-list)
+(def ^:dart to-map)
+(def ^:dart to-list)
 
 (def ^{:clj true} =)
 #_(def ^{:dart true} butlast)
@@ -567,6 +567,21 @@
   (-print [o sink]
     (.write ^StringSink sink (.toString o))))
 
+(extend-type Null
+  IPrint
+  (-print [o sink]
+    (.write ^StringSink sink "nil")))
+
+;; TODO js does define infinite but not native & VM, handle theses cases
+(extend-type num
+  IPrint
+  (-print [o sink]
+    (cond
+      (and (.-isInfinite o) (.-isNegative o)) (.write ^StringSink sink "##-Inf")
+      (.-isInfinite o) (.write ^StringSink sink "##Inf")
+      (.-isNaN o) (.write ^StringSink sink "##Nan")
+      :else (.write ^StringSink sink (.toString o)))))
+
 (deftype ^:abstract ToStringMixin []
   Object
   (toString [o]
@@ -786,6 +801,16 @@
   (-kv-reduce [coll f init]
     "Reduces an associative collection and returns the result. f should be
      a function that takes three arguments."))
+
+(defn reduce-kv
+  "Reduces an associative collection. f should be a function of 3
+  arguments. Returns the result of applying f to init, the first key
+  and the first value in coll, then applying f to that result and the
+  2nd key and value, etc. If coll contains no entries, returns init
+  and f is not called. Note that reduce-kv is supported on vectors,
+  where the keys will be the ordinals."
+  [f init coll]
+  (-kv-reduce coll f init))
 
 (defprotocol ICounted
   "Protocol for adding the ability to count a collection in constant time."
@@ -1709,8 +1734,47 @@
          h#)
        h#)))
 
+;; TODO : manage all bindings for printing
+(defn- print-sequential [^String begin ^String end sequence ^StringSink sink]
+  #_(binding [*print-level* (and (not *print-dup*) *print-level* (dec *print-level*))]
+      (if (and *print-level* (neg? *print-level*))
+        (.write w "#")
+        (do
+          (.write w begin)
+          (when-let [xs (seq sequence)]
+            (if (and (not *print-dup*) *print-length*)
+              (loop [[x & xs] xs
+                     print-length *print-length*]
+                (if (zero? print-length)
+                  (.write w "...")
+                  (do
+                    (print-one x w)
+                    (when xs
+                      (.write w sep)
+                      (recur xs (dec print-length))))))
+              (loop [[x & xs] xs]
+                (print-one x w)
+                (when xs
+                  (.write w sep)
+                  (recur xs)))))
+          (.write w end))))
+  (.write sink begin)
+  (reduce (fn [need-sep x]
+            (when need-sep
+              (.write sink " "))
+            (-print x sink)
+            true) false sequence)
+  (.write sink end))
+
 (deftype ^:abstract #/(SeqListMixin E)
   []
+  Object
+  (toString [o]
+    (let [sb (StringBuffer.)]
+      (-print o sb)
+      (.toString sb)))
+  IPrint
+  (-print [o sink] (print-sequential "(" ")" o sink))
   #/(List E)
   (length [coll ^int val]
     (throw (UnsupportedError. "lenght= not supported on Cons")))
@@ -1742,8 +1806,6 @@
   ^:mixin #/(SeqListMixin E)
   (^#/(Cons R) #/(cast R) [coll]
    (Cons. meta _first rest __hash))
-  Object
-  #_(^String toString [coll] "TODO" #_(pr-str* coll))
   IList
   IWithMeta
   (-with-meta [coll new-meta]
@@ -1793,11 +1855,7 @@
   (^int ^:getter length [coll] count) ; TODO dart resolution through our own types
   (^#/(PersistentList R) #/(cast R) [coll]
    (PersistentList. meta _first rest count __hash))
-
   ;; invariant: _first is nil when count is zero
-  Object
-  #_(^String toString [coll]
-     #_(pr-str* coll))
   IList
   IWithMeta
   (-with-meta [coll new-meta]
@@ -1840,7 +1898,7 @@
   (-reduce [coll f] (seq-reduce f coll))
   (-reduce [coll f start] (seq-reduce f start coll)))
 
-(def ^:private ^PersistentList -EMPTY-LIST (PersistentList. nil nil nil 0 -1))
+(def ^PersistentList -EMPTY-LIST (PersistentList. nil nil nil 0 -1))
 
 (defn list
   "Creates a new list containing the items."
@@ -1887,9 +1945,6 @@
   ^:mixin #/(SeqListMixin E)
   (^#/(StringSeq R) #/(cast R) [coll]
    (StringSeq. string i meta __hash))
-  Object
-  #_(^String toString [coll]
-     (pr-str* coll))
   ISeqable
   (-seq [coll] (when (< i (.-length string)) coll))
   IMeta
@@ -1998,9 +2053,6 @@
   ^:mixin #/(SeqListMixin E)
   (^#/(LazySeq R) #/(cast R) [coll]
    (LazySeq. meta fn s __hash))
-  Object
-  #_(^String toString [coll]
-     (pr-str* coll))
   (sval [coll]
     (if (nil? fn)
       s
@@ -2152,9 +2204,9 @@
   ^:mixin #/(SeqListMixin E)
   (^#/(PersistentVector R) #/(cast R) [coll]
    (PersistentVector. meta cnt shift root tail __hash))
-  Object
-  #_(toString [coll]
-      (pr-str* coll))
+  ^:mixin ToStringMixin
+  IPrint
+  (-print [o sink] (print-sequential "[" "]" o sink))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -2315,7 +2367,7 @@
 (defn ^bool vector? [x]
   (satisfies? IVector x))
 
-(def ^:private -EMPTY-VECTOR (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
+(def -EMPTY-VECTOR (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
 
 ;; chunks
 
@@ -2383,9 +2435,6 @@
   ^:mixin #/(SeqListMixin E)
   (^#/(ChunkedCons R) #/(cast R) [coll]
    (ChunkedCons. chunk more meta __hash))
-  Object
-  #_(^String toString [coll]
-     (pr-str* coll))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -2454,9 +2503,6 @@
   ^:mixin #/(SeqListMixin E)
   (^#/(PVChunkedSeq R) #/(cast R) [coll]
    (PVChunkedSeq. vec arr i off meta __hash))
-  Object
-  #_(toString [coll]
-      (pr-str* coll))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -2590,7 +2636,7 @@
     (let [cnt32 (bit-and cnt 31)]
       (cond
         (pos? cnt32)
-        (PersistentVector. nil cnt shift root (ashrink tail (inc (bit-and cnt 31))) -1)
+        (PersistentVector. nil cnt shift root (ashrink tail cnt32) -1)
         (zero? cnt) []
         :else (PersistentVector. nil cnt shift root tail -1))))
   ITransientAssociative
@@ -2676,7 +2722,11 @@
 
 ;;; Mapentry
 
-(deftype #/(PersistentMapEntry K V) [_k _v ^:mutable ^int __hash]
+(deftype #/(PersistentMapEntry K V)
+  [_k _v ^:mutable ^int __hash]
+  ^:mixin ToStringMixin
+  IPrint
+  (-print [o sink] (print-sequential "[" "]" o sink))
   #/(MapEntry K V)
   (^K key [_] _k)
   (^V value [_] _v)
@@ -2690,13 +2740,12 @@
   IMeta
   (-meta [node] nil)
   IStack
-  (-peek [node] val)
+  (-peek [node] _v)
   (-pop [node]
-    (PersistentVector. meta 1 5 (VectorNode. nil (.empty List)) #dart ^:fixed [_k] -1))
+    (PersistentVector. meta 1 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k] -1))
   ICollection
   (-conj [node o]
-    (PersistentVector. meta 3 5 (VectorNode. nil (.empty List))
-      #dart ^:fixed [_k _v o]  -1))
+    (PersistentVector. meta 3 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v o]  -1))
   #_#_IEmptyableCollection
   (-empty [node] nil)
   ISequential
@@ -2721,8 +2770,7 @@
   IAssociative
   (-assoc [node k v]
     (->
-      (PersistentVector. meta 2 5 (VectorNode. nil (.empty List))
-        #dart ^:fixed [_k _v]  -1)
+      (PersistentVector. meta 2 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v]  -1)
       (-assoc k v)))
   (-contains-key? [node k]
     (or (== k 0) (== k 1)))
@@ -2735,17 +2783,17 @@
   IVector
   (-assoc-n [node n v]
     (->
-      (PersistentVector. meta 2 5 (VectorNode. nil (.empty List))
+      (PersistentVector. meta 2 5 (.-root -EMPTY-VECTOR)
         #dart ^:fixed [_k _v]  -1)
       (-assoc-n n v)))
   IReduce
   (-reduce [node f]
-    (unreduced (f key val)))
+    (unreduced (f _k _v)))
   (-reduce [node f start]
-    (let [r (f start key)]
+    (let [r (f start _k)]
       (if (reduced? r)
         (deref r)
-        (unreduced (f r val)))))
+        (unreduced (f r _v)))))
   IFn
   (-invoke [node k]
     (-nth node k))
@@ -3183,6 +3231,50 @@
   (-invoke [tcoll k not-found]
     (-lookup tcoll k not-found)))
 
+;; TODO *configs*
+(defn- print-map [m ^StringSink sink]
+  #_(binding [*print-level* (and (not *print-dup*) *print-level* (dec *print-level*))]
+      (if (and *print-level* (neg? *print-level*))
+        (.write w "#")
+        (do
+          (.write w begin)
+          (when-let [xs (seq sequence)]
+            (if (and (not *print-dup*) *print-length*)
+              (loop [[x & xs] xs
+                     print-length *print-length*]
+                (if (zero? print-length)
+                  (.write w "...")
+                  (do
+                    (print-one x w)
+                    (when xs
+                      (.write w sep)
+                      (recur xs (dec print-length))))))
+              (loop [[x & xs] xs]
+                (print-one x w)
+                (when xs
+                  (.write w sep)
+                  (recur xs)))))
+          (.write w end))))
+  (.write sink "{")
+  (if (satisfies? IKVReduce m)
+    (reduce-kv (fn [need-sep k v]
+                 (when need-sep
+                   (.write sink ", "))
+                 (-print k sink)
+                 (.write sink " ")
+                 (-print v sink)
+                 true)
+      false m)
+    (reduce (fn [need-sep [k v]]
+              (when need-sep
+                (.write sink ", "))
+              (-print k sink)
+              (.write sink " ")
+              (-print v sink)
+              true)
+      false m))
+  (.write sink "}"))
+
 (deftype #/(PersistentHashMap K V)
   [meta ^BitmapNode root ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/MapMixin K V)
@@ -3216,7 +3308,12 @@
         (List/filled 7 root)
         (fn [_ v] v)))))
   (^#/(PersistentHashMap RK RV) #/(cast RK RV) [coll]
-    (PersistentHashMap. meta root __hash))
+   (PersistentHashMap. meta root __hash))
+  ^:mixin ToStringMixin
+  IPrint
+  ;; TODO : handle prefix-map & co
+  (-print [o sink]
+    (print-map o sink))
   IAssociative
   (-assoc [coll k v]
     (let [^BitmapNode new-root (.inode_assoc root 0 (hash k) k v)]
@@ -3296,7 +3393,7 @@
         (aset new-arr i (aget arr i)))
       (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) new-arr)))))
 
-(def ^:private -EMPTY-MAP
+(def -EMPTY-MAP
   (PersistentHashMap. nil (BitmapNode. 0 0 0 (.empty List)) -1))
 
 (defn ^List to-array
@@ -4040,415 +4137,15 @@
   (dart:core/print {1 2 3 [4 5 6 7]})
   (dart:core/print [4 5 6 7])
   (dart:core/print '(4 5 6 7))
-  #_(dart:core/print (into [] (partition-all 2) [1 2 3 4 5]))
-  #_(dart:core/print (into [] (partition-by #(.-isOdd %)) [1 2 3 4 5]))
-  #_(let [one (cons 1 (cons 2 (cons 3 nil)))]
-
-
-    (^:dart dart:core/print
-     (first one))
-
-
-    (^:dart dart:core/print
-     (rest one))
-
-    (^:dart dart:core/print
-     (first (rest one)))
-
-
-    (^:dart dart:core/print
-     (first (next one)))
-
-    (^:dart dart:core/print
-     (first (next (next one))))
-
-    (^:dart dart:core/print
-     (first (next (next (next one)))))
-
-    (^:dart dart:core/print
-    )
-
-    )
-
-  #_(let [coucou #dart [1 2]]
-
-    (^:dart dart:core/print
-     (first coucou))
-
-    (^:dart dart:core/print
-     ())
-
-    (^:dart dart:core/print
-     (first coucou))
-
-    (^:dart dart:core/print
-     (first (rest coucou)))
-
-    (^:dart dart:core/print
-     (first coucou))
-
-    (^:dart dart:core/print
-     (first (rest coucou)))
-
-    #_(^:dart dart:core/print
-     (first (rest (rest coucou))))
-
-    )
-
-
-
-
-  #_(^:dart dart:core/print
-   (reduce #(str %1 " " %2) "START: " (seq "abc"))
-   )
-
-  #_(^:dart dart:core/print
-   (reduce #(str %1 " " %2) "START: " (seq "a"))
-   )
-
-  #_(^:dart dart:core/print
-   (reduce #(str %1 " " %2) (seq "a"))
-   )
-
-  #_(^:dart dart:core/print
-   (reduce (fn [] "aa") "")
-   )
-
-  #_(^:dart dart:core/print
-   (first (lazy-seq #dart [1 2 3])))
-
-  #_(^:dart dart:core/print
-   (first (next (lazy-seq #dart [1 2 3]))))
-
-  #_(let [a (map #(do (^:dart dart:core/print %) (inc %)) #dart [1 2 3])]
-    (^:dart dart:core/print
-     "not realized")
-    (^:dart dart:core/print
-     (first a)))
-
-  #_(let [a ]
-      (dart:core/print (first (map #(+ %1 %2)  #dart [3 4 2 1]  #dart [1 2 3]))))
-
-  #_(dart:core/print (seq #dart [1 2]))
-
-  #_(dart:core/print (next (next (seq #dart [1 2]))))
-
-
-  #_(dart:core/print
-   (fnext (next (interleave (list 3 2) (list "a" "b") (list 10 11)))))
-
-
-  #_(dart:core/print
-   (first (drop-last (list 1 2))))
-
-  #_(dart:core/print
-   (fnext (drop-last (list 1 2))))
-
-  #_(dart:core/print
-   (first (second (partition 2 #dart[1 2 3 4]))))
-
-  #_(dart:core/print
-   (first (second (partition-all 2 #dart[1 2 3]))))
-
-  #_(dart:core/print
-   (next (partition 2 #dart[1 2 3])))
-
-  #_(dart:core/print (count (cons 1 (seq #dart [2 3 4]))))
-  #_(dart:core/print
-   (first (last (partition-by #(< % 2) #dart[1 2 3 4 1]))))
-
-  #_(dart:core/print
-   (count (remove #(== 1 %) #dart[1 2 3 4 1])))
-
-  #_(dart:core/print
-   (last (remove #(== 1 %) #dart[1 2 3 4 1])))
-
-  #_(dart:core/print
-   (some #(if (== 1 %) %) #dart[ 2 3 4 5 1]))
-
-  #_(dart:core/print
-   (count (keep identity #dart[nil 2 3 nil 4 5 1])))
-
-  #_(dart:core/print
-   (reduce (fn [acc item]
-             (if (== item 5)
-               (reduced acc)
-               (+ acc item)))
-           0
-           #dart[10 1 3 5 6]))
-
-  #_(dart:core/print
-   (reduce (fn [acc item]
-             (if (== item "a")
-               (reduced acc)
-               (str acc " " item)))
-           ""
-           "bcdeafjdffd"))
-
-  #_(dart:core/print
-   (u32-bit-shift-right 33 5))
-
-
-  (dart:core/print "Started PV test")
-  #_(let [sw (Stopwatch.)
-        _ (.start sw)
-        pv (PersistentVector. nil 0 5 (VectorNode. nil (List/filled 0 nil)) (List/filled 0 nil) -1)
-        pv1
-        (loop [pv2 pv
-               idx 0]
-          (if (== idx 1000000)
-            pv2
-            (recur (-conj pv2 idx) (inc idx))))]
-    (.stop sw)
-    (dart:core/print (.-elapsedMilliseconds sw))
-    (dart:core/print "ms")
-    (dart:core/print "-nth with a default value")
-    (dart:core/print (-nth pv1 10000))
-    (dart:core/print (-nth pv1 100000000 "default")))
-
-  #_(let [pv (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1)]
-    (quick-bench
-      (loop [pv pv, idx 1000000]
-        (if (pos? idx)
-          (recur (-conj pv idx) (dec idx))
-          pv))))
-  #_(dart:core/print "Ended PV test")
-
-
-
-  #_#_(dart:core/print "Started TransientVector test")
-  (let [tv (-as-transient [])]
-    (quick-bench
-      (loop [tv tv, idx 1000000]
-        (if (pos? idx)
-          (recur (-conj! tv idx) (dec idx))
-          tv))))
-
-  #_(let [sw (Stopwatch.)
-        _ (.start sw)
-        N 1000000
-        pv (PersistentVector. nil 0 5 (VectorNode. nil (List/filled 0 nil)) (List/filled 0 nil) -1)
-        pv1
-        (loop [pv2 pv
-               idx 0]
-          (if (== idx N)
-            pv2
-            (recur (-conj pv2 idx) (inc idx))))]
-    (.stop sw)
-    (loop [pv pv1 expected (dec N)]
-      (if (<= 0 expected)
-        (if (== expected (-peek pv))
-          (recur (-pop pv) (dec expected))
-          (dart:core/print (str "fail " expected)))
-        (if (== 0 (count pv))
-          "ok"
-          (dart:core/print "ouch"))))
-    (dart:core/print (-peek (-pop pv1)))
-    (dart:core/print (.-shift pv1))
-    (dart:core/print (.-shift  (-pop pv1))))
-
-  #_#_(dart:core/print "peek")
-  (let [pv []]
-    (dart:core/print (-peek (-assoc pv 0 1)))
-    ; throw
-    (dart:core/print (count (-conj (-conj pv 10) 11)))
-    (dart:core/print (-peek (-conj (-conj pv 10) 11)))
-    (dart:core/print (-peek (-assoc (-conj (-conj pv 10) 11) 1 1)))
-    ; throw
-    #_(dart:core/print (-assoc (-conj (-conj pv 10) 11) "a" 1)))
-
-  #_(let [pv (loop [pv []
-                  idx 0]
-             (if (== idx 10000000)
-               pv
-               (recur (-conj pv idx) (inc idx))))]
-    (dart:core/print (-nth (-assoc pv 11111 "coucou") 11111)))
-
-  (dart:core/print "Start reduce +")
-  (let [pv (loop [pv []
-                  idx 0]
-             (if (== idx 100000)
-               pv
-               (recur (-conj pv idx) (inc idx))))]
-    (dart:core/print (reduce + 0 pv)))
-  #_(dart:core/print "end reduce +")
-
-  #_#_#_(dart:core/print "Start reduce on chunked-seq form []+")
-  (let [pv (loop [pv []
-                  idx 0]
-             (if (== idx 100000)
-               pv
-               (recur (-conj pv idx) (inc idx))))]
-    (dart:core/print (first (seq pv)))
-    (dart:core/print (reduce + 0 (seq pv)))
-    (dart:core/print (reduce + 0 (next (next (seq pv))))))
-  (dart:core/print "end reduce +")
-
-  #_(dart:core/print "map on chunked")
-  #_(let [pv (loop [pv []
-                  idx 0]
-             (if (== idx 100000)
-               pv
-               (recur (-conj pv idx) (inc idx))))]
-    (dart:core/print (first (map (fn [o] (dart:core/print o) o) (seq pv)))))
-
-  #_#_(dart:core/print "keep on chunked")
-  (let [pv (loop [pv []
-                  idx 0]
-             (if (== idx 100000)
-               pv
-               (recur (-conj pv idx) (inc idx))))]
-    (dart:core/print (first (keep (fn [o] (dart:core/print o)
-                                    (when (.-isOdd o) o)) (seq pv)))))
-
-  #_(let [pv (loop [pv []
-                  idx 0]
-             (if (== idx 100000)
-               pv
-               (recur (-conj pv idx) (inc idx))))]
-    (-kv-reduce pv (fn [acc i item]
-                     (-conj acc #_(-conj (-conj [] i) item) i))
-      [])
-    (dart:core/print (-peek (-peek (-kv-reduce
-                                     pv
-                                     (fn [acc i item]
-                                       (-conj acc (-conj (-conj [] i) item)))
-                                     [])))))
-
-  #_(let [pv (-conj [] 100)]
-    (dart:core/print (pv 0)))
-
-  #_(dart:core/print "Started Vector test")
-  #_(let [sw (Stopwatch.)
-        _ (.start sw)
-
-        pv1
-        (loop [v (List/filled 1000000 1)
-               idx 0]
-          (if (== idx 1000000)
-            (.elementAt v 11111)
-            (recur (do (. v "[]=" idx idx) v) (inc idx))))]
-    (.stop sw)
-    (dart:core/print (.-elapsedMilliseconds sw))
-    (dart:core/print "ms"))
-
-  (dart:core/print "PersistentHashMap")
-  #_(let [node (BitmapNode. 0 0 0 (.empty List))
-        h (PersistentHashMap. nil node -1)
-        li (.generate List 100000 #(+ % 0))
-        h1 (reduce (fn [acc item] (-assoc acc item item)) h li)
-        h' (-seq h1)]
-
-    (quick-bench (count h'))
-
-    #_(let [ooo (-kv-reduce h1 (fn [acc k v] (-conj acc (-conj (-conj empty-persistent-vector k) v))) empty-persistent-vector)]
-      (dart:core/print (count ooo))
-      (dart:core/print (count h1))
-      (dart:core/print (-count h')))
-
-    #_(dart:core/print (-lookup h' 500 222))
-    #_#_#_(dart:core/print (-lookup (-dissoc h' 500) 500 222))
-    (dart:core/print (-peek (-first (-seq h'))))
-    (dart:core/print (-peek (-first (-next (-seq h')))))
-    #_(dart:core/print (count (-seq h')))
-    #_(loop [h' (-seq h')]
-      (when h'
-        (dart:core/print (-peek (-first h')))
-        (recur (-next h'))))
-    #_(dart:core/print (-peek (last (-seq h'))))
-    #_(dart:core/print (-lookup (-assoc (-assoc h 3342 1) 2 2) 2)))
-
-  #_(let [node (BitmapNode. 0 0 0 (.empty List))
-        h (PersistentHashMap. nil node -1)
-        li (.generate List 100 #(+ % 0))
-        h1 (reduce (fn [acc item] (-assoc acc item item)) h li)
-        tran (-as-transient h #_h1)]
-    #_  (dotimes [i 1000]
-          (-assoc! tran i i))
-    (let [tv (loop [tv tran, idx 100000]
-               (if (pos? idx)
-                 (recur (-assoc! tv idx idx) (dec idx))
-                 tv))]
-      (-> tv
-        (-dissoc! 1000)
-        (-dissoc! 999)
-        (-dissoc! 999))
-      (dart:core/print (-count tv))
-      (dart:core/print (tv 999))
-      (dart:core/print (-count (-persistent! tv)))
-
-      (let [node (BitmapNode. 0 0 0 (.empty List))
-            h (PersistentHashMap. nil node -1)
-            h (reduce
-                (fn [m i] (-assoc m i (- i)))
-                h
-                (.generate List 100000 #(+ % 0)))]
-        (dart:core/print (count (seq h)))
-        (quick-bench
-          (let [it (.-iterator (.-entries h))]
-            (while (.moveNext it))))
-        (quick-bench
-          (count (seq h))))
-
-      #_#_#_#_(dart:core/print (-count hm))
-      (dart:core/print (-count (seq hm)))
-      (dart:core/print (-lookup hm 9999))
-      (loop [hm hm, idx 10000]
-        (if (pos? idx)
-          (recur (-assoc hm idx 0) (dec idx))
-          (dart:core/print (-count hm))))
-      )
-
-    #_(quick-bench
-      (loop [phm h, idx 100000]
-        (if (pos? idx)
-          (recur (-assoc phm idx idx) (dec idx))
-          phm)))
-
-
-
-    #_(let [ooo (-kv-reduce h1 (fn [acc k v] (-conj acc (-conj (-conj empty-persistent-vector k) v))) empty-persistent-vector)]
-        (dart:core/print (count ooo))
-        (dart:core/print (count h1))
-        (dart:core/print (-count h')))
-
-    #_(dart:core/print (-lookup h' 500 222))
-    #_#_#_(dart:core/print (-lookup (-dissoc h' 500) 500 222))
-    (dart:core/print (-peek (-first (-seq h'))))
-    (dart:core/print (-peek (-first (-next (-seq h')))))
-    #_(dart:core/print (count (-seq h')))
-    #_(loop [h' (-seq h')]
-        (when h'
-          (dart:core/print (-peek (-first h')))
-          (recur (-next h'))))
-    #_(dart:core/print (-peek (last (-seq h'))))
-    #_(dart:core/print (-lookup (-assoc (-assoc h 3342 1) 2 2) 2)))
-
-  (let [e (cljd.core/PersistentHashMap. nil (cljd.core/BitmapNode. 0 0 0 (.empty List)) -1)
-        m (assoc e "items" (reduce conj [] #dart ^String ["one" "two" "three" "four"]))]
-    (dart:core/print (val (first m))))
-
-  (dart:core/print :hello/world)
-  (dart:core/print (hash-string* "hello"))
-
-  (dart:core/print (as-> [1 2 3] coucou
-                     (conj coucou 4)
-                     (conj coucou 5)
-                     (conj coucou "b")))
-
-  (dart:core/print (-> {} (assoc 0 "zero") (assoc nil "NIL") (assoc 0 "zilch")))
-
-  (let [a (loop [pv [], idx 1000000]
-            (if (pos? idx)
-              (recur (conj pv (if (.-isOdd idx) idx "a")) (dec idx))
-              pv))
-        b
-        (loop [pv a idx 50000]
-          (if (pos? idx)
-            (recur (pop pv) (dec idx))
-            pv))]
-    (dart:core/print (last (map identity b)))
-    (dart:core/print (reduce (fn [acc i] (if (dart/is? i int) (inc acc) acc)) 0 b))
-    (into [] b))
+  (dart:core/print (cons 1 (cons 2 nil)))
+  (dart:core/print (list 1 2 3))
+  (dart:core/print (seq "aaa"))
+  (dart:core/print (seq {:a :b :c :d}))
+  (dart:core/print {:a :b :c :d})
+  (dart:core/print {:root {:a :b :c :d}})
+  (dart:core/print [(math/pow 10e3 1000)])
+  (dart:core/print [1 2])
+  (dart:core/print (fn [^int a] a))
+  (dart:core/print (fn ([] 1) ([^int a] a)))
 
   )
