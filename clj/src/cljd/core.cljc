@@ -581,6 +581,13 @@
   (-namespace [x]
     "Returns the namespace String of x."))
 
+(defn namespace
+  "Returns the namespace String of a symbol or keyword, or nil if not present."
+  {:inline (fn [x] `(-namespace ~x))
+   :inline-arities #{1}}
+  [x]
+  (-namespace x))
+
 (defprotocol ISeqable
   "Protocol for adding the ability to a type to be transformed into a sequence."
   (-seq [o]
@@ -1086,6 +1093,20 @@
          (string? s) (Keyword. nil s (hash-combine 0 (hash-string* s)))))
   ([ns name]
    (Keyword. ns name (hash-combine (hash-string* ns) (hash-string* name)))))
+
+(defn ^bool keyword?
+  [x]
+  (dart/is? x Keyword))
+
+(defn ^bool simple-keyword?
+  "Return true if x is a keyword without a namespace"
+  [x]
+  (and (keyword? x) (nil? (namespace x))))
+
+(defn ^bool qualified-keyword?
+  "Return true if x is a keyword with a namespace"
+  [x]
+  (and (keyword? x) (namespace x) true))
 
 (defprotocol IFind
   "Protocol for implementing entry finding in collections."
