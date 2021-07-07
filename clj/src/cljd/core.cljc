@@ -843,7 +843,9 @@
 (defprotocol IChunk
   "Protocol for accessing the items of a chunk."
   (-drop-first [coll]
-    "Return a new chunk of coll with the first item removed."))
+    "Return a new chunk of coll with the first item removed.")
+  (-chunk-reduce [coll f init]
+    "Internal reduce, doesn't unwrap reduced values returned by f."))
 
 (defprotocol IChunkedSeq
   "Protocol for accessing a collection as sequential chunks."
@@ -2442,25 +2444,12 @@
     (if (== off end)
       (throw (ArgumentError. "-drop-first of empty chunk"))
       (ArrayChunk. arr (inc off) end)))
-  IReduce
-  (-reduce [coll f]
-    (let [x (aget arr off)
-          off' (inc off)]
-      (if (< off' end)
-        (loop [acc x ^int idx off']
-          (if (< idx end)
-            (let [val (f acc (aget arr idx))]
-              (if (reduced? val)
-                (deref val)
-                (recur val (inc idx))))
-            acc))
-        x)))
-  (-reduce [coll f start]
+  (-chunk-reduce [coll f start]
     (loop [acc start ^int idx off]
       (if (< idx end)
         (let [val (f acc (aget arr idx))]
           (if (reduced? val)
-            (deref val)
+            val
             (recur val (inc idx))))
         acc))))
 
@@ -2520,6 +2509,17 @@
     (if (nil? more)
       nil
       more))
+  IReduce
+  (-reduce [coll f]
+    (let [val (-chunk-reduce (-drop-first chunk) f (-nth chunk 0))]
+      (if (reduced? val)
+        (deref val)
+        (-reduce more f val))))
+  (-reduce [coll f start]
+    (let [val (-chunk-reduce chunk f start)]
+      (if (reduced? val)
+        (deref val)
+        (-reduce more f val))))
   ICollection
   (-conj [this o] (cons o this))
   #_#_IEmptyableCollection
@@ -4283,24 +4283,13 @@
                   mods (take nmods seq-exprs)
                   seq-exprs (seq (drop nmods seq-exprs))
                   body
-                  `(let [s# (seq ~expr)]
-                     (if (chunked-seq? s#)
-                       (loop [cn# s#]
-                         ;; TODO put -reduce here
-                         (-reduce (chunk-first cn#)
-                           (fn [~acc ~binding]
+                  `(reduce (fn [~acc ~binding]
                              ~(wrap mods
                                 (if seq-exprs
                                   (emit seq-exprs)
-                                  `(do ~@body-expr nil)))) nil)
-                         (some-> (chunk-next cn#) recur))
-                       (reduce (fn [~acc ~binding]
-                                 ~(wrap mods
-                                    (if seq-exprs
-                                      (emit seq-exprs)
-                                      `(do ~@body-expr nil))))
-                         nil
-                         s#)))]
+                                  `(do ~@body-expr nil))))
+                     nil
+                     ~expr)]
               body))]
     (emit seq-exprs)))
 
