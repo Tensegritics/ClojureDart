@@ -3228,86 +3228,6 @@
         node)
       (throw (Exception. "Collision!!!!")))))
 
-#_(defmacro for
-  "List comprehension. Takes a vector of one or more
-   binding-form/collection-expr pairs, each followed by zero or more
-   modifiers, and yields a lazy sequence of evaluations of expr.
-   Collections are iterated in a nested fashion, rightmost fastest,
-   and nested coll-exprs can refer to bindings created in prior
-   binding-forms.  Supported modifiers are: :let [binding-form expr ...],
-   :while test, :when test.
-
-  (take 100 (for [x (range 100000000) y (range 1000000) :while (< y x)] [x y]))"
-  [seq-exprs body-expr]
-  (letfn
-    [(emit [seq-exprs ors]
-       (let [[binding expr & seq-exprs] seq-exprs
-             iter `iter#
-             arg `coll#
-             wrap
-             (fn wrap [mods body]
-               (if-some [[mod expr & more-mods] (seq mods)]
-                 (let [body (wrap more-mods body)]
-                   (case mod
-                     :let `(let ~expr ~body)
-                     :while `(if ~expr ~body (or ~@ors))
-                     :when `(if ~expr ~body (recur (next ~arg)))))
-                 body))
-             ors (cons `(~iter (next ~arg)) ors)
-             nmods (* 2 (count (take-while keyword? (take-nth 2 seq-exprs))))
-             mods (take nmods seq-exprs)
-             seq-exprs (seq (drop nmods seq-exprs))
-             body
-             `(let [~binding (first ~arg)]
-                ~(wrap mods
-                   (if seq-exprs
-                     `(or ~(emit seq-exprs ors)
-                        (recur (next ~arg)))
-                     `(cons ~body-expr
-                        (lazy-seq (or ~@ors))))))
-             body
-             (if seq-exprs
-               body
-               ; innermost, also check for chunked
-               `(if (chunked-seq? ~arg)
-                  ~(emit-innermost-chunked arg ors binding
-                     mods body-expr)
-                  ~body))]
-         `((fn ~iter [~arg] (when ~arg ~body))
-           (seq ~expr))))
-     (emit-innermost-chunked [arg ors binding mods body-expr]
-       (let [buf `buf#]
-         `(let [c# (chunk-first ~arg)
-                size# (int (count c#))
-                ~buf (chunk-buffer size#)
-                exit#
-                (loop [i# (int 0)]
-                  (when (< i# size#)
-                    (or
-                      (let [~binding (.nth c# i#)]
-                        ~(chunked-wrap mods
-                           `(chunk-append ~buf ~body-expr)))
-                      (recur (unchecked-inc i#)))))]
-            (cond
-              (pos? (count ~buf))
-              (chunk-cons
-                (chunk ~buf)
-                (lazy-seq
-                  (or (when-not exit#
-                        (~(ffirst ors) (chunk-next ~arg)))
-                    ~@(next ors))))
-              exit# (or ~@(next ors))
-              :else (recur (chunk-next ~arg))))))
-     (chunked-wrap [mods body]
-       (if-some [[mod expr & more-mods] (seq mods)]
-         (let [body (chunked-wrap more-mods body)]
-           (case mod
-             :let `(let ~expr ~body)
-             :while `(if ~expr ~body true)
-             :when `(when ~expr ~body)))
-         body))]
-    `(lazy-seq ~(emit seq-exprs nil))))
-
 (comment
   (defn p-assoc [{:keys [nodes kvs] :as input}]
     (let [i (rand-int 32)]
@@ -4257,6 +4177,85 @@
      (if (satisfies? IEditableCollection to)
        (with-meta (persistent! (transduce xform conj! (transient to) from)) (meta to))
        (transduce xform conj to from))))
+
+(defmacro for
+  "List comprehension. Takes a vector of one or more
+   binding-form/collection-expr pairs, each followed by zero or more
+   modifiers, and yields a lazy sequence of evaluations of expr.
+   Collections are iterated in a nested fashion, rightmost fastest,
+   and nested coll-exprs can refer to bindings created in prior
+   binding-forms.  Supported modifiers are: :let [binding-form expr ...],
+   :while test, :when test.
+  (take 100 (for [x (range 100000000) y (range 1000000) :while (< y x)] [x y]))"
+  [seq-exprs body-expr]
+  (letfn
+      [(emit [seq-exprs ors]
+         (let [[binding expr & seq-exprs] seq-exprs
+               iter (gensym 'iter__)
+               arg (gensym 'coll__)
+               wrap
+               (fn wrap [mods body]
+                 (if-some [[mod expr & more-mods] (seq mods)]
+                   (let [body (wrap more-mods body)]
+                     (case mod
+                       :let `(let ~expr ~body)
+                       :while `(if ~expr ~body (or ~@ors))
+                       :when `(if ~expr ~body (recur (next ~arg)))))
+                   body))
+               ors (cons `(~iter (next ~arg)) ors)
+               nmods (* 2 (count (take-while keyword? (take-nth 2 seq-exprs))))
+               mods (take nmods seq-exprs)
+               seq-exprs (seq (drop nmods seq-exprs))
+               body
+               `(let [~binding (first ~arg)]
+                  ~(wrap mods
+                     (if seq-exprs
+                       `(or ~(emit seq-exprs ors)
+                          (recur (next ~arg)))
+                       `(cons ~body-expr
+                          (lazy-seq (or ~@ors))))))
+               body
+               (if seq-exprs
+                 body
+                 ; innermost, also check for chunked
+                 `(if (chunked-seq? ~arg)
+                    ~(emit-innermost-chunked arg ors binding
+                       mods body-expr)
+                    ~body))]
+           `((fn ~iter [~arg] (when ~arg ~body))
+             (seq ~expr))))
+       (emit-innermost-chunked [arg ors binding mods body-expr]
+         (let [buf `buf#]
+           `(let [c# (chunk-first ~arg)
+                  size# (int (count c#))
+                  ~buf (chunk-buffer size#)
+                  exit#
+                  (loop [i# (int 0)]
+                    (when (< i# size#)
+                      (or
+                        (let [~binding (.nth c# i#)]
+                          ~(chunked-wrap mods
+                             `(chunk-append ~buf ~body-expr)))
+                        (recur (unchecked-inc i#)))))]
+              (cond
+                (pos? (count ~buf))
+                (chunk-cons
+                  (chunk ~buf)
+                  (lazy-seq
+                    (or (when-not exit#
+                          (~(ffirst ors) (chunk-next ~arg)))
+                      ~@(next ors))))
+                exit# (or ~@(next ors))
+                :else (recur (chunk-next ~arg))))))
+       (chunked-wrap [mods body]
+         (if-some [[mod expr & more-mods] (seq mods)]
+           (let [body (chunked-wrap more-mods body)]
+             (case mod
+               :let `(let ~expr ~body)
+               :while `(if ~expr ~body true)
+               :when `(when ~expr ~body)))
+           body))]
+    `(lazy-seq ~(emit seq-exprs nil))))
 
 (defn vec [coll]
   (into [] coll))
