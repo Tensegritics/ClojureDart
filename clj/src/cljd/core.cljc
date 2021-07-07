@@ -2953,13 +2953,13 @@
                     new-arr (.filled #/(List dynamic) size v)]
                 (dotimes [i idx] (aset new-arr i (aget arr i)))
                 (aset new-arr idx k)
-                (loop [i (+ idx 2) j (inc idx)]
+                (loop [j (inc idx) i (inc j)]
                   (when (< i size)
                     (aset new-arr i (aget arr j))
-                    (recur (inc i) (inc j))))
-                (BitmapNode. (dec cnt) (bit-or bitmap-hi bit) (bit-or bitmap-lo bit) new-arr))
+                    (recur (inc j) (inc i))))
+                (BitmapNode. (dec cnt) (bit-or (bit-and bitmap-hi bitmap-lo) bit) (bit-or (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) new-arr))
               :else
-              (BitmapNode. (dec cnt) bitmap-hi bitmap-lo (doto (aclone (.-arr node)) (aset idx new-child)))))
+              (BitmapNode. (dec cnt) (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) (doto (aclone (.-arr node)) (aset idx new-child)))))
           ; a kv pair but not the right k
           (not (== k (aget arr idx))) node
           ; the right kv pair
@@ -2971,7 +2971,7 @@
               (when (< i size)
                 (aset new-arr i (aget arr j))
                 (recur (inc i) (inc j))))
-            (BitmapNode. (dec cnt) (bit-xor bitmap-hi bit) (bit-xor bitmap-lo bit) new-arr))))
+            (BitmapNode. (dec cnt) (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) new-arr))))
       ; collisions node
       (let [n (* 2 cnt)]
         (loop [^int i 0]
@@ -3004,13 +3004,14 @@
               (when (< i size)
                 (aset new-arr i (aget arr j))
                 (recur (inc i) (inc j))))
-            (BitmapNode. (inc cnt) (bit-or bitmap-hi bit) (bit-or bitmap-lo bit) new-arr))
+            (BitmapNode. (inc cnt) (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) new-arr))
           (zero? (bit-and hi lo)) ; node
           (let [^BitmapNode child (aget arr idx)
                 ^BitmapNode new-child (.inode_assoc child (+ shift 5) h k v)]
             (if (identical? child new-child)
               node
-              (BitmapNode. (+ cnt (- (.-cnt new-child) (.-cnt child))) bitmap-hi bitmap-lo
+              (BitmapNode. (+ cnt (- (.-cnt new-child) (.-cnt child)))
+                (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit)
                 (doto (aclone (.-arr node)) (aset idx new-child)))))
           :else ; kv
           (let [k' (aget arr idx)
@@ -3025,14 +3026,15 @@
                     new-node (-> (BitmapNode. 1 bit' bit' #dart ^:fixed [k' v']) (.inode_assoc shift' h k v))
                     new-arr (.filled #/(List dynamic) size new-node)]
                 (dotimes [i idx] (aset new-arr i (aget arr i)))
-                (loop [i (inc idx) j (+ 2 idx)]
+                (loop [i (inc idx) j (inc i)]
                   (when (< i size)
                     (aset new-arr i (aget arr j))
                     (recur (inc i) (inc j))))
-                (BitmapNode. (inc cnt) (bit-xor bitmap-hi hi) bitmap-lo new-arr))
+                (BitmapNode. (inc cnt) bitmap-hi (bit-xor bitmap-lo bit) new-arr))
               (identical? v v') node
               :else
-              (BitmapNode. cnt bitmap-hi bitmap-lo (doto (aclone arr) (aset (inc idx) v)))))))
+              (BitmapNode. cnt (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo)
+                (doto (aclone arr) (aset (inc idx) v)))))))
       ; collisions node
       (let [n (* 2 cnt)]
         (loop [^int i 0]
@@ -3056,10 +3058,15 @@
              lo (bit-and bitmap-lo bit)]
         (cond
           (zero? (bit-or hi lo)) ; nothing
-          (let [idx' (inc idx)]
-            (loop [i 63 j 61]
+          (let [net-size (u32x2-bit-count bitmap-hi bitmap-lo)
+                net-size' (+ 2 net-size)
+                idx' (inc idx)
+                from-arr arr]
+            (when (< (.-length arr) net-size')
+              (set! arr (aresize arr net-size (inc (bit-or 7 (dec net-size'))) nil)))
+            (loop [i (dec net-size') j (dec net-size)]
               (when (< idx' i)
-                (aset arr i (aget arr j))
+                (aset arr i (aget from-arr j))
                 (recur (dec i) (dec j))))
             (aset arr idx k)
             (aset arr idx' v)
@@ -3067,46 +3074,41 @@
             (set! bitmap-hi (bit-or bitmap-hi bit))
             (set! bitmap-lo (bit-or bitmap-lo bit)))
           (zero? (bit-and hi lo)) ; node
-          (let [^BitmapNode child (aget arr idx)
-                ^BitmapNode child (if (zero? hi)
-                                    ; if node is shared with a Persistent node
-                                    (let [new-child-arr (.filled #/(List dynamic) 64 nil)
-                                          child-arr (.-arr child)]
-                                      (set! bitmap-hi (bit-xor bit bitmap-hi))
-                                      (set! bitmap-lo (bit-xor bit bitmap-lo))
-                                      (dotimes [i (alength child-arr)]
-                                        (aset new-child-arr i (aget child-arr i)))
-                                      (let [child-bitmap-hi (.-bitmap_hi child)
-                                            child-bitmap-lo (.-bitmap_lo child)
-                                            child-node
-                                            (BitmapNode. (.-cnt child)
-                                              (bit-and child-bitmap-hi child-bitmap-lo)
-                                              (bit-or child-bitmap-hi child-bitmap-lo)
-                                              new-child-arr)]
-                                        (aset arr idx child-node)))
-                                    child)
-                ; we store cnt from child as mutability kicks in
-                old-cnt-child (.-cnt child)]
-            (.inode_assoc_transient child (+ shift 5) h k v)
-            (set! cnt (+ cnt (- (.-cnt child) old-cnt-child))))
+          (let [^BitmapNode child (aget arr idx)]
+            (if (zero? hi)
+              ; if node is not owned
+              (let [^BitmapNode child' (.inode_assoc child shift h k v)]
+                (when-not (identical? child child')
+                  (set! bitmap-hi (bit-xor hi bitmap-hi))
+                  (set! bitmap-lo (bit-xor hi bitmap-lo))
+                  (aset arr idx child')
+                  (set! cnt (+ cnt (- (.-cnt child') (.-cnt child))))))
+              ; if node is owned
+              (let [old-cnt-child (.-cnt child)]
+                (.inode_assoc_transient child (+ shift 5) h k v)
+                (set! cnt (+ cnt (- (.-cnt child) old-cnt-child))))))
           :else ; kv
           (let [k' (aget arr idx)
                 v' (aget arr (inc idx))]
             (cond
-              ;; TODO not=u
+              ;; TODO not=
               (not (== k' k))
-              (let [size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
+              (let [net-size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
+                    gross-size (inc (bit-or 7 (dec net-size)))
                     shift' (+ 5 ^int shift)
                     n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
                     bit' (u32-bit-shift-left 1 n')
-                    new-node (-> (BitmapNode. 1 bit' bit' (doto (.filled #/(List dynamic) 64 nil) (aset 0 k') (aset 1 v')))
-                               (.inode_assoc_transient shift' h k v))]
+                    new-node (-> (BitmapNode. 1 bit' bit' (doto (.filled #/(List dynamic) 8 nil) (aset 0 k') (aset 1 v')))
+                               (.inode_assoc_transient shift' h k v))
+                    from-arr arr]
+                (when (< gross-size (.-length arr))
+                  (set! arr (aresize arr idx gross-size nil)))
                 (aset arr idx new-node)
-                (loop [i (inc idx) j (+ 2 idx)]
-                  (when (< j 64)
-                    (aset arr i (aget arr j))
+                (loop [i (inc idx) j (inc i)]
+                  (when (< i net-size)
+                    (aset arr i (aget from-arr j))
                     (recur (inc i) (inc j))))
-                (aset arr 63 nil)
+                (when (< net-size gross-size) (aset arr net-size nil))
                 (set! cnt (inc cnt))
                 (set! bitmap-lo (bit-xor bitmap-lo lo)))
               (identical? v v') node
@@ -3129,58 +3131,164 @@
           ; a node
           (zero? (bit-and hi lo))
           (let [^BitmapNode child (aget arr idx)
-                ^BitmapNode child (if (zero? hi)
-                                    ; if node is shared with a Persistent node
-                                    (let [new-child-arr (.filled #/(List dynamic) 64 nil)
-                                          child-arr (.-arr child)]
-                                      (set! bitmap-hi (bit-xor bit bitmap-hi))
-                                      (set! bitmap-lo (bit-xor bit bitmap-lo))
-                                      (dotimes [i (alength child-arr)]
-                                        (aset new-child-arr i (aget child-arr i)))
-                                      (let [child-bitmap-hi (.-bitmap_hi child)
-                                            child-bitmap-lo (.-bitmap_lo child)
-                                            child-node
-                                            (BitmapNode. (.-cnt child)
-                                              (bit-and child-bitmap-hi child-bitmap-lo)
-                                              (bit-or child-bitmap-hi child-bitmap-lo)
-                                              new-child-arr)]
-                                        (aset arr idx child-node)))
-                                    child)
-                ^int old-child-cnt (.-cnt child)
-                ^BitmapNode new-child (.inode_without_transient child (+ shift 5) h k)
-                ^int new-child-cnt (.-cnt new-child)]
-            (cond
-              (== new-child-cnt old-child-cnt) node
-              (and (== 1 new-child-cnt) (zero? (bit-xor (.-bitmap_hi new-child) (.-bitmap_lo new-child))))
-              (let [k (aget (.-arr new-child) 0)
-                    v (aget (.-arr new-child) 1)]
-                (loop [i (+ idx 2) j (inc idx)]
-                  (when (< i 64)
-                    (aset arr i (aget arr j))
-                    (recur (inc i) (inc j))))
+                child-cnt (.-cnt child)
+                ^BitmapNode? child'
+                (if (zero? hi)
+                  (let [child' (.inode_without child shift h k)]
+                    (when-not (identical? child child') child'))
+                  (.inode_without_transient child (+ shift 5) h k))]
+            (when child'
+              (if (and (== 1 (.-cnt child')) (zero? (bit-xor (.-bitmap_hi child') (.-bitmap_lo child'))))
+                ; inline kv
+                (let [k (aget (.-arr child') 0)
+                      v (aget (.-arr child') 1)
+                      net-size (inc (u32x2-bit-count bitmap-hi bitmap-lo))
+                      gross-size (inc (bit-or 7 (dec net-size)))
+                      from-arr arr]
+                  (when (< (.-length arr) net-size)
+                    (set! arr (aresize arr idx gross-size nil)))
+                  (loop [j (inc idx) i (inc j)]
+                    (when (< i net-size)
+                      (aset arr i (aget from-arr j))
+                      (recur (inc j) (inc i))))
                 (aset arr idx k)
-                (aset arr idx v)
+                (aset arr (inc idx) v)
                 (set! cnt (dec cnt))
                 (set! bitmap-hi (bit-or bitmap-hi bit))
                 (set! bitmap-lo (bit-or bitmap-lo bit)))
-              :else
-              (do (set! cnt (dec cnt))
-                  (aset arr idx new-child))))
-          ; a kv pair but not the right k
-          (not (== k (aget arr idx))) node
+                ; just update in place
+                (aset arr idx child'))))
           ; the right kv pair
-          :else
-          (do (loop [i idx j (+ 2 idx)]
-                (when (< j 64)
-                  (aset arr i (aget arr j))
-                  (recur (inc i) (inc j))))
-              (aset arr 62 nil)
-              (aset arr 63 nil)
-              (set! cnt (dec cnt))
-              (set! bitmap-hi (bit-xor bitmap-hi bit))
-              (set! bitmap-lo (bit-xor bitmap-lo bit))))
+          (== k (aget arr idx))
+          (let [net-size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
+                gross-size (inc (bit-or 7 (dec net-size)))
+                from-arr arr]
+            (when (< gross-size (.-length arr))
+              (set! arr (aresize arr idx gross-size nil)))
+            (loop [i idx j (+ 2 idx)]
+              (when (< i net-size)
+                (aset arr i (aget from-arr j))
+                (recur (inc i) (inc j))))
+            (when (identical? arr from-arr)
+              (aset arr net-size nil)
+              (aset arr (inc net-size) nil))
+            (set! cnt (dec cnt))
+            (set! bitmap-hi (bit-xor bitmap-hi bit))
+            (set! bitmap-lo (bit-xor bitmap-lo bit))))
         node)
       (throw (Exception. "Collision!!!!")))))
+
+#_(defmacro for
+  "List comprehension. Takes a vector of one or more
+   binding-form/collection-expr pairs, each followed by zero or more
+   modifiers, and yields a lazy sequence of evaluations of expr.
+   Collections are iterated in a nested fashion, rightmost fastest,
+   and nested coll-exprs can refer to bindings created in prior
+   binding-forms.  Supported modifiers are: :let [binding-form expr ...],
+   :while test, :when test.
+
+  (take 100 (for [x (range 100000000) y (range 1000000) :while (< y x)] [x y]))"
+  [seq-exprs body-expr]
+  (letfn
+    [(emit [seq-exprs ors]
+       (let [[binding expr & seq-exprs] seq-exprs
+             iter `iter#
+             arg `coll#
+             wrap
+             (fn wrap [mods body]
+               (if-some [[mod expr & more-mods] (seq mods)]
+                 (let [body (wrap more-mods body)]
+                   (case mod
+                     :let `(let ~expr ~body)
+                     :while `(if ~expr ~body (or ~@ors))
+                     :when `(if ~expr ~body (recur (next ~arg)))))
+                 body))
+             ors (cons `(~iter (next ~arg)) ors)
+             nmods (* 2 (count (take-while keyword? (take-nth 2 seq-exprs))))
+             mods (take nmods seq-exprs)
+             seq-exprs (seq (drop nmods seq-exprs))
+             body
+             `(let [~binding (first ~arg)]
+                ~(wrap mods
+                   (if seq-exprs
+                     `(or ~(emit seq-exprs ors)
+                        (recur (next ~arg)))
+                     `(cons ~body-expr
+                        (lazy-seq (or ~@ors))))))
+             body
+             (if seq-exprs
+               body
+               ; innermost, also check for chunked
+               `(if (chunked-seq? ~arg)
+                  ~(emit-innermost-chunked arg ors binding
+                     mods body-expr)
+                  ~body))]
+         `((fn ~iter [~arg] (when ~arg ~body))
+           (seq ~expr))))
+     (emit-innermost-chunked [arg ors binding mods body-expr]
+       (let [buf `buf#]
+         `(let [c# (chunk-first ~arg)
+                size# (int (count c#))
+                ~buf (chunk-buffer size#)
+                exit#
+                (loop [i# (int 0)]
+                  (when (< i# size#)
+                    (or
+                      (let [~binding (.nth c# i#)]
+                        ~(chunked-wrap mods
+                           `(chunk-append ~buf ~body-expr)))
+                      (recur (unchecked-inc i#)))))]
+            (cond
+              (pos? (count ~buf))
+              (chunk-cons
+                (chunk ~buf)
+                (lazy-seq
+                  (or (when-not exit#
+                        (~(ffirst ors) (chunk-next ~arg)))
+                    ~@(next ors))))
+              exit# (or ~@(next ors))
+              :else (recur (chunk-next ~arg))))))
+     (chunked-wrap [mods body]
+       (if-some [[mod expr & more-mods] (seq mods)]
+         (let [body (chunked-wrap more-mods body)]
+           (case mod
+             :let `(let ~expr ~body)
+             :while `(if ~expr ~body true)
+             :when `(when ~expr ~body)))
+         body))]
+    `(lazy-seq ~(emit seq-exprs nil))))
+
+(comment
+  (defn p-assoc [{:keys [nodes kvs] :as input}]
+    (let [i (rand-int 32)]
+      (cond
+        (< i kvs) {:nodes (inc nodes) :kvs (dec kvs)}
+        (< i (+ kvs nodes)) input
+        :else {:nodes nodes :kvs (inc kvs)})))
+
+  (defn p-size [{:keys [nodes kvs]}] (+ nodes kvs kvs))
+
+  (defn max-sizes
+    "Returns the distribution of the max size to which arr grows when inserting
+     n random items. Default sample size: 10000."
+    ([n] (max-sizes n 10000))
+    ([n samples]
+     (into (sorted-map)
+       (frequencies
+         (repeatedly samples
+           #(transduce (comp (take n) (map p-size)) max 0 (iterate p-assoc {:nodes 0 :kvs 0})))))))
+
+  (defn end-sizes
+    "Returns the distribution of the end size to which arr grows when inserting
+     n random items. Default sample size: 10000."
+    ([n] (end-sizes n 10000))
+    ([n samples]
+     (into (sorted-map)
+       (frequencies
+         (repeatedly samples
+           #(transduce (comp (take n) (map p-size)) (fn ([x] x) ([_ x] x)) 0 (iterate p-assoc {:nodes 0 :kvs 0})))))))
+
+  )
 
 (deftype TransientHashMap [^:mutable ^bool editable ^:mutable ^BitmapNode root]
   ITransientCollection
@@ -3385,13 +3493,11 @@
     (-lookup coll k not-found))
   IEditableCollection
   (-as-transient [coll]
-    (let [new-arr (.filled #/(List dynamic) 64 nil)
-          arr (.-arr root)
-          bitmap-hi (.-bitmap_hi root)
-          bitmap-lo (.-bitmap_lo root)]
-      (dotimes [i (alength arr)]
-        (aset new-arr i (aget arr i)))
-      (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) new-arr)))))
+    (let [bitmap-hi (.-bitmap_hi root)
+          bitmap-lo (.-bitmap_lo root)
+          net-size (u32x2-bit-count bitmap-hi bitmap-lo)
+          gross-size (inc (bit-or 7 (dec net-size)))]
+      (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil))))))
 
 (def -EMPTY-MAP
   (PersistentHashMap. nil (BitmapNode. 0 0 0 (.empty List)) -1))
@@ -4147,5 +4253,13 @@
   (dart:core/print [1 2])
   (dart:core/print (fn [^int a] a))
   (dart:core/print (fn ([] 1) ([^int a] a)))
+
+
+  (dart:core/print (.-length (.-arr (.-root (persistent! (reduce #(assoc! %1 %2 %2) (transient {}) (map str (take 20 (iterate inc 0)))))))))
+
+  (dart:core/print (.-length (.-arr (.-root (persistent! (reduce #(assoc! %1 %2 %2) (transient {}) (map str (take 32 (iterate inc 0)))))))))
+
+
+  (dart:core/print (.-length (.-arr (.-root (persistent! (reduce #(assoc! %1 %2 %2) (transient {}) (map str (take 1000 (iterate inc 0)))))))))
 
   )
