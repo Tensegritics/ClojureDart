@@ -4258,6 +4258,40 @@
            body))]
     `(lazy-seq ~(emit seq-exprs nil))))
 
+(defmacro doseq
+  "Repeatedly executes body (presumably for side-effects) with
+  bindings and filtering as provided by \"for\".  Does not retain
+  the head of the sequence. Returns nil."
+  [seq-exprs & body-expr]
+  #_(assert-args
+      (vector? seq-exprs) "a vector for its binding"
+      (even? (count seq-exprs)) "an even number of forms in binding vector")
+  (letfn [(emit [seq-exprs]
+            (let [[binding expr & seq-exprs] seq-exprs
+                  acc (gensym 'acc__)
+                  wrap
+                  (fn wrap [mods body]
+                    (if-some [[mod expr & more-mods] (seq mods)]
+                      (let [body (wrap more-mods body)]
+                        (case mod
+                          :let `(let ~expr ~body)
+                          :while  `(if ~expr ~body (reduced ~acc))
+                          :when `(when ~expr ~body)))
+                      body))
+                  nmods (* 2 (count (take-while keyword? (take-nth 2 seq-exprs))))
+                  mods (take nmods seq-exprs)
+                  seq-exprs (seq (drop nmods seq-exprs))
+                  body
+                  `(reduce (fn [~acc ~binding]
+                             ~(wrap mods
+                                (if seq-exprs
+                                  (emit seq-exprs)
+                                  `(do ~@body-expr nil))))
+                     nil
+                     (seq ~expr))]
+              body))]
+    (emit seq-exprs)))
+
 (defn vec [coll]
   (into [] coll))
 
