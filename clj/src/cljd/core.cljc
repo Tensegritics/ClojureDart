@@ -4258,6 +4258,7 @@
            body))]
     `(lazy-seq ~(emit seq-exprs nil))))
 
+;; TODO : test in cljd when `case` is ready
 (defmacro doseq
   "Repeatedly executes body (presumably for side-effects) with
   bindings and filtering as provided by \"for\".  Does not retain
@@ -4282,13 +4283,24 @@
                   mods (take nmods seq-exprs)
                   seq-exprs (seq (drop nmods seq-exprs))
                   body
-                  `(reduce (fn [~acc ~binding]
+                  `(let [s# (seq ~expr)]
+                     (if (chunked-seq? s#)
+                       (loop [cn# s#]
+                         ;; TODO put -reduce here
+                         (.reduce (chunk-first cn#)
+                           (fn [~acc ~binding]
                              ~(wrap mods
                                 (if seq-exprs
                                   (emit seq-exprs)
-                                  `(do ~@body-expr nil))))
-                     nil
-                     (seq ~expr))]
+                                  `(do ~@body-expr nil)))) nil)
+                         (some-> (chunk-next cn#) recur))
+                       (reduce (fn [~acc ~binding]
+                                 ~(wrap mods
+                                    (if seq-exprs
+                                      (emit seq-exprs)
+                                      `(do ~@body-expr nil))))
+                         nil
+                         s#)))]
               body))]
     (emit seq-exprs)))
 
