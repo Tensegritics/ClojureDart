@@ -677,7 +677,14 @@
   "Protocol for types which can have a deferred realization. Currently only
   implemented by Delay and LazySeq."
   (-realized? [x]
-   "Returns true if a value for x has been produced, false otherwise."))
+    "Returns true if a value for x has been produced, false otherwise."))
+
+(defn realized?
+  "Returns true if a value has been produced for a promise, delay, future or lazy sequence."
+  {:inline-arities #{1}
+   :inline-arities (fn [x] `(-realized? ~x))}
+  [x]
+  (-realized? x))
 
 (defprotocol IList
   "Marker interface indicating a persistent list")
@@ -1210,6 +1217,49 @@
      (if ks
        (recur ntcoll (first ks) (next ks))
        ntcoll))))
+
+(defprotocol IAtom
+  "Marker protocol indicating an atom.")
+
+(defprotocol IReset
+  "Protocol for adding resetting functionality."
+  (-reset! [o new-value]
+    "Sets the value of o to new-value."))
+
+(defprotocol ISwap
+  "Protocol for adding swapping functionality."
+  (-swap! [o f] [o f a] [o f a b] [o f a b xs]
+    "Swaps the value of o to be (apply f current-value-of-atom args)."))
+
+(defprotocol IWatchable
+  "Protocol for types that can be watched. Currently only implemented by Atom."
+  (-notify-watches [this oldval newval]
+    "Calls all watchers with this, oldval and newval.")
+  (-add-watch [this key f]
+    "Adds a watcher function f to this. Keys must be unique per reference,
+     and can be used to remove the watch with -remove-watch.")
+  (-remove-watch [this key]
+    "Removes watcher that corresponds to key from this."))
+
+(deftype Atom [^:mutable state meta validator ^:mutable watches]
+  IAtom
+  IEquiv
+  (-equiv [o other] (identical? o other))
+  IDeref
+  (-deref [_] state)
+  IMeta
+  (-meta [_] meta)
+  IWatchable
+  (-notify-watches [this oldval newval]
+    (doseq [[key f] watches]
+      (f key this oldval newval)))
+  (-add-watch [this key f]
+    (set! watches (assoc watches key f))
+    this)
+  (-remove-watch [this key]
+    (set! watches (dissoc watches key)))
+  IHash
+  (-hash [this] #_(goog/getUid this)))
 
 (defprotocol IVolatile
   "Protocol for adding volatile functionality."
