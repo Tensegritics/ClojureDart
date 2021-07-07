@@ -1665,8 +1665,7 @@
                     (emit-def (list 'def (with-meta sym {kind true}) nil) {}))))
         do (run! bootstrap-eval (next x))
         deftype*
-        (let [_ (binding [*out* *err*] (prn x))
-              [_ class-name fields opts & specs] x
+        (let [[_ class-name fields opts & specs] x
               [class-name & type-params] (cons class-name (:type-params (meta class-name)))
               mclass-name (with-meta
                             (or (:dart/name (meta class-name)) (munge class-name {}))
