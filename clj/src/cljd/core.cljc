@@ -4178,6 +4178,7 @@
        (with-meta (persistent! (transduce xform conj! (transient to) from)) (meta to))
        (transduce xform conj to from))))
 
+;; TODO : test in cljd when `case` is ready
 (defmacro for
   "List comprehension. Takes a vector of one or more
    binding-form/collection-expr pairs, each followed by zero or more
@@ -4233,7 +4234,7 @@
                   (loop [i# (int 0)]
                     (when (< i# size#)
                       (or
-                        (let [~binding (.nth c# i#)]
+                        (let [~binding (-nth c# i#)]
                           ~(chunked-wrap mods
                              `(chunk-append ~buf ~body-expr)))
                         (recur (unchecked-inc i#)))))]
