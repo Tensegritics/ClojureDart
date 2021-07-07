@@ -682,7 +682,7 @@
 (defn realized?
   "Returns true if a value has been produced for a promise, delay, future or lazy sequence."
   {:inline-arities #{1}
-   :inline-arities (fn [x] `(-realized? ~x))}
+   :inline (fn [x] `(-realized? ~x))}
   [x]
   (-realized? x))
 
@@ -1241,7 +1241,7 @@
   (-remove-watch [this key]
     "Removes watcher that corresponds to key from this."))
 
-(deftype Atom [^:mutable state meta validator ^:mutable watches]
+#_(deftype Atom [^:mutable state meta validator ^:mutable watches]
   IAtom
   IEquiv
   (-equiv [o other] (identical? o other))
@@ -4179,7 +4179,7 @@
        (transduce xform conj to from))))
 
 ;; TODO : test in cljd when `case` is ready
-(defmacro for
+#_(defmacro for
   "List comprehension. Takes a vector of one or more
    binding-form/collection-expr pairs, each followed by zero or more
    modifiers, and yields a lazy sequence of evaluations of expr.
@@ -4259,7 +4259,7 @@
     `(lazy-seq ~(emit seq-exprs nil))))
 
 ;; TODO : test in cljd when `case` is ready
-(defmacro doseq
+#_(defmacro doseq
   "Repeatedly executes body (presumably for side-effects) with
   bindings and filtering as provided by \"for\".  Does not retain
   the head of the sequence. Returns nil."
@@ -4287,7 +4287,7 @@
                      (if (chunked-seq? s#)
                        (loop [cn# s#]
                          ;; TODO put -reduce here
-                         (.reduce (chunk-first cn#)
+                         (-reduce (chunk-first cn#)
                            (fn [~acc ~binding]
                              ~(wrap mods
                                 (if seq-exprs
