@@ -673,6 +673,20 @@
 (defprotocol ISequential
   "Marker interface indicating a persistent collection of sequential items")
 
+(defn sequential?
+  "Returns true if coll implements Sequential"
+  {:inline-arities #{1}
+   :inline (fn [coll] `(satisfies? ISequential ~coll))}
+  [coll]
+  (satisfies? ISequential coll))
+
+(defn realized?
+  "Returns true if a value has been produced for a promise, delay, future or lazy sequence."
+  {:inline-arities #{1}
+   :inline (fn [x] `(-realized? ~x))}
+  [x]
+  (-realized? x))
+
 (defprotocol IPending
   "Protocol for types which can have a deferred realization. Currently only
   implemented by Delay and LazySeq."
@@ -847,6 +861,10 @@
   (-chunk-reduce [coll f init]
     "Internal reduce, doesn't unwrap reduced values returned by f."))
 
+(defn chunk-reduce
+  [f val coll]
+  (-chunk-reduce coll f val))
+
 (defprotocol IChunkedSeq
   "Protocol for accessing a collection as sequential chunks."
   (-chunked-first [coll]
@@ -855,6 +873,15 @@
     "Return a new collection of coll with the first chunk removed.")
   (-chunked-next [coll]
     "Returns a new collection of coll without the first chunk."))
+
+(defn chunk-first [s]
+  (-chunked-first s))
+
+(defn chunk-rest [s]
+  (-chunked-rest s))
+
+(defn chunk-next [s]
+  (-chunked-next s))
 
 (defprotocol IVector
   "Protocol for adding vector functionality to collections."
@@ -914,7 +941,30 @@
 (defprotocol IEquiv
   "Protocol for adding value comparison functionality to a type."
   (-equiv [o other]
-   "Returns true if o and other are equal, false otherwise."))
+    "Returns true if o and other are equal, false otherwise."))
+
+(extend-type fallback
+  IEquiv
+  (-equiv [o other] (.== o other)))
+
+(defn ^bool =
+  #_"Equality. Returns true if x equals y, false if not. Same as
+  Java x.equals(y) except it also works for nil, and compares
+  numbers and collections in a type-independent manner.  Clojure's immutable data
+  structures define equals() (and thus =) as a value, not an identity,
+  comparison."
+  ;; TODO put inline when tagging is working
+  #_{:inline (fn [x y] `(. clojure.lang.Util equiv ~x ~y))
+     :inline-arities #{2}
+     :added "1.0"}
+  ([x] true)
+  ([x y] (-equiv x y))
+  ([x y & more]
+   (if (-equiv x y)
+     (if (next more)
+       (recur y (first more) (next more))
+       (-equiv y (first more)))
+     false)))
 
 (defprotocol IIndexed
   "Protocol for collections to provide indexed-based access to their items."
@@ -983,12 +1033,13 @@
         :else (recur (next xs) (.- i 1))))))
 
 (defn nth
-  {:inline-arities #{2 3}
+  #_{:inline-arities #{2 3}
    :inline (fn
-             ([coll n] `(-nth ~coll ~n))
-             ([coll n not-found] `(-nth ~coll ~n ~not-found)))}
-  ([coll n] (-nth coll n))
-  ([coll n not-found] (-nth coll n not-found)))
+             ([coll n] `(-nth ~coll (.toInt ~^num n)))
+             ([coll n not-found] `(-nth ~coll (.toInt ~^num n) ~not-found)))}
+  ;; TODO : check performance of toInt...
+  ([coll ^num n] (-nth coll (.toInt n)))
+  ([coll ^num n not-found] (-nth coll (.toInt ^num n) not-found)))
 
 (defprotocol ILookup
   "Protocol for looking up a value in a data structure."
@@ -1002,8 +1053,10 @@
     (when (and (dart/is? k int) (satisfies? IIndexed o))
       (-nth o k nil)))
   (-lookup [o k not-found]
-    (when (and (dart/is? k int) (satisfies? IIndexed o))
-      (-nth o k not-found))))
+    ;; `if` is used and not `when` - clj compliant e.g: (get [1 2] (int-array 1) :default) -> :default
+    (if (and (dart/is? k int) (satisfies? IIndexed o))
+      (-nth o k not-found)
+      not-found)))
 
 (defn get
   "Returns the value mapped to key, not-found or nil if key not present."
@@ -1091,7 +1144,98 @@
 
 (defprotocol IHash
   "Protocol for adding hashing functionality to a type."
-  (-hash [o] "Returns the hash code of o."))
+  (-hash [o] "Returns the hash code of o.")
+  (-hash-realized? [o] "Returns whether the hash has already been realized or not."))
+
+(extend-type bool
+  IHash
+  (-hash [o]
+    (cond
+      (true? o) 1231
+      (false? o) 1237))
+  (-hash-realized? [o] true))
+
+(declare ^:dart m3-hash-int)
+
+(extend-type double
+  IHash
+  (-hash [o]
+    ; values taken from cljs
+    (cond
+      (.== (.-negativeInfinity double) o) -1048576
+      (.== (.-infinity double) o) 2146435072
+      (.== (.-nan double) o) 2146959360
+      true (m3-hash-int (.-hashCode o))))
+  (-hash-realized? [o] true))
+
+(extend-type Null
+  IHash
+  (-hash [o] 0)
+  (-hash-realized? [o] true))
+
+(extend-type Object
+  IHash
+  (-hash [o] (m3-hash-int (.-hashCode o)))
+  (-hash-realized? [o] true))
+
+(defn ^int hash
+  {:inline (fn [o] `^dart:core/int (-hash ~o))
+   :inline-arities #{1}}
+  [o] (-hash o))
+
+(defn ^bool -equiv-sequential
+  "Assumes x is sequential."
+  [x y]
+  (if (and (sequential? y)
+        (or (not (and (counted? x) (counted? y)))
+          (== (count x) (count y)))
+        (or (not (and (-hash-realized? x) (-hash-realized? y)))
+          (== (-hash x) (-hash y))))
+    (loop [xs (seq x) ys (seq y)]
+      (cond
+        (nil? xs) (nil? ys)
+        (nil? ys) false
+        (= (first xs) (first ys)) (recur (next xs) (next ys))
+        :else false))
+    false))
+
+(deftype ^:abstract EquivSequentialHashMixin []
+  #_#_#_#_Object
+  (^bool check_hash [x y]
+    ;; TODO : use counted?
+    ;; (and (counted? x) (counted? y) (== (count x) (count y)))
+   )
+  (^bool equiv_sequential [x y]
+  )
+  (^bool equiv_chunked [x y]
+    (if (.check_hash x y)
+      (let [other-seq (seq y)]
+        (if (chunked-seq? other-seq)
+          (loop [me-seq (seq x)
+                 other-seq other-seq
+                 me-cf (chunk-first me-seq)
+                 other-cf (chunk-first other-seq)
+                 ^int ime (count me-cf)
+                 ^int iother (count other-cf)
+                 j 0]
+            (if (== ime iother)
+              (if me-seq
+                (if (== (-nth me-cf j) (-nth other-cf j))
+                  (let [j (inc j)]
+                    (if (< j ime)
+                      (recur me-seq other-seq me-cf other-cf ime iother j)
+                      (let [me-seq (chunk-next me-seq)
+                            me-cf (some-> me-seq chunk-first)
+                            other-seq (chunk-next other-seq)
+                            other-cf (some-> other-seq chunk-first)]
+                        (recur me-seq other-seq me-cf other-cf (count me-cf) (count other-cf) 0))))
+                  false)
+                true)
+              false))
+          (.equiv_sequential x y)))
+      false))
+  IEquiv
+  (-equiv [x y] (-equiv-sequential x y)))
 
 (deftype Keyword [^String? ns ^String name ^int _hash]
   ^:mixin ToStringMixin
@@ -1325,9 +1469,6 @@
 (defn ^:bootstrap ^:private >0? [n] (< 0 n))
 (defn ^:bootstrap ^:private >1? [n] (< 1 n))
 
-;; TODO should use -equiv or equivalent
-#_(defn ^bool = [a b] (.== a b))
-
 (defn ^bool ==
   {:inline (nary-cmp-inline "==")
    :inline-arities >0?}
@@ -1441,9 +1582,10 @@
   [n] (> 0 n))
 
 (defn ^bool zero?
-  {:inline-arities #{1}
-   :inline (fn [n] `(== 0 ~n))}
-  [n] (== 0 n))
+  {:inline (fn [num] `(.== 0 ~num))
+   :inline-arities #{1}}
+  [num]
+  (== 0 num))
 
 (defn ^num inc
   {:inline (fn [x] `(.+ ~x 1))
@@ -1455,12 +1597,6 @@
    :inline-arities #{1}}
   [x]
   (.- x 1))
-
-(defn ^bool zero?
-  {:inline (fn [num] `(.== 0 ~num))
-   :inline-arities #{1}}
-  [num]
-  (== 0 num))
 
 (defn quick-bench* [run]
   (let [sw (Stopwatch.)
@@ -1729,6 +1865,43 @@
         0))
     0))
 
+(defn ^int mix-collection-hash
+  "Mix final collection hash for ordered or unordered collections.
+   hash-basis is the combined collection hash, count is the number
+   of elements included in the basis. Note this is the hash code
+   consistent with =, different from .hashCode.
+   See http://clojure.org/data_structures#hash for full algorithms."
+  [hash-basis count]
+  (let [k1 (m3-mix-k1 hash-basis)
+        h1 (m3-mix-h1 0 k1)]
+    (m3-fmix h1 count)))
+
+(defn ^int hash-ordered-coll
+  "Returns the hash code, consistent with =, for an external ordered
+   collection implementing Iterable.
+   See http://clojure.org/data_structures#hash for full algorithms."
+  [coll]
+  (loop [^int n 0 ^int hash-code 1 coll (seq coll)]
+    (if-not (nil? coll)
+      (recur (inc n)
+        ;; TODO not sure about u32-add ?
+        (u32-add (u32-mul 31 hash-code) ^int (hash (first coll)))
+        (next coll))
+      (mix-collection-hash hash-code n))))
+
+(defn ^int hash-unordered-coll
+  "Returns the hash code, consistent with =, for an external unordered
+   collection implementing Iterable. For maps, the iterator should
+   return map entries whose hash is computed as
+     (hash-ordered-coll [k v]).
+   See http://clojure.org/data_structures#hash for full algorithms."
+  [coll]
+  (loop [n 0 hash-code 0 coll (seq coll)]
+    (if-not (nil? coll)
+      ;; TODO not sure about u32-add
+      (recur (inc n) (u32-add hash-code ^int (hash (first coll))) (next coll))
+      (mix-collection-hash hash-code n))))
+
 (defn ^bool identical?
   {:inline (fn [x y] `(dart:core/identical ~x ~y))
    :inline-arities #{2}}
@@ -1746,45 +1919,6 @@
    :inline-arities #{1}}
   [x]
   (dart:core/identical x false))
-
-(extend-type bool
-  IHash
-  (-hash [o]
-    (cond
-      (true? o) 1231
-      (false? o) 1237)))
-
-(extend-type double
-  IHash
-  (-hash [o]
-    ; values taken from cljs
-    (cond
-      (.== (.-negativeInfinity double) o) -1048576
-      (.== (.-infinity double) o) 2146435072
-      (.== (.-nan double) o) 2146959360
-      true (m3-hash-int (.-hashCode o)))))
-
-(extend-type Null
-  IHash
-  (-hash [o] 0))
-
-(extend-type Object
-  IHash
-  (-hash [o] (m3-hash-int (.-hashCode o))))
-
-(defn ^int hash
-  {:inline (fn [o] `(-hash ~o))
-   :inline-arities #{1}}
-  [o] (-hash o))
-
-(defmacro ensure-hash [hash-key hash-expr]
-  #_(core/assert (clojure.core/symbol? hash-key) "hash-key is substituted twice")
-  `(let [h# ~hash-key]
-     (if (< h# 0)
-       (let [h# ~hash-expr]
-         (set! ~hash-key h#)
-         h#)
-       h#)))
 
 ;; TODO : manage all bindings for printing
 (defn- print-sequential [^String begin ^String end sequence ^StringSink sink]
@@ -1852,8 +1986,18 @@
         (zero? i) (first xs)
         :else (recur (next xs) (.- i 1))))))
 
+(defmacro ensure-hash [hash-key hash-expr]
+  #_(core/assert (clojure.core/symbol? hash-key) "hash-key is substituted twice")
+  `(let [h# ~hash-key]
+     (if (< h# 0)
+       (let [h# ~hash-expr]
+         (set! ~hash-key h#)
+         h#)
+       h#)))
+
 (deftype #/(Cons E)
   [meta _first rest ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(Cons R) #/(cast R) [coll]
@@ -1875,10 +2019,9 @@
   #_#_IEmptyableCollection
   (-empty [coll] ())
   ISequential
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+  IHash
+  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
+  (-hash-realized? [coll] (.!= -1 __hash))
   ISeqable
   (-seq [coll] coll))
 
@@ -1937,10 +2080,9 @@
   #_#_IEmptyableCollection
   (-empty [coll] (-with-meta (.-EMPTY List) meta))
   ISequential
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+  IHash
+  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
+  (-hash-realized? [coll] (.!= -1 __hash))
   ISeqable
   (-seq [coll] (when (< 0 count) coll))
   ICounted
@@ -1993,6 +2135,7 @@
 
 (deftype #/(StringSeq E)
   [string i meta ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(StringSeq R) #/(cast R) [coll]
@@ -2034,8 +2177,6 @@
           (. string "[]" i)
           not-found))))
   ISequential
-  #_#_IEquiv
-  (-equiv [coll other] false)
   ICollection
   (-conj [coll o] (cons o coll))
   #_#_IEmptyableCollection
@@ -2065,6 +2206,7 @@
           acc))))
   IHash
   (-hash [coll] (ensure-hash __hash (m3-hash-int (.-hashCode (.substring string i)))))
+  (-hash-realized? [coll] (.!= -1 __hash))
   ; TODO : not reversible in clj (is in cljs)
   #_#_IReversible
   (-rseq [coll]
@@ -2101,6 +2243,7 @@
 
 (deftype #/(LazySeq E)
   [meta ^:mutable ^some fn ^:mutable s ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(LazySeq R) #/(cast R) [coll]
@@ -2150,10 +2293,9 @@
   #_#_IEmptyableCollection
   (-empty [coll] (-with-meta (.-EMPTY List) meta))
   ISequential
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash)))
+  IHash
+  (-hash-realized? [coll] (.!= -1 __hash))
+  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll))))
 
 (defmacro lazy-seq
   "Takes a body of expressions that returns an ISeq or nil, and yields
@@ -2252,6 +2394,7 @@
 
 (deftype #/(PersistentVector E)
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(PersistentVector R) #/(cast R) [coll]
@@ -2305,24 +2448,9 @@
   #_#_IEmptyableCollection
   (-empty [coll] (-with-meta (.-EMPTY PersistentVector) meta))
   ISequential
-  #_#_IEquiv
-  (-equiv [coll other]
-    (if (instance? PersistentVector other)
-      (if (== cnt (count other))
-        (let [me-iter  (-iterator coll)
-              you-iter (-iterator other)]
-          (loop []
-            (if ^boolean (.hasNext me-iter)
-              (let [x (.next me-iter)
-                    y (.next you-iter)]
-                (if (= x y)
-                  (recur)
-                  false))
-              true)))
-        false)
-      (equiv-sequential coll other)))
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+  IHash
+  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
+  (-hash-realized? [coll] (.!= -1 __hash))
   ISeqable
   (-seq [coll]
     (cond
@@ -2470,6 +2598,7 @@
 
 (deftype #/(ChunkedCons E)
   [chunk more meta ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(ChunkedCons R) #/(cast R) [coll]
@@ -2482,8 +2611,6 @@
   IMeta
   (-meta [coll] meta)
   ISequential
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
   ISeqable
   (-seq [coll] coll)
   ISeq
@@ -2524,11 +2651,12 @@
   (-conj [this o] (cons o this))
   #_#_IEmptyableCollection
   (-empty [coll] (.-EMPTY List))
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash)))
+  IHash
+  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
+  (-hash-realized? [coll] (.!= -1 __hash)))
 
 (defn chunk-cons [chunk rest]
-  (if (< 0 (-count chunk))
+  (if (< 0 (count chunk))
     (ChunkedCons. chunk rest nil -1)
     rest))
 
@@ -2538,17 +2666,9 @@
 (defn chunk [b]
   (.chunk b))
 
-(defn chunk-first [s]
-  (-chunked-first s))
-
-(defn chunk-rest [s]
-  (-chunked-rest s))
-
-(defn chunk-next [s]
-  (-chunked-next s))
-
 (deftype #/(PVChunkedSeq E)
   [^PersistentVector vec ^List arr ^int i ^int off meta ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(PVChunkedSeq R) #/(cast R) [coll]
@@ -2563,8 +2683,6 @@
   ISeqable
   (-seq [coll] coll)
   ISequential
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
   ISeq
   (-first [coll]
     (aget arr off))
@@ -2594,8 +2712,9 @@
                              (unchecked-array-for (.-root vec) (.-shift vec) end)
                              (.-tail vec))
           end 0 nil -1))))
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
+  IHash
+  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
+  (-hash-realized? [coll] (.!= -1 __hash))
   IReduce
   (-reduce [coll f] (pv-reduce vec f (+ i off)))
   (-reduce [coll f start] (pv-reduce vec f (+ i off) start)))
@@ -2774,6 +2893,7 @@
 
 (deftype #/(PersistentMapEntry K V)
   [_k _v ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink] (print-sequential "[" "]" o sink))
@@ -2783,10 +2903,9 @@
   IMapEntry
   (-key [node] _k)
   (-val [node] _v)
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-ordered-coll __hash))
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-sequential coll other))
+  IHash
+  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
+  (-hash-realized? [coll] (.!= -1 __hash))
   IMeta
   (-meta [node] nil)
   IStack
@@ -2855,18 +2974,19 @@
   (satisfies? IMapEntry x))
 
 ; cgrand's
-(deftype #/(BitmapIterator E) [^:mutable ^BitmapNode node
-                               ^:mutable ^int idx
-                               ^:mutable ^int mask
-                               ^:mutable ^int kvs
-                               ^:mutable ^int depth
-                               ^#/(List int) masks
-                               ^#/(List BitmapNode) nodes
-                               ^:dart mk-value]
+(deftype #/(BitmapIterator E)
+  [^:mutable ^BitmapNode node
+   ^:mutable ^int idx
+   ^:mutable ^int mask
+   ^:mutable ^int kvs
+   ^:mutable ^int depth
+   ^#/(List int) masks
+   ^#/(List BitmapNode) nodes
+   ^:dart mk-value]
   #/(Iterator E)
   (current [iter]
-   (let [arr (.-arr node)]
-     (mk-value (aget arr (- idx 2)) (aget arr (dec idx)))))
+    (let [arr (.-arr node)]
+      (mk-value (aget arr (- idx 2)) (aget arr (dec idx)))))
   (moveNext [iter]
     (cond
       (and (== depth 7) (< idx (* 2 (.-cnt node)))) ; collisions node
@@ -2898,8 +3018,8 @@
         (set! idx (u32x2-bit-count (bit-and-not hi mask) (bit-and-not lo mask)))
         (set! kvs (bit-and hi lo))
         (recur))
-     :else
-     false)))
+      :else
+      false)))
 
 ; Baptiste's
 #_(deftype BitmapIterator [^:mutable ^int current-mask
@@ -2968,15 +3088,14 @@
               :else ; kv
               (let [arr (.-arr node)
                     k' (aget arr idx)]
-                ;; TODO use = instead of ==
-                (if (== k' k) (aget arr (inc idx)) not-found))))
+                (if (= k' k) (aget arr (inc idx)) not-found))))
           ; collisions node
           (let [n (* 2 cnt)
                 arr (.-arr node)]
             (loop [^int i 0]
               (cond
                 (== i n) not-found
-                (== (aget arr i) k) (aget arr (inc i))
+                (= (aget arr i) k) (aget arr (inc i))
                 :else (recur (+ 2 i)))))))))
   (inode_without [node shift h k]
     (if (< shift 32)
@@ -3011,7 +3130,7 @@
               :else
               (BitmapNode. (dec cnt) (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) (doto (aclone (.-arr node)) (aset idx new-child)))))
           ; a kv pair but not the right k
-          (not (== k (aget arr idx))) node
+          (not (= k (aget arr idx))) node
           ; the right kv pair
           :else
           (let [size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
@@ -3027,7 +3146,7 @@
         (loop [^int i 0]
           (cond
             (== i n) node
-            (== (aget arr i) k)
+            (= (aget arr i) k)
             (let [n (- n 2)
                   new-arr (ashrink arr n)]
               (when-not (== i n)
@@ -3068,7 +3187,7 @@
                 v' (aget arr (inc idx))]
             (cond
               ;; TODO not=
-              (not (== k' k))
+              (not (= k' k))
               (let [size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
                     shift' (+ 5 ^int shift)
                     n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
@@ -3091,7 +3210,7 @@
           (cond
             (== i n)
             (BitmapNode. (inc cnt) 0 0 (doto (aresize arr n (+ 2 n) v) (aset n k)))
-            (== (aget arr i) k)
+            (= (aget arr i) k)
             (let [i+1 (inc i)]
               (if (identical? (aget arr i+1) v)
                 node
@@ -3142,7 +3261,7 @@
                 v' (aget arr (inc idx))]
             (cond
               ;; TODO not=
-              (not (== k' k))
+              (not (= k' k))
               (let [net-size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
                     gross-size (inc (bit-or 7 (dec net-size)))
                     shift' (+ 5 ^int shift)
@@ -3209,7 +3328,7 @@
                 ; just update in place
                 (aset arr idx child'))))
           ; the right kv pair
-          (== k (aget arr idx))
+          (= k (aget arr idx))
           (let [net-size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
                 gross-size (inc (bit-or 7 (dec net-size)))
                 from-arr arr]
@@ -3267,9 +3386,9 @@
       (throw (ArgumentError. "conj! after persistent!")))
     (cond
       (map-entry? o)
-      (-assoc tcoll (-key o) (-val o))
+      (-assoc! tcoll (-key o) (-val o))
       (vector? o)
-      (-assoc tcoll (-nth o 0) (-nth o 1))
+      (-assoc! tcoll (-nth o 0) (-nth o 1))
       :else
       (reduce -conj! tcoll o)))
   (-persistent! [tcoll]
@@ -3819,14 +3938,14 @@
         (rf result (apply f input inputs))))))
   ([f coll]
    (lazy-seq
-    (when-let [s (seq coll)]
-      (if (chunked-seq? s)
-        (let [c (chunk-first s)]
-          (chunk-cons
-            (chunk (reduce #(doto %1 (chunk-append (f %2)))
-                     (chunk-buffer (count c)) c))
-            (map f (chunk-rest s))))
-        (cons (f (first s)) (map f (rest s)))))))
+     (when-let [s (seq coll)]
+       (if (chunked-seq? s)
+         (let [c (chunk-first s)]
+           (chunk-cons
+             (chunk (chunk-reduce #(doto %1 (chunk-append (f %2)))
+                      (chunk-buffer (count c)) c))
+             (map f (chunk-rest s))))
+         (cons (f (first s)) (map f (rest s)))))))
   ([f c1 c2]
    (lazy-seq
     (let [s1 (seq c1) s2 (seq c2)]
@@ -3926,9 +4045,9 @@
       (if (chunked-seq? s)
         (let [c (chunk-first s)]
           (chunk-cons
-            (chunk (reduce #(if-some [x (f %2)]
-                              (doto %1 (chunk-append x))
-                              %1)
+            (chunk (chunk-reduce #(if-some [x (f %2)]
+                                    (doto %1 (chunk-append x))
+                                    %1)
                      (chunk-buffer (count c)) c))
             (keep f (chunk-rest s))))
         (let [x (f (first s))]
@@ -4007,9 +4126,9 @@
       (if (chunked-seq? s)
         (let [c (chunk-first s)]
           (chunk-cons
-            (chunk (reduce #(if-let [x (pred %2)]
-                              (doto %1 (chunk-append x))
-                              %1)
+            (chunk (chunk-reduce #(if-let [x (pred %2)]
+                                    (doto %1 (chunk-append x))
+                                    %1)
                      (chunk-buffer (count c)) c))
             (filter pred (chunk-rest s))))
         (let [f (first s) r (rest s)]
@@ -4121,9 +4240,7 @@
           (let [pval @pv
                 val (f input)]
             (vreset! pv val)
-            (if (or (identical? pval "none")
-                  ;; TODO replace == by =
-                  (== val pval))
+            (if (or (identical? pval "none") (= val pval))
               (do
                 (.add a input)
                 result)
@@ -4138,8 +4255,7 @@
     (when-let [s (seq coll)]
       (let [fst (first s)
             fv (f fst)
-            ;; TODO change == to =
-            run (cons fst (take-while #(== fv (f %)) (next s)))]
+            run (cons fst (take-while #(= fv (f %)) (next s)))]
         (cons run (partition-by f (lazy-seq (drop (count run) s)))))))))
 
 (defn remove
@@ -4347,4 +4463,44 @@
 
   (dart:core/print (.-length (.-arr (.-root (persistent! (reduce #(assoc! %1 %2 %2) (transient {}) (map str (take 1000 (iterate inc 0)))))))))
 
+  (dart:core/print (-equiv (next (seq "abcd")) (next (seq "abcd"))))
+  (dart:core/print (-equiv (next (seq "abcd")) ["b" "c" "d"]))
+  (dart:core/print (-equiv (map inc [1 2 3]) (map inc [1  2 3])))
+  (dart:core/print (-equiv [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33]
+                     '(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33)))
+  (dart:core/print (-equiv
+                     (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34])
+                     (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34])))
+
+  (dart:core/print (map inc nil))
+  (dart:core/print
+    (take 5 (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35])))
+
+  (let [a (take 5 (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35]))]
+    (dart:core/print (hash a))
+    (dart:core/print (hash (conj a 11)))
+    (dart:core/print (nth a 3))
+    (dart:core/print (nth a 3.0)))
+
+  #_(let [rng (take 100 (iterate inc 0))]
+    (quick-bench (into {} (->> rng
+                            (map #(do [% %]))
+                            (filter #(.-isOdd (first %)))
+                            (mapcat #(conj [%] %)))))
+    (quick-bench (into {}  (comp (map #(do [% %]))
+                             (filter #(.-isOdd (first %)))
+                             (mapcat #(conj [%] %)))
+                   rng)))
+
+  (let [a (take 5 (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35]))]
+    #_(dart:core/print (conj [] (vec a)))
+    (dart:core/print (= [1 2 3] [1 2 [3]]))
+    (dart:core/print (= 1 1)))
+
+
   )
+
+#_(if (or (not (and (realized-hash? x) (realized-hash? y)))
+      (== (-hash x) (-hash y)))
+  traversal
+  false)
