@@ -3477,7 +3477,19 @@
               (aset arr (inc idx) v))))
         node)
       ;; collisions node
-      (throw (Exception. "Collision!!!!"))))
+      (let [n (* 2 cnt)]
+        (loop [^int i 0]
+          (cond
+            (== i n)
+            (do
+              (set! cnt (inc cnt))
+              (set! arr (doto (aresize arr n (+ 2 n) v) (aset n k))))
+            (= (aget arr i) k)
+            (let [i+1 (inc i)]
+              (when-not (identical? (aget arr i+1) v)
+                (set! arr (doto (aclone arr) (aset i+1 v)))))
+            :else (recur (+ 2 i))))
+        node)))
   (inode_without_transient [node shift h k]
     (if (< shift 32)
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
@@ -3537,7 +3549,21 @@
             (set! bitmap-hi (bit-xor bitmap-hi bit))
             (set! bitmap-lo (bit-xor bitmap-lo bit))))
         node)
-      (throw (Exception. "Collision!!!!")))))
+      ; collisions node
+      (let [n (* 2 cnt)]
+        (loop [^int i 0]
+          (cond
+            (== i n) nil
+            (= (aget arr i) k)
+            (let [n (- n 2)
+                  new-arr (ashrink arr n)]
+              (when-not (== i n)
+                (aset new-arr i (aget arr n))
+                (aset new-arr (inc i) (aget arr (inc n))))
+              (set! arr new-arr)
+              (set! cnt (dec cnt)))
+            :else (recur (+ 2 i))))
+        node))))
 
 (comment
   (defn p-assoc [{:keys [nodes kvs] :as input}]
