@@ -1157,6 +1157,11 @@
 
 (declare ^:dart m3-hash-int)
 
+(extend-type int
+  IHash
+  (-hash [o]
+    (m3-hash-u32 o)))
+
 (extend-type double
   IHash
   (-hash [o]
@@ -1831,14 +1836,16 @@
     (bit-xor hash (u32-bit-shift-right hash 16))))
 
 (defn ^int m3-hash-u32 [in]
-  (let [k1 (m3-mix-k1 in)
-        h1 (m3-mix-h1 0 k1)]
-    (m3-fmix h1 4)))
+  (if (zero? in)
+    0
+    (let [k1 (m3-mix-k1 in)
+          h1 (m3-mix-h1 0 k1)]
+      (m3-fmix h1 4))))
 
 (defn ^int m3-hash-int [in]
   (if (zero? in)
     in
-    (let [upper (u32 (bit-shift-right in 32))
+    (let [upper (u32 (bit-shift-right in 32)) ; always 0 in js
           lower (u32 in)
           k (m3-mix-k1 lower)
           h (m3-mix-h1 0 k)
@@ -1854,16 +1861,41 @@
       (u32-bit-shift-right seed 2))))
 
 ;;http://hg.openjdk.java.net/jdk7u/jdk7u6/jdk/file/8c2c5d63a17e/src/share/classes/java/lang/String.java
-(defn ^int hash-string* [^String? s]
-  (if-not (nil? s)
-    (let [len (.-length s)]
-      (if (pos? len)
-        (loop [i 0 hash 0]
-          (if (< i len)
-            (recur (inc i) (+ (u32-mul 31 hash) (.codeUnitAt s i)))
-            hash))
-        0))
-    0))
+(defn- ^int hash-string* [^String s]
+  (let [len (.-length s)]
+    (if (pos? len)
+      (loop [i 0 hash 0]
+        (if (< i len)
+          (recur (inc i) (+ (u32-mul 31 hash) (.codeUnitAt s i)))
+          (m3-hash-u32 hash)))
+      0)))
+
+(deftype HashCache [^:mutable ^#/(Map dynamic int) young
+                    ^:mutable ^#/(Map dynamic int) old]
+  (insert [_ o ^int h]
+    (when (.== 256 (.-length young))
+      (let [bak old]
+        (set! old young)
+        (.clear bak)
+        (set! young bak)))
+    (. young "[]=" o h))
+  (^int? lookup [_ o]
+   (or (. young "[]" o)
+     (when-some [h (. old "[]" o)]
+       (. young "[]=" o h)
+       h))))
+
+(def ^HashCache -hash-string-cache (HashCache. (new #/(Map dynamic int)) (new #/(Map dynamic int))))
+
+(defn hash-string [s]
+  (or ^:some (.lookup -hash-string-cache s)
+    (let [h (hash-string* s)]
+      (.insert -hash-string-cache s h)
+      h)))
+
+(extend-type String
+  IHash
+  (-hash [o] (hash-string o)))
 
 (defn ^int mix-collection-hash
   "Mix final collection hash for ordered or unordered collections.
@@ -4497,6 +4529,8 @@
     (dart:core/print (= [1 2 3] [1 2 [3]]))
     (dart:core/print (= 1 1)))
 
+  (dart:core/print (-hash "abc"))
+  (dart:core/print (-hash 0))
 
   )
 
