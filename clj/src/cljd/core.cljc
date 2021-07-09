@@ -1412,6 +1412,21 @@
   IHash
   (-hash [this] #_(goog/getUid this)))
 
+(defprotocol IEmptyableCollection
+  "Protocol for creating an empty collection."
+  (-empty [coll]
+    "Returns an empty collection of the same category as coll. Used
+     by cljd.core/empty."))
+
+(extend-type fallback
+  IEmptyableCollection
+  (-empty [coll] nil))
+
+(defn empty
+  "Returns an empty collection of the same category as coll, or nil"
+  [coll]
+  (-empty coll))
+
 (defprotocol IVolatile
   "Protocol for adding volatile functionality."
   (-vreset! [o new-value]
@@ -1439,11 +1454,10 @@
   IVolatile
   (-vreset! [_ new-state]
     (set! state new-state))
-
   IDeref
   (-deref [_] state))
 
-(defn volatile!
+(defn ^Volatile volatile!
   "Creates and returns a Volatile with an initial value of val."
   [val]
   (Volatile. val))
@@ -2048,7 +2062,7 @@
   (-next [coll] (if (nil? rest) nil (seq rest)))
   ICollection
   (-conj [coll o] (Cons. nil o coll -1))
-  #_#_IEmptyableCollection
+  IEmptyableCollection
   (-empty [coll] ())
   ISequential
   IHash
@@ -2109,8 +2123,8 @@
       (throw (ArgumentError. "Can't pop empty list"))))
   ICollection
   (-conj [coll o] (PersistentList. meta o coll (inc count) -1))
-  #_#_IEmptyableCollection
-  (-empty [coll] (-with-meta (.-EMPTY List) meta))
+  IEmptyableCollection
+  (-empty [coll] (-with-meta () meta))
   ISequential
   IHash
   (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
@@ -2118,11 +2132,7 @@
   ISeqable
   (-seq [coll] (when (< 0 count) coll))
   ICounted
-  (-count [coll] count)
-  ;; TODO: do or not
-  #_#_#_IReduce
-  (-reduce [coll f] (seq-reduce f coll))
-  (-reduce [coll f start] (seq-reduce f start coll)))
+  (-count [coll] count))
 
 (def ^PersistentList -EMPTY-LIST (PersistentList. nil nil nil 0 -1))
 
@@ -2211,8 +2221,8 @@
   ISequential
   ICollection
   (-conj [coll o] (cons o coll))
-  #_#_IEmptyableCollection
-  (-empty [coll] (.-EMPTY List))
+  IEmptyableCollection
+  (-empty [coll] ())
   IReduce
   (-reduce [coll f]
     (let [l (.-length string)
@@ -2322,8 +2332,9 @@
       (next s)))
   ICollection
   (-conj [coll o] (cons o coll))
-  #_#_IEmptyableCollection
-  (-empty [coll] (-with-meta (.-EMPTY List) meta))
+  IEmptyableCollection
+  ;; TODO understand why clj & cljs are different on that one
+  (-empty [coll] ())
   ISequential
   IHash
   (-hash-realized? [coll] (.!= -1 __hash))
@@ -2477,8 +2488,8 @@
                          (VectorNode. nil #dart ^:fixed ^VectorNode [root (new-path shift (VectorNode. nil tail))])
                          (push-tail coll shift root (VectorNode. nil tail)))]
           (PersistentVector. meta (inc cnt) new-shift new-root #dart ^:fixed [o] -1)))))
-  #_#_IEmptyableCollection
-  (-empty [coll] (-with-meta (.-EMPTY PersistentVector) meta))
+  IEmptyableCollection
+  (-empty [coll] (-with-meta [] meta))
   ISequential
   IHash
   (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
@@ -2681,8 +2692,8 @@
         (-reduce more f val))))
   ICollection
   (-conj [this o] (cons o this))
-  #_#_IEmptyableCollection
-  (-empty [coll] (.-EMPTY List))
+  IEmptyableCollection
+  (-empty [coll] ())
   IHash
   (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
   (-hash-realized? [coll] (.!= -1 __hash)))
@@ -2729,9 +2740,8 @@
   ICollection
   (-conj [coll o]
     (cons o coll))
-  #_#_IEmptyableCollection
-  (-empty [coll]
-    ())
+  IEmptyableCollection
+  (-empty [coll] ())
   IChunkedSeq
   (-chunked-first [coll]
     (ArrayChunk. arr off (alength arr)))
@@ -2947,7 +2957,7 @@
   ICollection
   (-conj [node o]
     (PersistentVector. meta 3 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v o]  -1))
-  #_#_IEmptyableCollection
+  IEmptyableCollection
   (-empty [node] nil)
   ISequential
   ISeqable
@@ -3569,8 +3579,8 @@
             (if (satisfies? IVector e)
               (recur (-assoc ret (-nth e 0) (-nth e 1)) (-next s))
               (throw (ArgumentError. "conj on a map takes map entries or seqables of map entries"))))))))
-  #_#_IEmptyableCollection
-  (-empty [coll] (-with-meta (.-EMPTY PersistentHashMap) meta))
+  IEmptyableCollection
+  (-empty [coll] (-with-meta {} meta))
   #_#_IEquiv
   (-equiv [coll other] (equiv-map coll other))
   #_#_IHash
