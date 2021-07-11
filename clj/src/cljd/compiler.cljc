@@ -988,7 +988,7 @@
               (for [n (range from *threshold*)
                     :let [rest-args (subvec synth-params base-vararg-arity n)]]
                 `(~'-invoke [~this ~@base-args ~@rest-args]
-                  (. ~this ~vararg-mname ~@base-args ~(tagged-literal 'dart rest-args)))))))
+                  (. ~this ~vararg-mname ~@base-args (seq ~(tagged-literal 'dart rest-args))))))))
         max-fixed-arity (or base-vararg-arity max-fixed-arity)
         invoke-more
         (when (or base-vararg-arity (seq invoke-exts))
@@ -999,8 +999,8 @@
                     (if (neg? above-threshold)
                       `(. ~this ~vararg-mname
                           ~@(take base-vararg-arity more-params)
-                          (.+ ~(tagged-literal 'dart (vec (drop base-vararg-arity more-params)))
-                              ~more-param))
+                          (seq (.+ ~(tagged-literal 'dart (vec (drop base-vararg-arity more-params)))
+                                 ~more-param)))
                       (let [more-destructuring (conj (subvec synth-params (dec *threshold*)) '& 'etc)
                             bound-vars (remove #{'&} more-destructuring)]
                         `(if (.< ~above-threshold (count ~more-param))
@@ -1037,9 +1037,9 @@
                             (. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)) #{})
                                ~@fixed-args)
                             (. ~this ~vararg-mname ~@fixed-args
-                               (.toList
-                                (.takeWhile ~(tagged-literal 'dart (vec rest-args))
-                                            (fn [e#] (.!= e# ~default-value))))))
+                              (seq (.toList
+                                     (.takeWhile ~(tagged-literal 'dart (vec rest-args))
+                                       (fn [e#] (.!= e# ~default-value)))))))
                          `(. ~this ~vararg-mname ~@fixed-args nil))
                        `(. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)) #{})
                                ~@fixed-args))))
