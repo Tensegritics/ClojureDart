@@ -8,9 +8,6 @@
 
 (declare -EMPTY-LIST -EMPTY-MAP -EMPTY-VECTOR)
 
-(def ^:dart to-map)
-(def ^:dart to-list)
-
 (def ^{:clj true} =)
 #_(def ^{:dart true} butlast)
 (def ^{:dart true} contains?)
@@ -278,7 +275,7 @@
                      (let [gmap (gensym "map__")
                            defaults (:or b)]
                        (loop [ret (-> bvec (conj gmap) (conj v)
-                                      (conj gmap) (conj `(if (seq? ~gmap) (to-map (seq ~gmap)) ~gmap))
+                                      (conj gmap) (conj `(if (seq? ~gmap) (-map-lit (seq ~gmap)) ~gmap))
                                       ((fn [ret]
                                          (if (:as b)
                                            (conj ret (:as b) gmap)
@@ -1253,16 +1250,16 @@
   (-equiv [this other]
     (or (identical? this other)
       (and (dart/is? other Keyword)
-        (.== ns (.-ns other)) (.== name (.-name other)))))
+        ;; TODO : use `ns` instead of `(.-ns this)`; I used this form
+        ;; because their is a bug in optional type emit
+        (.== (.-ns this) (.-ns other)) (.== name (.-name other)))))
   IFn
   (-invoke [kw coll]
     (get coll kw))
   (-invoke [kw coll not-found]
     (get coll kw not-found))
-
   IHash
   (-hash [this] _hash)
-
   INamed
   (-name [_] name)
   (-namespace [_] ns))
@@ -1392,7 +1389,7 @@
   (-remove-watch [this key]
     "Removes watcher that corresponds to key from this."))
 
-#_(deftype Atom [^:mutable state meta validator ^:mutable watches]
+(deftype Atom [^:mutable state meta ^Function? validator ^:mutable ^PersistentHashMap watches]
   IAtom
   IEquiv
   (-equiv [o other] (identical? o other))
@@ -1402,15 +1399,106 @@
   (-meta [_] meta)
   IWatchable
   (-notify-watches [this oldval newval]
-    (doseq [[key f] watches]
-      (f key this oldval newval)))
+    (when-some [s (seq watches)]
+      (loop [[[key f] & r] s]
+        (f key this oldval newval)
+        (when r (recur r)))))
   (-add-watch [this key f]
     (set! watches (assoc watches key f))
     this)
   (-remove-watch [this key]
-    (set! watches (dissoc watches key)))
+    (set! watches (dissoc watches key))
+    this)
   IHash
-  (-hash [this] #_(goog/getUid this)))
+  (-hash [this] (.-hashCode this))
+  ISwap
+  (-swap! [this f] (set-and-validate-atom-state! this (f state)))
+  (-swap! [this f a] (set-and-validate-atom-state! this (f state a)))
+  (-swap! [this f a b] (set-and-validate-atom-state! this (f state a b)))
+  (-swap! [this f a b xs] (set-and-validate-atom-state! this (apply f state a b xs)))
+  IReset
+  (-reset! [this new-value] (set-and-validate-atom-state! this new-value)))
+
+(defn- validate-atom-state [validator new-state]
+  ;; TODO : maybe add some try/catch (see ARef.java)
+  (when-not (validator new-state)
+    (throw (Exception. "Validator rejected reference state"))))
+
+(defn- set-and-validate-atom-state! [^Atom a new-state]
+  (when-some [validator (.-validator a)]
+    (validate-atom-state validator new-state))
+  (let [old-state (.-state a)]
+    (set! (.-state a) new-state)
+    (-notify-watches a old-state new-state)
+    new-state))
+
+(defn ^Atom atom
+  ([x]
+   (Atom. x nil nil {}))
+  ([x & {:keys [meta validator] :as o}]
+   (when-not (or (nil? meta) (map? meta))
+     (throw (Exception. "meta must satisfies IMap.")))
+   (when validator
+     (validate-atom-state validator x))
+   (Atom. x meta validator {})))
+
+(defn ^Atom add-watch
+  "Adds a watch function to an atom reference. The watch fn must be a
+  fn of 4 args: a key, the reference, its old-state, its
+  new-state. Whenever the reference's state might have been changed,
+  any registered watches will have their functions called. The watch
+  fn will be called synchronously. Note that an atom's state
+  may have changed again prior to the fn call, so use old/new-state
+  rather than derefing the reference. Keys must be unique per
+  reference, and can be used to remove the watch with remove-watch,
+  but are otherwise considered opaque by the watch mechanism.  Bear in
+  mind that regardless of the result or action of the watch fns the
+  atom's value will change.  Example:
+
+      (def a (atom 0))
+      (add-watch a :inc (fn [k r o n] (assert (== 0 n))))
+      (swap! a inc)
+      ;; Assertion Error
+      (deref a)
+      ;=> 1"
+  [^Atom reference key ^Function fn]
+  (-add-watch reference key fn))
+
+(defn ^Atom remove-watch
+  "Removes a watch (set by add-watch) from a reference"
+  [^Atom reference key]
+  (-remove-watch reference key))
+
+(defn swap!
+  "Atomically swaps the value of atom to be:
+  (apply f current-value-of-atom args). Note that f may be called
+  multiple times, and thus should be free of side effects.  Returns
+  the value that was swapped in."
+  ([^Atom a f] (-swap! a f))
+  ([^Atom a f x] (-swap! a f x))
+  ([^Atom a f x y] (-swap! a f x y))
+  ([^Atom a f x y & more] (-swap! a f x y more)))
+
+(defn reset-vals!
+  "Sets the value of atom to newval. Returns [old new], the value of the
+   atom before and after the reset."
+  [^Atom a newval]
+  (let [old-state (.-state a)]
+    [old-state (set-and-validate-atom-state! a newval)]))
+
+(defn swap-vals!
+  "Atomically swaps the value of atom to be:
+  (apply f current-value-of-atom args). Note that f may be called
+  multiple times, and thus should be free of side effects.
+  Returns [old new], the value of the atom before and after the swap."
+  ([^Atom a f]
+   (reset-vals! a (swap! a f)))
+  ([^Atom a f x]
+   (reset-vals! a (swap! a f x)))
+  ([^Atom a f x y]
+   (reset-vals! a (swap! a f x y)))
+  ([^Atom a f x y & more]
+   (reset-vals! a (swap! a f x y more))))
 
 (defprotocol IEmptyableCollection
   "Protocol for creating an empty collection."
@@ -3015,6 +3103,10 @@
   [x]
   (satisfies? IMapEntry x))
 
+(defn ^bool map?
+  [x]
+  (satisfies? IMap x))
+
 ; cgrand's
 (deftype #/(BitmapIterator E)
   [^:mutable ^BitmapNode node
@@ -3168,9 +3260,9 @@
                   (when (< i size)
                     (aset new-arr i (aget arr j))
                     (recur (inc j) (inc i))))
-                (BitmapNode. (dec cnt) (bit-or (bit-and bitmap-hi bitmap-lo) bit) (bit-or (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) new-arr))
+                (BitmapNode. (dec cnt) (bit-or bitmap-hi bit) (bit-or bitmap-lo bit) new-arr))
               :else
-              (BitmapNode. (dec cnt) (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) (doto (aclone (.-arr node)) (aset idx new-child)))))
+              (BitmapNode. (dec cnt) bitmap-hi bitmap-lo (doto (aclone (.-arr node)) (aset idx new-child)))))
           ; a kv pair but not the right k
           (not (= k (aget arr idx))) node
           ; the right kv pair
@@ -3182,7 +3274,7 @@
               (when (< i size)
                 (aset new-arr i (aget arr j))
                 (recur (inc i) (inc j))))
-            (BitmapNode. (dec cnt) (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) new-arr))))
+            (BitmapNode. (dec cnt) (bit-xor bitmap-hi bit) (bit-xor bitmap-lo bit) new-arr))))
       ; collisions node
       (let [n (* 2 cnt)]
         (loop [^int i 0]
@@ -3784,6 +3876,36 @@
     (if (next s)
       (recur (conj ret (first s)) (next s))
       (seq ret))))
+
+(defn update
+  "'Updates' a value in an associative structure, where k is a
+  key and f is a function that will take the old value
+  and any supplied args and return the new value, and returns a new
+  structure.  If the key does not exist, nil is passed as the old value."
+  ([m k f]
+   (assoc m k (f (get m k))))
+  ([m k f x]
+   (assoc m k (f (get m k) x)))
+  ([m k f x y]
+   (assoc m k (f (get m k) x y)))
+  ([m k f x y z]
+   (assoc m k (f (get m k) x y z)))
+  ([m k f x y z & more]
+   (assoc m k (apply f (get m k) x y z more))))
+
+(defn update-in
+  "'Updates' a value in a nested associative structure, where ks is a
+  sequence of keys and f is a function that will take the old value
+  and any supplied args and return the new value, and returns a new
+  nested structure.  If any levels do not exist, hash-maps will be
+  created."
+  [m ks f & args]
+  (let [up (fn up [m ks f args]
+             (let [[k & ks] ks]
+               (if ks
+                 (assoc m k (up (get m k) ks f args))
+                 (assoc m k (apply f (get m k) args)))))]
+    (up m ks f args)))
 
 (defn drop
   "Returns a lazy sequence of all but the first n items in coll.
@@ -4498,53 +4620,14 @@
   (dart:core/print (fn ([] 1) ([^int a] a)))
 
 
-  (dart:core/print (.-length (.-arr (.-root (persistent! (reduce #(assoc! %1 %2 %2) (transient {}) (map str (take 20 (iterate inc 0)))))))))
+  (let [at (atom {:a {:b {:c "coucou"}}} :meta {:a :b} :validator (fn [one] (dart:core/print "one") true))]
+    (add-watch at :kk (fn [key ref old-state new-state]
+                        (dart:core/print old-state)
+                        (dart:core/print new-state)))
+    (remove-watch at :kk))
 
-  (dart:core/print (.-length (.-arr (.-root (persistent! (reduce #(assoc! %1 %2 %2) (transient {}) (map str (take 32 (iterate inc 0)))))))))
 
 
-  (dart:core/print (.-length (.-arr (.-root (persistent! (reduce #(assoc! %1 %2 %2) (transient {}) (map str (take 1000 (iterate inc 0)))))))))
 
-  (dart:core/print (-equiv (next (seq "abcd")) (next (seq "abcd"))))
-  (dart:core/print (-equiv (next (seq "abcd")) ["b" "c" "d"]))
-  (dart:core/print (-equiv (map inc [1 2 3]) (map inc [1  2 3])))
-  (dart:core/print (-equiv [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33]
-                     '(1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33)))
-  (dart:core/print (-equiv
-                     (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34])
-                     (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34])))
-
-  (dart:core/print (map inc nil))
-  (dart:core/print
-    (take 5 (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35])))
-
-  (let [a (take 5 (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35]))]
-    (dart:core/print (hash a))
-    (dart:core/print (hash (conj a 11)))
-    (dart:core/print (nth a 3))
-    (dart:core/print (nth a 3.0)))
-
-  #_(let [rng (take 100 (iterate inc 0))]
-    (quick-bench (into {} (->> rng
-                            (map #(do [% %]))
-                            (filter #(.-isOdd (first %)))
-                            (mapcat #(conj [%] %)))))
-    (quick-bench (into {}  (comp (map #(do [% %]))
-                             (filter #(.-isOdd (first %)))
-                             (mapcat #(conj [%] %)))
-                   rng)))
-
-  (let [a (take 5 (map inc [1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31 32 33 34 35]))]
-    #_(dart:core/print (conj [] (vec a)))
-    (dart:core/print (= [1 2 3] [1 2 [3]]))
-    (dart:core/print (= 1 1)))
-
-  (dart:core/print (-hash "abc"))
-  (dart:core/print (-hash 0))
 
   )
-
-#_(if (or (not (and (realized-hash? x) (realized-hash? y)))
-      (== (-hash x) (-hash y)))
-  traversal
-  false)
