@@ -397,7 +397,9 @@
                        :else
                        (throw (Exception. (str "Expecting " nparams " type arguments to " class ", got " nargs "."))))]
           [#(let [v (type-env' %)]
-              (or (when (:is-param v) (type-env (:type v))) v))
+              (or (when (:is-param v)
+                    (cond-> (type-env (:type v))
+                      (:nullable v) (assoc :nullable true))) v))
            member-info]))))
 
 (declare actual-parameters)
