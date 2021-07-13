@@ -6,7 +6,7 @@
   (extensions [x])
   (satisfies [x]))
 
-(declare -EMPTY-LIST -EMPTY-MAP -EMPTY-VECTOR)
+(declare -EMPTY-LIST -EMPTY-MAP -EMPTY-SET -EMPTY-VECTOR)
 
 (def ^{:clj true} =)
 #_(def ^{:dart true} butlast)
@@ -1127,6 +1127,8 @@
   {:inline (fn [obj m] `(-with-meta ~obj ~m))
    :inline-arities #{2}}
   [obj m]
+  (when-not (map? m)
+    (throw (Exception. (str "class " (.-runtimeType m) " cannot be cast to cljd.core/IMap"))))
   (-with-meta obj m))
 
 (defprotocol IMeta
@@ -1365,6 +1367,44 @@
      (if ks
        (recur ntcoll (first ks) (next ks))
        ntcoll))))
+
+(defprotocol ISet
+  "Protocol for adding set functionality to a collection."
+  (-disjoin [coll v]
+    "Returns a new collection of coll that does not contain v."))
+
+(extend-type Null
+  ISet
+  (-disjoin [coll v] nil))
+
+(defn disj
+  "disj[oin]. Returns a new set of the same (hashed/sorted) type, that
+  does not contain key(s)."
+  ([set] set)
+  ([set key]
+   (-disjoin set key))
+  ([set key & ks]
+   (let [ret (-disjoin set key)]
+     (if ^some ks
+       (recur ret (first ks) (next ks))
+       ret))))
+
+(defprotocol ITransientSet
+  "Protocol for adding set functionality to a transient collection."
+  (-disjoin! [tcoll v]
+    "Returns tcoll without v."))
+
+(defn disj!
+  "disj[oin]. Returns a transient set of the same (hashed/sorted) type, that
+  does not contain key(s)."
+  ([set] set)
+  ([set key]
+   (-disjoin! set key))
+  ([set key & ks]
+   (let [ret (-disjoin! set key)]
+     (if ^some ks
+       (recur ret (first ks) (next ks))
+       ret))))
 
 (defprotocol IAtom
   "Marker protocol indicating an atom.")
@@ -2523,6 +2563,23 @@
                                :else (unchecked-array-for root shift i')))
                :else acc))))))))
 
+(deftype #/(PVIterator E)
+  [^PersistentVector v
+   ^int cnt
+   ^:mutable ^int i
+   ^:mutable ^List curr]
+  #/(Iterator E)
+  (current [iter] (aget curr (bit-and (dec i) 31)))
+  (moveNext [iter]
+    (if (< i cnt)
+      (do (set! i (inc i))
+          (if (or (< 0 (bit-and i 31)) (zero? i))
+            (if (<= (bit-and-not (dec cnt) 31) i)
+              (set! curr (.-tail v))
+              (set! curr (unchecked-array-for (.-root v) (.-shift v) i))))
+          true)
+      false)))
+
 (deftype #/(PersistentVector E)
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
   ^:mixin EquivSequentialHashMixin
@@ -2570,9 +2627,6 @@
         (let [root-overflow? (< (u32-bit-shift-left 1 shift) (u32-bit-shift-right cnt 5))
               new-shift (if root-overflow? (+ shift 5) shift)
               new-root (if root-overflow?
-                         #_(let [n-r (VectorNode. nil (.filled List 2 (new-path shift (VectorNode. nil tail))))]
-                             (aset (.-arr n-r) 0 root)
-                             n-r)
                          (VectorNode. nil #dart ^:fixed ^VectorNode [root (new-path shift (VectorNode. nil tail))])
                          (push-tail coll shift root (VectorNode. nil tail)))]
           (PersistentVector. meta (inc cnt) new-shift new-root #dart ^:fixed [o] -1)))))
@@ -3307,13 +3361,17 @@
               (when (< i size)
                 (aset new-arr i (aget arr j))
                 (recur (inc i) (inc j))))
-            (BitmapNode. (inc cnt) (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) new-arr))
+            #_(BitmapNode. (inc cnt) (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) new-arr)
+            (BitmapNode. (inc cnt) (bit-xor bitmap-hi bit) (bit-xor bitmap-lo bit) new-arr))
           (zero? (bit-and hi lo)) ; node
           (let [^BitmapNode child (aget arr idx)
                 ^BitmapNode new-child (.inode_assoc child (+ shift 5) h k v)]
             (if (identical? child new-child)
               node
               (BitmapNode. (+ cnt (- (.-cnt new-child) (.-cnt child)))
+                (bit-xor bitmap-hi bit) (bit-xor bitmap-lo bit)
+                (doto (aclone (.-arr node)) (aset idx new-child)))
+              #_(BitmapNode. (+ cnt (- (.-cnt new-child) (.-cnt child)))
                 (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit)
                 (doto (aclone (.-arr node)) (aset idx new-child)))))
           :else ; kv
@@ -3724,6 +3782,118 @@
 
 (def -EMPTY-MAP
   (PersistentHashMap. nil (BitmapNode. 0 0 0 (.empty List)) -1))
+
+(deftype #/(PersistentHashSet E)
+  [meta ^PersistentHashMap hm ^:mutable ^int __hash]
+  ^:mixin #/(dart-coll/SetMixin E)
+  (contains [this e]
+    (if-some [_ (-lookup hm e nil)]
+      true false))
+  (lookup [this e]
+    (-lookup hm e nil))
+  (add [this e]
+    (throw (UnsupportedError. "add not supported on PersistentHashSet")))
+  (remove [this e]
+    (throw (UnsupportedError. "remove not supported on PersistentHashSet")))
+  (length [this] (-count hm))
+  (iterator [this] (.-iterator ^#/(Iterable E) (.-keys hm)))
+  (toSet [this] (dart:core/Set.of ^#/(Iterable E) (.-keys hm)))
+  ;; TODO: not sure of this one
+  (^#/(PersistentHashSet R) #/(cast R) [coll]
+   (PersistentHashSet. meta hm __hash))
+  ^:mixin ToStringMixin
+  IPrint
+  (-print [o sink]
+    (print-sequential "#{" "}" (-seq o) sink))
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (PersistentHashSet. new-meta hm __hash)))
+  IMeta
+  (-meta [coll] meta)
+  ICollection
+  (-conj [coll o]
+    (PersistentHashSet. meta (assoc hm o true) -1))
+  IEmptyableCollection
+  (-empty [coll] (-with-meta #{} meta))
+  IEquiv
+  (-equiv [coll other]
+    #_(and
+      (set? other)
+      (== (count coll) (count other))
+      ^boolean
+      (try
+        (reduce-kv
+          #(or (contains? other %2) (reduced false))
+          true hm)
+        (catch js/Error ex
+          false))))
+  IHash
+  (-hash [coll] #_(caching-hash coll hash-unordered-coll __hash))
+  ISeqable
+  (-seq [coll] (iterator-seq (.-iterator (.-keys hm))))
+  ICounted
+  (-count [coll] (-count hm))
+  ILookup
+  (-lookup [coll v]
+    (-lookup hm v nil))
+  (-lookup [coll v not-found]
+    (if-some [_ (-lookup hm v nil)]
+      v
+      not-found))
+  ISet
+  (-disjoin [coll v]
+    (PersistentHashSet. meta (-dissoc hm v) -1))
+  IFn
+  (-invoke [coll k]
+    (-lookup coll k))
+  (-invoke [coll k not-found]
+    (-lookup coll k not-found))
+  IEditableCollection
+  (-as-transient [coll] (TransientHashSet. (-as-transient hm))))
+
+(deftype TransientHashSet [^:mutable ^TransientHashMap transient-map]
+  ITransientCollection
+  (-conj! [tcoll o]
+    (when-not (.-editable transient-map)
+      (throw (ArgumentError. "conj! after persistent!")))
+    (set! transient-map (assoc! transient-map o true))
+    tcoll)
+  (-persistent! [tcoll]
+    (when-not (.-editable transient-map)
+      (throw (ArgumentError. "persistent! called twice")))
+    (PersistentHashSet. nil (persistent! transient-map) -1))
+  ITransientSet
+  (-disjoin! [tcoll v]
+    (when-not (.-editable transient-map)
+      (throw (ArgumentError. "disj! called twice")))
+    (set! transient-map (dissoc! transient-map v))
+    tcoll)
+  ICounted
+  (-count [tcoll]
+    (when-not (.-editable transient-map)
+      (throw (ArgumentError. "count after persistent!")))
+    (count transient-map))
+  ILookup
+  (-lookup [tcoll v]
+    (when-not (.-editable transient-map)
+      (throw (ArgumentError. "lookup after persistent!")))
+    (-lookup tcoll v nil))
+  (-lookup [tcoll v not-found]
+    (when-not (.-editable transient-map)
+      (throw (ArgumentError. "lookup after persistent!")))
+    (if-some [_ (-lookup transient-map v nil)]
+      v
+      not-found))
+  IFn
+  (-invoke [tcoll k]
+    (-lookup tcoll k nil))
+  (-invoke [tcoll k not-found]
+    (-lookup tcoll k not-found)))
+
+(def -EMPTY-SET
+  (PersistentHashSet. nil {} -1))
 
 (defn ^List to-array
   [coll]
@@ -4576,11 +4746,32 @@
 (defn vec [coll]
   (into [] coll))
 
+(defn set [coll]
+  (into #{} coll))
+
+(defn hash-set
+  "Returns a new hash set with supplied keys.  Any equal keys are
+  handled as if by repeated uses of conj."
+  ([] #{})
+  ([& keys] (into #{} keys)))
+
 (defn- -map-lit [^List kvs]
   (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
     (if (< i (.-length kvs))
       (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
       (-persistent! tm))))
+
+(defn hash-map
+  "keyval => key val
+  Returns a new hash map with supplied mappings."
+  [& keyvals]
+  (when (.-isOdd (count keyvals))
+    (throw (ArgumentError. (str "No value supplied for key: " (last keyvals)))))
+  (loop [in (seq keyvals)
+         out (transient {})]
+    (if in
+      (recur (nnext in) (assoc! out (first in) (second in)))
+      (persistent! out))))
 
 (defn- -list-lit [^List xs]
   (loop [^PersistentList l () ^int i (.-length xs)]
@@ -4627,7 +4818,14 @@
     (remove-watch at :kk))
 
 
+  (let [pv (into [] (take 1000 (map (fn [x] x) (iterate inc 0))))]
+    (dart:core/print (iterator-seq (PVIterator. pv (.-cnt pv) 0 (unchecked-array-for (.-root pv) (.-shift pv) 0)))))
 
+  (let [a #{1 2 3 4 5}]
+    (dart:core/print (disj a 1 2 4 3 5 6)))
 
+  (dart:core/print (hash-set :a :b 1 2 3 "d"))
+
+  (dart:core/print (next (seq #{1 2 3 4})))
 
   )
