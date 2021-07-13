@@ -451,35 +451,34 @@
 (defn resolve-dart-method
   [class-name mname args type-env]
   (when-some [type (resolve-type class-name {:type-vars type-env})] ; TODO pass type-vars
-    (let [class-info (get-in dart-libs-info [(:lib type) (:type type)])]
-      (if-some [member-info (some-> (dart-member-lookup type (name mname)) actual-member)] ; TODO are there special cases for operators? eg unary-
-        (case (:kind member-info)
-          :field
-          [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args]
-          :method
-          (let [[fixeds opts] (unresolve-params (:parameters member-info))
-                {:as actual :keys [opt-kind] [this & fixed-opts] :fixed-params}
-                (parse-dart-params args)
-                _ (when-not (= (count fixeds) (count fixed-opts))
-                    (throw (Exception. (str "Fixed arity mismatch on " mname " for " class-name))))
-                _ (when-not (case opt-kind :named (set? opts) (vector? opts))
-                    (throw (Exception. (str "Optional mismatch on " mname " for " class-name))))
-                actual-fixeds
-                (into [this] (map transfer-tag fixed-opts fixeds))
-                actual-opts
-                (case opt-kind
-                  :named
-                  (into []
-                    (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d]))
-                    (:opt-params actual))
-                  :positional
-                  (mapv transfer-tag (:opt-params actual) opts))]
-            [(vary-meta mname assoc :tag (unresolve-type (:return-type member-info)))
-             (cond-> actual-fixeds
-               (seq actual-opts)
-               (-> (conj (case opt-kind :named '.& '...))
-                 (into actual-opts)))]))
-        #_(TODO WARN)))))
+    (if-some [member-info (some-> (dart-member-lookup type (name mname)) actual-member)] ; TODO are there special cases for operators? eg unary-
+      (case (:kind member-info)
+        :field
+        [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args]
+        :method
+        (let [[fixeds opts] (unresolve-params (:parameters member-info))
+              {:as actual :keys [opt-kind] [this & fixed-opts] :fixed-params}
+              (parse-dart-params args)
+              _ (when-not (= (count fixeds) (count fixed-opts))
+                  (throw (Exception. (str "Fixed arity mismatch on " mname " for " class-name))))
+              _ (when-not (case opt-kind :named (set? opts) (vector? opts))
+                  (throw (Exception. (str "Optional mismatch on " mname " for " class-name))))
+              actual-fixeds
+              (into [this] (map transfer-tag fixed-opts fixeds))
+              actual-opts
+              (case opt-kind
+                :named
+                (into []
+                  (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d]))
+                  (:opt-params actual))
+                :positional
+                (mapv transfer-tag (:opt-params actual) opts))]
+          [(vary-meta mname assoc :tag (unresolve-type (:return-type member-info)))
+           (cond-> actual-fixeds
+             (seq actual-opts)
+             (-> (conj (case opt-kind :named '.& '...))
+               (into actual-opts)))]))
+      #_(TODO WARN))))
 
 (defn- assoc-ns [sym ns]
   (with-meta (symbol ns (name sym)) (meta sym)))
@@ -812,7 +811,7 @@
        (cond
          (map? coll) 'cljd.core/-EMPTY-MAP
          (vector? coll) 'cljd.core/-EMPTY-VECTOR
-         #_#_(set? coll) 'cljd.core/-EMPTY-SET
+         (set? coll) 'cljd.core/-EMPTY-SET
          (seq? coll) 'cljd.core/-EMPTY-LIST ; should we use apply list?
          :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
        env))))
