@@ -2014,6 +2014,7 @@
 
 (deftype HashCache [^:mutable ^#/(Map dynamic int) young
                     ^:mutable ^#/(Map dynamic int) old]
+  :type-only true
   (insert [_ o ^int h]
     (when (.== 256 (.-length young))
       (let [bak old]
@@ -2021,10 +2022,10 @@
         (.clear bak)
         (set! young bak)))
     (. young "[]=" o h))
-  (^int? lookup [_ o]
+  (^int? lookup [this o]
    (or (. young "[]" o)
      (when-some [h (. old "[]" o)]
-       (. young "[]=" o h)
+       (.insert this o h)
        h))))
 
 (def ^HashCache -hash-string-cache (HashCache. (new #/(Map dynamic int)) (new #/(Map dynamic int))))
