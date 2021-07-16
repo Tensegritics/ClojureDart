@@ -1190,18 +1190,17 @@
 (defn ^bool -equiv-sequential
   "Assumes x is sequential."
   [x y]
-  (if (and (sequential? y)
-        (or (not (and (counted? x) (counted? y)))
-          (== (count x) (count y)))
-        (or (not (and (-hash-realized? x) (-hash-realized? y)))
-          (== (-hash x) (-hash y))))
+  (and (sequential? y)
+    (or (not (counted? x)) (not (counted? y))
+      (== (count x) (count y)))
+    (or (not (-hash-realized? x)) (not (-hash-realized? y))
+      (== (-hash x) (-hash y)))
     (loop [xs (seq x) ys (seq y)]
       (cond
         (nil? xs) (nil? ys)
         (nil? ys) false
         (= (first xs) (first ys)) (recur (next xs) (next ys))
-        :else false))
-    false))
+        :else false))))
 
 (deftype ^:abstract EquivSequentialHashMixin []
   #_#_#_#_Object
@@ -2566,25 +2565,25 @@
 
 (deftype #/(PVIterator E)
   [^PersistentVector v
-   ^int cnt
    ^:mutable ^int i
    ^:mutable ^List curr]
   #/(Iterator E)
   (current [iter] (aget curr (bit-and (dec i) 31)))
   (moveNext [iter]
-    (if (< i cnt)
-      (do (set! i (inc i))
-          (if (or (< 0 (bit-and i 31)) (zero? i))
-            (if (<= (bit-and-not (dec cnt) 31) i)
-              (set! curr (.-tail v))
-              (set! curr (unchecked-array-for (.-root v) (.-shift v) i))))
-          true)
-      false)))
+    (and (< i (.-cnt v))
+      (do
+        (when (zero? (bit-and i 31))
+          (set! curr (if (<= (bit-and-not (dec (.-cnt v)) 31) i)
+                       (.-tail v)
+                       (unchecked-array-for (.-root v) (.-shift v) i))))
+        (set! i (inc i))
+        true))))
 
 (deftype #/(PersistentVector E)
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
+  (iterator [v] (PVIterator. v 0 tail)) ; tail assignment is only to pass a non-null list
   ^:mixin #/(SeqListMixin E)
   (^#/(PersistentVector R) #/(cast R) [coll]
    (PersistentVector. meta cnt shift root tail __hash))
@@ -4846,7 +4845,7 @@
 
 
   (let [pv (into [] (take 1000 (map (fn [x] x) (iterate inc 0))))]
-    (dart:core/print (iterator-seq (PVIterator. pv (.-cnt pv) 0 (unchecked-array-for (.-root pv) (.-shift pv) 0)))))
+    (dart:core/print (iterator-seq (.-iterator pv))))
 
   (let [a #{1 2 3 4 5}]
     (dart:core/print (disj a 1 2 4 3 5 6)))
