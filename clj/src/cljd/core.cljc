@@ -963,6 +963,13 @@
        (-equiv y (first more)))
      false)))
 
+(defn ^bool not=
+  "Same as (not (= obj1 obj2))"
+  ([x] false)
+  ([x y] (not (= x y)))
+  ([x y & more]
+   (not (apply = x y more))))
+
 (defprotocol IIndexed
   "Protocol for collections to provide indexed-based access to their items."
   (-nth [coll n] [coll n not-found]
@@ -2671,10 +2678,10 @@
     (if (dart/is? k int)
       (and (<= 0 k) (< k cnt))
       false))
-  #_#_IFind
+  IFind
   (-find [coll n]
-    (when (and (<= 0 n) (< n cnt))
-      (MapEntry. n (aget (unchecked-array-for coll n) (bit-and n 0x01f)) nil)))
+    (when-some [v' (-lookup coll n nil)]
+      (PersistentMapEntry. n v' -1)))
   #_APersistentVector
   IVector
   (-assoc-n [coll n val]
@@ -3821,6 +3828,8 @@
     (throw (UnsupportedError. "add not supported on PersistentHashSet")))
   (remove [this e]
     (throw (UnsupportedError. "remove not supported on PersistentHashSet")))
+  (clear [this]
+    (throw (UnsupportedError. "clear not supported on PersistentHashSet")))
   (length [this] (-count hm))
   (iterator [this] (.-iterator ^#/(Iterable E) (.-keys hm)))
   (toSet [this] (dart:core/Set.of ^#/(Iterable E) (.-keys hm)))
@@ -3844,6 +3853,7 @@
   IEmptyableCollection
   (-empty [coll] (-with-meta #{} meta))
   IEquiv
+  ;; TODO
   (-equiv [coll other]
     #_(and
       (set? other)
@@ -3856,6 +3866,7 @@
         (catch js/Error ex
           false))))
   IHash
+  ;; TODO
   (-hash [coll] #_(caching-hash coll hash-unordered-coll __hash))
   ISeqable
   (-seq [coll] (iterator-seq (.-iterator (.-keys hm))))
@@ -4246,6 +4257,31 @@
   "Returns a lazy sequence of x, (f x), (f (f x)) etc. f must be free of side-effects"
   {:added "1.0"}
   [f x] (cons x (lazy-seq (iterate f (f x)))))
+
+;; TODO : same as iterate, maybe follow clj/cljs implementation of Range
+(defn range
+  "Returns a lazy seq of nums from start (inclusive) to end
+  (exclusive), by step, where start defaults to 0, step to 1, and end to
+  infinity. When step is equal to 0, returns an infinite sequence of
+  start. When start is equal to end, returns empty list."
+  ([] (range 0 (.-maxFinite dart:core/double) 1))
+  ([end] (range 0 end 1))
+  ([start end] (range start end 1))
+  ([start end step]
+   (lazy-seq
+     (let [b (chunk-buffer 32)
+           comp (cond (or (zero? step) (== start end)) not=
+                      (pos? step) <
+                      (neg? step) >)]
+       (loop [i start]
+         (if (and (< (count b) 32)
+               (comp i end))
+           (do
+             (chunk-append b i)
+             (recur (+ i step)))
+           (chunk-cons (chunk b)
+             (when (comp i end)
+               (range i end step)))))))))
 
 (defn nthrest
   "Returns the nth rest of coll, coll when n is 0."
@@ -4853,5 +4889,7 @@
   (dart:core/print (hash-set :a :b 1 2 3 "d"))
 
   (dart:core/print (next (seq #{1 2 3 4})))
+
+  (dart:core/print (vec (take 100 (range 0 100 3))))
 
   )
