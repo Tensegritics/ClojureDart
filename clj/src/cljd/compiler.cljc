@@ -1537,7 +1537,6 @@
                                                 :clj-alias ns-sym}))
           ns-map
           (reduce #(%2 %1) ns-map
-
             (for [[lib & {:keys [as refer rename]}] require-specs
                   :let [dart-alias (if (= 'cljd.core lib)
                                      "cljd"
@@ -1555,9 +1554,10 @@
                   (cond-> (nil? (get (:imports ns-map) dartlib))
                     (assoc-in [:imports dartlib] {:dart-alias dart-alias :clj-alias clj-alias :ns clj-ns}))
                   (assoc-in [:aliases clj-alias] dartlib)
-                  (update :mappings into (for [[from to] (concat (zipmap refer refer) rename)]
-                                            [from (with-meta (symbol clj-alias (name to))
-                                                    {:dart (nil? clj-ns)})]))))))]
+                  (update :mappings into
+                    (for [to refer :let [from (get rename to to)]]
+                      [from (with-meta (symbol clj-alias (name to))
+                              {:dart (nil? clj-ns)})]))))))]
       (swap! nses assoc ns-sym ns-map :current-ns ns-sym))))
 
 (defn- emit-no-recur [expr env]
