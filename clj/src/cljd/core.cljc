@@ -526,6 +526,38 @@
                          "cond requires an even number of forms")))
             (cons 'cljd.core/cond (next (next clauses))))))
 
+(defmacro cond->
+  "Takes an expression and a set of test/form pairs. Threads expr (via ->)
+  through each form for which the corresponding test
+  expression is true. Note that, unlike cond branching, cond-> threading does
+  not short circuit after the first true test expression."
+  [expr & clauses]
+  #_(assert (even? (count clauses)))
+  (let [g (gensym)
+        steps (map (fn [[test step]] `(if ~test (-> ~g ~step) ~g))
+                (partition 2 clauses))]
+    `(let [~g ~expr
+           ~@(interleave (repeat g) (butlast steps))]
+       ~(if (empty? steps)
+          g
+          (last steps)))))
+
+(defmacro cond->>
+  "Takes an expression and a set of test/form pairs. Threads expr (via ->>)
+  through each form for which the corresponding test expression
+  is true.  Note that, unlike cond branching, cond->> threading does not short circuit
+  after the first true test expression."
+  [expr & clauses]
+  #_(assert (even? (count clauses)))
+  (let [g (gensym)
+        steps (map (fn [[test step]] `(if ~test (->> ~g ~step) ~g))
+                (partition 2 clauses))]
+    `(let [~g ~expr
+           ~@(interleave (repeat g) (butlast steps))]
+       ~(if (empty? steps)
+          g
+          (last steps)))))
+
 (defmacro loop
   "Evaluates the exprs in a lexical context in which the symbols in
   the binding-forms are bound to their respective init-exprs or parts
@@ -550,6 +582,15 @@
            (loop* ~(vec (interleave gs gs))
                   (let ~(vec (interleave bs gs))
                     ~@body)))))))
+
+(defmacro while
+  "Repeatedly executes body while test expression is true. Presumes
+  some side-effect will cause test to become false/nil. Returns nil"
+  [test & body]
+  `(loop []
+     (when ~test
+       ~@body
+       (recur))))
 
 (defmacro comment
   "Ignores body, yields nil"
@@ -1596,6 +1637,19 @@
   [val]
   (Volatile. val))
 
+(defn ^bool not
+  "Returns true if x is logical false, false otherwise."
+  {:inline (fn [x] `^bool (if ~x false true))
+   :inline-arities #{1}}
+  [x] (if x false true))
+
+(defmacro if-not
+  "Evaluates test. If logical false, evaluates and returns then expr,
+  otherwise else expr, if supplied, else nil."
+  ([test then] `(if-not ~test ~then nil))
+  ([test then else]
+   `(if (not ~test) ~then ~else)))
+
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:bootstrap ^:private nary-inline
   ([op] (nary-inline nil nil op))
@@ -2411,12 +2465,6 @@
   at end (defaults to length of string), exclusive."
   ([^String s start] (. s (substring start)))
   ([^String s start end] (. s (substring start end))))
-
-(defn ^bool not
-  "Returns true if x is logical false, false otherwise."
-  {:inline (fn [x] `^bool (if ~x false true))
-   :inline-arities #{1}}
-  [x] (if x false true))
 
 (deftype #/(LazySeq E)
   [meta ^:mutable ^some fn ^:mutable s ^:mutable ^int __hash]
@@ -3839,7 +3887,7 @@
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink]
-    (print-sequential "#{" "}" (-seq o) sink))
+    (print-sequential "#{" "}" o sink))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -4419,6 +4467,32 @@
         name
         (last forms))))
 
+(defmacro some->
+  "When expr is not nil, threads it into the first form (via ->),
+  and when that result is not nil, through the next etc"
+  [expr & forms]
+  (let [g (gensym)
+        steps (map (fn [step] `(if (nil? ~g) nil (-> ~g ~step)))
+                forms)]
+    `(let [~g ~expr
+           ~@(interleave (repeat g) (butlast steps))]
+       ~(if (empty? steps)
+          g
+          (last steps)))))
+
+(defmacro some->>
+  "When expr is not nil, threads it into the first form (via ->>),
+  and when that result is not nil, through the next etc"
+  [expr & forms]
+  (let [g (gensym)
+        steps (map (fn [step] `(if (nil? ~g) nil (->> ~g ~step)))
+                forms)]
+    `(let [~g ~expr
+           ~@(interleave (repeat g) (butlast steps))]
+       ~(if (empty? steps)
+          g
+          (last steps)))))
+
 (defn keep
   "Returns a lazy sequence of the non-nil results of (f item). Note,
   this means false return values will be included.  f must be free of
@@ -4891,5 +4965,10 @@
   (dart:core/print (next (seq #{1 2 3 4})))
 
   (dart:core/print (vec (take 100 (range 0 100 3))))
+
+  (dart:core/print (some-> {:a :b} :a))
+  (dart:core/print (= 0 0.0))
+  (dart:core/print (hash 0))
+  (dart:core/print (hash 0.0))
 
   )
