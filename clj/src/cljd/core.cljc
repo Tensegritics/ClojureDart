@@ -4930,7 +4930,7 @@
 
 (def d6 (inc (rand-int 6)))
 
-(defn main []
+#_(defn main []
   (dart:core/print d6)
   (dart:core/print {1 2 3 [4 5 6 7]})
   (dart:core/print [4 5 6 7])
