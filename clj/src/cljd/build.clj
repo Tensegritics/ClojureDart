@@ -1,7 +1,8 @@
 (ns cljd.build
   (:require [cljd.compiler :as compiler]
             [clojure.tools.cli :as ctc]
-            [clojure.string :as str]))
+            [clojure.string :as str]
+            [clojure.stacktrace :as st]))
 
 (defn compile-core []
   (binding [compiler/*lib-path* (str (System/getProperty "user.dir") "/lib")]
@@ -16,7 +17,7 @@
       (doseq [n namespaces]
         (try (compiler/compile-namespace n)
              (catch Exception e
-               (println (.getMessage e)))))
+               (cs/print-stack-trace e))))
       (when watch
         (println "Press ENTER to recompile files :")
         (when (pos? (.read (System/in)))
