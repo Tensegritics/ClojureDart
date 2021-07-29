@@ -14,7 +14,9 @@
     (time (compile-core))
     (loop []
       (doseq [n namespaces]
-        (compiler/compile-namespace n))
+        (try (compiler/compile-namespace n)
+             (catch Exception e
+               (println (.getMessage e)))))
       (when watch
         (println "Press ENTER to recompile files :")
         (when (pos? (.read (System/in)))
