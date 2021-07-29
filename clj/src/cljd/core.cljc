@@ -2833,7 +2833,8 @@
   Object
   (add [_ o]
     (aset ^List arr end o)
-    (set! end (inc end)))
+    (set! end (inc end))
+    nil)
   (chunk [_]
     (let [ret (ArrayChunk. ^List arr 0 end)]
       (set! arr nil)
@@ -2908,10 +2909,10 @@
     (ChunkedCons. chunk rest nil -1)
     rest))
 
-(defn chunk-append [b x]
+(defn chunk-append [^ChunkBuffer b x]
   (.add b x))
 
-(defn chunk [b]
+(defn chunk [^ChunkBuffer b]
   (.chunk b))
 
 (deftype #/(PVChunkedSeq E)
@@ -4772,8 +4773,7 @@
        (with-meta (persistent! (transduce xform conj! (transient to) from)) (meta to))
        (transduce xform conj to from))))
 
-;; TODO : test in cljd when `case` is ready
-#_(defmacro for
+(defmacro for
   "List comprehension. Takes a vector of one or more
    binding-form/collection-expr pairs, each followed by zero or more
    modifiers, and yields a lazy sequence of evaluations of expr.
@@ -4792,7 +4792,7 @@
                (fn wrap [mods body]
                  (if-some [[mod expr & more-mods] (seq mods)]
                    (let [body (wrap more-mods body)]
-                     (case mod
+                     (clojure.core/case mod
                        :let `(let ~expr ~body)
                        :while `(if ~expr ~body (or ~@ors))
                        :when `(if ~expr ~body (recur (next ~arg)))))
@@ -4822,16 +4822,16 @@
        (emit-innermost-chunked [arg ors binding mods body-expr]
          (let [buf `buf#]
            `(let [c# (chunk-first ~arg)
-                  size# (int (count c#))
+                  size# (count c#)
                   ~buf (chunk-buffer size#)
                   exit#
-                  (loop [i# (int 0)]
+                  (loop [i# 0]
                     (when (< i# size#)
                       (or
                         (let [~binding (-nth c# i#)]
                           ~(chunked-wrap mods
                              `(chunk-append ~buf ~body-expr)))
-                        (recur (unchecked-inc i#)))))]
+                        (recur (inc i#)))))]
               (cond
                 (pos? (count ~buf))
                 (chunk-cons
@@ -4845,7 +4845,7 @@
        (chunked-wrap [mods body]
          (if-some [[mod expr & more-mods] (seq mods)]
            (let [body (chunked-wrap more-mods body)]
-             (case mod
+             (clojure.core/case mod
                :let `(let ~expr ~body)
                :while `(if ~expr ~body true)
                :when `(when ~expr ~body)))
@@ -4853,7 +4853,7 @@
     `(lazy-seq ~(emit seq-exprs nil))))
 
 ;; TODO : test in cljd when `case` is ready
-#_(defmacro doseq
+(defmacro doseq
   "Repeatedly executes body (presumably for side-effects) with
   bindings and filtering as provided by \"for\".  Does not retain
   the head of the sequence. Returns nil."
@@ -4868,7 +4868,7 @@
                   (fn wrap [mods body]
                     (if-some [[mod expr & more-mods] (seq mods)]
                       (let [body (wrap more-mods body)]
-                        (case mod
+                        (clojure.core/case mod
                           :let `(let ~expr ~body)
                           :while  `(if ~expr ~body (reduced ~acc))
                           :when `(when ~expr ~body)))
