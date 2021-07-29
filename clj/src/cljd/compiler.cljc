@@ -653,6 +653,7 @@
           (env f) form
           #?@(:clj ; macro overrides
               [(= 'ns f) form
+               (= 'letfn f) form
                (= 'reify f)
                (let [[opts specs] (roll-leading-opts args)]
                  (list* 'reify* opts specs))
@@ -1167,7 +1168,7 @@
         dart-body (emit (cons 'do body) env)
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         dart-fixed-params (if recur-params
-                            (map #(dart-fn-param % env) fixed-params)
+                            (map #(dart-fn-param % env) fixed-params) ; regen new fixed params
                             dart-fixed-params)
         dart-body (cond->> dart-body
                     recur-params
@@ -1178,8 +1179,8 @@
       (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name)
       dart-fn)))
 
-(defn emit-fn* [[fn-sym & bodies] env]
-  (let [var-name (some-> fn-sym meta :var-name)
+(defn emit-fn* [[fn* & bodies] env]
+  (let [var-name (some-> fn* meta :var-name)
         name (when (symbol? (first bodies)) (first bodies))
         bodies (cond-> bodies name next)
         [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)
@@ -1188,6 +1189,32 @@
     (case fn-type
       :ifn (emit-ifn var-name name bodies env)
       (emit-dart-fn name body env))))
+
+(defn emit-letfn [[_ fns & body] env]
+  (let [env (reduce (fn [env [name]] (assoc env name (dart-local name env))) env fns)
+        fn*s (map #(macroexpand env (cons 'cljd.core/fn %)) fns)
+        ifn? (fn [[_fn* _name & bodies]]
+               (let [[body & more-bodies] (cond-> bodies (vector? (first bodies)) list)]
+                 (or more-bodies (variadic? body))))
+        dart-fns (remove ifn? fn*s)
+        ifns (filter ifn? fn*s)
+        env (-> env
+              (into (for [[_ name] ifns] [name (vary-meta (env name) assoc :dart/fn-type :ifn)]))
+              (into (for [[_ name] dart-fns] [name (vary-meta (env name) assoc :dart/fn-type :native)])))
+        just-fns-env (into {}
+                       (for [[name] fns]
+                         ; next line is a bit hacky has we inentionally put a clojure meta on a dart local
+                         ; the intent is that when closed overs will be collected these dart locals will be used
+                         ; as fields for deftype*
+                         [name (vary-meta (env name) assoc :mutable true)]))
+        emit-binding (fn [[_ name & body]]
+                        [(env name) (emit (cons 'fn* body) env)])]
+    (assert (empty? ifns))
+    (list 'dart/letrec
+      (concat (map emit-binding dart-fns)
+        )
+      nil
+      (emit (list* 'let* [] body) env))))
 
 (defn emit-method [[mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
   ;; params destructuring will be added by a macro
@@ -1661,6 +1688,7 @@
                        recur emit-recur
                        if emit-if
                        fn* emit-fn*
+                       letfn emit-letfn
                        def emit-def
                        reify* emit-reify*
                        deftype* emit-deftype*
@@ -1987,6 +2015,14 @@
                                           :else (final-locus v))))
                bindings)
          (write expr locus)))
+      dart/letrec
+      (let [[_ bindings wiring-statements expr] x
+            loci+exprs (map (fn [[local expr]] [(final-locus local) expr]) bindings)]
+        (run! print (keep (comp declaration first) loci+exprs))
+        (doseq [[locus expr] loci+exprs]
+          (write expr (declared locus)))
+        ;; TODO wiring
+        (write expr locus))
       dart/try
       (let [[_ body catches final] x
             decl (declaration locus)
@@ -2194,8 +2230,7 @@
         (print (:post locus))
         (:exit locus))
       ;; native fn call
-      (let [[f & args] x
-            {:keys [dart/fn-type]} (meta f)]
+      (let [[f & args] x]
         (print (:pre locus))
         (write f expr-locus)
         (write-args args)
