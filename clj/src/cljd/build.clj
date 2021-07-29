@@ -25,10 +25,6 @@
     :id :verbosity
     :default 0
     :update-fn inc]
-   ["-f" "--file NAME" "File names to read"
-    :multi true
-    :default []
-    :update-fn conj]
    ["-h" "--help"]])
 
 (defn usage [options-summary]
