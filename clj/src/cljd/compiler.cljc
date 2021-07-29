@@ -356,7 +356,7 @@
       ;; TODO SELFHOST sort types
       (cons 'cond
         (concat
-          (mapcat (fn [[t ext]] [(list 'dart/is? 'x t) ext]) (sort-by (fn [[x]] (case x Object 1 0)) (dissoc extensions 'fallback)))
+          (mapcat (fn [[t ext]] [(list 'dart/is? 'x t) ext]) (dissoc extensions 'fallback))
           [:else (or ('fallback extensions) `(throw (dart:core/Exception. (.+ ~(str "No extension of protocol " name " found for type ") (.toString (.-runtimeType ~'x)) "."))))])))))
 
 (defn- roll-leading-opts [body]
@@ -546,15 +546,16 @@
         (list proto)))))
 
 (defn- expand-case [expr & clauses]
-  (if (or (symbol? expr) (odd? (count clauses)))
+  (cond
+    (not (symbol? expr))
+    `(let* [test# ~expr] (~'case test# ~@clauses))
+    (even? (count clauses))
+    `(~'case ~expr ~@clauses (throw (.value dart:core/ArgumentError ~expr nil "No matching clause.")))
+    :else
     (let [clauses (vec (partition-all 2 clauses))
-          last-clause (peek clauses)
-          clauses (cond-> clauses (nil? (next last-clause)) pop)
-          default (if (next last-clause)
-                    `(throw (.value dart:core/ArgumentError ~expr nil "No matching clause."))
-                    (first last-clause))]
-      (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))
-    `(let* [test# ~expr] (~'case test# ~@clauses))))
+          [default] (peek clauses)
+          clauses (pop clauses)]
+      (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))))
 
 (defn expand-extend-type [type & specs]
   (let [proto+meths (reduce
@@ -959,13 +960,42 @@
     :else
     (emit else env)))
 
+(defn cljd-hash
+  "Returns the hash for x in cljd."
+  [x]
+  (cond
+    (string? x) (hash x) ; cljd hashes string like clj/jvm
+    (keyword? x)
+    (clojure.lang.Util/hashCombine
+      (or (some-> x namespace cljd-hash) 0)
+      (cljd-hash (name x)))
+    :else (throw (ex-info (str "target-hash not implemented for " (class x)) {:x x}))))
+
 (defn emit-case* [[op expr clauses default] env]
-  (if (seq clauses)
+  (assert (and (symbol? expr) (env expr)))
+  (cond
+    (empty? clauses) (emit default env)
+    (or (every? string? (mapcat first clauses))
+      (every? int? (mapcat first clauses)))
     (list 'dart/case (emit expr env)
-          (for [[vs e] clauses]
-            [(map #(emit % {}) vs) (emit e env)])
-          (emit default env))
-    (emit default env)))
+      (for [[vs e] clauses]
+        [(map #(emit % {}) vs) (emit e env)])
+      (emit default env))
+    :else
+    (let [dart-local (env expr)
+          by-hashes (group-by (fn [[v e]] (cljd-hash v)) (for [[vs e] clauses, v vs] [v e]))
+          [tmp :as binding] (dart-binding 'hash (emit (list 'cljd.core/hash expr) env) env)]
+      (list 'dart/let [binding]
+        (list 'dart/case tmp
+          (for [[h groups] by-hashes]
+            [[h]
+             (reduce (fn [else [v e]]
+                       ; TODO constant extraction
+                       (list 'dart/if (emit (list 'cljd.core/= v expr) env)
+                         (emit e env)
+                         else))
+               '(dart/continue _default) (rseq groups))])
+          (emit default env))))))
 
 (defn- variadic? [[params]] (some #{'&} params))
 
@@ -1612,12 +1642,7 @@
           #?@(:clj [(char? x) (str x)])
           (or (number? x) (boolean? x) (string? x)) x
           (keyword? x)
-          (let [ns (namespace x)
-                name (name x)
-                h (clojure.lang.Util/hashCombine
-                    (if ns (.hashCode ns) 0)
-                    (.hashCode name))]
-            (emit (with-meta (list 'cljd.core/Keyword. ns name h) {:const true}) env))
+          (emit (with-meta (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) {:const true}) env)
           (nil? x) nil
           (and (seq? x) (seq x)) ; non-empty seqs only
           (let [emit (case (-> (first x) ensure-new-special)
@@ -2027,10 +2052,14 @@
                       (print "break;\n")))
                   true
                   clauses)
-            _ (print "default:\n")
+            _ (print "_default: default:\n")
             exit (and (write default-expr locus) exit)]
         (print "}\n")
         exit)
+      dart/continue
+      (let [[_ label] x]
+        (print "continue ") (print label) (print ";\n")
+        true)
       dart/if
       (let [[_ test then else] x
             decl (declaration locus)
