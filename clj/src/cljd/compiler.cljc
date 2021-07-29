@@ -1725,6 +1725,14 @@
     :decl (str (or vartype "var") " " varname ";\n")
     :fork (assignment-locus varname)}))
 
+(defn final-locus
+  ([varname] (final-locus (-> varname meta :dart/type) varname))
+  ([vartype varname]
+   {:pre (str "final " (some-> vartype (str " ")) varname "=")
+    :post ";\n"
+    :decl (str "late final " (some-> vartype (str " ")) varname ";\n")
+    :fork (assignment-locus varname)}))
+
 (declare write)
 
 (defn write-top-dartfn [sym x]
@@ -1942,9 +1950,9 @@
         (or
          (some (fn [[v e]] (write e (cond (nil? v) statement-locus
                                           (and (seq? e) (= 'dart/fn (first e))) (named-fn-locus v)
-                                          :else (var-locus v))))
+                                          :else (final-locus v))))
                bindings)
-          (write expr locus)))
+         (write expr locus)))
       dart/try
       (let [[_ body catches final] x
             decl (declaration locus)
