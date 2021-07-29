@@ -356,7 +356,7 @@
       ;; TODO SELFHOST sort types
       (cons 'cond
         (concat
-          (mapcat (fn [[t ext]] [(list 'dart/is? 'x t) ext]) (dissoc extensions 'fallback))
+          (mapcat (fn [[t ext]] [(list 'dart/is? 'x t) ext]) (sort-by (fn [[x]] (case x Object 1 0)) (dissoc extensions 'fallback)))
           [:else (or ('fallback extensions) `(throw (dart:core/Exception. (.+ ~(str "No extension of protocol " name " found for type ") (.toString (.-runtimeType ~'x)) "."))))])))))
 
 (defn- roll-leading-opts [body]
