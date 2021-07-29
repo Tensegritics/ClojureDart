@@ -1144,10 +1144,11 @@
   (let [var-name (some-> fn-sym meta :var-name)
         name (when (symbol? (first bodies)) (first bodies))
         bodies (cond-> bodies name next)
-        env (cond-> env name (assoc name (dart-local name env)))
-        [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)]
-    (if (or more-bodies (variadic? body))
-      (emit-ifn var-name name bodies env)
+        [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)
+        fn-type (if (or more-bodies (variadic? body)) :ifn :native)
+        env (cond-> env name (assoc name (vary-meta (dart-local name env) assoc :dart/fn-type fn-type)))]
+    (case fn-type
+      :ifn (emit-ifn var-name name bodies env)
       (emit-dart-fn name body env))))
 
 (defn emit-method [[mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
