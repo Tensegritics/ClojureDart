@@ -1424,7 +1424,7 @@
         expr (macroexpand env expr)
         kind (fn-kind expr)
         sym (cond-> sym kind (vary-meta assoc kind true))
-        expr (if (= 'fn* (first expr))
+        expr (if (and (seq? expr) (= 'fn* (first expr)))
                (cons (vary-meta (first expr) assoc :var-name sym) (next expr))
                expr)
         dartname (cond-> (munge sym env) kind (vary-meta (fn [{:dart/keys [type truth] :as m}]
