@@ -1,6 +1,7 @@
 (ns cljd.compiler
   (:refer-clojure :exclude [macroexpand macroexpand-1 munge])
-  (:require [clojure.string :as str]))
+  (:require [clojure.string :as str]
+            [clojure.java.io :as io]))
 
 (def dart-libs-info
   (-> "core-libs.edn" clojure.java.io/resource clojure.java.io/reader clojure.lang.LineNumberingPushbackReader. clojure.edn/read))
@@ -9,10 +10,6 @@
 
 (def ^:dynamic *bootstrap* false)
 (def ^:dynamic *bootstrap-eval* false)
-
-(def ^:dynamic *clj-path*
-  "Sequential collection of directories to search for clj files."
-  ["clj/"])
 
 (def ^:dynamic *lib-path* "lib/")
 
@@ -2261,49 +2258,40 @@
   (let [base (replace-all (name ns-name) #"[.-]" {"." "/" "-" "_"})]
     [(str base ".cljd") (str base ".cljc")]))
 
-(defn find-file
+(defn find-resource
   "Search for a file on the clojure path."
   [filename]
-  (first
-   (for [dir *clj-path*
-         :let [file (java.io.File. ^String dir ^String filename)]
-         :when (.exists file)]
-     file)))
+  (io/resource filename))
 
 (defn compile-namespace [ns-name]
   ;; iterate first on file variants then on paths, not the other way!
   (binding [*bootstrap* (bootstrap-nses ns-name)]
     (let [file-paths (ns-to-paths ns-name)]
-      (if-some [file (some find-file file-paths)]
+      (if-some [^java.net.URL url (some find-resource file-paths)]
         (do
           (when *bootstrap*
-            (with-open [in (java.io.FileInputStream. file)]
+            (with-open [in (.openStream url)]
               (bootstrap-load-input (java.io.InputStreamReader. in "UTF-8"))))
-          (with-open [in (java.io.FileInputStream. file)]
+          (with-open [in (.openStream url)]
             (compile-input (java.io.InputStreamReader. in "UTF-8"))))
         (throw (ex-info (str "Could not locate "
-                          (str/join " or " file-paths)
-                          " on *clj-path*.")
+                          (str/join " or " file-paths))
                  {:ns ns-name}))))))
 
 (comment
-  (binding [*clj-path* ["examples/hello-flutter/src"]
-            *lib-path* "examples/hello-flutter/lib"]
+  (binding [*lib-path* "examples/hello-flutter/lib"]
     (compile-namespace 'hello-flutter.core))
 
   (time
-    (binding [*clj-path* ["clj/src"]
-              *lib-path* "lib"]
+    (binding [*lib-path* "lib"]
       (compile-namespace 'cljd.core)))
 
   (time
-    (binding [*clj-path* ["clj/src"]
-              *lib-path* "lib"]
+    (binding [*lib-path* "lib"]
       (compile-namespace 'cljd.main)))
 
   (time
-    (binding [*clj-path* ["clj/src"]
-              *lib-path* "lib"]
+    (binding [*lib-path* "lib"]
       (compile-namespace 'cljd.user)))
 
   (-> @nses (get-in '[cljd.core :lib]

@@ -4,38 +4,21 @@
             [clojure.string :as str]))
 
 (defn compile-core []
-  (binding [compiler/*clj-path* ["clj/src"]
-            compiler/*lib-path* (str (System/getProperty "user.dir") "/lib")]
+  (binding [compiler/*lib-path* (str (System/getProperty "user.dir") "/lib")]
     (compiler/compile-namespace 'cljd.core)))
 
-(defn compile-files [files]
-  (let [current-path (System/getProperty "user.dir")]
-    (binding [compiler/*clj-path* [(str current-path "/clj/src") #_(str "/tmp/test/clj/src")]
-              compiler/*lib-path* (str current-path "/lib")]
-      (doseq [p compiler/*clj-path*
-              f files
-              :let [file-path (.getAbsolutePath f)
-                    ns-name (-> (re-matches #"(.*)\.clj[cd]?" (subs file-path (inc (count p))))
-                              second
-                              (str/replace #"[\/_]" {"/" "." "_"  "-"})
-                              symbol)]]
-        (do
-          (println (str "Compiling " file-path " to dart file."))
-          (compiler/compile-namespace ns-name))))))
-
 (defn compile-cli
-  "Assumes valid cljd files."
-  [& {:keys [watch files] :or {watch false}}]
+  [& {:keys [watch namespaces] :or {watch false}}]
   (let [current-path (System/getProperty "user.dir")]
     (println "== Compiling core.cljd -> core.dart ===")
     (time (compile-core))
-    (compile-files files)
-    (when watch
-      (println "Press ENTER to recompile files :")
-      (while (.read (System/in))
-        (println "== Recompiling files")
-        (compile-files files)
-        (println "Press ENTER to recompile files :")))))
+    (loop []
+      (doseq [n namespaces]
+        (compiler/compile-namespace n))
+      (when watch
+        (println "Press ENTER to recompile files :")
+        (when (pos? (.read (System/in)))
+          (recur))))))
 
 (def cli-options
   [["-v" nil "Verbosity level; may be specified multiple times to increase value"
@@ -88,24 +71,15 @@
         (#{"compile" "watch"} (first arguments)))
       {:action (first arguments)
        :options options
-       :files (when (every? #(let [f (java.io.File. %)
-                                   curr-dir (System/getProperty "user.dir")]
-                               (when-not (.exists f)
-                                 (exit 1 (str "File `" curr-dir "/" % "` does not exists.")))
-                               (when-not (.isFile f)
-                                 (exit 1 (str "File `" curr-dir "/" % "` is not a file.")))
-                               (when-not (re-matches #".*\.(clj[cd]?)" %)
-                                 (exit 1 (str "File name `" curr-dir "/" % "` must be valid, e.g. : clj/src/a/b/c/name.clj[cd]?")))
-                               true) (next arguments))
-                (map #(java.io.File. %) (next arguments)))}
+       :namespaces (map symbol (next arguments))}
       :else ; failed custom validation => exit with usage summary
       {:exit-message (usage summary)})))
 
 (defn -main [& args]
-  (let [{:keys [action options exit-message files ok?]} (validate-args args)]
+  (let [{:keys [action options exit-message namespaces ok?]} (validate-args args)]
     (prn action)
     (if exit-message
       (exit (if ok? 0 1) exit-message)
       (case action
-        "watch" (compile-cli :files files :watch true)
-        "compile" (compile-cli :files files :watch false)))))
+        "watch" (compile-cli :namespaces namespaces :watch true)
+        "compile" (compile-cli :namespaces namespaces :watch false)))))
