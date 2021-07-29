@@ -17,7 +17,7 @@
       (doseq [n namespaces]
         (try (compiler/compile-namespace n)
              (catch Exception e
-               (cs/print-stack-trace e))))
+               (st/print-stack-trace e))))
       (when watch
         (println "Press ENTER to recompile files :")
         (when (pos? (.read (System/in)))
