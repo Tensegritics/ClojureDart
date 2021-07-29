@@ -1215,7 +1215,7 @@
 (extend-type int
   IHash
   (-hash [o]
-    (m3-hash-u32 o)))
+    (m3-hash-int o)))
 
 (extend-type double
   IHash

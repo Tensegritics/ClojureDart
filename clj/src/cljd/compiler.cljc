@@ -658,7 +658,7 @@
                (let [[opts specs] (roll-leading-opts args)]
                  (list* 'reify* opts specs))
                (= 'defprotocol f) (apply expand-defprotocol args)
-               (= 'case f) (apply expand-case args)
+               ('#{case clojure.core/case cljd.core/case} f) (apply expand-case args)
                (= 'extend-type f) (apply expand-extend-type args)])
           (= '. f) form
           macro-fn
@@ -961,16 +961,24 @@
     :else
     (emit else env)))
 
+(defn cljd-u32 [n] (bit-and 0xFFFFFFFF n))
+
+(defn cljd-hash-combine [a b]
+  (cljd-u32 (clojure.lang.Util/hashCombine (unchecked-int a) (unchecked-int b))))
+
 (defn cljd-hash
   "Returns the hash for x in cljd."
   [x]
-  (cond
-    (string? x) (hash x) ; cljd hashes string like clj/jvm
-    (keyword? x)
-    (clojure.lang.Util/hashCombine
-      (or (some-> x namespace cljd-hash) 0)
-      (cljd-hash (name x)))
-    :else (throw (ex-info (str "target-hash not implemented for " (class x)) {:x x}))))
+  (cljd-u32
+    (cond
+      (nil? x) 0
+      (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (hash x) ; safe between -2^31 to 2^32-1 (TODO check in dartjs)
+      (string? x) (hash x) ; cljd hashes string like clj/jvm
+      (keyword? x)
+      (cljd-hash-combine
+        (or (some-> x namespace cljd-hash) 0)
+        (cljd-hash (name x)))
+      :else (throw (ex-info (str "target-hash not implemented for " (class x)) {:x x})))))
 
 (defn emit-case* [[op expr clauses default] env]
   (assert (and (symbol? expr) (env expr)))
