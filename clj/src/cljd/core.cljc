@@ -1177,6 +1177,10 @@
   (-dissoc [coll k]
     "Returns a new collection of coll without the mapping for key k."))
 
+(defn ^bool map?
+  [x]
+  (satisfies? IMap x))
+
 (extend-type fallback
   IMap
   (-dissoc [coll k]
@@ -1409,6 +1413,10 @@
   (-val [coll]
     "Returns the value of the map entry."))
 
+(defn ^bool map-entry?
+  [x]
+  (satisfies? IMapEntry x))
+
 (defn key
   "Returns the key of the map entry."
   [^MapEntry e]
@@ -1469,6 +1477,11 @@
   "Protocol for adding set functionality to a collection."
   (-disjoin [coll v]
     "Returns a new collection of coll that does not contain v."))
+
+(defn ^bool set?
+  "Returns true if x satisfies ISet"
+  [x]
+  (satisfies? ISet x))
 
 (extend-type Null
   ISet
@@ -3259,14 +3272,6 @@
   (-invoke [node k not-found]
     (-nth node k not-found)))
 
-(defn ^bool map-entry?
-  [x]
-  (satisfies? IMapEntry x))
-
-(defn ^bool map?
-  [x]
-  (satisfies? IMap x))
-
 ; cgrand's
 (deftype #/(BitmapIterator E)
   [^:mutable ^BitmapNode node
@@ -3952,18 +3957,18 @@
   IEmptyableCollection
   (-empty [coll] (-with-meta #{} meta))
   IEquiv
-  ;; TODO
   (-equiv [coll other]
-    #_(and
+    (and
       (set? other)
-      (== (count coll) (count other))
-      ^boolean
-      (try
+      (== (-count hm) (-count (.-hm other)))
+      (let [y (.-hm other)
+            never-equiv (Object.)]
         (reduce-kv
-          #(or (contains? other %2) (reduced false))
-          true hm)
-        (catch js/Error ex
-          false))))
+          (fn [_ k v]
+            (if (= (get y k never-equiv) v)
+              true
+              (reduced false)))
+          true hm))))
   IHash
   ;; TODO
   (-hash [coll] #_(caching-hash coll hash-unordered-coll __hash))
