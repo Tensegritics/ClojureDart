@@ -228,10 +228,31 @@
   [^IProtocol protocol x]
   (.satisfies protocol x))
 
+(defn ^bool false?
+  "Returns true if x is the value false, false otherwise."
+  {:inline (fn [x] `(.== false ~x))
+   :inline-arities #{1}}
+  [x]
+  (== false x))
+
+(defn ^bool true?
+  "Returns true if x is the value true, false otherwise."
+  {:inline (fn [x] `(.== true ~x))
+   :inline-arities #{1}}
+  [x]
+  (== true x))
+
 (defn ^bool nil?
   {:inline-arities #{1}
    :inline (fn [x] `(.== nil ~x))}
   [x] (.== nil x))
+
+(defn ^bool boolean
+  "Coerce to boolean"
+  [x]
+  (if (or (nil? x) (false? x))
+    false
+    true))
 
 (defn ^bool some?
   "Returns true if x is not nil, false otherwise."
@@ -1257,6 +1278,27 @@
         (nil? ys) false
         (= (first xs) (first ys)) (recur (next xs) (next ys))
         :else false))))
+
+(defn ^bool -equiv-map
+  "Test map equivalence. Returns true if x equals y, otherwise returns false."
+  [x y]
+  (boolean
+    ;; TODO : add record? when there are records
+    (when (and (map? y) #_(not (record? y)))
+      ; assume all maps are counted
+      (when (== (count x) (count y))
+        (let [never-equiv (Object.)]
+          (if (satisfies? IKVReduce x)
+            (reduce-kv
+              (fn [_ k v]
+                (if (= (get y k never-equiv) v)
+                  true
+                  (reduced false)))
+              true x)
+            (every?
+              (fn [xkv]
+                (= (get y (first xkv) never-equiv) (second xkv)))
+              x)))))))
 
 (deftype ^:abstract EquivSequentialHashMixin []
   #_#_#_#_Object
@@ -3821,8 +3863,8 @@
               (throw (ArgumentError. "conj on a map takes map entries or seqables of map entries"))))))))
   IEmptyableCollection
   (-empty [coll] (-with-meta {} meta))
-  #_#_IEquiv
-  (-equiv [coll other] (equiv-map coll other))
+  IEquiv
+  (-equiv [coll other] (-equiv-map coll other))
   #_#_IHash
   (-hash [coll] (caching-hash coll hash-unordered-coll __hash))
   ISeqable
