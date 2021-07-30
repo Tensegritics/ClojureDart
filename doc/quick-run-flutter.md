@@ -14,6 +14,7 @@
 3. Create your first Flutter project
 
 ``` shell
+# In your terminal
 flutter create training
 cd training
 ```
@@ -21,6 +22,7 @@ cd training
 4. Remove existing lib/main.dart
 
 ``` shell
+# In your terminal
 rm lib/main.dart
 ```
 
@@ -39,6 +41,7 @@ rm lib/main.dart
 First create a directory where clojure files live
 
 ``` shell
+# In your terminal
 mkdir -p clj/src/acme/
 touch clj/src/acme/main.cljc
 ```
@@ -80,18 +83,21 @@ the project.
 6. Launch the clojuredart watcher
 
 ``` shell
+# In your terminal
 clj -M -m cljd.build watch acme.main
 ```
 
 7. (iOS Only) Launch a simulator
 
 ``` shell
+# In an other terminal window
 open -a Simulator
 ```
 
 8. Run the flutter hot-reload cli
 
 ``` shell
+# In a terminal window
 flutter run -t lib/cljd-out/acme/main.dart
 ```
 
