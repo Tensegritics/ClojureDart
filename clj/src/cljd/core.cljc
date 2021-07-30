@@ -3870,8 +3870,8 @@
   (-empty [coll] (-with-meta {} meta))
   IEquiv
   (-equiv [coll other] (-equiv-map coll other))
-  #_#_IHash
-  (-hash [coll] (caching-hash coll hash-unordered-coll __hash))
+  IHash
+  (-hash [coll] (ensure-hash __hash (hash-unordered-coll coll)))
   ISeqable
   (-seq [coll] (iterator-seq (.-iterator (.-entries coll))))
   ICounted
@@ -3970,8 +3970,7 @@
               (reduced false)))
           true hm))))
   IHash
-  ;; TODO
-  (-hash [coll] #_(caching-hash coll hash-unordered-coll __hash))
+  (-hash [coll] (ensure-hash __hash (hash-unordered-coll coll)))
   ISeqable
   (-seq [coll] (iterator-seq (.-iterator (.-keys hm))))
   ICounted
