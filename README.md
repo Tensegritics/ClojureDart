@@ -22,6 +22,7 @@ partially implemented or even bugged. In any case get in touch with us or open
 an issue.
 
 - pr/println -> use (dart:core/print)
+- regexp
 - no REPL yet
 - multi-method
 - records
