@@ -2,7 +2,7 @@
 
 > Even if Flutter bundles its own Dart it's better to first try [ClojureDart](quick-start.md) alone first.
 
-## 1. Install the latest stable [Flutter](https://flutter.dev/docs/get-started/install)
+## 1. [Install the latest stable Flutter](https://flutter.dev/docs/get-started/install)
 
 It's a tad laborious as you have to install dependencies.
 
