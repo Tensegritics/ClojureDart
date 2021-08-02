@@ -1,54 +1,51 @@
-# Quick run flutter project
+# ClojureDart+Flutter Quick Start
 
-> Make sure you've done the [Quick Run](quick-run.md) before trying Flutter
+> Even if Flutter bundles its own Dart it's better to first try [ClojureDart](quick-start.md) alone first.
 
-1. Install clj cli dans dart (see Quick Run)
+1. Install [Clojure CLI Tools](quick-start.md#2)
 
-2. Install [Flutter](https://flutter.dev/docs/get-started/install)
+## 2. Install the latest stabe [Flutter](https://flutter.dev/docs/get-started/install)
 
-- We advise you to choose a stable release of flutter.
-- You might need to install XCode or Android Studio depending on which
-  platform you are working on.
-- You might need to install/update Cocoapods for iOS
+It's a tad laborious as you have to install dependencies.
 
-3. Create your first Flutter project
+## 2. [Install Clojure CLI Tools](https://clojure.org/guides/getting_started#_clojure_installer_and_cli_tools)
+
+If you already have the `clj` command installed make sure to upgrade to at least the [1.10.3.814](https://clojure.org/releases/tools#v1.10.3.814). This release allows to easily use private git deps.
+
+## 3. Create your first Flutter project
 
 ``` shell
-# In your terminal
 flutter create training
 cd training
 ```
 
-4. Remove existing lib/main.dart
+This creates a Dart project with (among other things) a `pubspec.yaml` with Flutter dependencies.
+
+## 4. Remove existing lib/main.dart
 
 ``` shell
-# In your terminal
 rm lib/main.dart
 ```
 
-4. Create `deps.edn` file at the root of your project
+## 5. Create `deps.edn` file at the root of your project
 
-``` clojure
-{:paths ["clj/src" "clj/test" "resources"]
+``` shell
+cat << EOF > dep.edn
+{:paths ["src"] ; where your cljd files are
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
-        io.github.dupuchba/clojuredart
-        {:git/url "git@github.com:Tensegritics/ClojureDartPreview.git"
-         :sha "dca46fa9f4b759b6a1ea2bd622ed887a7aca73c9"}}}
+        tensegritics/clojuredart
+        {:git/url "git@github.com:tensegritics/ClojureDartPreview.git
+         :sha "724fea858c0f0629f776910d442de2a2ca209dc8"}}}
+EOF
 ```
 
-5. Create a clojuredart file with a main entry-point
+## 6. Create a ClojureDart file with a main entry-point
 
 First create a directory where clojure files live
 
 ``` shell
-# In your terminal
 mkdir -p clj/src/acme/
-touch clj/src/acme/main.cljc
-```
-
-Try out some components...
-
-``` clojure
+cat << EOF > clj/src/acme/main.cljd
 (ns acme.main
   ;; pure dart package are imported using string
   (:require ["package:flutter/material.dart" :as material]
@@ -75,37 +72,37 @@ Try out some components...
                                   :style (painting/TextStyle. .&
                                            :color (.-red material/Colors)
                                            :fontSize 32.0)))))))))
+EOF
 ```
 
-Note : Flutter deps is specified in pubspec.yml file at the root of
-the project.
-
-6. Launch the clojuredart watcher
+## 7. Start the ClojureDart watcher
 
 ``` shell
-# In your terminal
 clj -M -m cljd.build watch acme.main
 ```
 
-7. (iOS Only) Launch a simulator
+## 8. Start a simulator
 
+In another terminal
+
+iOS:
 ``` shell
 # In an other terminal window
 open -a Simulator
 ```
 
-8. Run the flutter hot-reload cli
+Android:
+
+## 9. Run the flutter hot-reload cli
+
+In yet another terminal
 
 ``` shell
-# In a terminal window
 flutter run -t lib/cljd-out/acme/main.dart
 ```
 
-9. Enjoy :-)
+## 10. Enjoy!
 
-***
-
-### When you edit your cljc file
-
-- just press enter in your clj terminal to recompile
-- press R in your flutter cli to restart the app
+ When you edit your cljd file, always follow these steps:
+ 1. press enter in the terminal tied to the ClojureDart "watcher",
+ 2. press R in the terminal tied to the flutter cli to restart the app.
