@@ -28,7 +28,7 @@ rm lib/main.dart
 ## 5. Create `deps.edn` file at the root of your project
 
 ``` shell
-cat << EOF > dep.edn
+cat << EOF > deps.edn
 {:paths ["src"] ; where your cljd files are
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
