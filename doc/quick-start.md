@@ -1,12 +1,14 @@
-# Your first ClojureDart project
+# ClojureDart Quick Start
+
+> If you want to use Flutter, follow this document first (not mandatory but recommended) then follow our [Flutter Quick Start](flutter-quick-start.md).
 
 ## 1. [Install the Dart SDK](https://dart.dev/get-dart#install)
 
 Make sure your version of the sdk >= 2.12 -- this version introduced a big change (types are not nullable by default) to the language. Code produced by ClojureDart wouldn't be compatible by previous versions of Dart.
 
-## 2. [Install clj cli](https://clojure.org/guides/getting_started#_clojure_installer_and_cli_tools)
+## 2. [Install Clojure CLI Tools](https://clojure.org/guides/getting_started#_clojure_installer_and_cli_tools)
 
-If you already have the `clj` command installed make sure to upgrade to at least the [1.10.3.814](https://clojure.org/releases/tools#v1.10.3.814). This release allows to easily use private git deps. 
+If you already have the `clj` command installed make sure to upgrade to at least the [1.10.3.814](https://clojure.org/releases/tools#v1.10.3.814). This release allows to easily use private git deps.
 
 ## 3. Create a new project
 
@@ -47,12 +49,14 @@ pub get
 
 ### 3.3 Create a `deps.edn` file
 
-``` clojure
+``` shell
+cat << EOF > dep.edn
 {:paths ["src"] ; where your cljd files are
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDartPreview.git"
          :sha "724fea858c0f0629f776910d442de2a2ca209dc8"}}}
+EOF
 ```
 
 The `src` directory isn't special, you are free to layout your project as you like, as long as you don't
