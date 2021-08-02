@@ -42,8 +42,8 @@ EOF
 First create a directory where clojure files live
 
 ``` shell
-mkdir -p clj/src/acme/
-cat << EOF > clj/src/acme/main.cljd
+mkdir -p src/acme
+cat << EOF > src/acme/main.cljd
 (ns acme.main
   ;; pure dart package are imported using string
   (:require ["package:flutter/material.dart" :as material]
