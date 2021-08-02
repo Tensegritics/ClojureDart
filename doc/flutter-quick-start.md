@@ -99,6 +99,28 @@ In yet another terminal
 flutter run -t lib/cljd-out/acme/main.dart
 ```
 
+You should get this kind of output:
+
+```
+Launching lib/cljd-out/acme/main.dart on iPhone 12 Pro Max in debug mode...
+Running Xcode build...
+ └─Compiling, linking and signing...                        51,0s
+Xcode build done.                                           74,0s
+Syncing files to device iPhone 12 Pro Max...                       150ms
+
+Flutter run key commands.
+r Hot reload. 🔥🔥🔥
+R Hot restart.
+h Repeat this help message.
+d Detach (terminate "flutter run" but leave application running).
+c Clear the screen
+q Quit (terminate the application on the device).
+
+💪 Running with sound null safety 💪
+```
+
+And the application should open in the simulator.
+
 ## 10. Enjoy!
 
  When you edit your cljd file, always follow these steps:
