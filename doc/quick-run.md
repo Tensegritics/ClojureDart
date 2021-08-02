@@ -14,9 +14,9 @@ If you already have the `clj` command installed make sure to upgrade to at least
 
 ``` shell
 # create a Dart project
-dart create hello-world
+dart create helloworld
 # move into it
-cd hello-world
+cd helloworld
 # create a directory for clojure source files
 mkdir src
 ```
@@ -37,6 +37,12 @@ environment:
   sdk: '>=2.12.0 <3.0.0'
 ```
 
+And then call `pub get` to update dependencies.
+
+``` shell
+pub get
+```
+
 (Again it's about ensuring the right language version, otherwise the Dart compiler enters compatibility mode.)
 
 ### 3.3 Create a `deps.edn` file
@@ -45,7 +51,7 @@ environment:
 {:paths ["src"] ; where your cljd files are
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
-        {:git/url "git@github.com:tensegritics/ClojureDartPreview.git
+        {:git/url "git@github.com:tensegritics/ClojureDartPreview.git"
          :sha "724fea858c0f0629f776910d442de2a2ca209dc8"}}}
 ```
 
@@ -55,7 +61,7 @@ interfere with [Dart's project layout](https://dart.dev/tools/pub/package-layout
 ## 4. Create an actual ClojureDart file
 
 ``` shell
-mkdir src/quickstart
+mkdir -p src/quickstart
 cat << EOF > src/quickstart/helloworld.cljd
 (ns quickstart.helloworld)
 
@@ -101,7 +107,8 @@ Without the `-o helloworld` option it would have created a `helloworld.exe` alon
 Last, if you feel playful you can compile it to js:
 
 ``` shell
-dart2js -o helloworld.js foo/lib/cljd-out/acme/core.dart
+dart2js -o helloworld.js lib/cljd-out/quickstart/helloworld.dart
+node helloworld.js
 ```
 
 ## 7. Enjoy!
