@@ -27,12 +27,26 @@ rm lib/main.dart
 
 ## 5. Create `deps.edn` file at the root of your project
 
+If your GitHub account is [configured for SSH access](https://docs.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account):
+
 ``` shell
 cat << EOF > deps.edn
 {:paths ["src"] ; where your cljd files are
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDartPreview.git"
+         :sha "724fea858c0f0629f776910d442de2a2ca209dc8"}}}
+EOF
+```
+
+Otherwise using HTTPS authentication:
+
+``` shell
+cat << EOF > deps.edn
+{:paths ["src"] ; where your cljd files are
+ :deps {org.clojure/clojure {:mvn/version "1.10.1"}
+        tensegritics/clojuredart
+        {:git/url "https://github.com/tensegritics/ClojureDartPreview.git"
          :sha "724fea858c0f0629f776910d442de2a2ca209dc8"}}}
 EOF
 ```
