@@ -972,19 +972,20 @@
   (cljd-u32
     (cond
       (nil? x) 0
-      (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (hash x) ; safe between -2^31 to 2^32-1 (TODO check in dartjs)
+      (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (hash x) ; safe between -2^31 to 2^32-1 both inclusive (TODO check in dartjs)
       (string? x) (hash x) ; cljd hashes string like clj/jvm
+      (char? x) (hash (str x))
       (keyword? x)
       (cljd-hash-combine
         (or (some-> x namespace cljd-hash) 0)
         (cljd-hash (name x)))
-      :else (throw (ex-info (str "target-hash not implemented for " (class x)) {:x x})))))
+      :else (throw (ex-info (str "cljd-hash not implemented for " (class x)) {:x x})))))
 
 (defn emit-case* [[op expr clauses default] env]
   (assert (and (symbol? expr) (env expr)))
   (cond
     (empty? clauses) (emit default env)
-    (or (every? string? (mapcat first clauses))
+    (or (every? #(or (char? % ) (string? %)) (mapcat first clauses))
       (every? int? (mapcat first clauses)))
     (list 'dart/case (emit expr env)
       (for [[vs e] clauses]
@@ -1825,7 +1826,7 @@
 (defn write-string-literal [s]
   (print
    (str \"
-        (replace-all s #"([\x00-\x1f])|[$\"]"
+        (replace-all s #"([\x00-\x1f])|[$\\\"]"
                      (fn [match]
                        (let [[match control-char] (-> match #?@(:cljd [re-groups]))]
                          (if control-char
@@ -1842,7 +1843,7 @@
                                          (+ 0x100)
                                          Long/toHexString
                                          (subs 1))
-                                     :cld
+                                     :cljd
                                      (-> control-char
                                          (.codeUnitAt 0)
                                          (.toRadixString 16)
