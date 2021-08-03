@@ -649,6 +649,10 @@
       (.-isNaN o) (.write ^StringSink sink "##Nan")
       :else (.write ^StringSink sink (.toString o)))))
 
+(defn ^bool string?
+  [x]
+  (dart/is? x String))
+
 (deftype ^:abstract ToStringMixin []
   Object
   (toString [o]
@@ -1390,6 +1394,62 @@
   "Return true if x is a keyword with a namespace"
   [x]
   (and (keyword? x) (namespace x) true))
+
+(deftype Symbol [^String? ns ^String name ^:mutable meta ^:mutable ^int _hash]
+  ^:mixin ToStringMixin
+  IPrint
+  (-print [o ^StringSink sink]
+    (when ns (.write sink ns) (.write sink "/"))
+    (.write sink name))
+  IMeta
+  (-meta [s] meta)
+  IWithMeta
+  (-with-meta [s new-meta]
+    (if (identical? new-meta meta)
+      s
+      (Symbol. ns name _hash new-meta)))
+  INamed
+  (-name [_] name)
+  (-namespace [_] ns)
+  IFn
+  (-invoke [s coll]
+    (get coll s))
+  (-invoke [s coll not-found]
+    (get coll s not-found))
+  IEquiv
+  (-equiv [this other]
+    (and (dart/is? other Symbol)
+      (.== (.-ns this) (.-ns other))
+      (.== name (.-name other))))
+  IHash
+  (-hash [coll] #_(ensure-hash _hash (hash-ordered-coll coll))))
+
+(defn ^bool symbol?
+  "Return true if x is a Symbol"
+  [x]
+  (dart/is? x Symbol))
+
+(defn symbol
+  "Returns a Symbol with the given namespace and name. Arity-1 works
+  on strings, keywords, and vars."
+  ([name]
+   (cond
+     (symbol? name) name
+     (string? name) (let [idx (.indexOf name "/")]
+                      (if (< idx -1)
+                        (symbol nil name)
+                        (symbol (.substring name 0 idx)
+                          (.substring name (inc idx)))))
+     ;; TODO : var? case
+     #_#_(var? name) (.-sym name)
+     (keyword? name) (symbol (.-ns name) (.-name name))
+     :else (throw (Exception. (str "no conversion to symbol on " (.-runtimeType name))))))
+  ([ns name]
+   (Symbol. ns name nil -1)))
+
+;; clojure.core/qualified-symbol?
+;; clojure.core/simple-symbol?
+;; clojure.core/special-symbol?
 
 (defprotocol IFind
   "Protocol for implementing entry finding in collections."
