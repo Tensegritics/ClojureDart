@@ -979,6 +979,9 @@
       (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (hash x) ; safe between -2^31 to 2^32-1 both inclusive (TODO check in dartjs)
       (string? x) (hash x) ; cljd hashes string like clj/jvm
       (char? x) (hash (str x))
+      (symbol? x) (cljd-hash-combine
+                    (clojure.lang.Murmur3/hashUnencodedChars (name x))
+                    (hash (namespace x)))
       (keyword? x)
       (cljd-hash-combine
         (or (some-> x namespace cljd-hash) 0)
@@ -1005,7 +1008,7 @@
             [[h]
              (reduce (fn [else [v e]]
                        ; TODO constant extraction
-                       (list 'dart/if (emit (list 'cljd.core/= v expr) env)
+                       (list 'dart/if (emit (list 'cljd.core/= (list 'quote v) expr) env)
                          (emit e env)
                          else))
                '(dart/continue _default) (rseq groups))])

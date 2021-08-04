@@ -1417,7 +1417,7 @@
   [x]
   (and (keyword? x) (namespace x) true))
 
-(deftype Symbol [^String? ns ^String name ^:mutable meta ^:mutable ^int _hash]
+(deftype Symbol [^String? ns ^String name meta ^:mutable ^int _hash]
   ^:mixin ToStringMixin
   IPrint
   (-print [o ^StringSink sink]
@@ -1444,7 +1444,7 @@
       (.== (.-ns this) (.-ns other))
       (.== name (.-name other))))
   IHash
-  (-hash [coll] #_(ensure-hash _hash (hash-ordered-coll coll))))
+  (-hash [s] (ensure-hash _hash (hash-symbol s))))
 
 (defn ^bool symbol?
   "Return true if x is a Symbol"
@@ -2216,10 +2216,10 @@
 
 (defn ^int hash-combine [^int seed ^int hash]
   ; a la boost
-  (bit-xor seed
-    (+ hash 0x9e3779b9
-      (u32-bit-shift-left seed 6)
-      (u32-bit-shift-right seed 2))))
+  (u32 (bit-xor seed
+         (+ hash 0x9e3779b9
+           (u32-bit-shift-left seed 6)
+           (u32-bit-shift-right seed 2)))))
 
 ;;http://hg.openjdk.java.net/jdk7u/jdk7u6/jdk/file/8c2c5d63a17e/src/share/classes/java/lang/String.java
 (defn- ^int hash-string* [^String s]
