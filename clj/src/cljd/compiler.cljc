@@ -1892,8 +1892,8 @@
 
   (when-not abstract
     (newline)
-    (when-not (and (contains? '#{nil dc.Object} extends) ;; TODO refine heuristiict  with analyzer
-                (some #(:dart/mutable (meta %)) fields))
+    (when (and (contains? '#{nil dc.Object} extends) ;; TODO refine heuristiict  with analyzer
+            (every? #(:dart/mutable (meta %)) fields))
       (print "const "))
     (print (str (or ctor class-name) "("))
     (doseq [p ctor-params]
