@@ -17,6 +17,8 @@
 
 (declare -EMPTY-LIST -EMPTY-MAP -EMPTY-SET -EMPTY-VECTOR)
 
+(def -DYNAMIC-BINDINGS {})
+
 (def ^{:clj true} =)
 #_(def ^{:dart true} butlast)
 (def ^{:dart true} contains?)
@@ -5083,7 +5085,53 @@
   ([] (.nextDouble RNG))
   ([n] (* (.nextDouble RNG) n)))
 
+(defn get-dynamic-binding [k else]
+  (if-some [binding (get -DYNAMIC-BINDINGS k)]
+    @binding
+    else))
+
+(defn set-dynamic-binding! [k v]
+  (if-some [binding (get -DYNAMIC-BINDINGS k)]
+    (vreset! binding v)
+    (throw (Exception. (str "Can't change/establish root binding of: " k " with set!.")))))
+
+(defn push-dynamic-bindings [bindings]
+  (let [old -DYNAMIC-BINDINGS]
+    (set! -DYNAMIC-BINDINGS (into old (map (fn [[k v]] [k (volatile! v)])) bindings))
+    old))
+
+(defn restore-dynamic-bindings [bindings]
+  (set! -DYNAMIC-BINDINGS bindings))
+
+(defmacro binding
+  "binding => var-symbol init-expr
+
+  Creates new bindings for the (already-existing) vars, with the
+  supplied initial values, executes the exprs in an implicit do, then
+  re-establishes the bindings that existed before.  The new bindings
+  are made in parallel (unlike let); all init-exprs are evaluated
+  before the vars are bound to their new values."
+  [bindings & body]
+  `(let [prev-bindings# (push-dynamic-bindings
+                          ~(into {}
+                             (map (fn [[sym v]] [(list 'var sym) v]))
+                             (partition 2 bindings)))]
+     (try
+       ~@body
+       (finally
+         (restore-dynamic-bindings prev-bindings#)))))
+
 (def ^:dynamic ^StringSink *out* dart-io/stdout)
+
+(defmacro with-out-str
+  "Evaluates exprs in a context in which *out* is bound to a fresh
+  StringWriter.  Returns the string created by any nested printing
+  calls."
+  [& body]
+  `(let [s# (StringBuffer.)]
+     (binding [*out* s#]
+       ~@body
+       (.toString s#))))
 
 ;; TODO should be dynamic
 (defn pr
@@ -5107,44 +5155,24 @@
 
 (defn prn
   "Same as pr followed by (newline). Observes *flush-on-newline*"
-  {:added "1.0"
-   :static true}
   [& more]
   (apply pr more)
   (newline)
   #_(when *flush-on-newline* ; TODO
       (flush)))
 
+(defn ^String pr-str
+  "pr to a string, returning it"
+  [& xs]
+  (with-out-str
+    (apply pr xs)))
 
 #_(defn main []
-  (prn {1 2 3 [4 5 6 7]})
-  (prn [4 5 6 7])
-  (prn '(4 5 6 7))
-  (prn (cons 1 (cons 2 nil)))
-  (prn (list 1 2 3))
-  (prn (seq "aaa"))
-  (prn (seq {:a :b :c :d}))
-  (prn {:a :b :c :d})
-  (prn {:root {:a :b :c :d}})
-  (prn [(math/pow 10e3 1000)])
-  (prn [1 2])
-  (prn (fn [^int a] a))
-  (prn (fn ([] 1) ([^int a] a)))
+  (prn (hash-combine (u32 2831616095 #_(m3-hash-unencoded-chars "bbb")) 0))
+  (prn (hash :a/b))
+  (prn (hash-combine 1535618779 0))
 
-
-  (doseq [x [1 "s" :k nil :many]]
-    (prn
-      (case x
-        1 :one
-        "s" :string
-        nil :nada
-        (:one "of" :many) :too-many
-        :else)))
-
-  (doseq [n (for [x "ab" y (range 3)] (str x y))] (prn n))
-
-  (prn (for [x "ab" y (range 3)] (str x y)))
-
-  (prn (chunk-append (chunk-buffer 32) 2))
+  (prn ">" (pr-str 12))
+  (prn :ok)
 
   )

@@ -47,6 +47,8 @@ In some contexts, suffixes may be appended to the munged name of a symbol. A suf
 
 `$extension` is for the actual singleton of a `$cext`.
 
+`$root` is for the root value of a dyn
+
 ## Composite names
 
 A list of already munged names can be munged into a single unique identifier: the new composite name starts with `$C$` and ends with `$D$` (C and D look a bit like parenthesis) and its components are separated by `$$` when needed (that is when two adjacent components are not composite).

@@ -888,13 +888,17 @@
   (let [target (macroexpand env target)]
     (cond
       (symbol? target)
-      (if-some [dart-var (env target)]
-        (if (-> dart-var meta :dart/mutable)
-          (list 'dart/let
-                [[nil (list 'dart/set! dart-var (emit expr env))]]
-                dart-var)
-          (throw (ex-info (str "Cannot assign to non-mutable: " target) {:target target})))
-        (throw (ex-info (str "Unable to resolve symbol: " target " in this lexical context") {:target target})))
+      (let [dart-sym (emit-symbol target env)
+            [tag info] (resolve-symbol target env)]
+        (case tag
+          :local
+          (when-not (-> info meta :dart/mutable)
+            (throw (ex-info (str "Cannot assign to non-mutable: " target) {:target target})))
+          :def (when-not (= :field (:type info))
+                 (throw (ex-info (str "Cannot assign: " target) {:target target}))))
+        (list 'dart/let
+          [[nil (list 'dart/set! dart-sym (emit expr env))]]
+          dart-sym))
       (and (seq? target) (= '. (first target)))
       (let [[_ obj member] target]
         (if-some [[_ fld] (re-matches #"-(.+)" (name member))]
@@ -1518,7 +1522,11 @@
           (emit expr env))
         dart-code
         (with-out-str
-          (if (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
+          (cond
+            (:dynamic (meta sym))
+            (let [k (symbol (name (:current-ns @nses)) (name sym))]
+              (write-dynamic-var-top-field k dartname dart-fn))
+            (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
             (write-top-dartfn dartname
               (or
                 ; peephole optimization: unwrap single let
@@ -1526,6 +1534,7 @@
                   (let [[_ [[x e] & more-bindings] x'] dart-fn]
                     (and (nil? more-bindings) (= x x') e)))
                 (ensure-dart-expr dart-fn env)))
+            :else
             (write-top-field dartname dart-fn)))]
     (swap! nses alter-def sym assoc :dart/code dart-code)
     (emit sym env)))
@@ -1552,6 +1561,13 @@
               (meta dart-name))))
       :dart (vary-meta (:qname v) assoc :dart/fn-type :native)
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
+
+(defn emit-var [[_ s] env]
+  (let [[tag info] (resolve-symbol s {})]
+    (case tag
+      :def
+      (emit (list 'quote (symbol (name (:ns info)) (name (:name info)))) {})
+      (throw (Exception. (str "Not a var: " s (source-info)))))))
 
 (defn emit-quoted [[_ x] env]
   (cond
@@ -1699,6 +1715,7 @@
                        case* emit-case*
                        quote emit-quoted
                        do emit-do
+                       var emit-var
                        let* emit-let*
                        loop* emit-loop*
                        recur emit-recur
@@ -1718,9 +1735,9 @@
               (emit x env)))
           (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
           (coll? x) (emit-coll x env)
-          :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
-    (cond-> dart-x
-      (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type (vary-meta dart-x merge (dart-meta x env)))))))
+          :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
+        (cond-> dart-x
+          (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type (vary-meta dart-x merge (dart-meta x env)))))]))
 
 (defn bootstrap-eval
   [x]
@@ -1820,6 +1837,23 @@
 
 (defn write-top-field [sym x]
   (write (ensure-dart-expr x {}) (var-locus (name sym))))
+
+(defn write-dynamic-var-top-field [k dart-sym x]
+  (let [root-sym (symbol (str dart-sym "$root"))
+        type (-> dart-sym meta (:dart/type "dc.dynamic"))]
+    (write-top-field root-sym x)
+    (print type)
+    (print " get ")
+    (print dart-sym)
+    (print " => ")
+    (write (list 'dart/as
+             (emit `(cljd.core/get-dynamic-binding '~k ~root-sym) {root-sym root-sym})
+             type) expr-locus)
+    (print ";\nset ")
+    (print dart-sym)
+    (print "(dc.dynamic v) => ")
+    (write (emit `(cljd.core/set-dynamic-binding! '~k ~'v) '{v v}) expr-locus)
+    (print ";\n")))
 
 (defn- write-args [args]
   (let [[positionals nameds] (split-with (complement keyword?) args)]
@@ -2026,6 +2060,7 @@
         (print (:post locus)))
       dart/let
       (let [[_ bindings expr] x]
+
         (or
          (some (fn [[v e]] (write e (cond (nil? v) statement-locus
                                           (and (seq? e) (= 'dart/fn (first e))) (named-fn-locus v)
