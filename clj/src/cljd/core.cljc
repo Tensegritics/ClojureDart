@@ -8,7 +8,8 @@
 
 (ns cljd.core
   (:require ["dart:math" :as math]
-            ["dart:collection" :as dart-coll]))
+            ["dart:collection" :as dart-coll]
+            ["dart:io" :as dart-io]))
 
 (definterface IProtocol
   (extensions [x])
@@ -652,6 +653,27 @@
 (defn ^bool string?
   [x]
   (dart/is? x String))
+
+(extend-type String
+  IPrint
+  (-print [s sink]
+    (let [^StringSink sink sink]
+      (if true ; TODO(or *print-dup* *print-readably*)
+        (do (.write sink \")
+            (dotimes [n (count s)]
+              (let [c (. s "[]" n)]
+                (.write sink (case c
+                               \newline "\\n"
+                               \tab  "\\t"
+                               \return "\\r"
+                               \" "\\\""
+                               \\  "\\\\"
+                               \formfeed "\\f"
+                               \backspace "\\b"
+                               c))))
+            (.write sink \"))
+        (.write ^StringSink sink s)))
+    nil))
 
 (deftype ^:abstract ToStringMixin []
   Object
@@ -5042,47 +5064,89 @@
   ([] (.nextDouble RNG))
   ([n] (* (.nextDouble RNG) n)))
 
-(def d6 (inc (rand-int 6)))
+(def ^:dynamic ^StringSink *out* dart-io/stdout)
+
+;; TODO should be dynamic
+(defn pr
+  "Prints the object(s) to the StringSink that is the current value
+  of *out*.  Prints the object(s), separated by spaces if there is
+  more than one.  By default, pr and prn print in a way that objects
+  can be read by the reader"
+  #_{:dynamic true} ; TODO
+  ([] nil)
+  ([x & more]
+   (-print x *out*)
+   (when-some [[x & more] (seq more)]
+     (.write *out* " ")
+     (recur x more))))
+
+(defn newline
+  "Writes a platform-specific newline to *out*"
+  []
+  (.writeln *out*)
+  nil)
+
+(defn prn
+  "Same as pr followed by (newline). Observes *flush-on-newline*"
+  {:added "1.0"
+   :static true}
+  [& more]
+  (apply pr more)
+  (newline)
+  #_(when *flush-on-newline* ; TODO
+      (flush)))
 
 #_(defn main []
-  (dart:core/print d6)
-  (dart:core/print {1 2 3 [4 5 6 7]})
-  (dart:core/print [4 5 6 7])
-  (dart:core/print '(4 5 6 7))
-  (dart:core/print (cons 1 (cons 2 nil)))
-  (dart:core/print (list 1 2 3))
-  (dart:core/print (seq "aaa"))
-  (dart:core/print (seq {:a :b :c :d}))
-  (dart:core/print {:a :b :c :d})
-  (dart:core/print {:root {:a :b :c :d}})
-  (dart:core/print [(math/pow 10e3 1000)])
-  (dart:core/print [1 2])
-  (dart:core/print (fn [^int a] a))
-  (dart:core/print (fn ([] 1) ([^int a] a)))
+  (prn {1 2 3 [4 5 6 7]})
+  (prn [4 5 6 7])
+  (prn '(4 5 6 7))
+  (prn (cons 1 (cons 2 nil)))
+  (prn (list 1 2 3))
+  (prn (seq "aaa"))
+  (prn (seq {:a :b :c :d}))
+  (prn {:a :b :c :d})
+  (prn {:root {:a :b :c :d}})
+  (prn [(math/pow 10e3 1000)])
+  (prn [1 2])
+  (prn (fn [^int a] a))
+  (prn (fn ([] 1) ([^int a] a)))
 
 
-  (let [at (atom {:a {:b {:c "coucou"}}} :meta {:a :b} :validator (fn [one] (dart:core/print "one") true))]
+  (let [at (atom {:a {:b {:c "coucou"}}} :meta {:a :b} :validator (fn [one] (prn "one") true))]
     (add-watch at :kk (fn [key ref old-state new-state]
-                        (dart:core/print old-state)
-                        (dart:core/print new-state)))
+                        (prn old-state)
+                        (prn new-state)))
     (remove-watch at :kk))
 
 
   (let [pv (into [] (take 1000 (map (fn [x] x) (iterate inc 0))))]
-    (dart:core/print (iterator-seq (.-iterator pv))))
+    (prn (iterator-seq (.-iterator pv))))
 
   (let [a #{1 2 3 4 5}]
-    (dart:core/print (disj a 1 2 4 3 5 6)))
+    (prn (disj a 1 2 4 3 5 6)))
 
-  (dart:core/print (hash-set :a :b 1 2 3 "d"))
+  (prn (hash-set :a :b 1 2 3 "d"))
 
-  (dart:core/print (next (seq #{1 2 3 4})))
+  (prn (next (seq #{1 2 3 4})))
 
-  (dart:core/print (vec (take 100 (range 0 100 3))))
+  (prn (vec (take 100 (range 0 100 3))))
 
-  (dart:core/print (some-> {:a :b} :a))
-  (dart:core/print (= 0 0.0))
-  (dart:core/print (hash 0))
-  (dart:core/print (hash 0.0))
+  (prn (some-> {:a :b} :a))
+  (prn (= 0 0.0))
+
+  (doseq [x [1 "s" :k nil :many]]
+    (prn
+      (case x
+        1 :one
+        "s" :string
+        nil :nada
+        (:one "of" :many) :too-many
+        :else)))
+
+  (doseq [n (for [x "ab" y (range 3)] (str x y))] (prn n))
+
+  (prn (for [x "ab" y (range 3)] (str x y)))
+
+  (prn (chunk-append (chunk-buffer 32) 2))
 
   )
