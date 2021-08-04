@@ -5115,7 +5115,7 @@
   #_(when *flush-on-newline* ; TODO
       (flush)))
 
-<<<<<<< HEAD
+
 #_(defn main []
   (prn {1 2 3 [4 5 6 7]})
   (prn [4 5 6 7])
@@ -5130,11 +5130,6 @@
   (prn [1 2])
   (prn (fn [^int a] a))
   (prn (fn ([] 1) ([^int a] a)))
-
-
-  (let [at (atom {:a {:b {:c "coucou"}}} :meta {:a :b} :validator (fn [one] (prn "one") true))]
-
-#_(defn main []
 
 
   (doseq [x [1 "s" :k nil :many]]
