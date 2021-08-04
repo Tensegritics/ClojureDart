@@ -2200,6 +2200,20 @@
           h (m3-mix-h1 h k)]
       (m3-fmix h 8))))
 
+(defn ^int m3-hash-unencoded-chars [^String in]
+  (let [h1 (loop [^int i 1 ^int h1 0]
+             (if (< i (.-length in))
+               (recur (+ i 2)
+                 (m3-mix-h1 h1
+                   (m3-mix-k1
+                     (bit-or (.codeUnitAt in (dec i))
+                       (u32-bit-shift-left (.codeUnitAt in i) 16)))))
+               h1))
+        h1 (if (== (bit-and (.-length in) 1) 1)
+             (bit-xor h1 (m3-mix-k1 (.codeUnitAt in (dec (.-length in)))))
+             h1)]
+    (m3-fmix h1 (u32-mul 2 (.-length in)))))
+
 (defn ^int hash-combine [^int seed ^int hash]
   ; a la boost
   (bit-xor seed
@@ -2216,6 +2230,11 @@
           (recur (inc i) (+ (u32-mul 31 hash) (.codeUnitAt s i)))
           (m3-hash-u32 hash)))
       0)))
+
+(defn- ^int hash-symbol [sym]
+  (hash-combine
+    (m3-hash-unencoded-chars (.-name sym))
+    (hash-string* (or (.-ns sym) ""))))
 
 (deftype HashCache [^:mutable ^#/(Map dynamic int) young
                     ^:mutable ^#/(Map dynamic int) old]
@@ -5096,6 +5115,7 @@
   #_(when *flush-on-newline* ; TODO
       (flush)))
 
+<<<<<<< HEAD
 #_(defn main []
   (prn {1 2 3 [4 5 6 7]})
   (prn [4 5 6 7])
@@ -5113,26 +5133,9 @@
 
 
   (let [at (atom {:a {:b {:c "coucou"}}} :meta {:a :b} :validator (fn [one] (prn "one") true))]
-    (add-watch at :kk (fn [key ref old-state new-state]
-                        (prn old-state)
-                        (prn new-state)))
-    (remove-watch at :kk))
 
+#_(defn main []
 
-  (let [pv (into [] (take 1000 (map (fn [x] x) (iterate inc 0))))]
-    (prn (iterator-seq (.-iterator pv))))
-
-  (let [a #{1 2 3 4 5}]
-    (prn (disj a 1 2 4 3 5 6)))
-
-  (prn (hash-set :a :b 1 2 3 "d"))
-
-  (prn (next (seq #{1 2 3 4})))
-
-  (prn (vec (take 100 (range 0 100 3))))
-
-  (prn (some-> {:a :b} :a))
-  (prn (= 0 0.0))
 
   (doseq [x [1 "s" :k nil :many]]
     (prn
