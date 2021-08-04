@@ -963,8 +963,12 @@
 
 (defn cljd-u32 [n] (bit-and 0xFFFFFFFF n))
 
-(defn cljd-hash-combine [a b]
-  (cljd-u32 (clojure.lang.Util/hashCombine (unchecked-int a) (unchecked-int b))))
+(defn cljd-hash-combine [seed hash]
+  (cljd-u32
+    (bit-xor seed
+      (+ hash 0x9e3779b9
+        (bit-shift-left seed 6)
+        (bit-shift-right seed 2)))))
 
 (defn cljd-hash
   "Returns the hash for x in cljd."
