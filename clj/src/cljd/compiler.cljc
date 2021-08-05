@@ -884,6 +884,8 @@
       (cond->> (list* op dart-obj name dart-args)
         (seq bindings) (list 'dart/let bindings)))))
 
+(declare emit-symbol)
+
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
     (cond
@@ -1497,6 +1499,8 @@
           [[args] & more-bodies] (cond-> body (vector? arglist-or-body) list)]
       (if (or more-bodies (some '#{&} args)) :clj :dart))))
 
+(declare write-dynamic-var-top-field)
+
 (defn emit-def [[_ sym & doc-string?+expr] env]
   (let [[doc-string expr]
         (case (count doc-string?+expr)
@@ -1735,9 +1739,9 @@
               (emit x env)))
           (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
           (coll? x) (emit-coll x env)
-          :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
-        (cond-> dart-x
-          (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type (vary-meta dart-x merge (dart-meta x env)))))]))
+          :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))]
+    (cond-> dart-x
+      (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type (vary-meta dart-x merge (dart-meta x env)))))))
 
 (defn bootstrap-eval
   [x]
