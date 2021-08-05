@@ -19,7 +19,7 @@
 (def ^:dynamic *bootstrap* false)
 (def ^:dynamic *bootstrap-eval* false)
 
-(def ^:dynamic *lib-path* "lib/")
+(def ^:dynamic ^String *lib-path* "lib/")
 
 (def ^:dynamic *target-subdir*
   "Relative path to the lib directory (*lib-dir*) where compiled dart file will be put.
@@ -303,7 +303,7 @@
 (defn munge* [dart-names]
   (let [sb (StringBuilder. "$C$")]
     (reduce
-      (fn [need-sep dart-name]
+      (fn [need-sep ^String dart-name]
         (when (and need-sep (not (.startsWith dart-name "$C$")))
           (.append sb "$$"))
         (.append sb dart-name)
