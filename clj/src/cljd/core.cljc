@@ -175,7 +175,7 @@
                 ;;todo - restore propagation of fn name
                 ;;must figure out how to convey primitive hints to self calls first
 								;;(cons `fn fdecl)
-								(with-meta (cons `fn fdecl) {:rettag (:tag m)})))))
+								(with-meta (cons `fn fdecl) {:rettag (:tag m) :async (:async m)})))))
 
 (def
  ^{:macro true
@@ -5121,6 +5121,13 @@
        (finally
          (restore-dynamic-bindings prev-bindings#)))))
 
+(defmacro await [expr]
+  `(let [bindings# -DYNAMIC-BINDINGS]
+     (try
+       (dart/await ~expr)
+       (finally
+         (set! -DYNAMIC-BINDINGS bindings#)))))
+
 (def ^:dynamic ^StringSink *out* dart-io/stdout)
 
 (defmacro with-out-str
@@ -5167,12 +5174,5 @@
   (with-out-str
     (apply pr xs)))
 
-#_(defn main []
-  (prn (hash-combine (u32 2831616095 #_(m3-hash-unencoded-chars "bbb")) 0))
-  (prn (hash :a/b))
-  (prn (hash-combine 1535618779 0))
-
-  (prn ">" (pr-str 12))
-  (prn :ok)
-
-  )
+#_(defn ^:async main []
+  (prn (pr-str (seq (await (.-first dart-io/stdin))))))

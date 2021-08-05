@@ -230,6 +230,7 @@
   (let [{:keys [tag] :as m} (meta sym)
         type (some-> tag (emit-type env))]
     (cond-> {}
+      (:async m) (assoc :dart/async true)
       (:getter m) (assoc :dart/getter true)
       (:setter m) (assoc :dart/setter true)
       (:const m) (assoc :dart/const true)
@@ -1132,7 +1133,7 @@
     (swap! nses assoc :current-ns current-ns)
     (symbol "cljd.core" (name mixin-name))))
 
-(defn- emit-ifn [var-name name bodies env]
+(defn- emit-ifn [async var-name name bodies env]
   (let [fixed-bodies (remove variadic? bodies)
         fixed-arities (some->> fixed-bodies seq (map first) (map count))
         [vararg-params & vararg-body] (some #(when (variadic? %) %) bodies)
@@ -1155,7 +1156,8 @@
               ~@vararg-body)))
         methods
         (for [[mname [this & params] & body] methods]
-          (list mname (into [this] (map #(vary-meta % dissoc :tag) params))
+          (list (cond-> mname async (with-meta {:async true}))
+            (into [this] (map #(vary-meta % dissoc :tag) params))
             `(let [~@(mapcat (fn [p] (when (:tag (meta p)) [p (vary-meta p dissoc :tag)])) params)]
                ~@body)))
         [tmp :as binding] (dart-binding (with-meta (or name 'f) {:clj true})
@@ -1175,7 +1177,7 @@
   ([hint env]
    (vary-meta (dart-local hint env) dissoc :dart/nat-type)))
 
-(defn- emit-dart-fn [fn-name [params & body] env]
+(defn- emit-dart-fn [async fn-name [params & body] env]
   (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
         dart-fixed-params (map #(dart-fn-param % env) fixed-params)
         dart-opt-params (for [[p d] opt-params]
@@ -1194,21 +1196,22 @@
                     recur-params
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
         dart-fn
-        (list 'dart/fn dart-fixed-params opt-kind dart-opt-params dart-body)]
+        (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)]
     (if-some [dart-fn-name (some-> fn-name env)]
       (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name)
       dart-fn)))
 
-(defn emit-fn* [[fn* & bodies] env]
-  (let [var-name (some-> fn* meta :var-name)
+(defn emit-fn* [[fn* & bodies :as form] env]
+  (let [{:keys [async]} (meta form)
+        var-name (some-> fn* meta :var-name)
         name (when (symbol? (first bodies)) (first bodies))
         bodies (cond-> bodies name next)
         [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)
         fn-type (if (or more-bodies (variadic? body)) :ifn :native)
         env (cond-> env name (assoc name (vary-meta (dart-local name env) assoc :dart/fn-type fn-type)))]
     (case fn-type
-      :ifn (emit-ifn var-name name bodies env)
-      (emit-dart-fn name body env))))
+      :ifn (emit-ifn async var-name name bodies env)
+      (emit-dart-fn async name body env))))
 
 (defn emit-letfn [[_ fns & body] env]
   (let [env (reduce (fn [env [name]] (assoc env name (dart-local name env))) env fns)
@@ -1290,7 +1293,7 @@
                         params (vec (into #{} (filter symbol?) args))
                         meth (nth x 2)
                         dart-fn-name (dart-local (with-meta (symbol (str "super-" meth)) {:dart true}) {})
-                        dart-fn (list 'dart/fn params :positional ()
+                        dart-fn (list 'dart/fn params :positional () false
                                   (list* (first x) 'super meth args))]
                     (swap! dart-fns conj [dart-fn-name dart-fn])
                     (cond->> (cons dart-fn-name params)
@@ -1300,7 +1303,7 @@
                                   (when (and (= 'dart/.- op) (= o this-super))
                                     fld))]
                   (let [dart-fn-name (dart-local (with-meta (symbol (str "super-set-" fld)) {:dart true}) {})
-                        dart-fn (list 'dart/fn '[v] :positional ()
+                        dart-fn (list 'dart/fn '[v] :positional () false
                                   (list 'dart/set! (list 'dart/.- 'super fld) 'v))]
                     (swap! dart-fns conj [dart-fn-name dart-fn])
                     (list dart-fn-name (nth x 2))))
@@ -1438,7 +1441,7 @@
    its emission is returned as is, otherwise a IIFE (thunk invocation) is returned."
   [dart-expr env]
   (if-some [[bindings dart-expr] (liftable dart-expr env)]
-    (list (list 'dart/fn () :positional () (list 'dart/let bindings dart-expr)))
+    (list (list 'dart/fn () :positional () false (list 'dart/let bindings dart-expr)))
     dart-expr))
 
 (declare write-top-dartfn write-top-field write-dynamic-var-top-field)
@@ -1511,7 +1514,7 @@
         kind (fn-kind expr)
         sym (cond-> sym kind (vary-meta assoc kind true))
         expr (if (and (seq? expr) (= 'fn* (first expr)))
-               (cons (vary-meta (first expr) assoc :var-name sym) (next expr))
+               (with-meta (cons (vary-meta (first expr) assoc :var-name sym) (next expr)) (meta expr))
                expr)
         dartname (cond-> (munge sym env) kind (vary-meta (fn [{:dart/keys [type truth] :as m}]
                                                        (-> m (dissoc :dart/type :dart/nat-type :dart/truth)
@@ -1686,6 +1689,12 @@
       (list 'dart/let bindings (list 'dart/is x (emit-type type env)))
       (list 'dart/is x (emit-type type env)))))
 
+(defn emit-dart-await [[_ x] env]
+  (let [x (emit x env)]
+    (if-some [[bindings x] (liftable x env)]
+      (list 'dart/let bindings (list 'dart/await x))
+      (list 'dart/await x))))
+
 (defn- ensure-new-special [x]
   (case (and (symbol? x) (name x))
     "dart/is?" 'dart/is?
@@ -1708,6 +1717,7 @@
                        . emit-dot
                        set! emit-set!
                        dart/is? emit-dart-is
+                       dart/await emit-dart-await
                        throw emit-throw
                        new emit-new
                        ns emit-ns
@@ -1939,7 +1949,7 @@
     (print ";\n"))
 
   (doseq [[mname type-params fixed-params opt-kind opt-params no-explicit-body body] methods
-          :let [{:dart/keys [getter setter type]} (meta mname)]]
+          :let [{:dart/keys [getter setter type async]} (meta mname)]]
     (newline)
     (when-not setter
       (print (or type "dc.dynamic"))
@@ -1959,6 +1969,7 @@
     (if (and abstract no-explicit-body)
       (print ";\n")
       (do
+        (when async (print " async "))
         (print "{\n")
         (write body return-locus)
         (print "}\n"))))
@@ -2051,9 +2062,10 @@
     (seq? x)
     (case (first x)
       dart/fn
-      (let [[_ fixed-params opt-kind opt-params body] x]
+      (let [[_ fixed-params opt-kind opt-params async body] x]
         (print (:pre locus))
         (write-params fixed-params opt-kind opt-params)
+        (when async (print " async "))
         (print "{\n")
         (write body return-locus)
         (print "}")
@@ -2116,6 +2128,13 @@
         (write expr expr-locus)
         (print " is ")
         (print type)
+        (print ")")
+        (print (:post locus)))
+      dart/await
+      (let [[_ expr] x]
+        (print (:pre locus))
+        (print "(await ")
+        (write expr expr-locus)
         (print ")")
         (print (:post locus)))
       dart/throw
@@ -2379,9 +2398,9 @@
   (load-input in)
   (let [{:keys [current-ns] :as all-nses} @nses
         libname (:lib (all-nses current-ns))]
-    (with-open [out (-> (java.io.File. *lib-path* libname)
-                        (doto (-> .getParentFile .mkdirs))
-                        java.io.FileWriter.)]
+    (with-open [out (-> (java.io.File. *lib-path* ^String libname)
+                      (doto (-> .getParentFile .mkdirs))
+                      java.io.FileWriter.)]
       (binding [*out* out]
         (dump-ns (all-nses current-ns))))
     (swap! nses assoc-in [current-ns :lib] libname)
