@@ -884,13 +884,11 @@
       (cond->> (list* op dart-obj name dart-args)
         (seq bindings) (list 'dart/let bindings)))))
 
-(declare emit-symbol)
-
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
     (cond
       (symbol? target)
-      (let [dart-sym (emit-symbol target env)
+      (let [dart-sym (emit target env)
             [tag info] (resolve-symbol target env)]
         (case tag
           :local
@@ -1443,7 +1441,7 @@
     (list (list 'dart/fn () :positional () (list 'dart/let bindings dart-expr)))
     dart-expr))
 
-(declare write-top-dartfn write-top-field)
+(declare write-top-dartfn write-top-field write-dynamic-var-top-field)
 
 (defn emit-defprotocol* [[_ pname spec] env]
   (let [dartname (munge pname env)]
@@ -1498,8 +1496,6 @@
           [arglist-or-body :as body] (cond-> body (symbol? maybe-name) next)
           [[args] & more-bodies] (cond-> body (vector? arglist-or-body) list)]
       (if (or more-bodies (some '#{&} args)) :clj :dart))))
-
-(declare write-dynamic-var-top-field)
 
 (defn emit-def [[_ sym & doc-string?+expr] env]
   (let [[doc-string expr]
