@@ -374,7 +374,8 @@
   (let [[tag protocol] (resolve-symbol pname {:type-vars type-env})]
     (when (and (= :def tag) (= :protocol (:type protocol)))
       (or
-        (get-in protocol [:sigs mname args-count :dart/name] mname)
+        (let [mname' (get-in protocol [:sigs mname args-count :dart/name] mname)]
+          (with-meta mname' (meta mname)))
         (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " pname ".")))))))
 
 (defn resolve-protocol-method [pname mname args type-env]
