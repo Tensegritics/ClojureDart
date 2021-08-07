@@ -57,6 +57,14 @@
 (def ^:dart ^:bootstrap seq #?(:cljd nil :clj clojure.core/seq))
 (def ^:clj ^:bootstrap vector #?(:cljd nil :clj clojure.core/vector))
 
+(defprotocol Fn
+  "Marker protocol, used to mark multiple/variable arities cljd functions.")
+
+(defn ^bool fn?
+  "Return true if f is a Dart function or satisfies the Fn protocol."
+  [f]
+  (or (dart/is? f Function) (satisfies? Fn f)))
+
 (defprotocol IFn
   "Protocol for adding the ability to invoke an object as a function.
   For example, a vector can also be used to look up a value:
@@ -74,6 +82,11 @@
     [this a b c d e f g h i])
   (-invoke-more [this a b c d e f g h i rest])
   (-apply [this more]))
+
+(defn ^bool ifn?
+  "Returns true if f returns true for fn? or satisfies IFn."
+  [f]
+  (or (fn? f) (satisfies? IFn f)))
 
 (def ^:macro fn
   (fn* [&form &env & decl]

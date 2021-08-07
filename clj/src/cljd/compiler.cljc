@@ -1166,6 +1166,7 @@
                                     :var-name ~var-name
                                     :name-hint ~name
                                     ~(vary-meta arities-mixin assoc :mixin true)
+                                    cljd.core/Fn
                                     cljd.core/IFn
                                     ~@methods)
                               env)
