@@ -559,6 +559,9 @@
           clauses (pop clauses)]
       (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))))
 
+(defn- ensure-bodies [body-or-bodies]
+  (cond-> body-or-bodies (vector? (first body-or-bodies)) list))
+
 (defn expand-extend-type [type & specs]
   (let [proto+meths (reduce
                       (fn [proto+meths x]
@@ -580,7 +583,7 @@
               :type-only true
               (:iext info)
               (for [[mname & body-or-bodies] meths
-                    [[this & args] & body] (cond-> body-or-bodies (vector? (first body-or-bodies)) list)
+                    [[this & args] & body] (ensure-bodies body-or-bodies)
                     :let [mname (get-in info [:sigs mname (inc (count args)) :dart/name])]]
                 `(~mname [~'_ ~this ~@args] (let* [~@(when-not (= type 'fallback)
                                                        [(vary-meta this assoc :tag type) this])] ~@body))))
@@ -1140,7 +1143,7 @@
         [vararg-params & vararg-body] (some #(when (variadic? %) %) bodies)
         base-vararg-arity (some->> vararg-params (take-while (complement #{'&})) count)
         arities-mixin (ensure-ifn-arities-mixin fixed-arities base-vararg-arity)
-        this (or name (gensym "this"))
+        this (vary-meta (or name (gensym "this")) assoc :clj true)
         methods
         (cond->>
             (for [[params & body] fixed-bodies
@@ -1161,16 +1164,15 @@
             (into [this] (map #(vary-meta % dissoc :tag) params))
             `(let [~@(mapcat (fn [p] (when (:tag (meta p)) [p (vary-meta p dissoc :tag)])) params)]
                ~@body)))
-        [tmp :as binding] (dart-binding (with-meta (or name 'f) {:clj true})
-                            (emit `(~'reify
-                                    :var-name ~var-name
-                                    :name-hint ~name
-                                    ~(vary-meta arities-mixin assoc :mixin true)
-                                    cljd.core/Fn
-                                    cljd.core/IFn
-                                    ~@methods)
-                              env)
-                            env)]
+        dart-sexpr (emit `(~'reify
+                           :var-name ~var-name
+                           :name-hint ~name
+                           ~(vary-meta arities-mixin assoc :mixin true)
+                           cljd.core/Fn
+                           cljd.core/IFn
+                           ~@methods)
+                     env)
+        [tmp :as binding] (if name [(env name) dart-sexpr] (dart-binding '^:clj f dart-sexpr env))]
     (list 'dart/let [binding] tmp)))
 
 (defn- dart-fn-param
@@ -1208,38 +1210,52 @@
         var-name (some-> fn* meta :var-name)
         name (when (symbol? (first bodies)) (first bodies))
         bodies (cond-> bodies name next)
-        [body & more-bodies :as bodies] (cond-> bodies (vector? (first bodies)) list)
+        [body & more-bodies :as bodies] (ensure-bodies bodies)
         fn-type (if (or more-bodies (variadic? body)) :ifn :native)
         env (cond-> env name (assoc name (vary-meta (dart-local name env) assoc :dart/fn-type fn-type)))]
     (case fn-type
       :ifn (emit-ifn async var-name name bodies env)
       (emit-dart-fn async name body env))))
 
+(defn closed-overs
+  "Returns the set of dart locals (values of the env) referenced in the emitted code."
+  [emitted env]
+  (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
+
 (defn emit-letfn [[_ fns & body] env]
   (let [env (reduce (fn [env [name]] (assoc env name (dart-local name env))) env fns)
-        fn*s (map #(macroexpand env (cons 'cljd.core/fn %)) fns)
+        fn*s (map #(macroexpand env (with-meta (cons 'cljd.core/fn %) (meta %))) fns)
         ifn? (fn [[_fn* _name & bodies]]
-               (let [[body & more-bodies] (cond-> bodies (vector? (first bodies)) list)]
+               (let [[body & more-bodies] (ensure-bodies bodies)]
                  (or more-bodies (variadic? body))))
         dart-fns (remove ifn? fn*s)
         ifns (filter ifn? fn*s)
         env (-> env
               (into (for [[_ name] ifns] [name (vary-meta (env name) assoc :dart/fn-type :ifn)]))
               (into (for [[_ name] dart-fns] [name (vary-meta (env name) assoc :dart/fn-type :native)])))
-        just-fns-env (into {}
-                       (for [[name] fns]
-                         ; next line is a bit hacky has we inentionally put a clojure meta on a dart local
-                         ; the intent is that when closed overs will be collected these dart locals will be used
-                         ; as fields for deftype*
-                         [name (vary-meta (env name) assoc :mutable true)]))
-        emit-binding (fn [[_ name & body]]
-                        [(env name) (emit (cons 'fn* body) env)])]
-    (assert (empty? ifns))
-    (list 'dart/letrec
-      (concat (map emit-binding dart-fns)
-        )
-      nil
-      (emit (list* 'let* [] body) env))))
+        bindings (into [] (mapcat (fn [[_ name & body :as form]]
+                                    ; assumes emit-dart-fn returns a dart/let
+                                    (second (emit-dart-fn (-> form meta :async) name (first (ensure-bodies body)) env)))) dart-fns)
+        unset-env (into {}
+                    (for [[_ name] ifns]
+                      [name (vary-meta (env name) assoc :dart/mutable true)]))
+        [_ bindings wirings]
+        (reduce (fn [[unset-env bindings wirings] [_ name & bodies :as form]]
+                  (let [unset-env (dissoc unset-env name)
+                        ; assumes emit-ifn returns a dart/let
+                        emitted (second (emit-ifn (-> form meta :async) nil name (ensure-bodies bodies)
+                                          (into env unset-env)))
+                        dart-name (env name)
+                        deps (closed-overs emitted unset-env)
+                        wirings (assoc wirings dart-name deps)
+                        ; assumes emitted is a list of binding whose last binding is [dart-name (reify-ctor-call. ...)]
+                        [dart-name ctor-call] (last emitted)
+                        bindings (-> bindings
+                                   (into (butlast emitted))
+                                   (conj [dart-name (map #(if (deps %) nil %) ctor-call)]))]
+                    [unset-env bindings wirings]))
+          [unset-env bindings {}] ifns)]
+    (list 'dart/letrec bindings wirings (emit (list* 'let* [] body) env))))
 
 (defn emit-method [[mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
   ;; params destructuring will be added by a macro
@@ -1255,7 +1271,7 @@
                              :positional (dart-local p env))
                            (emit d env)])
         super-param (:super (meta this-param))
-        env (into (cond-> (assoc env this-param 'this)
+        env (into (cond-> (assoc env this-param (with-meta 'this (dart-meta this-param env)))
                     super-param (assoc super-param 'super))
                   (zipmap (concat fixed-params (map first opt-params))
                           (concat dart-fixed-params (map first dart-opt-params))))
@@ -1269,12 +1285,6 @@
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
         mname (with-meta mname (dart-meta mname env))]
     [mname mtype-params dart-fixed-params opt-kind dart-opt-params (nil? (seq body)) dart-body]))
-
-(defn closed-overs [emitted env]
-  (into #{} (keep (set (vals env))) (tree-seq coll? seq emitted)))
-
-(defn method-closed-overs [[mname type-params dart-fixed-params opt-kind dart-opt-params _ dart-body] env]
-  (reduce disj (closed-overs dart-body env) (list* 'this 'super (concat dart-fixed-params (map second dart-opt-params)))))
 
 (defn extract-super-calls [dart-body this-super]
   (let [dart-fns (atom [])
@@ -1382,6 +1392,9 @@
       :args ctor-args}
      :methods dart-methods
      :nsm need-nsm}))
+
+(defn method-closed-overs [[mname type-params dart-fixed-params opt-kind dart-opt-params _ dart-body] env]
+  (reduce disj (closed-overs dart-body env) (list* 'this 'super (concat dart-fixed-params (map second dart-opt-params)))))
 
 (defn emit-reify* [[_ opts & specs] env]
   (let [this-this (dart-local "this" env)
@@ -2082,12 +2095,14 @@
                bindings)
          (write expr locus)))
       dart/letrec
-      (let [[_ bindings wiring-statements expr] x
+      (let [[_ bindings wirings expr] x
             loci+exprs (map (fn [[local expr]] [(final-locus local) expr]) bindings)]
         (run! print (keep (comp declaration first) loci+exprs))
         (doseq [[locus expr] loci+exprs]
           (write expr (declared locus)))
-        ;; TODO wiring
+        (doseq [[obj deps] wirings
+                dep deps]
+          (print obj) (print ".") (print dep) (print "=") (print dep) (print ";\n"))
         (write expr locus))
       dart/try
       (let [[_ body catches final] x
