@@ -642,6 +642,9 @@
   {:added "1.0"}
   [& body])
 
+(def ^:dynamic *print-readably* true)
+(def ^:dynamic *print-dup* false)
+
 (defprotocol IPrint
   (-print [o string-sink]))
 
@@ -673,7 +676,7 @@
   IPrint
   (-print [s sink]
     (let [^StringSink sink sink]
-      (if true ; TODO(or *print-dup* *print-readably*)
+      (if (or *print-dup* *print-readably*)
         (do (.write sink \")
             (dotimes [n (count s)]
               (let [c (. s "[]" n)]
@@ -835,6 +838,13 @@
    (if xs
      (recur (-conj coll x) (first xs) (next xs))
      (-conj coll x))))
+
+(defn coll?
+  "Returns true if x satisfies ICollection"
+  [x]
+  (if (nil? x)
+    false
+    (satisfies? ICollection x)))
 
 (defprotocol IDeref
   "Protocol for adding dereference functionality to a reference."
@@ -2503,6 +2513,10 @@
   (-count [coll] count))
 
 (def ^PersistentList -EMPTY-LIST (PersistentList. nil nil nil 0 -1))
+
+(defn list?
+  "Returns true if x implements PersistentList"
+  [x] (dart/is? x PersistentList))
 
 (defn list
   "Creates a new list containing the items."
@@ -4204,6 +4218,37 @@
   ([f g & fs]
      (reduce comp f (cons g fs))))
 
+(defn partial
+  "Takes a function f and fewer than the normal arguments to f, and
+  returns a fn that takes a variable number of additional args. When
+  called, the returned function calls f with args + additional args."
+  {:added "1.0"
+   :static true}
+  ([f] f)
+  ([f arg1]
+   (fn
+     ([] (f arg1))
+     ([x] (f arg1 x))
+     ([x y] (f arg1 x y))
+     ([x y z] (f arg1 x y z))
+     ([x y z & args] (apply f arg1 x y z args))))
+  ([f arg1 arg2]
+   (fn
+     ([] (f arg1 arg2))
+     ([x] (f arg1 arg2 x))
+     ([x y] (f arg1 arg2 x y))
+     ([x y z] (f arg1 arg2 x y z))
+     ([x y z & args] (apply f arg1 arg2 x y z args))))
+  ([f arg1 arg2 arg3]
+   (fn
+     ([] (f arg1 arg2 arg3))
+     ([x] (f arg1 arg2 arg3 x))
+     ([x y] (f arg1 arg2 arg3 x y))
+     ([x y z] (f arg1 arg2 arg3 x y z))
+     ([x y z & args] (apply f arg1 arg2 arg3 x y z args))))
+  ([f arg1 arg2 arg3 & more]
+   (fn [& args] (apply f arg1 arg2 arg3 (concat more args)))))
+
 (defmacro dotimes
   "bindings => name n
 
@@ -5209,6 +5254,25 @@
   [& xs]
   (with-out-str
     (apply pr xs)))
+
+(defn ^String prn-str
+  "prn to a string, returning it"
+  [& xs]
+  (with-out-str
+   (apply prn xs)))
+
+(defn print
+  "Prints the object(s) to the output stream that is the current value
+  of *out*.  print and println produce output for human consumption."
+  [& more]
+  (binding [*print-readably* nil]
+    (apply pr more)))
+
+(defn println
+  "Same as print followed by (newline)"
+  [& more]
+  (binding [*print-readably* nil]
+    (apply prn more)))
 
 #_(defn ^:async main []
   (prn (pr-str (seq (await (.-first dart-io/stdin))))))
