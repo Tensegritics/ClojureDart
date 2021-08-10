@@ -5316,5 +5316,25 @@
     s
     (RegExp. s)))
 
+(defmacro assert
+  "Evaluates expr and throws an exception if it does not evaluate to
+  logical true."
+  ([x] `(assert ~x (str "Assert failed: " (pr-str '~x))))
+  ([x message]
+   ; if true false to ensure nil is falsey
+   `(dart/assert (if ~x true false) ~message)))
+
+(defn zipmap
+  "Returns a map with the keys mapped to the corresponding vals."
+  [keys vals]
+  (loop [map (transient {})
+         ks (seq keys)
+         vs (seq vals)]
+    (if (and ks vs)
+      (recur (assoc! map (first ks) (first vs))
+        (next ks)
+        (next vs))
+      (persistent! map))))
+
 #_(defn ^:async main []
   (prn (pr-str (seq (await (.-first dart-io/stdin))))))
