@@ -727,6 +727,8 @@
     (let [[tmp :as binding] (dart-binding (first x) x env)]
       [[binding]
        tmp])
+    dart/assert
+    [[nil x] nil]
     nil))
 
 (defn- lift-arg [must-lift x hint env]
@@ -1704,16 +1706,15 @@
       (list 'dart/let bindings (list 'dart/is x (emit-type type env)))
       (list 'dart/is x (emit-type type env)))))
 
+(defn emit-dart-assert [[_ test msg] env]
+  (list 'dart/assert (ensure-dart-expr (emit test env) env)
+    (ensure-dart-expr (emit msg env) env)))
+
 (defn emit-dart-await [[_ x] env]
   (let [x (emit x env)]
     (if-some [[bindings x] (liftable x env)]
       (list 'dart/let bindings (list 'dart/await x))
       (list 'dart/await x))))
-
-(defn- ensure-new-special [x]
-  (case (and (symbol? x) (name x))
-    "dart/is?" 'dart/is?
-    x))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -1730,11 +1731,12 @@
           (emit (with-meta (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) {:const true}) env)
           (nil? x) nil
           (and (seq? x) (seq x)) ; non-empty seqs only
-          (let [emit (case (-> (first x) ensure-new-special)
+          (let [emit (case (first x)
                        . emit-dot
                        set! emit-set!
                        dart/is? emit-dart-is
                        dart/await emit-dart-await
+                       dart/assert emit-dart-assert
                        throw emit-throw
                        new emit-new
                        ns emit-ns
@@ -2149,6 +2151,13 @@
         (print type)
         (print ")")
         (print (:post locus)))
+      dart/assert
+      (let [[_ condition msg-expr] x]
+        (print "assert(")
+        (write condition expr-locus)
+        (print ", ")
+        (write msg-expr expr-locus)
+        (print ");\n"))
       dart/await
       (let [[_ expr] x]
         (print (:pre locus))
