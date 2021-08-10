@@ -1724,6 +1724,8 @@
           (symbol? x) (emit-symbol x env)
           #?@(:clj [(char? x) (str x)])
           (or (number? x) (boolean? x) (string? x)) x
+          (instance? java.util.regex.Pattern x)
+          (emit (list 'new 'dart:core/RegExp (.pattern ^java.util.regex.Pattern x)) env)
           (keyword? x)
           (emit (with-meta (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) {:const true}) env)
           (nil? x) nil

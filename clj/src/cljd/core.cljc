@@ -5274,5 +5274,50 @@
   (binding [*print-readably* nil]
     (apply prn more)))
 
+(defn re-groups
+  "Returns the groups from a match. If there are no
+  nested groups, returns a string of the entire match. If there are
+  nested groups, returns a vector of the groups, the first element
+  being the entire match."
+  [^Match m]
+    (let [gc  (.-groupCount m)]
+      (if (zero? gc)
+        (subs (.-input m) (.-start m) (.-end m))
+        (loop [ret (transient []) c 0]
+          (if (<= c gc)
+            (recur (conj! ret (.group m c)) (inc c))
+            (persistent! ret))))))
+
+(defn re-matches
+  "Returns the match, if any, of string to pattern, using
+  java.util.regex.Matcher.matches().  Uses re-groups to return the
+  groups."
+  [^RegExp re ^String s]
+  (let [re (RegExp. (str "(?:" (.-pattern re) ")$") .&
+             :multiLine (.-isMultiLine re)
+             :caseSensitive (.-isCaseSensitive re)
+             :unicode (.-isUnicode re)
+             :dotAll (.-isDotAll re))]
+    (when-some [m (.matchAsPrefix re s)]
+      (when (= (.-length s) (.-end m))
+        (re-groups m)))))
+
+(defn re-seq
+  "Returns a lazy sequence of successive matches of pattern in string,
+  using java.util.regex.Matcher.find(), each such match processed with
+  re-groups."
+  {:added "1.0"
+   :static true}
+  [^RegExp re s]
+  (seq (map re-groups (.allMatches re s))))
+
+(defn ^RegExp re-pattern
+  "Returns an instance of dart:core/RegExp, for use, e.g. in
+  re-matches."
+  [s]
+  (if (dart/is? s RegExp)
+    s
+    (RegExp. s)))
+
 #_(defn ^:async main []
   (prn (pr-str (seq (await (.-first dart-io/stdin))))))
