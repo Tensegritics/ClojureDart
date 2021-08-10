@@ -5299,8 +5299,7 @@
              :unicode (.-isUnicode re)
              :dotAll (.-isDotAll re))]
     (when-some [m (.matchAsPrefix re s)]
-      (when (= (.-length s) (.-end m))
-        (re-groups m)))))
+      (re-groups m))))
 
 (defn re-seq
   "Returns a lazy sequence of successive matches of pattern in string,
