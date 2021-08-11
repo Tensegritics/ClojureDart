@@ -1,0 +1,278 @@
+;   Copyright (c) Rich Hickey. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+(ns ^{:doc "Clojure String utilities
+
+It is poor form to (:use clojure.string). Instead, use require
+with :as to specify a prefix, e.g.
+
+(ns your.namespace.here
+  (:require [clojure.string :as str]))
+
+Design notes for clojure.string:
+
+1. Strings are objects (as opposed to sequences). As such, the
+   string being manipulated is the first argument to a function;
+   passing nil will result in a NullPointerException unless
+   documented otherwise. If you want sequence-y behavior instead,
+   use a sequence.
+
+2. Functions are generally not lazy, and call straight to host
+   methods where those are available and efficient.
+
+3. Functions take advantage of String implementation details to
+   write high-performing loop/recurs instead of using higher-order
+   functions. (This is not idiomatic in general-purpose application
+   code.)
+
+4. When a function is documented to accept a string argument, it
+   will take any implementation of the correct *interface* on the
+   host platform. In Java, this is CharSequence, which is more
+   general than String. In ordinary usage you will almost always
+   pass concrete strings. If you are doing something unusual,
+   e.g. passing a mutable implementation of CharSequence, then
+   thread-safety is your responsibility."
+      :author "Stuart Sierra, Stuart Halloway, David Liebke"}
+  cljd.string
+  (:refer-clojure :exclude (replace reverse)))
+
+(defn ^String reverse
+  "Returns s with its characters reversed."
+  [^String s]
+  (let [sb (StringBuffer.)]
+    (loop [i (dec (.-length s))]
+      (if (neg? i)
+        (.toString sb)
+        (do
+          (.write sb (. s "[]" i))
+          (recur (dec i)))))))
+
+(defn ^String re-quote-replacement
+  "Given a replacement string that you wish to be a literal
+   replacement for a pattern match in replace or replace-first, do the
+   necessary escaping of special characters in the replacement."
+  [^String replacement]
+  (.replaceAllMapped replacement #"[\$\\]" (fn [^Match m] (str "\\" (.group m 0)))))
+
+(defn- ^String re-unquote-replacement
+  [^String replacement]
+  (.replaceAllMapped replacement #"\\(.)" (fn nnn ^String [^Match m] (.group m 1))))
+
+(defn- replacer
+  [replacement]
+  (if (dart/is? replacement String)
+    (let [re #"((?:[^\$\\]|\\.)+)|(?:\$([0-9]+))"]
+      (loop [vs [] i 0]
+        (if-some [m (.matchAsPrefix re replacement i)]
+          (recur (conj vs (if-some [r (.group m 1)]
+                            (re-unquote-replacement r)
+                            (int/parse ^String (.group m 2)))) ; TODO, compiler should cast
+            (.-end m))
+          (if (and (= 1 (count vs)) (dart/is? (peek vs) String))
+            (peek vs)
+            (fn [^Match m]
+              (let [sb (StringBuffer.)]
+                (reduce #(.write sb (if (dart/is? %2 String) %2 (.group m %2))) nil vs)
+                (.toString sb)))))))
+    replacement))
+
+(defn ^String replace
+  "Replaces all instance of match with replacement in s.
+
+   match/replacement can be:
+
+   string / string
+   char / char
+   pattern / (string or function of match).
+
+   See also replace-first.
+
+   The replacement is literal (i.e. none of its characters are treated
+   specially) for all cases above except pattern / string.
+
+   For pattern / string, $1, $2, etc. in the replacement string are
+   substituted with the string that matched the corresponding
+   parenthesized group in the pattern.  If you wish your replacement
+   string r to be used literally, use (re-quote-replacement r) as the
+   replacement argument.  See also documentation for
+   java.util.regex.Matcher's appendReplacement method.
+
+   Example:
+   (clojure.string/replace \"Almost Pig Latin\" #\"\\b(\\w)(\\w+)\\b\" \"$2$1ay\")
+   -> \"lmostAay igPay atinLay\""
+  [^String s match replacement]
+  (cond
+    (dart/is? match String) (.replaceAll s match replacement)
+    (dart/is? match RegExp)
+    (let [replacement (replacer replacement)]
+      (if (dart/is? replacement String)
+        (.replaceAll s match replacement)
+        (.replaceAllMapped s match replacement)))
+    :else (throw (ArgumentError. (str "Invalid match arg: " match)))))
+
+(defn ^String replace-first
+  "Replaces the first instance of match with replacement in s.
+
+   match/replacement can be:
+
+   char / char
+   string / string
+   pattern / (string or function of match).
+
+   See also replace.
+
+   The replacement is literal (i.e. none of its characters are treated
+   specially) for all cases above except pattern / string.
+
+   For pattern / string, $1, $2, etc. in the replacement string are
+   substituted with the string that matched the corresponding
+   parenthesized group in the pattern.  If you wish your replacement
+   string r to be used literally, use (re-quote-replacement r) as the
+   replacement argument.  See also documentation for
+   java.util.regex.Matcher's appendReplacement method.
+
+   Example:
+   (clojure.string/replace-first \"swap first two words\"
+                                 #\"(\\w+)(\\s+)(\\w+)\" \"$3$2$1\")
+   -> \"first swap two words\""
+  [^String s match replacement]
+  (cond
+    (dart/is? match String) (.replaceFirst s match replacement)
+    (dart/is? match RegExp)
+    (let [replacement (replacer replacement)]
+      (if (dart/is? replacement String)
+        (.replaceFirst s match replacement)
+        (.replaceFirstMapped s match replacement)))
+    :else (throw (ArgumentError. (str "Invalid match arg: " match)))))
+
+(defn ^String join
+  "Returns a string of all elements in coll, as returned by (seq coll),
+   separated by an optional separator."
+  ([coll] (apply str coll))
+  ([separator coll]
+   (.join ^Iterable (map str coll) separator)))
+
+(defn ^String capitalize
+  "Converts first character of the string to upper-case, all other
+  characters to lower-case."
+  [^String s]
+  (if (< (count s) 2)
+    (.toUpperCase s)
+    (str (.toUpperCase (subs s 0 1))
+      (.toLowerCase (subs s 1)))))
+
+(defn ^String upper-case
+  "Converts string to all upper-case."
+  [^String s]
+  (.toUpperCase s))
+
+(defn ^String lower-case
+  "Converts string to all lower-case."
+  [^String s]
+  (.toLowerCase s))
+
+(defn split
+  "Splits string on a regular expression.  Optional argument limit is
+  the maximum number of splits. Not lazy. Returns vector of the splits."
+  ([^String s re]
+   (vec (.split s re)))
+  ([^String s re limit]
+   (if (<= limit 0)
+     (split s re) ; to mimick Java
+     (loop [v (transient []) i 0 matches (seq (take (dec limit) (.allMatches re s)))]
+       (if-some [[^Match m & matches] matches]
+         (recur (conj! v (subs s i (.-start m))) (.-end m) matches)
+         (-> v (conj! (subs s i)) persistent!))))))
+
+(defn split-lines
+  "Splits s on \\n or \\r\\n."
+  [s]
+  (split s #"\r?\n"))
+
+(defn ^String trim
+  "Removes whitespace from both ends of string."
+  [^String s]
+  (.trim s))
+
+(defn ^String triml
+  "Removes whitespace from the left side of string."
+  [^String s]
+  (.trimLeft s))
+
+(defn ^String trimr
+  "Removes whitespace from the right side of string."
+  [^String s]
+  (.trimRight s))
+
+(defn ^String trim-newline
+  "Removes all trailing newline \\n or return \\r characters from
+  string.  Similar to Perl's chomp."
+  [^String s]
+  (loop [index (.-length s)]
+    (if (zero? index)
+      ""
+      (let [ch (. s "[]" (dec index))]
+        (if (or (= ch \newline) (= ch \return))
+          (recur (dec index))
+          (.substring s 0 index))))))
+
+(defn ^bool blank?
+  "True if s is nil, empty, or contains only whitespace."
+  [^String? s]
+  (or (nil? s) (= "" (trim s))))
+
+(defn ^String escape
+  "Return a new string, using cmap to escape each character ch
+   from s as follows:
+
+   If (cmap ch) is nil, append ch to the new string.
+   If (cmap ch) is non-nil, append (str (cmap ch)) instead."
+  [^String s cmap]
+  (let [sb (StringBuffer.)]
+    ; docstring is out of sync with behavior: it's not nil but falsey
+    (reduce #(.write sb (if-let [replacement (cmap %2)] (str replacement) %2)))
+    (.toString sb)))
+
+(defn ^int? index-of
+  "Return index of value (string or char) in s, optionally searching
+  forward from from-index. Return nil if value not found."
+  ([^String s value]
+   (let [result (.indexOf s value)]
+     (when-not (neg? result)
+       result)))
+  ([^String s value from-index]
+   (let [result (.indexOf s value from-index)]
+     (when-not (neg? result)
+       result))))
+
+(defn ^int? last-index-of
+  "Return last index of value (string or char) in s, optionally
+  searching backward from from-index. Return nil if value not found."
+  ([^String s value]
+   (let [result (.lastIndexOf s value)]
+     (when-not (neg? result)
+       result)))
+  ([^String s value from-index]
+   (let [result (.lastIndexOf s value from-index)]
+     (when-not (neg? result)
+       result))))
+
+(defn ^bool starts-with?
+  "True if s starts with substr."
+  [^String s substr]
+  (.startsWith s substr))
+
+(defn ^bool ends-with?
+  "True if s ends with substr."
+  [^String s substr]
+  (.endsWith s substr))
+
+(defn ^bool includes?
+  "True if s includes substr."
+  [^String s substr]
+  (.contains s substr))

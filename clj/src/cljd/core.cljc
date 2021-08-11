@@ -234,6 +234,11 @@
                             d))]
                (cons `defn decl))))
 
+(defmacro defn-
+  "same as defn, yielding non-public def"
+  [name & decls]
+  (list* `defn (with-meta name (assoc (meta name) :private true)) decls))
+
 (defmacro declare
   "defs the supplied var names with no bindings, useful for making forward declarations."
   [& names] `(do ~@(map #(list 'def % nil) names)))
@@ -503,6 +508,25 @@
   [test & body]
   `(if ~test nil (do ~@body)))
 
+(defmacro if-some
+  "bindings => binding-form test
+
+   If test is not nil, evaluates then with binding-form bound to the
+   value of test, if not, yields else"
+  ([bindings then]
+   `(if-some ~bindings ~then nil))
+  ([bindings then else & oldform]
+   #_(assert-args
+     (vector? bindings) "a vector for its binding"
+     (nil? oldform) "1 or 2 forms after binding vector"
+     (= 2 (count bindings)) "exactly 2 forms in binding vector")
+   (let [form (bindings 0) tst (bindings 1)]
+     `(let [temp# ~tst]
+        (if (nil? temp#)
+          ~else
+          (let [~form temp#]
+            ~then))))))
+
 (defmacro when-some
   "bindings => binding-form test
 
@@ -518,6 +542,25 @@
          nil
          (let [~form temp#]
            ~@body)))))
+
+(defmacro if-let
+  "bindings => binding-form test
+
+  If test is true, evaluates then with binding-form bound to the value of
+  test, if not, yields else"
+  ([bindings then]
+   `(if-let ~bindings ~then nil))
+  ([bindings then else & oldform]
+   #_(assert-args
+     (vector? bindings) "a vector for its binding"
+     (nil? oldform) "1 or 2 forms after binding vector"
+     (= 2 (count bindings)) "exactly 2 forms in binding vector")
+   (let [form (bindings 0) tst (bindings 1)]
+     `(let [temp# ~tst]
+        (if temp#
+          (let [~form temp#]
+            ~then)
+          ~else)))))
 
 (defmacro when-let
   "bindings => binding-form test
@@ -1818,45 +1861,7 @@
   otherwise else expr, if supplied, else nil."
   ([test then] `(if-not ~test ~then nil))
   ([test then else]
-   `(if (not ~test) ~then ~else)))
-
-(defmacro if-let
-  "bindings => binding-form test
-
-  If test is true, evaluates then with binding-form bound to the value of
-  test, if not, yields else"
-  ([bindings then]
-   `(if-let ~bindings ~then nil))
-  ([bindings then else & oldform]
-   #_(assert-args
-     (vector? bindings) "a vector for its binding"
-     (nil? oldform) "1 or 2 forms after binding vector"
-     (= 2 (count bindings)) "exactly 2 forms in binding vector")
-   (let [form (bindings 0) tst (bindings 1)]
-     `(let [temp# ~tst]
-        (if temp#
-          (let [~form temp#]
-            ~then)
-          ~else)))))
-
-(defmacro if-some
-  "bindings => binding-form test
-
-   If test is not nil, evaluates then with binding-form bound to the
-   value of test, if not, yields else"
-  ([bindings then]
-   `(if-some ~bindings ~then nil))
-  ([bindings then else & oldform]
-   #_(assert-args
-     (vector? bindings) "a vector for its binding"
-     (nil? oldform) "1 or 2 forms after binding vector"
-     (= 2 (count bindings)) "exactly 2 forms in binding vector")
-   (let [form (bindings 0) tst (bindings 1)]
-     `(let [temp# ~tst]
-        (if (nil? temp#)
-          ~else
-          (let [~form temp#]
-            ~then))))))
+   `(if ~test ~else ~then)))
 
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:bootstrap ^:private nary-inline
@@ -2678,7 +2683,28 @@
 
 (extend-type String
   ISeqable
-  (-seq [coll] (when (.-isNotEmpty coll) (StringSeq. coll 0 nil -1))))
+  (-seq [coll] (when (.-isNotEmpty coll) (StringSeq. coll 0 nil -1)))
+  IReduce
+  (-reduce [s f]
+    (let [n (.-length s)]
+      (if (pos? n)
+        (loop [acc (. s "[]" 0) i 1]
+          (if (< i n)
+            (let [acc (f acc (. s "[]" i))]
+              (if (reduced? acc)
+                (unreduced acc)
+                (recur acc (inc i))))
+            acc))
+        (f))))
+  (-reduce [s f start]
+    (let [n (.-length s)]
+      (loop [acc start i 0]
+        (if (< i n)
+          (let [acc (f acc (. s "[]" i))]
+            (if (reduced? acc)
+              (unreduced acc)
+              (recur acc (inc i))))
+          acc)))))
 
 (defn ^String str
   ([] "")
@@ -5320,7 +5346,7 @@
   [^Match m]
     (let [gc  (.-groupCount m)]
       (if (zero? gc)
-        (subs (.-input m) (.-start m) (.-end m))
+        (.group m 0)
         (loop [ret (transient []) c 0]
           (if (<= c gc)
             (recur (conj! ret (.group m c)) (inc c))

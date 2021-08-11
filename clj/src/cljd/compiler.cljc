@@ -1184,7 +1184,8 @@
    (vary-meta (dart-local hint env) dissoc :dart/nat-type)))
 
 (defn- emit-dart-fn [async fn-name [params & body] env]
-  (let [{:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
+  (let [ret-type (some-> (or (:tag (meta fn-name)) (:tag (meta params))) (emit-type env))
+        {:keys [fixed-params opt-kind opt-params]} (parse-dart-params params)
         dart-fixed-params (map #(dart-fn-param % env) fixed-params)
         dart-opt-params (for [[p d] opt-params]
                           [(case opt-kind
@@ -1201,9 +1202,12 @@
         dart-body (cond->> dart-body
                     recur-params
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
+        dart-body (if ret-type
+                    (list 'dart/as dart-body ret-type)
+                    dart-body)
         dart-fn
         (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)]
-    (if-some [dart-fn-name (some-> fn-name env)]
+    (if-some [dart-fn-name (some-> fn-name env (vary-meta assoc :dart/ret-type ret-type))]
       (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name)
       dart-fn)))
 
