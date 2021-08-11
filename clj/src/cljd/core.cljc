@@ -1820,6 +1820,44 @@
   ([test then else]
    `(if (not ~test) ~then ~else)))
 
+(defmacro if-let
+  "bindings => binding-form test
+
+  If test is true, evaluates then with binding-form bound to the value of
+  test, if not, yields else"
+  ([bindings then]
+   `(if-let ~bindings ~then nil))
+  ([bindings then else & oldform]
+   #_(assert-args
+     (vector? bindings) "a vector for its binding"
+     (nil? oldform) "1 or 2 forms after binding vector"
+     (= 2 (count bindings)) "exactly 2 forms in binding vector")
+   (let [form (bindings 0) tst (bindings 1)]
+     `(let [temp# ~tst]
+        (if temp#
+          (let [~form temp#]
+            ~then)
+          ~else)))))
+
+(defmacro if-some
+  "bindings => binding-form test
+
+   If test is not nil, evaluates then with binding-form bound to the
+   value of test, if not, yields else"
+  ([bindings then]
+   `(if-some ~bindings ~then nil))
+  ([bindings then else & oldform]
+   #_(assert-args
+     (vector? bindings) "a vector for its binding"
+     (nil? oldform) "1 or 2 forms after binding vector"
+     (= 2 (count bindings)) "exactly 2 forms in binding vector")
+   (let [form (bindings 0) tst (bindings 1)]
+     `(let [temp# ~tst]
+        (if (nil? temp#)
+          ~else
+          (let [~form temp#]
+            ~then))))))
+
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:bootstrap ^:private nary-inline
   ([op] (nary-inline nil nil op))
