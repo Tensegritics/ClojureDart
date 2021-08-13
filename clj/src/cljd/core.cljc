@@ -5084,7 +5084,7 @@
                arg (gensym 'coll__)
                wrap
                (fn wrap [mods body]
-                 (if-some [[mod expr & more-mods] (seq mods)]
+                 (clojure.core/if-some [[mod expr & more-mods] (seq mods)]
                    (let [body (wrap more-mods body)]
                      (clojure.core/case mod
                        :let `(let ~expr ~body)
@@ -5137,7 +5137,7 @@
                 exit# (or ~@(next ors))
                 :else (recur (chunk-next ~arg))))))
        (chunked-wrap [mods body]
-         (if-some [[mod expr & more-mods] (seq mods)]
+         (clojure.core/if-some [[mod expr & more-mods] (seq mods)]
            (let [body (chunked-wrap more-mods body)]
              (clojure.core/case mod
                :let `(let ~expr ~body)
@@ -5160,7 +5160,7 @@
                   acc (gensym 'acc__)
                   wrap
                   (fn wrap [mods body]
-                    (if-some [[mod expr & more-mods] (seq mods)]
+                    (clojure.core/if-some [[mod expr & more-mods] (seq mods)]
                       (let [body (wrap more-mods body)]
                         (clojure.core/case mod
                           :let `(let ~expr ~body)
