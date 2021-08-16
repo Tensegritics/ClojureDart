@@ -11,131 +11,134 @@
             ["dart:collection" :as dart-coll]
             ["dart:io" :as dart-io]))
 
-(definterface IProtocol
-  (extensions [x])
-  (satisfies [x]))
-
-(declare -EMPTY-LIST -EMPTY-MAP -EMPTY-SET -EMPTY-VECTOR)
-
-(def -DYNAMIC-BINDINGS {})
-
-(def ^{:clj true} =)
-#_(def ^{:dart true} butlast)
-(def ^{:dart true} contains?)
-#_(def ^{:clj true} dissoc)
-(def ^{:clj true} gensym)
-(def ^{:dart true} ident?)
-(def ^{:dart true} key)
-(def ^{:dart true} keys)
-(def ^{:clj true} keyword)
-(def ^{:dart true} keyword?)
-(def ^{:dart true} map?)
-(def ^{:dart true} name)
-(def ^{:dart true} namespace)
-(def ^{:dart true} set)
-(def ^{:dart true} string?)
-(def ^{:clj true} subvec)
-(def ^{:clj true} symbol)
-(def ^{:dart true} symbol?)
-#_(def ^{:dart true} take-nth)
-#_(def ^{:dart true} val)
-(def ^{:clj true} vary-meta)
-#_(def ^{:dart true} vec)
-(def ^{:clj true} vector)
-(def ^{:dart true} vector?)
-
-;; syntax quote support at bootstrap
-;; the :cljd nil is most certainly going to bite us once we run the compiler on dart vm
-(def ^:clj ^:bootstrap apply #?(:cljd nil :clj clojure.core/apply))
-(def ^:clj ^:bootstrap concat #?(:cljd nil :clj clojure.core/concat))
-(def ^:dart ^:bootstrap first #?(:cljd nil :clj clojure.core/first))
-(def ^:clj ^:bootstrap hash-map #?(:cljd nil :clj clojure.core/hash-map))
-(def ^:clj ^:bootstrap hash-set #?(:cljd nil :clj clojure.core/hash-set))
-(def ^:clj ^:bootstrap list #?(:cljd nil :clj clojure.core/list))
-(def ^:dart ^:bootstrap next #?(:cljd nil :clj clojure.core/next))
-(def ^:clj ^:bootstrap nth #?(:cljd nil :clj clojure.core/nth))
-(def ^:dart ^:bootstrap seq #?(:cljd nil :clj clojure.core/seq))
-(def ^:clj ^:bootstrap vector #?(:cljd nil :clj clojure.core/vector))
-
-(defprotocol Fn
-  "Marker protocol, used to mark multiple/variable arities cljd functions.")
-
-(defn ^bool fn?
-  "Return true if f is a Dart function or satisfies the Fn protocol."
-  [f]
-  (or (dart/is? f Function) (satisfies? Fn f)))
-
-(defprotocol IFn
-  "Protocol for adding the ability to invoke an object as a function.
-  For example, a vector can also be used to look up a value:
-  ([1 2 3 4] 1) => 2"
-  (-invoke
-    [this]
-    [this a]
-    [this a b]
-    [this a b c]
-    [this a b c d]
-    [this a b c d e]
-    [this a b c d e f]
-    [this a b c d e f g]
-    [this a b c d e f g h]
-    [this a b c d e f g h i])
-  (-invoke-more [this a b c d e f g h i rest])
-  (-apply [this more]))
-
-(defn ^bool ifn?
-  "Returns true if f returns true for fn? or satisfies IFn."
-  [f]
-  (or (fn? f) (satisfies? IFn f)))
-
-(def ^:macro fn
+#_(def ^:macro fn
   (fn* [&form &env & decl]
     (cons 'fn* decl)))
 
-(def
-  ^{:private true
-    :bootstrap true}
- sigs
- (fn [fdecl]
-   #_(assert-valid-fdecl fdecl)
-   (let [asig
-         (fn [fdecl]
-           (let [arglist (first fdecl)
-                 ;elide implicit macro args
-                 arglist (if (= '&form (first arglist))
-                           (subvec arglist 2 (count arglist))
-                           arglist)
-                 body (next fdecl)]
-             (if (map? (first body))
-               (if (next body)
-                 (with-meta arglist (conj (if (meta arglist) (meta arglist) {}) (first body)))
-                 arglist)
-               arglist)))
-         resolve-tag (fn [argvec]
+(def ^:macro-support ^:private  argument-error
+  (fn [msg]
+    (new #?(:cljd ArgumentError :clj IllegalArgumentException) msg)))
+
+(def ^:macro-support ^:private maybe-destructured
+  (fn* [params body]
+    (if (every? symbol? params)
+      (cons params body)
+      (loop [params params
+             new-params (with-meta [] (meta params))
+             lets []]
+        (if params
+          (if (symbol? (first params))
+            (recur (next params) (conj new-params (first params)) lets)
+            (let [gparam (gensym "p__")]
+              (recur (next params) (conj new-params gparam)
+                (-> lets (conj (first params)) (conj gparam)))))
+          `(~new-params
+            (let ~lets
+              ~@body)))))))
+
+(def ^{:macro true
+       :doc
+       "params => positional-params* , or positional-params* & next-param
+  positional-param => binding-form
+  next-param => binding-form
+  name => symbol
+  Defines a function"
+       :arglists '[[& sigs]],
+       :special-form true,
+       :forms '[(fn name? [params* ] exprs*) (fn name? ([params* ] exprs*)+)]}
+  fn
+  (fn*
+    [&form &env & sigs]
+    (let [name (if (symbol? (first sigs)) (first sigs) nil)
+          sigs (if name (next sigs) sigs)
+          sigs (if (vector? (first sigs))
+                 (list sigs)
+                 (if (seq? (first sigs))
+                   sigs
+                   ;; Assume single arity syntax
+                   (throw (argument-error
+                            (if (seq sigs)
+                              (str "Parameter declaration "
+                                (first sigs)
+                                " should be a vector")
+                              (str "Parameter declaration missing"))))))
+          psig (fn* [sig]
+                 ;; Ensure correct type before destructuring sig
+                 (when (not (seq? sig))
+                   (throw (argument-error
+                            (str "Invalid signature " sig
+                              " should be a list"))))
+                 (let [[params & body] sig
+                       _ (when (not (vector? params))
+                           (throw (argument-error
+                                    (if (seq? (first sigs))
+                                      (str "Parameter declaration " params
+                                        " should be a vector")
+                                      (str "Invalid signature " sig
+                                        " should be a list")))))
+                       conds (when (and (next body) (map? (first body)))
+                               (first body))
+                       body (if conds (next body) body)
+                       conds (or conds (meta params))
+                       pre (:pre conds)
+                       post (:post conds)
+                       body (if post
+                              `((let [~'% ~(if (.< 1 (count body))
+                                             `(do ~@body)
+                                             (first body))]
+                                  ~@(map (fn* [c] `(assert ~c)) post)
+                                  ~'%))
+                              body)
+                       body (if pre
+                              (concat (map (fn* [c] `(assert ~c)) pre)
+                                body)
+                              body)]
+                   (maybe-destructured params body)))
+          new-sigs (map psig sigs)]
+      (with-meta
+        (if name
+          (list* 'fn* name new-sigs)
+          (cons 'fn* new-sigs))
+        (meta &form)))))
+
+(def ^:macro-support ^:private
+  sigs
+  (fn [fdecl]
+    #_(assert-valid-fdecl fdecl)
+    (let [asig
+          (fn [fdecl]
+            (let [arglist (first fdecl)
+                  ;elide implicit macro args
+                  arglist (if (= '&form (first arglist))
+                            (subvec arglist 2 (count arglist))
+                            arglist)
+                  body (next fdecl)]
+              (if (map? (first body))
+                (if (next body)
+                  (with-meta arglist (conj (if (meta arglist) (meta arglist) {}) (first body)))
+                  arglist)
+                arglist)))
+          resolve-tag (fn [argvec]
                         (let [m (meta argvec)
                               tag (:tag m)]
                           argvec
                           ; TODO how to port to CLJD?
                           #_(if (symbol? tag)
-                            (if (= (.indexOf ^String (name tag) ".") -1)
-                              (if (nil? (clojure.lang.Compiler$HostExpr/maybeSpecialTag tag))
-                                (let [c (clojure.lang.Compiler$HostExpr/maybeClass tag false)]
-                                  (if c
-                                    (with-meta argvec (assoc m :tag (symbol (name c))))
-                                    argvec))
+                              (if (= (.indexOf ^String (name tag) ".") -1)
+                                (if (nil? (clojure.lang.Compiler$HostExpr/maybeSpecialTag tag))
+                                  (let [c (clojure.lang.Compiler$HostExpr/maybeClass tag false)]
+                                    (if c
+                                      (with-meta argvec (assoc m :tag (symbol (name c))))
+                                      argvec))
+                                  argvec)
                                 argvec)
-                              argvec)
-                            argvec)))]
-     (if (seq? (first fdecl))
-       (loop [ret [] fdecls fdecl]
-         (if fdecls
-           (recur (conj ret (resolve-tag (asig (first fdecls)))) (next fdecls))
-           (seq ret)))
-       (list (resolve-tag (asig fdecl)))))))
-
-(def ^:bootstrap ^:private ^:dart argument-error
-  (fn [msg]
-    (new #?(:cljd ArgumentError :clj IllegalArgumentException) msg)))
+                              argvec)))]
+      (if (seq? (first fdecl))
+        (loop [ret [] fdecls fdecl]
+          (if fdecls
+            (recur (conj ret (resolve-tag (asig (first fdecls)))) (next fdecls))
+            (seq ret)))
+        (list (resolve-tag (asig fdecl)))))))
 
 (def
   ^{:macro true
@@ -144,8 +147,7 @@
     to the var metadata. prepost-map defines a map with optional keys
     :pre and :post that contain collections of pre or post conditions."
    :arglists '([name doc-string? attr-map? [params*] prepost-map? body]
-                [name doc-string? attr-map? ([params*] prepost-map? body)+ attr-map?])
-   :added "1.0"}
+                [name doc-string? attr-map? ([params*] prepost-map? body)+ attr-map?])}
  defn (fn defn [&form &env fname & fdecl]
         ;; Note: Cannot delegate this check to def because of the call to (with-meta name ..)
         (if (symbol? fname)
@@ -188,7 +190,7 @@
                 ;;todo - restore propagation of fn name
                 ;;must figure out how to convey primitive hints to self calls first
 								;;(cons `fn fdecl)
-								(with-meta (cons `fn fdecl) {:rettag (:tag m) :async (:async m)})))))
+								(with-meta (cons 'clojure.core/fn fdecl) {:rettag (:tag m) :async (:async m)})))))
 
 (def
  ^{:macro true
@@ -237,51 +239,9 @@
 (defmacro defn-
   "same as defn, yielding non-public def"
   [name & decls]
-  (list* `defn (with-meta name (assoc (meta name) :private true)) decls))
+  (list* `clojure.core/defn (with-meta name (assoc (meta name) :private true)) decls))
 
-(defmacro declare
-  "defs the supplied var names with no bindings, useful for making forward declarations."
-  [& names] `(do ~@(map #(list 'def % nil) names)))
-
-(defn ^bool satisfies?
-  {:inline (fn [protocol x] `(.satisfies ~protocol ~x))
-   :inline-arities #{2}}
-  [^IProtocol protocol x]
-  (.satisfies protocol x))
-
-(defn ^bool false?
-  "Returns true if x is the value false, false otherwise."
-  {:inline (fn [x] `(.== false ~x))
-   :inline-arities #{1}}
-  [x]
-  (== false x))
-
-(defn ^bool true?
-  "Returns true if x is the value true, false otherwise."
-  {:inline (fn [x] `(.== true ~x))
-   :inline-arities #{1}}
-  [x]
-  (== true x))
-
-(defn ^bool nil?
-  {:inline-arities #{1}
-   :inline (fn [x] `(.== nil ~x))}
-  [x] (.== nil x))
-
-(defn ^bool boolean
-  "Coerce to boolean"
-  [x]
-  (if (or (nil? x) (false? x))
-    false
-    true))
-
-(defn ^bool some?
-  "Returns true if x is not nil, false otherwise."
-  {:inline-arities #{1}
-   :inline (fn [x] `(. ~x "!=" nil))}
-  [x] (. x "!=" nil))
-
-(defn ^:bootstrap destructure [bindings]
+(defn ^:macro-support destructure [bindings]
   (let [bents (partition 2 bindings)
         pb (fn pb [bvec b v]
              (let [pvec
@@ -377,33 +337,158 @@
   Evaluates the exprs in a lexical context in which the symbols in
   the binding-forms are bound to their respective init-exprs or parts
   therein."
-  {:added "1.0", :special-form true, :forms '[(let [bindings*] exprs*)]}
+  {:special-form true, :forms '[(let [bindings*] exprs*)]}
   [bindings & body]
   #_(assert-args
       (vector? bindings) "a vector for its binding"
       (even? (count bindings)) "an even number of forms in binding vector")
   `(let* ~(destructure bindings) ~@body))
 
-(defn ^{:private true :bootstrap true}
-  maybe-destructured
-  [params body]
-  (if (every? symbol? params)
-    (cons params body)
-    (loop [params params
-           new-params (with-meta [] (meta params))
-           lets []]
-      (if params
-        (if (symbol? (first params))
-          (recur (next params) (conj new-params (first params)) lets)
-          (let [gparam (gensym "p__")]
-            (recur (next params) (conj new-params gparam)
-                   (-> lets (conj (first params)) (conj gparam)))))
-        `(~new-params
-          (let ~lets
-            ~@body))))))
+(defn- ^:macro-support roll-leading-opts [body]
+  (loop [[k v & more :as body] (seq body) opts {}]
+    (if (and body (keyword? k))
+      (recur more (assoc opts k v))
+      [opts body])))
+
+(defmacro deftype [& args]
+  (let [[class-name fields & args] args
+        [opts specs] (roll-leading-opts args)]
+    `(do
+       (~'deftype* ~class-name ~fields ~opts ~@specs)
+       ~(when-not (or (:type-only opts) (:abstract (meta class-name)))
+          `(defn
+             ~(symbol (str "->" class-name))
+             [~@fields]
+             (new ~(vary-meta class-name dissoc :type-params) ~@fields))))))
+
+(defmacro definterface [iface & meths]
+  `(deftype ~(vary-meta iface assoc :abstract true) []
+     :type-only true
+     ~@(map (fn [[meth args]] `(~meth [~'_ ~@args])) meths)))
+
+(definterface IProtocol
+  (extensions [x])
+  (satisfies [x]))
+
+(def -DYNAMIC-BINDINGS {})
+
+#_((declare -EMPTY-LIST -EMPTY-MAP -EMPTY-SET -EMPTY-VECTOR)
+
+
+(def ^{:clj true} =)
+#_(def ^{:dart true} butlast)
+(def ^{:dart true} contains?)
+#_(def ^{:clj true} dissoc)
+(def ^{:clj true} gensym)
+(def ^{:dart true} ident?)
+(def ^{:dart true} key)
+(def ^{:dart true} keys)
+(def ^{:clj true} keyword)
+(def ^{:dart true} keyword?)
+(def ^{:dart true} map?)
+(def ^{:dart true} name)
+(def ^{:dart true} namespace)
+(def ^{:dart true} set)
+(def ^{:dart true} string?)
+(def ^{:clj true} subvec)
+(def ^{:clj true} symbol)
+(def ^{:dart true} symbol?)
+#_(def ^{:dart true} take-nth)
+#_(def ^{:dart true} val)
+(def ^{:clj true} vary-meta)
+#_(def ^{:dart true} vec)
+(def ^{:clj true} vector)
+(def ^{:dart true} vector?)
+
+ ;; syntax quote support at bootstrap
+ ;; the :cljd nil is most certainly going to bite us once we run the compiler on dart vm
+(def ^:clj ^:macro-support apply #?(:cljd nil :clj clojure.core/apply))
+(def ^:clj ^:macro-support concat #?(:cljd nil :clj clojure.core/concat))
+(def ^:dart ^:macro-support first #?(:cljd nil :clj clojure.core/first))
+(def ^:clj ^:macro-support hash-map #?(:cljd nil :clj clojure.core/hash-map))
+(def ^:clj ^:macro-support hash-set #?(:cljd nil :clj clojure.core/hash-set))
+(def ^:clj ^:macro-support list #?(:cljd nil :clj clojure.core/list))
+(def ^:dart ^:macro-support next #?(:cljd nil :clj clojure.core/next))
+(def ^:clj ^:macro-support nth #?(:cljd nil :clj clojure.core/nth))
+(def ^:dart ^:macro-support seq #?(:cljd nil :clj clojure.core/seq))
+(def ^:clj ^:macro-support vector #?(:cljd nil :clj clojure.core/vector))
+   )
+
+(defprotocol Fn
+  "Marker protocol, used to mark multiple/variable arities cljd functions.")
+
+(defn ^bool fn?
+  "Return true if f is a Dart function or satisfies the Fn protocol."
+  [f]
+  (or (dart/is? f Function) (satisfies? Fn f)))
+
+(defprotocol IFn
+  "Protocol for adding the ability to invoke an object as a function.
+  For example, a vector can also be used to look up a value:
+  ([1 2 3 4] 1) => 2"
+  (-invoke
+    [this]
+    [this a]
+    [this a b]
+    [this a b c]
+    [this a b c d]
+    [this a b c d e]
+    [this a b c d e f]
+    [this a b c d e f g]
+    [this a b c d e f g h]
+    [this a b c d e f g h i])
+  (-invoke-more [this a b c d e f g h i rest])
+  (-apply [this more]))
+
+(defn ^bool ifn?
+  "Returns true if f returns true for fn? or satisfies IFn."
+  [f]
+  (or (fn? f) (satisfies? IFn f)))
+
+(defmacro declare
+  "defs the supplied var names with no bindings, useful for making forward declarations."
+  [& names] `(do ~@(map #(list 'def % nil) names)))
+
+(defn ^bool satisfies?
+  {:inline (fn [protocol x] `(.satisfies ~protocol ~x))
+   :inline-arities #{2}}
+  [^IProtocol protocol x]
+  (.satisfies protocol x))
+
+(defn ^bool false?
+  "Returns true if x is the value false, false otherwise."
+  {:inline (fn [x] `(.== false ~x))
+   :inline-arities #{1}}
+  [x]
+  (== false x))
+
+(defn ^bool true?
+  "Returns true if x is the value true, false otherwise."
+  {:inline (fn [x] `(.== true ~x))
+   :inline-arities #{1}}
+  [x]
+  (== true x))
+
+(defn ^bool nil?
+  {:inline-arities #{1}
+   :inline (fn [x] `(.== nil ~x))}
+  [x] (.== nil x))
+
+(defn ^bool boolean
+  "Coerce to boolean"
+  [x]
+  (if (or (nil? x) (false? x))
+    false
+    true))
+
+(defn ^bool some?
+  "Returns true if x is not nil, false otherwise."
+  {:inline-arities #{1}
+   :inline (fn [x] `(. ~x "!=" nil))}
+  [x] (. x "!=" nil))
 
 ;redefine fn with destructuring and pre/post conditions
-(defmacro fn
+#_(defmacro fn
   "params => positional-params* , or positional-params* & next-param
   positional-param => binding-form
   next-param => binding-form
@@ -463,28 +548,6 @@
           (list* 'fn* name new-sigs)
           (cons 'fn* new-sigs))
         (meta &form))))
-
-(defn- ^:bootstrap roll-leading-opts [body]
-  (loop [[k v & more :as body] (seq body) opts {}]
-    (if (and body (keyword? k))
-      (recur more (assoc opts k v))
-      [opts body])))
-
-(defmacro deftype [& args]
-  (let [[class-name fields & args] args
-        [opts specs] (roll-leading-opts args)]
-    `(do
-       (~'deftype* ~class-name ~fields ~opts ~@specs)
-       ~(when-not (or (:type-only opts) (:abstract (meta class-name)))
-          `(defn
-             ~(symbol (str "->" class-name))
-             [~@fields]
-             (new ~(vary-meta class-name dissoc :type-params) ~@fields))))))
-
-(defmacro definterface [iface & meths]
-  `(deftype ~(vary-meta iface assoc :abstract true) []
-     :type-only true
-     ~@(map (fn [[meth args]] `(~meth [~'_ ~@args])) meths)))
 
 (defmacro and
   "Evaluates exprs one at a time, from left to right. If a form
@@ -1864,7 +1927,7 @@
    `(if ~test ~else ~then)))
 
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
-(defn ^:bootstrap ^:private nary-inline
+(defn ^:macro-support ^:private nary-inline
   ([op] (nary-inline nil nil op))
   ([unary-fn op] (nary-inline nil unary-fn op))
   ([zero unary-fn op]
@@ -1874,7 +1937,7 @@
      ([x y] `(. ~x ~op ~y))
      ([x y & more] (reduce (fn [a b] `(. ~a ~op ~b)) `(. ~x ~op ~y) more)))))
 
-(defn ^:bootstrap ^:private nary-cmp-inline
+(defn ^:macro-support ^:private nary-cmp-inline
   [op]
   (fn
     ([x] true)
@@ -1886,8 +1949,8 @@
             ~@(map (fn [[x y]] `(. ~x ~op ~y))
                 (partition 2 1 (take-nth 2 bindings)))))))))
 
-(defn ^:bootstrap ^:private >0? [n] (< 0 n))
-(defn ^:bootstrap ^:private >1? [n] (< 1 n))
+(defn ^:macro-support ^:private >0? [n] (< 0 n))
+(defn ^:macro-support ^:private >1? [n] (< 1 n))
 
 (defn ^bool ==
   {:inline (nary-cmp-inline "==")
@@ -4419,6 +4482,14 @@
   [coll]
   (next (next coll)))
 
+(defn nthnext
+  "Returns the nth next of coll, (seq coll) when n is 0."
+  [coll n]
+  (loop [n n xs (seq coll)]
+    (if (and xs (pos? n))
+      (recur (dec n) (next xs))
+      xs)))
+
 (defn last
   "Return the last item in coll, in linear time"
   [s]
@@ -5400,5 +5471,8 @@
         (next vs))
       (persistent! map))))
 
-#_(defn ^:async main []
+; TODO
+(declare subvec name vary-meta gensym keys ident? contains? vector)
+
+(defn ^:async main []
   (prn (pr-str (seq (await (.-first dart-io/stdin))))))

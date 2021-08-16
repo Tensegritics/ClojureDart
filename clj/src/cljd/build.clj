@@ -13,23 +13,23 @@
             [clojure.stacktrace :as st]))
 
 (defn compile-core []
-  (binding [compiler/*lib-path* (str (System/getProperty "user.dir") "/lib")]
-    (compiler/compile-namespace 'cljd.core)))
+  (compiler/compile-namespace 'cljd.core))
 
 (defn compile-cli
   [& {:keys [watch namespaces] :or {watch false}}]
-  (let [current-path (System/getProperty "user.dir")]
+  (binding [compiler/*lib-path* (str (System/getProperty "user.dir") "/lib")
+            compiler/*hosted* true]
     (println "== Compiling core.cljd -> core.dart ===")
-    (time (compile-core))
+    (compile-core)
     (loop []
-      (doseq [n namespaces]
-        (try (compiler/compile-namespace n)
-             (catch Exception e
-               (st/print-stack-trace e))))
-      (when watch
-        (println "Press ENTER to recompile files :")
-        (when (pos? (.read (System/in)))
-          (recur))))))
+        (doseq [n namespaces]
+          (try (compiler/compile-namespace n)
+               (catch Exception e
+                 (st/print-stack-trace e))))
+        (when watch
+          (println "Press ENTER to recompile files :")
+          (when (pos? (.read (System/in)))
+            (recur))))))
 
 (def cli-options
   [["-v" nil "Verbosity level; may be specified multiple times to increase value"

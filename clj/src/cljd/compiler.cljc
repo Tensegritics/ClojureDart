@@ -14,10 +14,8 @@
 (def dart-libs-info
   (-> "core-libs.edn" clojure.java.io/resource clojure.java.io/reader clojure.lang.LineNumberingPushbackReader. clojure.edn/read))
 
-(def bootstrap-nses '#{cljd.compiler cljd.core})
-
-(def ^:dynamic *bootstrap* false)
-(def ^:dynamic *bootstrap-eval* false)
+(def ^:dynamic *hosted* false)
+(def ^:dynamic *host-eval* false)
 
 (def ^:dynamic ^String *lib-path* "lib/")
 
@@ -154,10 +152,13 @@
       (if-some [v (current-ns sym)] [:def v])
       (if-some [v (mappings sym)]
         (recur (with-meta v (meta sym)) env))
-      (let [lib (get aliases (namespace sym))])
-      (if-some [ns (some-> lib imports :ns)]
-        (recur (with-meta (symbol (name ns) (name sym)) (meta sym)) env))
-      (if-some [info (some-> sym namespace symbol nses (get (symbol (name sym))))]
+      (let [sym-ns (namespace sym)
+            lib-ns (if (= "clojure.core" sym-ns)
+                     "cljd.core"
+                     (some-> (get aliases sym-ns) imports :ns name))])
+      (if (some-> lib-ns (not= sym-ns))
+        (recur (with-meta (symbol lib-ns (name sym)) (meta sym)) env))
+      (if-some [info (some-> sym-ns symbol nses (get (symbol (name sym))))]
         [:def info])
       (if-some [atype (resolve-dart-type sym env)]
         [:dart atype]))))
@@ -204,7 +205,7 @@
     ('#{void dart:core/void} tag) "void"
     :else
     (let [tag! (non-nullable tag)
-          atype (or (resolve-type tag! env) (when *bootstrap* (resolve-type (symbol (name tag!)) env))
+          atype (or (resolve-type tag! env) (when *hosted* (resolve-type (symbol (name tag!)) env))
                   (throw (Exception. (str "Can't resolve type " tag! "."))))
           typename
           (if (:is-param atype) (:type atype) (name (:qname atype)))
@@ -570,7 +571,7 @@
                           (conj (pop proto+meths) (conj (peek proto+meths) x))))
                       [] specs)]
     (cons 'do
-      (when-not *bootstrap-eval*
+      (when-not *host-eval*
         (for [[protocol & meths] proto+meths
               :let [[tag info] (resolve-symbol protocol {})
                     _ (when-not (and (= tag :def) (= :protocol (:type info)))
@@ -591,20 +592,12 @@
             (list 'extend-type-protocol* type (:ns info) (:name info)
               (symbol (name (:current-ns @nses)) (name extension-instance)))))))))
 
-(defn ghost-ns
-  ([]
-   (ghost-ns (:current-ns @nses)))
-  ([ns-sym]
-   (create-ns (symbol (str ns-sym "$ghost")))))
-
-(defn ghost-resolve
-  ([sym] (ghost-resolve sym false (ghost-ns)))
-  ([sym ghost-only]
-   (ghost-resolve sym ghost-resolve (ghost-ns)))
-  ([sym ghost-only gns]
-   (let [v (ns-resolve gns (if (= "clojure.core" (namespace sym)) (symbol "cljd.core" (name sym)) sym))]
-     (when (or (not ghost-only) (some-> v meta :ns (= gns)))
-       v))))
+(defn create-host-ns [ns-sym directives]
+  (let [sym (symbol (str ns-sym "$host"))]
+    (remove-ns sym)
+    (binding [*ns* *ns*]
+      (eval (list* 'ns sym directives))
+      *ns*)))
 
 (defn- propagate-hints [expansion form]
   (if-let [tag (and (not (identical? form expansion))
@@ -618,13 +611,9 @@
     (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
       (let [f-name (name f)
             [f-type f-v] (resolve-symbol f env)
-            {:keys [inline-arities inline]} (or
-                                              #_(when-some [v (when *bootstrap* (ghost-resolve f true))]
-                                                  (when (-> v meta :inline-arities) (meta v)))
-                                              ; TODO SELFHOST
-                                              (case f-type ; wishful coding for the compiler running on dart
-                                                :def (:meta f-v)
-                                                nil))]
+            {:keys [inline-arities inline]} (case f-type
+                                              :def (:meta f-v)
+                                              nil)]
         (cond
           (env f) form
           (and inline-arities (inline-arities (count args))) (apply inline args)
@@ -642,18 +631,9 @@
     (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
       (let [f-name (name f)
             [f-type f-v] (resolve-symbol f env)
-            macro-fn (or
-                       (when-some [v (when *bootstrap* (ghost-resolve f))]
-                         (when (-> v meta :macro) @v))
-                       ; TODO Delete this with X-compilation, usefull for hybrid case
-                       (case f-type
-                         :def (when-some [ns-sym (and (-> f-v :meta :macro) (bootstrap-nses (:ns f-v)))]
-                                (some-> (ghost-resolve f false (ghost-ns ns-sym)) deref))
-                         nil)
-                       ; TODO SELFHOST
-                       (case f-type ; wishful coding for the compiler running on dart
-                         :def (when (-> f-v :meta :macro) (-> f-v :runtime-value))
-                         nil))]
+            macro-fn (case f-type
+                       :def (-> f-v :meta :macro-host-fn)
+                       nil)]
         (cond
           (env f) form
           #?@(:clj ; macro overrides
@@ -1339,12 +1319,27 @@
 
 (defn do-def [nses sym m]
   (let [the-ns (:current-ns nses)
-        {:keys [inline-arities inline] :as msym} (meta sym)
-        msym (cond-> msym inline-arities (into (binding [*ns* (ghost-ns)]
-                                                  (eval {:inline inline
-                                                         :inline-arities inline-arities}))))
-        m (assoc m :ns the-ns :name sym :meta (merge msym (:meta m)))]
-    (assoc-in nses [the-ns sym] m)))
+        m (assoc m :ns the-ns :name sym )]
+    (cond
+      *host-eval* ; first def during host pass
+      (let [{:keys [host-ns]} (nses the-ns)
+            {:keys [inline-arities inline macro-host-fn bootstrap-def] :as msym} (meta sym)
+            msym (cond-> msym (or inline-arities macro-host-fn)
+                         (into (binding [*ns* host-ns]
+                                 (eval {:inline inline
+                                        :inline-arities inline-arities
+                                        :macro-host-fn macro-host-fn}))))
+            m (assoc m :meta (merge msym (:meta m)))]
+        (when bootstrap-def
+          (binding [*ns* host-ns]
+            (eval bootstrap-def)))
+        (assoc-in nses [the-ns sym] m))
+      *hosted* ; second pass
+      (let [old-meta (select-keys (get-in nses [the-ns sym :meta])
+                       [:inline :inline-arities :macro-host-fn :bootstrap-def])]
+        (assoc-in nses [the-ns sym] (update m :meta merge old-meta)))
+      :else
+      (assoc-in nses [the-ns sym] m))))
 
 (defn alter-def [nses sym f & args]
   (let [the-ns (:current-ns nses)]
@@ -1533,13 +1528,17 @@
         sym (vary-meta sym assoc :doc doc-string)
         expr (macroexpand env expr)
         kind (fn-kind expr)
-        sym (cond-> sym kind (vary-meta assoc kind true))
-        expr (if (and (seq? expr) (= 'fn* (first expr)))
-               (with-meta (cons (vary-meta (first expr) assoc :var-name sym) (next expr)) (meta expr))
-               expr)
+        sym (cond-> sym
+              kind (vary-meta assoc kind true)
+              (:macro (meta sym)) (vary-meta assoc :macro-host-fn expr)
+              (:macro-support (meta sym)) (vary-meta assoc :bootstrap-def (list 'def sym expr)))
+        expr (when-not *host-eval*
+               (if (and (seq? expr) (= 'fn* (first expr)))
+                 (with-meta (cons (vary-meta (first expr) assoc :var-name sym) (next expr)) (meta expr))
+                 expr))
         dartname (cond-> (munge sym env) kind (vary-meta (fn [{:dart/keys [type truth] :as m}]
-                                                       (-> m (dissoc :dart/type :dart/nat-type :dart/truth)
-                                                         (assoc :dart/ret-type type :dart/ret-truth truth)))))
+                                                           (-> m (dissoc :dart/type :dart/nat-type :dart/truth)
+                                                             (assoc :dart/ret-type type :dart/ret-truth truth)))))
         dart-fn
         (do
           (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
@@ -1627,14 +1626,14 @@
                             (include name) (not (exclude name)))]
                 name)]
     ['cljd.core
-     :as 'clojure.core
      :refer refer
      :rename (or rename {})]))
 
 (defn emit-ns [[_ ns-sym & ns-clauses :as ns-form] _]
-  (when (or (not *bootstrap*) (-> ns-form meta :force))
+  (when (or (not *hosted*) *host-eval*)
     (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
           refer-clojures (or (seq (filter #(= :refer-clojure (first %)) ns-clauses)) [[:refer-clojure]])
+          host-ns-directives (some #(when (= :host-ns (first %)) (next %)) ns-clauses)
           require-specs
           (concat
             (map refer-clojure-to-require refer-clojures)
@@ -1644,7 +1643,7 @@
                             :require #(if (sequential? %) % [%])
                             :import import-to-require
                             :use use-to-require
-                            :refer-clojure nil)]
+                            (:refer-clojure :host-ns) nil)]
                   :when f
                   spec specs]
               (f spec)))
@@ -1676,7 +1675,9 @@
                   (update :mappings into
                     (for [to refer :let [from (get rename to to)]]
                       [from (with-meta (symbol clj-alias (name to))
-                              {:dart (nil? clj-ns)})]))))))]
+                              {:dart (nil? clj-ns)})]))))))
+          ns-map (cond-> ns-map
+                   *host-eval* (assoc :host-ns (create-host-ns ns-sym host-ns-directives)))]
       (swap! nses assoc ns-sym ns-map :current-ns ns-sym))))
 
 (defn- emit-no-recur [expr env]
@@ -1772,32 +1773,24 @@
     (cond-> dart-x
       (or (symbol? dart-x) (coll? dart-x)) (with-meta (infer-type (vary-meta dart-x merge (dart-meta x env)))))))
 
-(defn bootstrap-eval
+(defn host-eval
   [x]
-  (let [x (binding [*bootstrap-eval* true] (macroexpand {} x))]
-    (when (seq? x)
-      (case (first x)
-        ns (let [the-ns (second x)]
-             (emit-ns (vary-meta x assoc :force true) {})
-             (remove-ns (ns-name (ghost-ns))) ; ensure we don't have a dirty ns
-             (binding [*ns* (ghost-ns)]
-               (refer-clojure :exclude '[definterface deftype defprotocol case])
-               (alias the-ns (ns-name *ns*))))
-        def (let [sym (second x)
-                  {:keys [macro bootstrap]} (meta sym)]
-              (when (or macro bootstrap) (binding [*ns* (ghost-ns)] (eval x)))
-              (when-not macro
-                (when-some [kind (fn-kind (macroexpand {} (last x)))]
-                    (emit-def (list 'def (with-meta sym {kind true}) nil) {}))))
-        do (run! bootstrap-eval (next x))
-        deftype*
-        (let [[_ class-name fields opts & specs] x
-              [class-name & type-params] (cons class-name (:type-params (meta class-name)))
-              mclass-name (with-meta
-                            (or (:dart/name (meta class-name)) (munge class-name {}))
-                            {:type-params type-params})] ; TODO shouldn't it be dne by munge?
-              (swap! nses do-def class-name {:dart/name mclass-name :type :class}))
-        nil))))
+  (binding [*host-eval* true]
+    (let [x (macroexpand {} x)]
+      (when (seq? x)
+        (case (first x)
+          ns (emit-ns x {})
+          def (emit-def x {})
+          do (run! host-eval (next x))
+          defprotocol* (emit-defprotocol* x {})
+          deftype*
+          (let [[_ class-name fields opts & specs] x
+                [class-name & type-params] (cons class-name (:type-params (meta class-name)))
+                mclass-name (with-meta
+                              (or (:dart/name (meta class-name)) (munge class-name {}))
+                              {:type-params type-params})] ; TODO shouldn't it be dne by munge?
+            (swap! nses do-def class-name {:dart/name mclass-name :type :class}))
+          nil)))))
 
 (defn emit-test [expr env]
   (binding [*locals-gen* {}]
@@ -2047,18 +2040,21 @@
                    :dart/nat-type (second x)
                    :dart/truth (dart-type-truthiness (second x))}
          dart/.
-         (let [[_ a meth b & bs] x]
-           (case (name meth)
-             ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "^^" "||")
-             {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
-             ("~" "&" "|" "^" "<<" ">>" "~/")
-             {:dart/type "dc.int" :dart/nat-type "dc.int" :dart/truth :some}
-             ("+" "*" "-" "/")
-             (let [type (reduce (inferences meth) (map (comp :dart/type infer-type) (list* a b bs)))]
-               {:dart/type type
-                :dart/nat-type type
-                :dart/truth (dart-type-truthiness type)})
-             nil))
+         (let [[_ a meth b & bs] x
+               {:dart/keys [fn-type ret-type ret-truth]} (infer-type a)]
+           (if (= :ifn fn-type)
+             {:dart/type ret-type :dart/truth ret-truth}
+             (case (name meth)
+               ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "^^" "||")
+               {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
+               ("~" "&" "|" "^" "<<" ">>" "~/")
+               {:dart/type "dc.int" :dart/nat-type "dc.int" :dart/truth :some}
+               ("+" "*" "-" "/")
+               (let [type (reduce (inferences meth) (map (comp :dart/type infer-type) (list* a b bs)))]
+                 {:dart/type type
+                  :dart/nat-type type
+                  :dart/truth (dart-type-truthiness type)})
+               nil)))
          dart/is {:dart/type "dc.bool" :dart/nat-type "dc.bool" :dart/truth :boolean}
          dart/as (let [[_ _ type] x] {:dart/type type
                                       :dart/nat-type type
@@ -2416,14 +2412,14 @@
                      (throw (ex-info "Compilation error." {:form form} e))))
                  (recur))))))))
 
-(defn bootstrap-load-input [in]
+(defn host-load-input [in]
   #?(:clj
      (with-cljd-reader
        (let [in (clojure.lang.LineNumberingPushbackReader. in)]
          (loop []
            (let [form (read {:eof in :read-cond :allow} in)]
              (when-not (identical? form in)
-               (binding [*locals-gen* {}] (bootstrap-eval form))
+               (binding [*locals-gen* {}] (host-eval form))
                (recur))))))))
 
 (defn compile-input [in]
@@ -2432,7 +2428,8 @@
         libname (:lib (all-nses current-ns))]
     (with-open [out (-> (java.io.File. *lib-path* ^String libname)
                       (doto (-> .getParentFile .mkdirs))
-                      java.io.FileWriter.)]
+                      java.io.FileWriter.
+                      java.io.BufferedWriter.)]
       (binding [*out* out]
         (dump-ns (all-nses current-ns))))
     (swap! nses assoc-in [current-ns :lib] libname)
@@ -2449,26 +2446,44 @@
 
 (defn compile-namespace [ns-name]
   ;; iterate first on file variants then on paths, not the other way!
-  (binding [*bootstrap* (bootstrap-nses ns-name)]
-    (let [file-paths (ns-to-paths ns-name)]
-      (if-some [^java.net.URL url (some find-resource file-paths)]
-        (do
-          (when *bootstrap*
-            (with-open [in (.openStream url)]
-              (bootstrap-load-input (java.io.InputStreamReader. in "UTF-8"))))
+  (let [file-paths (ns-to-paths ns-name)]
+    (if-some [^java.net.URL url (some find-resource file-paths)]
+      (do
+        (when *hosted*
           (with-open [in (.openStream url)]
-            (compile-input (java.io.InputStreamReader. in "UTF-8"))))
-        (throw (ex-info (str "Could not locate "
-                          (str/join " or " file-paths))
-                 {:ns ns-name}))))))
+            (host-load-input (java.io.InputStreamReader. in "UTF-8"))))
+        (with-open [in (.openStream url)]
+          (compile-input (java.io.InputStreamReader. in "UTF-8"))))
+      (throw (ex-info (str "Could not locate "
+                        (str/join " or " file-paths))
+               {:ns ns-name})))))
 
 (comment
   (binding [*lib-path* "examples/hello-flutter/lib"]
     (compile-namespace 'hello-flutter.core))
 
   (time
-    (binding [*lib-path* "lib"]
+    (binding [*lib-path* "lib"
+              *hosted* true]
       (compile-namespace 'cljd.core)))
+
+  (time
+    (binding [*lib-path* "lib"]
+      (compile-namespace 'cljd.string)))
+
+  (time
+    (binding [*lib-path* "lib"]
+      (compile-namespace 'cljd.walk)))
+
+  (time
+    (binding [*lib-path* "lib"
+              *hosted* true]
+      (compile-namespace 'cljd.template)))
+
+  (time
+    (binding [*lib-path* "lib"
+              *hosted* true]
+      (compile-namespace 'cljd.test)))
 
   (time
     (binding [*lib-path* "lib"]
