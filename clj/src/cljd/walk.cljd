@@ -43,7 +43,7 @@ the sorting function."}
   (cond
    (list? form) (outer (apply list (map inner form)))
    (satisfies? cljd.core/IMapEntry form)
-   (outer (cljd.core/PersistentMapEntry. (inner (key form)) (inner (val form))) -1)
+   (outer (cljd.core/PersistentMapEntry. (inner (key form)) (inner (val form)) -1))
    (seq? form) (outer (doall (map inner form)))
    #_#_(instance? clojure.lang.IRecord form) ; TODO
      (outer (reduce (fn [r x] (conj r (inner x))) form form))
