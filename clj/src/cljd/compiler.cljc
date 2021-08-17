@@ -2446,8 +2446,20 @@
                (binding [*locals-gen* {}] (host-eval form))
                (recur))))))))
 
+(defn ensure-main []
+  (let [{:keys [current-ns] :as all-nses} @nses
+        ns-map (all-nses current-ns)]
+    (when-not (ns-map 'main)
+      (when-some [mains (seq (keep (fn [[k v]]
+                                     (when (and (symbol? k) (-> v :meta :dart/main)) k)) ns-map))]
+        (let [args (gensym 'args)]
+          (binding [*locals-gen* {}]
+            (emit (list* 'cljd.core/defn 'main [args]
+                    (for [main mains] (list main args))) {})))))))
+
 (defn compile-input [in]
   (load-input in)
+  (ensure-main)
   (let [{:keys [current-ns] :as all-nses} @nses
         libname (:lib (all-nses current-ns))]
     (with-open [out (-> (java.io.File. *lib-path* ^String libname)
