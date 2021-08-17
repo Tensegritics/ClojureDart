@@ -2070,6 +2070,10 @@
   [num]
   (== 0 num))
 
+(defn ^bool odd? [^int num] (.-isOdd num))
+
+(defn ^bool even? [^int num] (.-isEven num))
+
 (defn ^num inc
   {:inline (fn [x] `(.+ ~x 1))
    :inline-arities #{1}}
@@ -4950,6 +4954,27 @@
     (let [ss (map seq (list* c1 c2 colls))]
       (when (every? identity ss)
         (concat (map first ss) (apply interleave (map rest ss))))))))
+
+(defn interpose
+  "Returns a lazy seq of the elements of coll separated by sep.
+  Returns a stateful transducer when no collection is provided."
+  ([sep]
+   (fn [rf]
+     (let [started (volatile! false)]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (if @started
+            (let [sepr (rf result sep)]
+              (if (reduced? sepr)
+                sepr
+                (rf sepr input)))
+            (do
+              (vreset! started true)
+              (rf result input))))))))
+  ([sep coll]
+   (drop 1 (interleave (repeat sep) coll))))
 
 (defn filter
   "Returns a lazy sequence of the items in coll for which
