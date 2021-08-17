@@ -40,7 +40,7 @@
      (str/replace s regexp f)))
 
 (def ns-prototype
-  {:imports {"dart:core" {:dart-alias "dc"}} ; dc can't clash with user aliases because they go through dart-global
+  {:imports {"dart:core" {}}
    :aliases {"dart:core" "dart:core"}
    :mappings
    '{Type dart:core/Type,
@@ -110,14 +110,33 @@
      List dart:core/List}})
 
 (def nses (atom {:current-ns 'user
+                 :libs {"dart:core" {:dart-alias "dc" :ns nil}} ; dc can't clash with user aliases because they go through dart-global
+                 :aliases {"dc" "dart:core"}
                  'user ns-prototype}))
+
+(defn global-lib-alias [lib ns]
+  (or (-> @nses :libs (get lib) :dart-alias)
+    (let [[_ trimmed-lib] (re-matches #"(?:package:)?(.+?)(?:\.dart)?" lib)
+          segments (re-seq #"[a-zA-Z][a-zA-Z_0-9]*" trimmed-lib)
+          prefix (apply str (map first (butlast segments)))
+          base (cond->> (last segments) (not= prefix "") (str prefix "_"))
+          nses (swap! nses
+                 (fn [nses]
+                   (if (-> nses :libs (get lib) :dart-alias)
+                     nses
+                     (let [alias (some #(when-not (get (:aliases nses) %) %)
+                                   (cons base (map #(str "_" (inc %)) (range))))]
+                       (-> nses
+                         (assoc-in [:libs lib] {:dart-alias alias :ns ns})
+                         (assoc-in [:aliases alias] lib))))))]
+      (-> nses :libs (get lib) :dart-alias))))
 
 (declare resolve-type)
 
 (defn- resolve-dart-type
   [sym env]
-  (let [nses @nses
-        {:keys [imports aliases] :as current-ns} (nses (:current-ns nses))]
+  (let [{:keys [libs] :as nses} @nses
+        {:keys [aliases] :as current-ns} (nses (:current-ns nses))]
     (else->>
       (if ('#{void dart:core/void} sym)
         {:type "void"
@@ -125,7 +144,7 @@
       (if (contains? (:type-vars env #{}) sym)
         {:type (name sym) :is-param true})
       (let [lib (get aliases (namespace sym))])
-      (if-some [dart-alias (:dart-alias (get imports lib))]
+      (if-some [dart-alias (some-> lib libs :dart-alias)]
         {:qname (symbol (str dart-alias "." (name sym)))
          :lib lib
          :type (name sym)
@@ -145,8 +164,8 @@
    - for :def it's what's is in nses,
    - for :dart it's the aliased dart symbol."
   [sym env]
-  (let [nses @nses
-        {:keys [mappings aliases imports] :as current-ns} (nses (:current-ns nses))]
+  (let [{:keys [libs] :as nses} @nses
+        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
     (else->>
       (if-some [v (env sym)] [:local v])
       (if-some [v (current-ns sym)] [:def v])
@@ -155,7 +174,7 @@
       (let [sym-ns (namespace sym)
             lib-ns (if (= "clojure.core" sym-ns)
                      "cljd.core"
-                     (some-> (get aliases sym-ns) imports :ns name))])
+                     (some-> (get aliases sym-ns) libs :ns name))])
       (if (some-> lib-ns (not= sym-ns))
         (recur (with-meta (symbol lib-ns (name sym)) (meta sym)) env))
       (if-some [info (some-> sym-ns symbol nses (get (symbol (name sym))))]
@@ -165,11 +184,12 @@
 
 (defn dart-alias-for-ns [ns]
   (let [{:keys [current-ns] :as nses} @nses
-        lib (get-in nses [ns :lib])
-        alias (get-in nses [current-ns :imports lib :dart-alias])]
-    alias))
+        lib (get-in nses [ns :lib])]
+    (-> nses :libs (get lib) :dart-alias)))
 
-(defn resolve-type [sym env]
+(defn resolve-type
+  "Resolves a type to map with keys :qname :lib :type and :type-parameters."
+  [sym env]
   (when-some [[tag info] (resolve-symbol sym env)]
     (case tag
       :dart info
@@ -178,7 +198,7 @@
              {:qname (symbol (str (dart-alias-for-ns (:ns info))
                                "." (:dart/name info)))
               :lib (-> @nses (get (:ns info)) :lib)
-              :type (name sym)
+                :type (name sym)
               :type-parameters [#_TODO]})
       (throw (ex-info (str "oops " sym) {:env env})))))
 
@@ -1319,27 +1339,28 @@
 
 (defn do-def [nses sym m]
   (let [the-ns (:current-ns nses)
-        m (assoc m :ns the-ns :name sym )]
+        m (assoc m :ns the-ns :name sym)
+        msym (meta sym)]
     (cond
       *host-eval* ; first def during host pass
       (let [{:keys [host-ns]} (nses the-ns)
-            {:keys [inline-arities inline macro-host-fn bootstrap-def] :as msym} (meta sym)
+            {:keys [inline-arities inline macro-host-fn bootstrap-def]} msym
             msym (cond-> msym (or inline-arities macro-host-fn)
                          (into (binding [*ns* host-ns]
                                  (eval {:inline inline
                                         :inline-arities inline-arities
-                                        :macro-host-fn macro-host-fn}))))
-            m (assoc m :meta (merge msym (:meta m)))]
+                                        :macro-host-fn macro-host-fn}))))]
         (when bootstrap-def
           (binding [*ns* host-ns]
             (eval bootstrap-def)))
-        (assoc-in nses [the-ns sym] m))
+        (assoc-in nses [the-ns sym] (assoc m :meta (merge msym (:meta m)))))
       *hosted* ; second pass
       (let [old-meta (select-keys (get-in nses [the-ns sym :meta])
                        [:inline :inline-arities :macro-host-fn :bootstrap-def])]
-        (assoc-in nses [the-ns sym] (update m :meta merge old-meta)))
+        (assoc-in nses [the-ns sym]
+          (assoc m :meta (merge msym (:meta m) old-meta))))
       :else
-      (assoc-in nses [the-ns sym] m))))
+      (assoc-in nses [the-ns sym] (assoc m :meta (merge msym (:meta m)))))))
 
 (defn alter-def [nses sym f & args]
   (let [the-ns (:current-ns nses)]
@@ -1544,33 +1565,34 @@
           (swap! nses do-def sym {:dart/name dartname :type :field}) ; predecl so that the def is visible in recursive defs
           (emit expr env))
         dart-code
-        (with-out-str
-          (cond
-            (:dynamic (meta sym))
-            (let [k (symbol (name (:current-ns @nses)) (name sym))]
-              (write-dynamic-var-top-field k dartname dart-fn))
-            (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
-            (write-top-dartfn dartname
-              (or
-                ; peephole optimization: unwrap single let
-                (and (seq? dart-fn) (= 'dart/let (first dart-fn))
-                  (let [[_ [[x e] & more-bindings] x'] dart-fn]
-                    (and (nil? more-bindings) (= x x') e)))
-                (ensure-dart-expr dart-fn env)))
-            :else
-            (write-top-field dartname dart-fn)))]
+        (when-not *host-eval*
+          (with-out-str
+            (cond
+              (:dynamic (meta sym))
+              (let [k (symbol (name (:current-ns @nses)) (name sym))]
+                (write-dynamic-var-top-field k dartname dart-fn))
+              (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
+              (write-top-dartfn dartname
+                (or
+                  ; peephole optimization: unwrap single let
+                  (and (seq? dart-fn) (= 'dart/let (first dart-fn))
+                    (let [[_ [[x e] & more-bindings] x'] dart-fn]
+                      (and (nil? more-bindings) (= x x') e)))
+                  (ensure-dart-expr dart-fn env)))
+              :else
+              (write-top-field dartname dart-fn))))]
     (swap! nses alter-def sym assoc :dart/code dart-code)
     (emit sym env)))
 
 (defn ensure-import [the-ns]
   (let [{:keys [current-ns] :as all-nses} @nses
-        the-lib (:lib (all-nses the-ns))]
-    (or
-     (-> current-ns all-nses :imports (get the-lib) :dart-alias)
-     (let [[_ last-segment] (re-matches #".*?([^.]+)$" (name the-ns))
-           alias (str (dart-global last-segment))]
-       (swap! nses assoc-in [current-ns :imports the-lib] {:dart-alias alias :ns the-ns})
-       alias))))
+        the-lib (:lib (all-nses the-ns))
+        dart-alias (some-> all-nses :libs (get the-lib) :dart-alias)]
+    (when-not dart-alias
+      (throw (ex-info (str "Namespace not required: " the-ns) {:ns the-ns})))
+    (when-not (some-> current-ns all-nses :imports (get the-lib))
+      (swap! nses assoc-in [current-ns :imports the-lib] {}))
+    dart-alias))
 
 (defn emit-symbol [x env]
   (let [[tag v] (resolve-symbol x env)]
@@ -1615,10 +1637,13 @@
                                (pr-str spec)) {:spec spec}))))
 
 (defn- use-to-require [spec]
-  (if (sequential? spec)
-    (let [lib (first spec)
-          {:keys [only rename]} (apply hash-map (rest spec))]
-      [lib :refer only :rename rename])))
+  (or
+    (when (sequential? spec)
+      (let [lib (first spec)
+            {:keys [only rename]} (apply hash-map (rest spec))]
+        (when (or only rename)
+          [lib :refer only :rename rename])))
+    (throw (ex-info "use must have either a :rename or an :only option" {:spec spec}))))
 
 (defn- refer-clojure-to-require [refer-spec]
   (let [{:keys [exclude only rename]} (reduce (fn [m [k v]] (merge-with into m {k v})) {} (partition 2 refer-spec))
@@ -1653,27 +1678,23 @@
           ns-lib (ns-to-lib ns-sym)
           ns-map (-> ns-prototype
                    (assoc :lib ns-lib)
-                   (assoc-in [:imports ns-lib] {:dart-alias "here"
-                                                :ns ns-sym
-                                                :clj-alias ns-sym}))
+                   (assoc-in [:imports ns-lib] {:clj-alias ns-sym}))
           ns-map
           (reduce #(%2 %1) ns-map
             (for [[lib & {:keys [as refer rename]}] require-specs
-                  :let [dart-alias (if (= 'cljd.core lib)
-                                     "cljd"
-                                     (name (dart-global (or as "lib"))))
-                        clj-ns (when-not (string? lib) lib)
-                        clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
+                  :let [clj-ns (when-not (string? lib) lib)
                         dartlib (else->>
                                   (if (string? lib) lib)
                                   (if-some [{:keys [lib]} (@nses lib)] lib)
                                   (if (= ns-sym lib) ns-lib)
                                   (compile-namespace lib))
+                        dart-alias (global-lib-alias dartlib clj-ns)
+                        clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
                         to-dart-sym (if clj-ns #(munge % {}) identity)]]
               (fn [ns-map]
                 (-> ns-map
                   (cond-> (nil? (get (:imports ns-map) dartlib))
-                    (assoc-in [:imports dartlib] {:dart-alias dart-alias :clj-alias clj-alias :ns clj-ns}))
+                    (assoc-in [:imports dartlib] {:clj-alias clj-alias}))
                   (assoc-in [:aliases clj-alias] dartlib)
                   (update :mappings into
                     (for [to refer :let [from (get rename to to)]]
@@ -1681,6 +1702,7 @@
                               {:dart (nil? clj-ns)})]))))))
           ns-map (cond-> ns-map
                    *host-eval* (assoc :host-ns (create-host-ns ns-sym host-ns-directives)))]
+      (global-lib-alias ns-lib ns-sym)
       (swap! nses assoc ns-sym ns-map :current-ns ns-sym))))
 
 (defn- emit-no-recur [expr env]
@@ -2348,15 +2370,14 @@
   (if (<= 0 (.indexOf target ":"))
     target
     (loop [[s & ss] (str/split src #"/") [t & ts :as all-ts] (str/split target #"/")]
-      (cond
-        (nil? ts) t
-        (nil? ss) (str/join "/" all-ts)
-        (= s t) (recur ss ts)
-        :else (str/join "/" (concat (map (constantly "..") ss) all-ts))))))
+      (if (and (some? ss) (= s t))
+        (recur ss ts)
+        (str/join "/" (concat (map (constantly "..") ss) all-ts))))))
 
 ;; Compile clj -> dart file
 (defn dump-ns [{ns-lib :lib :as ns-map}]
-  (doseq [[lib {:keys [dart-alias]}] (:imports ns-map)]
+  (doseq [lib (keys (:imports ns-map))
+          :let [dart-alias (-> @nses :libs (get lib) :dart-alias)]]
     (print "import ")
     (write-string-literal (relativize-lib ns-lib lib)) ;; TODO: relativize local libs (nses)
     (print " as ")
@@ -2392,9 +2413,9 @@
       (let [{:keys [current-ns] :as nses} @nses]
          (get-in nses [current-ns :mappings sym])))
     (resolveAlias [_ sym]
-      (let [{:keys [current-ns] :as nses} @nses
-            {:keys [aliases imports]} (nses current-ns)]
-        (some-> (aliases (name sym)) imports :ns symbol)))
+      (let [{:keys [current-ns libs] :as nses} @nses
+            {:keys [aliases]} (nses current-ns)]
+        (some-> (aliases (name sym)) libs :ns symbol)))
     (resolveVar [_ sym] nil)))
 
 (defmacro with-cljd-reader [& body]
