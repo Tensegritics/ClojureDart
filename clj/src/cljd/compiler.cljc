@@ -784,10 +784,10 @@
       (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-coll
-  ([coll env] (emit-coll identity coll env))
-  ([f coll env]
+  ([coll env] (emit-coll emit coll env))
+  ([emit coll env]
    (if (seq coll)
-     (let [items (into [] (comp (if (map? coll) cat identity) (map f)) coll)
+     (let [items (into [] (if (map? coll) cat identity) coll)
            [bindings items]
            (reduce (fn [[bindings fn-call] x]
                      (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
@@ -1592,11 +1592,14 @@
       (emit (list 'quote (symbol (name (:ns info)) (name (:name info)))) {})
       (throw (Exception. (str "Not a var: " s (source-info)))))))
 
-(defn emit-quoted [[_ x] env]
+(defn emit-quoted [x env]
   (cond
-    (coll? x) (emit-coll #(list 'quote %) x env)
+    (coll? x) (emit-coll emit-quoted x env)
     (symbol? x) (emit (list 'cljd.core/symbol (namespace x) (name x)) env)
     :else (emit x env)))
+
+(defn emit-quote [[_ x] env]
+  (emit-quoted x env))
 
 (defn ns-to-lib [ns-name]
   (str *target-subdir* (replace-all (name ns-name) #"[.]" {"." "/"}) ".dart"))
@@ -1747,7 +1750,7 @@
                        ns emit-ns
                        try emit-try
                        case* emit-case*
-                       quote emit-quoted
+                       quote emit-quote
                        do emit-do
                        var emit-var
                        let* emit-let*
