@@ -805,12 +805,12 @@
 
 (defn emit-coll
   ([coll env] (emit-coll emit coll env))
-  ([emit coll env]
+  ([maybe-quoted-emit coll env]
    (if (seq coll)
      (let [items (into [] (if (map? coll) cat identity) coll)
            [bindings items]
            (reduce (fn [[bindings fn-call] x]
-                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
+                     (let [[bindings' x'] (lift-arg (seq bindings) (maybe-quoted-emit x env) "item" env)]
                        [(concat bindings' bindings) (cons x' fn-call)]))
              [nil ()] (rseq items))
            fn-sym (cond
