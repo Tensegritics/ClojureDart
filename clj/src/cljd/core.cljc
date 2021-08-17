@@ -1016,20 +1016,20 @@
   IReduce
   (-reduce [coll f]
     (if-some [[x & xs] (seq coll)]
-      (if-some [[y & xs] xs]
+      (if-some [[y] xs]
         (let [val (f x y)]
           (if (reduced? val)
             (deref val)
-            (-reduce xs f val)))
+            (-reduce (next xs) f val)))
         x)
       (f)))
   (-reduce [coll f start]
     (loop [acc start xs (seq coll)]
-      (if-some [[x & xs] xs]
+      (if-some [[x] xs]
         (let [val (f acc x)]
           (if (reduced? val)
             (deref val)
-            (recur val xs)))
+            (recur val (next xs))))
         acc))))
 
 (defn reduce
