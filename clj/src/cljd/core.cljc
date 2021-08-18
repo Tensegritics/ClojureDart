@@ -11,9 +11,6 @@
             ["dart:collection" :as dart-coll]
             ["dart:io" :as dart-io]))
 
-#_(def ^:macro fn
-  (fn* [&form &env & decl]
-    (cons 'fn* decl)))
 
 (def ^:macro-support  argument-error
   (fn [msg]
@@ -371,48 +368,6 @@
   (satisfies [x]))
 
 (def -DYNAMIC-BINDINGS {})
-
-#_((declare -EMPTY-LIST -EMPTY-MAP -EMPTY-SET -EMPTY-VECTOR)
-
-
-(def ^{:clj true} =)
-#_(def ^{:dart true} butlast)
-(def ^{:dart true} contains?)
-#_(def ^{:clj true} dissoc)
-(def ^{:clj true} gensym)
-(def ^{:dart true} ident?)
-(def ^{:dart true} key)
-(def ^{:dart true} keys)
-(def ^{:clj true} keyword)
-(def ^{:dart true} keyword?)
-(def ^{:dart true} map?)
-(def ^{:dart true} name)
-(def ^{:dart true} namespace)
-(def ^{:dart true} set)
-(def ^{:dart true} string?)
-(def ^{:clj true} subvec)
-(def ^{:clj true} symbol)
-(def ^{:dart true} symbol?)
-#_(def ^{:dart true} take-nth)
-#_(def ^{:dart true} val)
-(def ^{:clj true} vary-meta)
-#_(def ^{:dart true} vec)
-(def ^{:clj true} vector)
-(def ^{:dart true} vector?)
-
- ;; syntax quote support at bootstrap
- ;; the :cljd nil is most certainly going to bite us once we run the compiler on dart vm
-(def ^:clj ^:macro-support apply #?(:cljd nil :clj clojure.core/apply))
-(def ^:clj ^:macro-support concat #?(:cljd nil :clj clojure.core/concat))
-(def ^:dart ^:macro-support first #?(:cljd nil :clj clojure.core/first))
-(def ^:clj ^:macro-support hash-map #?(:cljd nil :clj clojure.core/hash-map))
-(def ^:clj ^:macro-support hash-set #?(:cljd nil :clj clojure.core/hash-set))
-(def ^:clj ^:macro-support list #?(:cljd nil :clj clojure.core/list))
-(def ^:dart ^:macro-support next #?(:cljd nil :clj clojure.core/next))
-(def ^:clj ^:macro-support nth #?(:cljd nil :clj clojure.core/nth))
-(def ^:dart ^:macro-support seq #?(:cljd nil :clj clojure.core/seq))
-(def ^:clj ^:macro-support vector #?(:cljd nil :clj clojure.core/vector))
-   )
 
 (defprotocol Fn
   "Marker protocol, used to mark multiple/variable arities cljd functions.")
