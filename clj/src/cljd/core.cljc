@@ -11,6 +11,7 @@
             ["dart:collection" :as dart-coll]
             ["dart:io" :as dart-io]))
 
+(def ^:private sentinel (Object.))
 
 (def ^:macro-support  argument-error
   (fn [msg]
@@ -768,7 +769,12 @@
   (-namespace [x]
     "Returns the namespace String of x."))
 
-(defn namespace
+(defn ^String name
+  "Returns the name String of a string, symbol or keyword."
+  [x]
+  (if (string? x) x (-name x)))
+
+(defn ^String namespace
   "Returns the namespace String of a symbol or keyword, or nil if not present."
   {:inline (fn [x] `(-namespace ~x))
    :inline-arities #{1}}
@@ -1069,8 +1075,6 @@
 
 (defprotocol IAssociative
   "Protocol for adding associativity to collections."
-  (-contains-key? [coll k]
-    "Returns true if k is a key in coll.")
   (-assoc [coll k v]
     "Returns a new collection of coll with a mapping from key k to
      value v added to it."))
@@ -1231,7 +1235,8 @@
   "Protocol for looking up a value in a data structure."
   (-lookup [o k] [o k not-found]
     "Use k to look up a value in o. If not-found is supplied and k is not
-     a valid value that can be used for look up, not-found is returned."))
+     a valid value that can be used for look up, not-found is returned.")
+  (-contains-key? [o k] "Returns true if k is a key in o."))
 
 (extend-type fallback
   ILookup
@@ -1242,7 +1247,10 @@
     ;; `if` is used and not `when` - clj compliant e.g: (get [1 2] (int-array 1) :default) -> :default
     (if (and (dart/is? k int) (satisfies? IIndexed o))
       (-nth o k not-found)
-      not-found)))
+      not-found))
+  (-contains-key? [o k]
+    (and (dart/is? k int) (satisfies? IIndexed o)
+      (not (identical? sentinel (-nth o k sentinel))))))
 
 (defn get
   "Returns the value mapped to key, not-found or nil if key not present."
@@ -1250,6 +1258,14 @@
    (-lookup map key))
   ([map key not-found]
    (-lookup map key not-found)))
+
+(defn ^bool contains?
+  "Returns true if key is present in the given collection, otherwise
+  returns false.  Note that for numerically indexed collections like
+  vectors and Dart lists, this tests if the numeric key is within the
+  range of indexes. 'contains?' operates constant or logarithmic time;
+  it will not perform a linear search for a value.  See also 'some'."
+  [coll key] (-contains-key? coll key))
 
 (defprotocol IStack
   "Protocol for collections to provide access to their items as stacks. The top
@@ -1317,12 +1333,18 @@
     "Returns a new object with value of o and metadata meta added to it."))
 
 (defn with-meta
-  {:inline (fn [obj m] `(-with-meta ~obj ~m))
-   :inline-arities #{2}}
+  "Returns an object of the same type and value as obj, with
+    map m as its metadata."
   [obj m]
   (when-not (map? m)
     (throw (Exception. (str "class " (.-runtimeType m) " cannot be cast to cljd.core/IMap"))))
   (-with-meta obj m))
+
+(defn vary-meta
+ "Returns an object of the same type and value as obj, with
+  (apply f (meta obj) args) as its metadata."
+  [obj f & args]
+  (with-meta obj (apply f (meta obj) args)))
 
 (defprotocol IMeta
   "Protocol for accessing the metadata of an object."
@@ -1469,6 +1491,10 @@
   "Return true if x is a keyword with a namespace"
   [x]
   (and (keyword? x) (namespace x) true))
+
+(defn ident?
+  "Return true if x is a symbol or keyword"
+  [x] (or (keyword? x) (symbol? x)))
 
 (deftype Symbol [^String? ns ^String name meta ^:mutable ^int _hash]
   ^:mixin ToStringMixin
@@ -2959,15 +2985,15 @@
     (if (dart/is? k int)
       (-nth coll k not-found)
       not-found))
+  (-contains-key? [coll k]
+    (if (dart/is? k int)
+      (and (<= 0 k) (< k cnt))
+      false))
   IAssociative
   (-assoc [coll k v]
     (if (dart/is? k int)
       (-assoc-n coll k v)
       (throw (ArgumentError. "Vector's key for assoc must be a number."))))
-  (-contains-key? [coll k]
-    (if (dart/is? k int)
-      (and (<= 0 k) (< k cnt))
-      false))
   IFind
   (-find [coll n]
     (when-some [v' (-lookup coll n nil)]
@@ -3361,6 +3387,10 @@
     (if (dart/is? k int)
       (-nth coll k not-found)
       not-found))
+  (-contains-key? [coll n]
+    (when-not edit
+      (throw (ArgumentError. "contains? after persistent!")))
+    (and (<= 0 n) (< n cnt)))
   IFn
   (-invoke [coll k]
     (-lookup coll k))
@@ -3415,13 +3445,13 @@
   ILookup
   (-lookup [node k] (-nth node k nil))
   (-lookup [node k not-found] (-nth node k not-found))
+  (-contains-key? [node k]
+    (or (== k 0) (== k 1)))
   IAssociative
   (-assoc [node k v]
     (->
       (PersistentVector. meta 2 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v]  -1)
       (-assoc k v)))
-  (-contains-key? [node k]
-    (or (== k 0) (== k 1)))
   #_#_IFind
   (-find [node k]
     ;; TODO : replace with case
@@ -3927,6 +3957,10 @@
     (when-not editable
       (throw (ArgumentError. "lookup after persistent!")))
     (.inode_lookup root k not-found))
+  (-contains-key? [tcoll k]
+    (when-not editable
+      (throw (ArgumentError. "lookup after persistent!")))
+    (not (identical? root (.inode_lookup root k root))))
   IFn
   (-invoke [tcoll k]
     (-lookup tcoll k))
@@ -4022,8 +4056,6 @@
       (if (identical? new-root root)
         coll
         (PersistentHashMap. meta new-root -1))))
-  (-contains-key? [coll k]
-    (not (identical? (-lookup coll k coll) coll)))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -4057,6 +4089,8 @@
     (-lookup coll k nil))
   (-lookup [coll k not-found]
     (.inode_lookup root k not-found))
+  (-contains-key? [coll k]
+    (not (identical? (-lookup coll k coll) coll)))
   IFind
   (-find [coll k]
     (when-some [v (-lookup coll k nil)]
@@ -4100,8 +4134,7 @@
   [meta ^PersistentHashMap hm ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/SetMixin E)
   (contains [this e]
-    (if-some [_ (-lookup hm e nil)]
-      true false))
+    (-contains-key? hm e))
   (lookup [this e]
     (-lookup hm e nil))
   (add [this e]
@@ -4129,7 +4162,7 @@
   (-meta [coll] meta)
   ICollection
   (-conj [coll o]
-    (PersistentHashSet. meta (assoc hm o true) -1))
+    (PersistentHashSet. meta (assoc hm o o) -1))
   IEmptyableCollection
   (-empty [coll] (-with-meta #{} meta))
   IEquiv
@@ -4137,14 +4170,13 @@
     (and
       (set? other)
       (== (-count hm) (-count (.-hm other)))
-      (let [y (.-hm other)
-            never-equiv (Object.)]
-        (reduce-kv
-          (fn [_ k v]
-            (if (= (get y k never-equiv) v)
-              true
+      (let [y (.-hm other)]
+        (reduce
+          (fn [acc k]
+            (if (= (get y k sentinel) k)
+              acc
               (reduced false)))
-          true hm))))
+          true (.-keys hm)))))
   IHash
   (-hash [coll] (ensure-hash __hash (hash-unordered-coll coll)))
   ISeqable
@@ -4155,9 +4187,9 @@
   (-lookup [coll v]
     (-lookup hm v nil))
   (-lookup [coll v not-found]
-    (if-some [_ (-lookup hm v nil)]
-      v
-      not-found))
+    (-lookup hm v not-found))
+  (-contains-key? [coll k]
+    (-contains-key? hm k))
   ISet
   (-disjoin [coll v]
     (PersistentHashSet. meta (-dissoc hm v) -1))
@@ -4170,38 +4202,27 @@
   (-as-transient [coll] (TransientHashSet. (-as-transient hm))))
 
 (deftype TransientHashSet [^:mutable ^TransientHashMap transient-map]
+  ;; all editability checks are performed by the transient map
   ITransientCollection
   (-conj! [tcoll o]
-    (when-not (.-editable transient-map)
-      (throw (ArgumentError. "conj! after persistent!")))
-    (set! transient-map (assoc! transient-map o true))
+    (set! transient-map (assoc! transient-map o o))
     tcoll)
   (-persistent! [tcoll]
-    (when-not (.-editable transient-map)
-      (throw (ArgumentError. "persistent! called twice")))
     (PersistentHashSet. nil (persistent! transient-map) -1))
   ITransientSet
   (-disjoin! [tcoll v]
-    (when-not (.-editable transient-map)
-      (throw (ArgumentError. "disj! called twice")))
     (set! transient-map (dissoc! transient-map v))
     tcoll)
   ICounted
   (-count [tcoll]
-    (when-not (.-editable transient-map)
-      (throw (ArgumentError. "count after persistent!")))
     (count transient-map))
   ILookup
   (-lookup [tcoll v]
-    (when-not (.-editable transient-map)
-      (throw (ArgumentError. "lookup after persistent!")))
     (-lookup tcoll v nil))
   (-lookup [tcoll v not-found]
-    (when-not (.-editable transient-map)
-      (throw (ArgumentError. "lookup after persistent!")))
-    (if-some [_ (-lookup transient-map v nil)]
-      v
-      not-found))
+    (-lookup transient-map v not-found))
+  (-contains-key? [tcoll k]
+    (-contains-key? transient-map k))
   IFn
   (-invoke [tcoll k]
     (-lookup tcoll k nil))
@@ -5199,6 +5220,18 @@
 (defn vec [coll]
   (into [] coll))
 
+(defn vector
+  "Creates a new vector containing the args."
+  ([] [])
+  ([a] [a])
+  ([a b] [a b])
+  ([a b c] [a b c])
+  ([a b c d] [a b c d])
+	([a b c d e] [a b c d e])
+	([a b c d e f] [a b c d e f])
+  ([a b c d e f & args]
+   (into [a b c d e f] args)))
+
 (defn set [coll]
   (into #{} coll))
 
@@ -5416,7 +5449,7 @@
       (persistent! map))))
 
 ; TODO
-(declare subvec name vary-meta gensym keys ident? contains? vector)
+(declare subvec gensym keys)
 
 (defn ^:async main []
   )
