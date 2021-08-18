@@ -15,7 +15,7 @@
   (fn* [&form &env & decl]
     (cons 'fn* decl)))
 
-(def ^:macro-support ^:private  argument-error
+(def ^:macro-support  argument-error
   (fn [msg]
     (new #?(:cljd ArgumentError :clj IllegalArgumentException) msg)))
 
@@ -1462,40 +1462,7 @@
               x)))))))
 
 (deftype ^:abstract EquivSequentialHashMixin []
-  #_#_#_#_Object
-  (^bool check_hash [x y]
-    ;; TODO : use counted?
-    ;; (and (counted? x) (counted? y) (== (count x) (count y)))
-   )
-  (^bool equiv_sequential [x y]
-  )
-  (^bool equiv_chunked [x y]
-    (if (.check_hash x y)
-      (let [other-seq (seq y)]
-        (if (chunked-seq? other-seq)
-          (loop [me-seq (seq x)
-                 other-seq other-seq
-                 me-cf (chunk-first me-seq)
-                 other-cf (chunk-first other-seq)
-                 ^int ime (count me-cf)
-                 ^int iother (count other-cf)
-                 j 0]
-            (if (== ime iother)
-              (if me-seq
-                (if (== (-nth me-cf j) (-nth other-cf j))
-                  (let [j (inc j)]
-                    (if (< j ime)
-                      (recur me-seq other-seq me-cf other-cf ime iother j)
-                      (let [me-seq (chunk-next me-seq)
-                            me-cf (some-> me-seq chunk-first)
-                            other-seq (chunk-next other-seq)
-                            other-cf (some-> other-seq chunk-first)]
-                        (recur me-seq other-seq me-cf other-cf (count me-cf) (count other-cf) 0))))
-                  false)
-                true)
-              false))
-          (.equiv_sequential x y)))
-      false))
+  ISequential
   IEquiv
   (-equiv [x y] (-equiv-sequential x y)))
 
@@ -2552,7 +2519,6 @@
   (-conj [coll o] (Cons. nil o coll -1))
   IEmptyableCollection
   (-empty [coll] ())
-  ISequential
   IHash
   (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
   (-hash-realized? [coll] (.!= -1 __hash))
@@ -2581,6 +2547,7 @@
   [meta _first rest ^int count ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
+  ^:mixin EquivSequentialHashMixin
   (^int ^:getter length [coll] count) ; TODO dart resolution through our own types
   (^#/(PersistentList R) #/(cast R) [coll]
    (PersistentList. meta _first rest count __hash))
@@ -2613,7 +2580,6 @@
   (-conj [coll o] (PersistentList. meta o coll (inc count) -1))
   IEmptyableCollection
   (-empty [coll] (-with-meta () meta))
-  ISequential
   IHash
   (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
   (-hash-realized? [coll] (.!= -1 __hash))
@@ -2710,7 +2676,6 @@
         (if (< i (.-length string))
           (. string "[]" i)
           not-found))))
-  ISequential
   ICollection
   (-conj [coll o] (cons o coll))
   IEmptyableCollection
@@ -2842,7 +2807,6 @@
   IEmptyableCollection
   ;; TODO understand why clj & cljs are different on that one
   (-empty [coll] ())
-  ISequential
   IHash
   (-hash-realized? [coll] (.!= -1 __hash))
   (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll))))
@@ -3011,7 +2975,6 @@
           (PersistentVector. meta (inc cnt) new-shift new-root #dart ^:fixed [o] -1)))))
   IEmptyableCollection
   (-empty [coll] (-with-meta [] meta))
-  ISequential
   IHash
   (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
   (-hash-realized? [coll] (.!= -1 __hash))
@@ -3175,7 +3138,6 @@
       (ChunkedCons. chunk more new-meta __hash)))
   IMeta
   (-meta [coll] meta)
-  ISequential
   ISeqable
   (-seq [coll] coll)
   ISeq
@@ -3247,7 +3209,6 @@
   (-meta [coll] meta)
   ISeqable
   (-seq [coll] coll)
-  ISequential
   ISeq
   (-first [coll]
     (aget arr off))
@@ -3481,7 +3442,6 @@
     (PersistentVector. meta 3 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v o]  -1))
   IEmptyableCollection
   (-empty [node] nil)
-  ISequential
   ISeqable
   (-seq [node] (-seq #dart ^:fixed [_k _v]))
   #_#_IReversible
@@ -4418,6 +4378,10 @@
    :inline-arities #{1}}
   [coll]
   (not (seq coll)))
+
+(defn constantly
+  "Returns a function that takes any number of arguments and returns x."
+  [x] (fn [& args] x))
 
 (defn complement
   "Takes a fn f and returns a fn that takes the same arguments as f,
@@ -5474,7 +5438,7 @@
   [s]
   (if (dart/is? s RegExp)
     s
-    (RegExp. s)))
+    (RegExp. s .& :unicode true)))
 
 (defmacro assert
   "Evaluates expr and throws an exception if it does not evaluate to
@@ -5500,4 +5464,4 @@
 (declare subvec name vary-meta gensym keys ident? contains? vector)
 
 (defn ^:async main []
-  (prn (pr-str (seq (await (.-first dart-io/stdin))))))
+  )

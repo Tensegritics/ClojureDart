@@ -39,7 +39,8 @@ Design notes for clojure.string:
    thread-safety is your responsibility."
       :author "Stuart Sierra, Stuart Halloway, David Liebke"}
   cljd.string
-  (:refer-clojure :exclude (replace reverse)))
+  (:refer-clojure :exclude (replace reverse))
+  (:require ["dart:math" :as m]))
 
 (defn ^String reverse
   "Returns s with its characters reversed."
@@ -79,7 +80,7 @@ Design notes for clojure.string:
               (let [sb (StringBuffer.)]
                 (reduce #(.write sb (if (dart/is? %2 String) %2 (.group m %2))) nil vs)
                 (.toString sb)))))))
-    replacement))
+    (fn ^String [^Match m] (replacement (re-groups m)))))
 
 (defn ^String replace
   "Replaces all instance of match with replacement in s.
@@ -235,7 +236,7 @@ Design notes for clojure.string:
   [^String s cmap]
   (let [sb (StringBuffer.)]
     ; docstring is out of sync with behavior: it's not nil but falsey
-    (reduce #(.write sb (if-let [replacement (cmap %2)] (str replacement) %2)))
+    (reduce  #(.write sb (if-let [replacement (cmap %2)] (str replacement) %2)) nil s)
     (.toString sb)))
 
 (defn ^int? index-of
@@ -246,9 +247,10 @@ Design notes for clojure.string:
      (when-not (neg? result)
        result)))
   ([^String s value from-index]
-   (let [result (.indexOf s value from-index)]
-     (when-not (neg? result)
-       result))))
+   (when (< from-index (.-length s))
+     (let [result (.indexOf s value (m/max 0 from-index))]
+       (when-not (neg? result)
+         result)))))
 
 (defn ^int? last-index-of
   "Return last index of value (string or char) in s, optionally
@@ -258,9 +260,10 @@ Design notes for clojure.string:
      (when-not (neg? result)
        result)))
   ([^String s value from-index]
-   (let [result (.lastIndexOf s value from-index)]
-     (when-not (neg? result)
-       result))))
+   (when (pos? from-index)
+     (let [result (.lastIndexOf s value (m/min (.-length s) from-index))]
+       (when-not (neg? result)
+         result)))))
 
 (defn ^bool starts-with?
   "True if s starts with substr."

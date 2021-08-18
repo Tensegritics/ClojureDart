@@ -731,6 +731,12 @@
     [[nil x] nil]
     nil))
 
+(defmacro ^:private with-lifted [[name expr] env wrapped-expr]
+  `(let [~name ~expr]
+     (if-some [[bindings# ~name] (liftable ~name ~env)]
+       (list 'dart/let bindings# ~wrapped-expr)
+       ~wrapped-expr)))
+
 (defn- lift-arg [must-lift x hint env]
   (or (liftable x env)
       (cond
@@ -1203,7 +1209,8 @@
                     recur-params
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
         dart-body (if ret-type
-                    (list 'dart/as dart-body ret-type)
+                    (with-lifted [dart-expr dart-body] env
+                      (list 'dart/as dart-expr ret-type))
                     dart-body)
         dart-fn
         (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)]
@@ -1700,6 +1707,15 @@
                     (for [to refer :let [from (get rename to to)]]
                       [from (with-meta (symbol clj-alias (name to))
                               {:dart (nil? clj-ns)})]))))))
+          host-ns-directives
+          (concat
+            host-ns-directives
+            (for [[lib & {:keys [refer as] :as options}] require-specs
+                  :let [host-ns (some-> (get @nses lib) :host-ns ns-name)]
+                  :when (and host-ns (not= ns-sym lib))
+                  :let [options
+                        (assoc options :refer (filter (comp :macro-support :meta (@nses 'cljd.core)) refer))]]
+              (list :require (into [host-ns] cat options))))
           ns-map (cond-> ns-map
                    *host-eval* (assoc :host-ns (create-host-ns ns-sym host-ns-directives)))]
       (global-lib-alias ns-lib ns-sym)
@@ -1731,20 +1747,16 @@
 (defn emit-dart-is [[_ x type] env]
   #_(when (or (not (symbol? type)) (env type))
     (throw (ex-info (str "The second argument to dart/is? must be a literal type. Got: " (pr-str type)) {:type type})))
-  (let [x (emit x env)]
-    (if-some [[bindings x] (liftable x env)]
-      (list 'dart/let bindings (list 'dart/is x (emit-type type env)))
-      (list 'dart/is x (emit-type type env)))))
+  (with-lifted [x (emit x env)] env
+    (list 'dart/is x (emit-type type env))))
 
 (defn emit-dart-assert [[_ test msg] env]
   (list 'dart/assert (ensure-dart-expr (emit test env) env)
     (ensure-dart-expr (emit msg env) env)))
 
 (defn emit-dart-await [[_ x] env]
-  (let [x (emit x env)]
-    (if-some [[bindings x] (liftable x env)]
-      (list 'dart/let bindings (list 'dart/await x))
-      (list 'dart/await x))))
+  (with-lifted [x (emit x env)] env
+    (list 'dart/await x)))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -1756,7 +1768,7 @@
           #?@(:clj [(char? x) (str x)])
           (or (number? x) (boolean? x) (string? x)) x
           (instance? java.util.regex.Pattern x)
-          (emit (list 'new 'dart:core/RegExp (.pattern ^java.util.regex.Pattern x)) env)
+          (emit (list 'new 'dart:core/RegExp (.pattern ^java.util.regex.Pattern x) '.& :unicode true) env)
           (keyword? x)
           (emit (with-meta (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) {:const true}) env)
           (nil? x) nil
@@ -2452,7 +2464,8 @@
         libname (:lib (all-nses current-ns))]
     (with-open [out (-> (java.io.File. *lib-path* ^String libname)
                       (doto (-> .getParentFile .mkdirs))
-                      java.io.FileWriter.
+                      java.io.FileOutputStream.
+                      (java.io.OutputStreamWriter. "UTF-8")
                       java.io.BufferedWriter.)]
       (binding [*out* out]
         (dump-ns (all-nses current-ns))))
@@ -2508,6 +2521,16 @@
     (binding [*lib-path* "lib"
               *hosted* true]
       (compile-namespace 'cljd.test)))
+
+  (time
+    (binding [*lib-path* "lib"
+              *hosted* true]
+      (compile-namespace 'cljd.test-clojure.for)))
+
+  (time
+    (binding [*lib-path* "lib"
+              *hosted* true]
+      (compile-namespace 'cljd.test-clojure.string)))
 
   (time
     (binding [*lib-path* "lib"]

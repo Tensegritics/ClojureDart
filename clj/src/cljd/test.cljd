@@ -232,8 +232,8 @@
   Chas Emerick, Allen Rohner, and Stuart Halloway"}
   (:require [cljd.template :as temp]
             [cljd.string :as str])
-  (:host-ns
-   (:require [clojure.template :as temp])))
+  #_(:host-ns
+   (:require [clojure.template :as host-temp])))
 
 ;;; TEST RESULT REPORTING
 
@@ -470,7 +470,7 @@
   ([form] `(is ~form nil))
   ([form msg] `(try-expr ~msg ~form)))
 
-#_(defmacro are
+(defmacro are
   "Checks multiple assertions with a template expression.
   See clojure.template/do-template for an explanation of
   templates.
@@ -493,7 +493,7 @@
             (pos? (count args))
             (zero? (mod (count args) (count argv)))))
     `(temp/do-template ~argv (is ~expr) ~@args)
-    (throw (IllegalArgumentException. "The number of args doesn't match are's argv."))))
+    (throw (argument-error "The number of args doesn't match are's argv."))))
 
 (defmacro testing
   "Adds a new string to the list of testing contexts.  May be nested,
@@ -509,7 +509,7 @@
 (defmacro defrunner-main []
   (let [{:keys [current-ns] :as nses} (:nses &env)
         tests (keep (fn [[k v]] (when (and (symbol? k) (::test (:meta v))) (list k))) (nses current-ns))]
-    `(defn main [] ~@tests)))
+    `(defn ~'main [] ~@tests)))
 
 (defmacro deftest
   "Defines a test function with no arguments.  Test functions may call
