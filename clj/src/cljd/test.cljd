@@ -487,6 +487,10 @@
 
 ;;; DEFINING TESTS
 
+(defmacro defrunner-main []
+  (let [{:keys [current-ns] :as nses} (:nses &env)
+        tests (keep (fn [[k v]] (when (and (symbol? k) (::test (:meta v))) (list k))) (nses current-ns))]
+    `(defn main [] ~@tests)))
 
 (defmacro deftest
   "Defines a test function with no arguments.  Test functions may call
@@ -500,7 +504,9 @@
 
   When *load-tests* is false, deftest is ignored."
   [name & body]
-  `(defn ~(vary-meta name assoc :dart/main true) [_#] ~@body))
+  `(do
+     (defn ~(vary-meta name assoc ::test true) [] ~@body)
+     (defrunner-main)))
 
 (defmacro deftest-
   "Like deftest but creates a private var."
