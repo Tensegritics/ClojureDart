@@ -327,7 +327,7 @@
 
 ;;; UTILITIES FOR ASSERTIONS
 
-#_(defn assert-predicate
+(defn ^:macro-support assert-predicate
   "Returns generic assertion code for any functional predicate.  The
   'expected' argument to 'report' will contains the original form, the
   'actual' argument will contain the form with all its sub-forms
@@ -340,7 +340,7 @@
            result# (apply ~pred values#)]
        (if result#
          (do-report {:type :pass, :message ~msg,
-                  :expected '~form, :actual (cons ~pred values#)})
+                  :expected '~form, :actual (cons '~pred values#)})
          (do-report {:type :fail, :message ~msg,
                   :expected '~form, :actual (list '~'not (cons '~pred values#))}))
        result#)))
@@ -365,7 +365,26 @@
 ;; macro.  These define different kinds of tests, based on the first
 ;; symbol in the test expression.
 
-(defn ^:macro-support assert-expr [msg form]
+
+(defn- ^:macro-support resolve-symbol [env sym] ; TODO migrate to core when design settles
+  (let [{:keys [libs] :as nses} (:nses env)
+        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+    (when-not (env sym)
+      (or (current-ns sym)
+        (if-some [v (mappings sym)]
+          (recur env v)
+          (let [sym-ns (namespace sym)
+                lib-ns (if (= "clojure.core" sym-ns)
+                         "cljd.core"
+                         (some-> (get aliases sym-ns) libs :ns name))]
+            (if (some-> lib-ns (not= sym-ns))
+              (recur env (symbol lib-ns (name sym)))
+              (some-> sym-ns symbol nses (get (symbol (name sym)))))))))))
+
+(defn- ^:macro-support function? [env sym]
+  (and (symbol? sym) (when-some [v (resolve-symbol env sym)] (not (:macro (:meta v))))))
+
+(defn ^:macro-support assert-expr [env msg form]
   (case (cond
           (nil? form) :always-fail
           (seq? form) (first form)
@@ -415,15 +434,15 @@
                 (do-report {:type :fail, :message ~msg,
                             :expected '~form, :actual e#})))
             e#)))
-    (if false #_(and (sequential? form) (function? (first form))) ; TODO
-      nil #_(assert-predicate msg form)
+    (if (and (sequential? form) (function? env (first form))) ; TODO
+      (assert-predicate msg form)
       (assert-any msg form))))
 
 (defmacro try-expr
   "Used by the 'is' macro to catch unexpected exceptions.
   You don't call this."
   [msg form]
-  `(try ~(assert-expr msg form)
+  `(try ~(assert-expr &env msg form)
         (catch Object t#
           (do-report {:type :error, :message ~msg,
                       :expected '~form, :actual t#}))))
