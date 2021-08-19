@@ -18,6 +18,7 @@
 (def ^:dynamic *host-eval* false)
 
 (def ^:dynamic ^String *lib-path* "lib/")
+(def ^:dynamic ^String *test-path* "test/")
 
 (def ^:dynamic *target-subdir*
   "Relative path to the lib directory (*lib-dir*) where compiled dart file will be put.
@@ -133,18 +134,28 @@
 
 (declare resolve-type)
 
+(defn- ensure-import-lib [lib-or-alias]
+  (when lib-or-alias
+    (let [{:keys [libs current-ns] :as all-nses} @nses
+          {:keys [aliases]} (all-nses current-ns)]
+      (if-some [lib (get aliases lib-or-alias)]
+        (some-> lib libs :dart-alias (vector lib))
+        (when-some [[_ dart-alias] (re-matches #"\$lib:(.*)" lib-or-alias)]
+          (when-some [lib (get (:aliases all-nses) dart-alias)]
+            (swap! nses assoc-in [current-ns :imports lib] {})
+            [dart-alias lib]))))))
+
 (defn- resolve-dart-type
   [sym env]
-  (let [{:keys [libs] :as nses} @nses
-        {:keys [aliases] :as current-ns} (nses (:current-ns nses))]
+  (let [{:keys [libs current-ns] :as nses} @nses
+        {:keys [aliases]} (nses current-ns)]
     (else->>
       (if ('#{void dart:core/void} sym)
         {:type "void"
          :qname 'void})
       (if (contains? (:type-vars env #{}) sym)
         {:type (name sym) :is-param true})
-      (let [lib (get aliases (namespace sym))])
-      (if-some [dart-alias (some-> lib libs :dart-alias)]
+      (if-some [[dart-alias lib] (ensure-import-lib (namespace sym))]
         {:qname (symbol (str dart-alias "." (name sym)))
          :lib lib
          :type (name sym)
@@ -878,7 +889,9 @@
           {:dart/keys [type nat-type]} (infer-type dart-obj)
           type (some-> type non-nullable)
           dart-obj (cond
+                     ; static only
                      (:type-params (meta obj)) (symbol (emit-type obj env)) ; this symbol is not readable
+                     ; non static
                      (not= type nat-type)
                      (list 'dart/as dart-obj type)
                      :else dart-obj)
@@ -1591,7 +1604,7 @@
     (swap! nses alter-def sym assoc :dart/code dart-code)
     (emit sym env)))
 
-(defn ensure-import [the-ns]
+(defn ensure-import-ns [the-ns]
   (let [{:keys [current-ns] :as all-nses} @nses
         the-lib (:lib (all-nses the-ns))
         dart-alias (some-> all-nses :libs (get the-lib) :dart-alias)]
@@ -1609,7 +1622,7 @@
       (let [{dart-name :dart/name the-ns :ns} v]
           (if (= (:current-ns @nses) the-ns)
             dart-name
-            (with-meta (symbol (str (ensure-import the-ns) "." dart-name))
+            (with-meta (symbol (str (ensure-import-ns the-ns) "." dart-name))
               (meta dart-name))))
       :dart (vary-meta (:qname v) assoc :dart/fn-type :native)
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
@@ -1631,7 +1644,7 @@
   (emit-quoted x env))
 
 (defn ns-to-lib [ns-name]
-  (str *target-subdir* (replace-all (name ns-name) #"[.]" {"." "/"}) ".dart"))
+  (str *lib-path* *target-subdir* (replace-all (name ns-name) #"[.]" {"." "/"}) ".dart"))
 
 (declare compile-namespace)
 
@@ -2427,7 +2440,9 @@
     (resolveAlias [_ sym]
       (let [{:keys [current-ns libs] :as nses} @nses
             {:keys [aliases]} (nses current-ns)]
-        (some-> (aliases (name sym)) libs :ns symbol)))
+        (when-some [lib (some-> sym name aliases libs)]
+          (or (:ns lib)
+            (symbol (str "$lib:" (:dart-alias lib)))))))
     (resolveVar [_ sym] nil)))
 
 (defmacro with-cljd-reader [& body]
@@ -2458,19 +2473,38 @@
                (binding [*locals-gen* {}] (host-eval form))
                (recur))))))))
 
+(defn- rename-fresh-lib [{:keys [libs aliases] :as nses} from to]
+  (let [{:keys [ns dart-alias] :as m} (libs from)
+        nses (assoc nses
+               :libs (-> libs (dissoc from) (assoc to m))
+               :aliases (assoc aliases dart-alias to))
+        {:keys [aliases imports] :as  the-ns} (nses ns)
+        imports (-> imports (dissoc from) (assoc to (imports from)))
+        aliases (into {}
+                  (map (fn [[alias lib]]
+                         [alias (if (= lib from) to lib)]))
+                  aliases)]
+    (assoc nses ns (assoc the-ns :lib to :imports imports :aliases aliases))))
+
 (defn compile-input [in]
   (load-input in)
   (let [{:keys [current-ns] :as all-nses} @nses
-        libname (:lib (all-nses current-ns))]
-    (with-open [out (-> (java.io.File. *lib-path* ^String libname)
+        the-ns (all-nses current-ns)
+        libname (:lib the-ns)
+        is-test-ns (-> 'main the-ns :meta :dart/test)
+        libname' (if is-test-ns
+                   (str *test-path* (str/replace (subs libname (count *lib-path*)) #"\.dart$" "_test.dart"))
+                   libname)]
+    (when is-test-ns
+      (swap! nses rename-fresh-lib libname libname'))
+    (with-open [out (-> (java.io.File. ^String libname')
                       (doto (-> .getParentFile .mkdirs))
                       java.io.FileOutputStream.
                       (java.io.OutputStreamWriter. "UTF-8")
                       java.io.BufferedWriter.)]
       (binding [*out* out]
-        (dump-ns (all-nses current-ns))))
-    (swap! nses assoc-in [current-ns :lib] libname)
-    libname))
+        (dump-ns (@nses current-ns))))
+    libname'))
 
 (defn ns-to-paths [ns-name]
   (let [base (replace-all (name ns-name) #"[.-]" {"." "/" "-" "_"})]
@@ -2500,47 +2534,35 @@
     (compile-namespace 'hello-flutter.core))
 
   (time
-    (binding [*lib-path* "lib"
-              *hosted* true]
+    (binding [*hosted* true]
       (compile-namespace 'cljd.core)))
 
   (time
-    (binding [*lib-path* "lib"]
-      (compile-namespace 'cljd.string)))
+    (compile-namespace 'cljd.string))
 
   (time
-    (binding [*lib-path* "lib"]
-      (compile-namespace 'cljd.walk)))
+    (compile-namespace 'cljd.walk))
 
   (time
-    (binding [*lib-path* "lib"
-              *hosted* true]
+    (binding [*hosted* true]
       (compile-namespace 'cljd.template)))
 
   (time
-    (binding [*lib-path* "lib"
-              *hosted* true]
+    (binding [*hosted* true]
       (compile-namespace 'cljd.test)))
 
   (time
-    (binding [*lib-path* "lib"
-              *hosted* true]
+    (binding [*hosted* true]
       (compile-namespace 'cljd.test-clojure.for)))
 
   (time
-    (binding [*lib-path* "lib"
-              *hosted* true]
+    (binding [*hosted* true]
       (compile-namespace 'cljd.test-clojure.string)))
 
   (time
-    (binding [*lib-path* "lib"]
-      (compile-namespace 'cljd.main)))
+    (compile-namespace 'cljd.main))
 
   (time
-    (binding [*lib-path* "lib"]
-      (compile-namespace 'cljd.user)))
-
-  (-> @nses (get-in '[cljd.core :lib]
-              ))
+    (compile-namespace 'cljd.user))
 
   )

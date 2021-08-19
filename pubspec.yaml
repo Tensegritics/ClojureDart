@@ -8,3 +8,5 @@ dependencies:
   vm_service:
   collection: ^1.14.13
   analyzer: ^1.7.1
+dev_dependencies: 
+  test: ^1.17.11

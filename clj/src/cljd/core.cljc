@@ -1252,6 +1252,17 @@
     (and (dart/is? k int) (satisfies? IIndexed o)
       (not (identical? sentinel (-nth o k sentinel))))))
 
+(extend-type Map
+  ILookup
+  (-lookup [m k]
+    (. m "[]" k))
+  (-lookup [m k not-found]
+    (if (.containsKey m k)
+      (. m "[]" k)
+      not-found))
+  (-contains-key? [m k]
+    (.containsKey m k)))
+
 (defn get
   "Returns the value mapped to key, not-found or nil if key not present."
   ([map key]
@@ -1336,7 +1347,7 @@
   "Returns an object of the same type and value as obj, with
     map m as its metadata."
   [obj m]
-  (when-not (map? m)
+  (when-not (or (nil? m) (map? m))
     (throw (Exception. (str "class " (.-runtimeType m) " cannot be cast to cljd.core/IMap"))))
   (-with-meta obj m))
 
@@ -1466,7 +1477,10 @@
   (-hash [this] _hash)
   INamed
   (-name [_] name)
-  (-namespace [_] ns))
+  (-namespace [_] ns)
+  Object
+  (hashCode [_] _hash)
+  (== [this other] (-equiv this other)))
 
 (defn keyword
   "Returns a Keyword with the given namespace and name.  Do not use :

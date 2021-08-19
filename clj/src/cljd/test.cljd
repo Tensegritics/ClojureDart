@@ -231,99 +231,8 @@
   {:author "Stuart Sierra, with contributions and suggestions by
   Chas Emerick, Allen Rohner, and Stuart Halloway"}
   (:require [cljd.template :as temp]
-            [cljd.string :as str])
-  #_(:host-ns
-   (:require [clojure.template :as host-temp])))
-
-;;; TEST RESULT REPORTING
-
-#_(defmulti
-  ^{:doc "Generic reporting function, may be overridden to plug in
-   different report formats (e.g., TAP, JUnit).  Assertions such as
-   'is' call 'report' to indicate results.  The argument given to
-   'report' will be a map with a :type key.  See the documentation at
-   the top of test_is.clj for more information on the types of
-   arguments for 'report'."
-     :dynamic true
-     :added "1.1"}
-  report :type)
-
-#_(defn- file-and-line
-  {:deprecated "1.8"}
-  [^Throwable exception depth]
-  (let [stacktrace (.getStackTrace exception)]
-    (if (< depth (count stacktrace))
-      (let [^StackTraceElement s (nth stacktrace depth)]
-        {:file (.getFileName s) :line (.getLineNumber s)})
-      {:file nil :line nil})))
-
-#_(defn- stacktrace-file-and-line
-  [stacktrace]
-  (if (seq stacktrace)
-    (let [^StackTraceElement s (first stacktrace)]
-      {:file (.getFileName s) :line (.getLineNumber s)})
-    {:file nil :line nil}))
-
-(defn do-report
-  "Add file and line information to a test result and call report.
-   If you are writing a custom assert-expr method, call this function
-   to pass test results to report."
-  [m]
-  (prn m)
-  #_(report
-   (case
-    (:type m)
-    :fail (merge (stacktrace-file-and-line (drop-while
-                                             #(let [cl-name (.getClassName ^StackTraceElement %)]
-                                                (or (str/starts-with? cl-name "java.lang.")
-                                                    (str/starts-with? cl-name "clojure.test$")
-                                                    (str/starts-with? cl-name "clojure.core$ex_info")))
-                                             (.getStackTrace (Thread/currentThread)))) m)
-    :error (merge (stacktrace-file-and-line (.getStackTrace ^Throwable (:actual m))) m)
-    m)))
-
-#_(defmethod report :default [m]
-  (with-test-out (prn m)))
-
-#_(defmethod report :pass [m]
-  (with-test-out (inc-report-counter :pass)))
-
-#_(defmethod report :fail [m]
-  (with-test-out
-    (inc-report-counter :fail)
-    (println "\nFAIL in" (testing-vars-str m))
-    (when (seq *testing-contexts*) (println (testing-contexts-str)))
-    (when-let [message (:message m)] (println message))
-    (println "expected:" (pr-str (:expected m)))
-    (println "  actual:" (pr-str (:actual m)))))
-
-#_(defmethod report :error [m]
-  (with-test-out
-   (inc-report-counter :error)
-   (println "\nERROR in" (testing-vars-str m))
-   (when (seq *testing-contexts*) (println (testing-contexts-str)))
-   (when-let [message (:message m)] (println message))
-   (println "expected:" (pr-str (:expected m)))
-   (print "  actual: ")
-   (let [actual (:actual m)]
-     (if (instance? Throwable actual)
-       (stack/print-cause-trace actual *stack-trace-depth*)
-       (prn actual)))))
-
-#_(defmethod report :summary [m]
-  (with-test-out
-   (println "\nRan" (:test m) "tests containing"
-            (+ (:pass m) (:fail m) (:error m)) "assertions.")
-   (println (:fail m) "failures," (:error m) "errors.")))
-
-#_(defmethod report :begin-test-ns [m]
-  (with-test-out
-   (println "\nTesting" (ns-name (:ns m)))))
-
-;; Ignore these message types:
-#_(defmethod report :end-test-ns [m])
-#_(defmethod report :begin-test-var [m])
-#_(defmethod report :end-test-var [m])
+            [cljd.string :as str]
+            ["package:test/test.dart" :as dt]))
 
 ;;; UTILITIES FOR ASSERTIONS
 
@@ -338,26 +247,17 @@
         pred (first form)]
     `(let [values# (list ~@args)
            result# (apply ~pred values#)]
-       (if result#
-         (do-report {:type :pass, :message ~msg,
-                  :expected '~form, :actual (cons '~pred values#)})
-         (do-report {:type :fail, :message ~msg,
-                  :expected '~form, :actual (list '~'not (cons '~pred values#))}))
-       result#)))
+       (when-not result#
+         {:type :fail, :message ~msg,
+          :actual (list '~'not (cons '~pred values#))}))))
 
 (defn ^:macro-support assert-any
   "Returns generic assertion code for any test, including macros, Java
   method calls, or isolated symbols."
   [msg form]
   `(let [value# ~form]
-     (if value#
-       (do-report {:type :pass, :message ~msg,
-                :expected '~form, :actual value#})
-       (do-report {:type :fail, :message ~msg,
-                :expected '~form, :actual value#}))
-     value#))
-
-
+     (when-not value#
+       {:type :fail, :message ~msg, :actual value#})))
 
 ;;; ASSERTION METHODS
 
@@ -391,7 +291,7 @@
           :else :default)
     :always-fail
     ;; nil test: always fail
-    `(do-report {:type :fail, :message ~msg})
+    `{:type :fail, :message ~msg}
     thrown?
     ;; (is (thrown? c expr))
     ;; Asserts that evaluating expr throws an exception of class c.
@@ -399,12 +299,8 @@
     (let [klass (second form)
           body (nthnext form 2)]
       `(try ~@body
-            (do-report {:type :fail, :message ~msg,
-                        :expected '~form, :actual nil})
-            (catch ~klass e#
-              (do-report {:type :pass, :message ~msg,
-                          :expected '~form, :actual e#})
-              e#)))
+            {:type :fail, :message ~msg, :actual nil}
+            (catch ~klass e# nil)))
     #_#_instance? ; TODO dart/is? or satisfies?
     ;; Test if x is an instance of y.
     `(let [klass# ~(nth form 1)
@@ -438,20 +334,53 @@
       (assert-predicate msg form)
       (assert-any msg form))))
 
-(defmacro try-expr
-  "Used by the 'is' macro to catch unexpected exceptions.
-  You don't call this."
-  [msg form]
-  `(try ~(assert-expr &env msg form)
-        (catch Object t#
-          (do-report {:type :error, :message ~msg,
-                      :expected '~form, :actual t#}))))
+(defn ^String cljd-formatter [actual ^dt/Matcher matcher ^String? reason
+                              ^Map match-state ^bool verbose]
+  (let [desc (dt/StringDescription.)]
+    (.describeMismatch matcher actual desc match-state verbose)
+    (.toString desc)))
 
+(deftype Result [^:mutable ^:some f ^:mutable v]
+  cljd.core/IDeref
+  (-deref [_]
+    (when f (set! v (f)) (set! f nil))
+    v)
+  Object
+  (toString [self]
+    (if-some [e (:exception @self)]
+      (str "has thrown " (pr-str e))
+      (pr-str (:actual @self)))))
 
+(defn- thunk [f] (Result. f nil))
+
+(defn cljd-test-matcher [form]
+  (reify
+    :extends dt/Matcher
+    (^dt/Description describe [_ ^dt/Description description]
+     (doto description (.add (pr-str form))))
+    (^bool matches [_ thunk ^Map match-state]
+     (if-some [m @thunk]
+       (do
+         (dt/addStateInfo match-state m)
+         false)
+       true))
+    (^dt/Description describeMismatch [_ thunk ^dt/Description mismatch-description ^Map match-state ^bool verbose]
+     (doto mismatch-description
+       (.add
+         (with-out-str
+           (when-let [message (:message match-state)] (println message))
+           (case (:type match-state)
+             :fail nil
+             :error
+             (do
+               (prn (:exception match-state))
+               (prn (:stacktrace match-state))))))))))
 
 ;;; ASSERTION MACROS
 
 ;; You use these in your tests.
+
+(def ^:dynamic *asserts-counter*)
 
 (defmacro is
   "Generic assertion macro.  'form' is any predicate test.
@@ -468,7 +397,20 @@
   thrown AND that the message on the exception matches (with
   re-find) the regular expression re."
   ([form] `(is ~form nil))
-  ([form msg] `(try-expr ~msg ~form)))
+  ([form msg]
+   `(let [n# (set! *asserts-counter* (inc *asserts-counter*))]
+      (dt/test (str "#" n#)
+        (fn []
+          (dt/expect
+            (thunk
+              (fn []
+                (try
+                  ~(assert-expr &env msg form)
+                  (catch Object t# st#
+                         {:type :error
+                          :exception t#
+                          :stacktrace st#}))))
+            (cljd-test-matcher '~form)))))))
 
 (defmacro are
   "Checks multiple assertions with a template expression.
@@ -498,10 +440,8 @@
 (defmacro testing
   "Adds a new string to the list of testing contexts.  May be nested,
   but must occur inside a test function (deftest)."
-  {:added "1.1"}
   [string & body]
-  `(binding [*testing-contexts* (conj *testing-contexts* ~string)]
-     ~@body))
+  `(dt/group ~string (fn [] (binding [*asserts-counter* 0] ~@body))))
 
 
 ;;; DEFINING TESTS
@@ -509,7 +449,8 @@
 (defmacro defrunner-main []
   (let [{:keys [current-ns] :as nses} (:nses &env)
         tests (keep (fn [[k v]] (when (and (symbol? k) (::test (:meta v))) (list k))) (nses current-ns))]
-    `(defn ~'main [] ~@tests)))
+    `(defn ~'^:dart/test main []
+       ~@tests)))
 
 (defmacro deftest
   "Defines a test function with no arguments.  Test functions may call
@@ -524,7 +465,8 @@
   When *load-tests* is false, deftest is ignored."
   [name & body]
   `(do
-     (defn ~(vary-meta name assoc ::test true) [] ~@body)
+     (defn ~(vary-meta name assoc ::test true) []
+       (testing ~(str (:current-ns (:nses &env)) "/" name) ~@body))
      (defrunner-main)))
 
 (defmacro deftest-
