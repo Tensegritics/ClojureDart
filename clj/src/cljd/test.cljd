@@ -26,16 +26,6 @@
    (is (instance? Integer 256))
    (is (.startsWith \"abcde\" \"ab\"))
 
-   You can type an \"is\" expression directly at the REPL, which will
-   print a message if it fails.
-
-       user> (is (= 5 (+ 2 2)))
-
-       FAIL in  (:1)
-       expected: (= 5 (+ 2 2))
-         actual: (not (= 5 4))
-       false
-
    The \"expected:\" line shows you the original expression, and the
    \"actual:\" shows you what actually happened.  In this case, it
    shows that (+ 2 2) returned 4, which is not = to 5.  Finally, the
@@ -298,21 +288,18 @@
     ;; Returns the exception thrown.
     (let [klass (second form)
           body (nthnext form 2)]
-      `(try ~@body
-            {:type :fail, :message ~msg, :actual nil}
-            (catch ~klass e# nil)))
-    #_#_instance? ; TODO dart/is? or satisfies?
+      `(try
+         {:type :fail, :message ~msg,
+          :actual (do ~@body)}
+         (catch ~klass e# nil)))
+    instance? ; TODO dart/is? or satisfies?
     ;; Test if x is an instance of y.
-    `(let [klass# ~(nth form 1)
-           object# ~(nth form 2)]
-       (let [result# (instance? klass# object#)]
-         (if result#
-           (do-report {:type :pass, :message ~msg,
-                       :expected '~form, :actual (class object#)})
-           (do-report {:type :fail, :message ~msg,
-                       :expected '~form, :actual (class object#)}))
-         result#))
-    #_#_thrown-with-msg? ; TODO
+    (let [klass (nth form 1)]
+      `(let [object# ~(nth form 2)]
+         (when-not (dart/is? object# ~klass)
+           {:type :fail, :message ~msg,
+            :expected '~form, :actual (.-runtimeType object#)})))
+    thrown-with-msg?
     ;; (is (thrown-with-msg? c re expr))
     ;; Asserts that evaluating expr throws an exception of class c.
     ;; Also asserts that the message string of the exception matches
@@ -320,51 +307,39 @@
     (let [klass (nth form 1)
           re (nth form 2)
           body (nthnext form 3)]
-      `(try ~@body
-            (do-report {:type :fail, :message ~msg, :expected '~form, :actual nil})
-            (catch ~klass e#
-            (let [m# (.getMessage e#)]
-              (if (re-find ~re m#)
-                (do-report {:type :pass, :message ~msg,
-                            :expected '~form, :actual e#})
-                (do-report {:type :fail, :message ~msg,
-                            :expected '~form, :actual e#})))
-            e#)))
-    (if (and (sequential? form) (function? env (first form))) ; TODO
+      `(try
+         {:type :fail, :message ~msg, :expected '~form,
+          :actual (do ~@body)}
+         (catch ~klass e#
+           (when-not (re-find ~re (.-message e#))
+             {:type :fail, :message ~msg,
+              :expected '~form, :actual e#}))))
+    (if (and (sequential? form) (function? env (first form)))
       (assert-predicate msg form)
       (assert-any msg form))))
 
-(defn ^String cljd-formatter [actual ^dt/Matcher matcher ^String? reason
-                              ^Map match-state ^bool verbose]
-  (let [desc (dt/StringDescription.)]
-    (.describeMismatch matcher actual desc match-state verbose)
-    (.toString desc)))
-
-(deftype Result [^:mutable ^:some f ^:mutable v]
-  cljd.core/IDeref
-  (-deref [_]
-    (when f (set! v (f)) (set! f nil))
-    v)
+(deftype Result [m s]
   Object
-  (toString [self]
-    (if-some [e (:exception @self)]
-      (str "has thrown " (pr-str e))
-      (pr-str (:actual @self)))))
+  (toString [self] s))
 
-(defn- thunk [f] (Result. f nil))
+(defn result [m]
+  (Result. m
+    (if-some [e (:exception m)]
+      (str "has thrown " e)
+      (pr-str (:actual m)))))
 
 (defn cljd-test-matcher [form]
   (reify
     :extends dt/Matcher
     (^dt/Description describe [_ ^dt/Description description]
      (doto description (.add (pr-str form))))
-    (^bool matches [_ thunk ^Map match-state]
-     (if-some [m @thunk]
+    (^bool matches [_ r ^Map match-state]
+     (if-some [m (.-m ^Result r)]
        (do
          (dt/addStateInfo match-state m)
          false)
        true))
-    (^dt/Description describeMismatch [_ thunk ^dt/Description mismatch-description ^Map match-state ^bool verbose]
+    (^dt/Description describeMismatch [_ r ^dt/Description mismatch-description ^Map match-state ^bool verbose]
      (doto mismatch-description
        (.add
          (with-out-str
@@ -401,16 +376,14 @@
    `(let [n# (set! *asserts-counter* (inc *asserts-counter*))]
       (dt/test (str "#" n#)
         (fn []
-          (dt/expect
-            (thunk
-              (fn []
-                (try
-                  ~(assert-expr &env msg form)
-                  (catch Object t# st#
-                         {:type :error
-                          :exception t#
-                          :stacktrace st#}))))
-            (cljd-test-matcher '~form)))))))
+          (let [r# (result
+                     (try
+                       ~(assert-expr &env msg form)
+                       (catch Object t# st#
+                              {:type :error
+                               :exception t#
+                               :stacktrace st#})))]
+            (dt/expect r# (cljd-test-matcher '~form))))))))
 
 (defmacro are
   "Checks multiple assertions with a template expression.
@@ -441,15 +414,36 @@
   "Adds a new string to the list of testing contexts.  May be nested,
   but must occur inside a test function (deftest)."
   [string & body]
-  `(dt/group ~string (fn [] (binding [*asserts-counter* 0] ~@body))))
-
+  `(dt/group ~string
+     (fn [] (binding [*asserts-counter* 0] ~@body))))
 
 ;;; DEFINING TESTS
 
+(defn fixture-callbacks [f]
+  (let [v (volatile! nil)]
+    [#(vreset! v (f)) #(f @v)]))
+
+(defn register-fixtures [fixtures-callbacks]
+  (doseq [[setUp tearDown] fixtures-callbacks]
+    (dt/setUpAll setUp)
+    (dt/tearDownAll tearDown)))
+
+(defmacro use-fixtures [type & fns]
+  `(do
+     (def ~(case type
+             :once 'cljd-test-once-fixtures
+             :each 'cljd-test-each-fixtures
+             (throw (argument-error "First argument to cljs.test/use-fixtures must be :once or :each")))
+       (map fixture-callbacks [~@fns]))
+     (defrunner-main)))
+
 (defmacro defrunner-main []
   (let [{:keys [current-ns] :as nses} (:nses &env)
-        tests (keep (fn [[k v]] (when (and (symbol? k) (::test (:meta v))) (list k))) (nses current-ns))]
+        the-ns (nses current-ns)
+        tests (keep (fn [[k v]] (when (and (symbol? k) (::test (:meta v))) (list k))) the-ns)]
     `(defn ~'^:dart/test main []
+       ~(when (the-ns 'cljd-test-once-fixtures)
+          `(register-fixtures ~'cljd-test-once-fixtures))
        ~@tests)))
 
 (defmacro deftest
@@ -464,10 +458,16 @@
 
   When *load-tests* is false, deftest is ignored."
   [name & body]
-  `(do
-     (defn ~(vary-meta name assoc ::test true) []
-       (testing ~(str (:current-ns (:nses &env)) "/" name) ~@body))
-     (defrunner-main)))
+  (let [{:keys [current-ns] :as nses} (:nses &env)
+        the-ns (nses current-ns)]
+    `(do
+       (defn ~(vary-meta name assoc ::test true) []
+         (dt/group ~(str (:current-ns (:nses &env)) "/" name)
+           (fn []
+             ~(when (the-ns 'cljd-test-each-fixtures)
+                `(register-fixtures ~'cljd-test-each-fixtures))
+             (binding [*asserts-counter* 0] ~@body))))
+       (defrunner-main))))
 
 (defmacro deftest-
   "Like deftest but creates a private var."

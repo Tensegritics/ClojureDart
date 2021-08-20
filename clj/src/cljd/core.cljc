@@ -1079,6 +1079,10 @@
     "Returns a new collection of coll with a mapping from key k to
      value v added to it."))
 
+(extend-type Null
+  IAssociative
+  (-assoc [coll k v] {k v}))
+
 (defn assoc
   {:inline (fn [map key val] `(-assoc ~map ~key ~val))
    :inline-arities #{3}}
@@ -1190,15 +1194,6 @@
       (== 0 n) (.-key me)
       (== 1 n) (.-value me)
       :else not-found)))
-
-(extend-type Match
-  IIndexed
-  (-nth [m n]
-    (.group m n))
-  (-nth [m n not-found]
-    (if (<= 0 n (.-groupCount m))
-      (.group m n)
-      not-found)))
 
 (extend-type Null
   IIndexed
@@ -5434,6 +5429,33 @@
   [^RegExp re s]
   (seq (map re-groups (.allMatches re s))))
 
+(extend-type Match
+  ICounted
+  (-count [m] (inc (.-groupCount m)))
+  IIndexed
+  (-nth [m n]
+    (.group m n))
+  (-nth [m n not-found]
+    (if (<= 0 n (.-groupCount m))
+      (.group m n)
+      not-found)))
+
+(defn re-matcher
+  "Returns a stateful object for use with re-find."
+  [^RegExp re ^String s]
+  (.-iterator (.allMatches re s)))
+
+(defn re-find
+  "Returns the next regex match, if any, of string to pattern.
+  Uses re-groups to return the groups."
+  {:added "1.0"
+   :static true}
+  ([^Iterator m]
+   (when (.moveNext m)
+     (re-groups (.-current m))))
+  ([^RegExp re s]
+   (some-> (.firstMatch re s) re-groups)))
+
 (defn ^RegExp re-pattern
   "Returns an instance of dart:core/RegExp, for use, e.g. in
   re-matches."
@@ -5466,4 +5488,7 @@
 (declare subvec gensym keys)
 
 (defn ^:async main []
+  (prn (Map/of {:a 1}))
+  (prn (get (Map/of {:a 1}) :a))
+  (prn (:a (Map/of {:a 1})))
   )
