@@ -71,3 +71,52 @@
       (is (= 2 (vreset! v 2)))
       (is (= 3 (vswap! v inc)))
       (is (= 3 @v)))))
+
+(deftest test-contains?
+  (testing "Testing contains?"
+    (is (contains? {:a 1 :b 2} :a))
+    (is (not (contains? {:a 1 :b 2} :z)))
+    (is (contains? [5 6 7] 1))
+    (is (contains? [5 6 7] 2))
+    (is (not (contains? [5 6 7] 3)))
+    (is (contains? (to-array [5 6 7]) 1))
+    (is (contains? (to-array [5 6 7]) 2))
+    (is (not (contains? (to-array [5 6 7]) 3)))
+    (is (not (contains? nil 42)))
+    (is (contains? "f" 0))
+    (is (not (contains? "f" 55))))
+
+
+  (testing "Testing contains? with IAssociative protocol"
+    (let [ds (reify cljd.core/ILookup
+               (-contains-key? [_ k] (= k :valid)))]
+      (is (contains? ds :valid))
+      (is (not (contains? ds :invalid))))))
+
+(deftest test-in-operations
+  (testing "Testing update-in"
+    (is (= {:foo {:bar {:baz 1}}}
+          (update-in {:foo {:bar {:baz 0}}} [:foo :bar :baz] inc)))
+    (is (= {:foo 1 :bar 2 :baz 10}
+          (update-in {:foo 1 :bar 2 :baz 3} [:baz] + 7)))
+    (is (= [{:foo 1, :bar 2} {:foo 1, :bar 3}]
+          (update-in [{:foo 1 :bar 2}, {:foo 1 :bar 2}] [1 :bar] inc)))
+    (is (= [{:foo {:bar 2}} {:foo {:bar 3}}]
+          (update-in [{:foo {:bar 2}}, {:foo {:bar 2}}] [1 :foo :bar] inc))))
+  (testing "Testing assoc-in"
+    (is (= {:foo {:bar {:baz 100}}}
+          (assoc-in {:foo {:bar {:baz 0}}} [:foo :bar :baz] 100)))
+    (is (= {:foo 1 :bar 2 :baz 100}
+          (assoc-in {:foo 1 :bar 2 :baz 3} [:baz] 100)))
+    (is (= [{:foo [{:bar 2} {:baz 3}]} {:foo [{:bar 2} {:baz 100}]}]
+          (assoc-in [{:foo [{:bar 2} {:baz 3}]}, {:foo [{:bar 2} {:baz 3}]}]
+            [1 :foo 1 :baz] 100)))
+    (is (= [{:foo 1, :bar 2} {:foo 1, :bar 100}]
+          (assoc-in [{:foo 1 :bar 2}, {:foo 1 :bar 2}] [1 :bar] 100))))
+  (testing "Testing get-in"
+    (is (= 1 (get-in {:foo 1 :bar 2} [:foo])))
+    (is (= 2 (get-in {:foo {:bar 2}} [:foo :bar])))
+    (is (= 1 (get-in [{:foo 1}, {:foo 2}] [0 :foo])))
+    (is (= 4 (get-in [{:foo 1 :bar [{:baz 1}, {:buzz 2}]}, {:foo 3 :bar [{:baz 3}, {:buzz 4}]}]
+               [1 :bar 1 :buzz]))))
+  )

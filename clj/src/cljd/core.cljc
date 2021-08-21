@@ -1095,6 +1095,15 @@
          (throw (ArgumentError. "assoc expects even number of arguments after map/vector, found odd number")))
        ret))))
 
+(defn assoc-in
+  "Associates a value in a nested associative structure, where ks is a
+  sequence of keys and v is the new value and returns a new nested structure.
+  If any levels do not exist, hash-maps will be created."
+  [m [k & ks] v]
+  (if ks
+    (assoc m k (assoc-in (get m k) ks v))
+    (assoc m k v)))
+
 (defprotocol ITransientAssociative
   "Protocol for adding associativity to transient collections."
   (-assoc! [tcoll key val]
@@ -1264,6 +1273,23 @@
    (-lookup map key))
   ([map key not-found]
    (-lookup map key not-found)))
+
+(defn get-in
+  "Returns the value in a nested associative structure,
+  where ks is a sequence of keys. Returns nil if the key
+  is not present, or the not-found value if supplied."
+  ([m ks]
+   (reduce get m ks))
+  ([m ks not-found]
+   (loop [sentinel sentinel
+          m m
+          ks (seq ks)]
+     (if ks
+       (let [m (get m (first ks) sentinel)]
+         (if (identical? sentinel m)
+           not-found
+           (recur sentinel m (next ks))))
+       m))))
 
 (defn ^bool contains?
   "Returns true if key is present in the given collection, otherwise
@@ -4285,12 +4311,14 @@
 (defn ^List to-array
   [coll]
   ;; TODO : use more concrete implem of to-array for DS ?
-  (let [ary #dart []]
-    (loop [s (seq coll)]
-      (if-not (nil? s)
-        (do (.add ary (first s))
-            (recur (next s)))
-        ary))))
+  (if (dart/is? coll List)
+    (.toList coll)
+    (let [ary #dart []]
+      (loop [s (seq coll)]
+        (if-not (nil? s)
+          (do (.add ary (first s))
+              (recur (next s)))
+          ary)))))
 
 (defn apply
   ([f args]
