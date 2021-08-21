@@ -1709,7 +1709,10 @@
   (-remove-watch [this key]
     "Removes watcher that corresponds to key from this."))
 
-(deftype Atom [^:mutable state meta ^Function? validator ^:mutable ^PersistentHashMap watches]
+(deftype Atom [^:mutable state
+               ^:mutable meta
+               ^:mutable ^Function? validator
+               ^:mutable ^PersistentHashMap watches]
   IAtom
   IEquiv
   (-equiv [o other] (identical? o other))
@@ -1739,7 +1742,19 @@
   IReset
   (-reset! [this new-value] (set-and-validate-atom-state! this new-value)))
 
-(defn- validate-atom-state [validator new-state]
+(defn reset! [^Atom atom new-value]
+  (-reset! atom new-value))
+
+(defn ^bool compare-and-set!
+  "Atomically sets the value of atom to newval if and only if the
+  current value of the atom is equal to oldval. Returns true if
+  set happened, else false."
+  [^Atom a oldval newval]
+  (if (= (-deref a) oldval)
+    (do (reset! a newval) true)
+    false))
+
+(defn- validate-atom-state [^Function validator new-state]
   ;; TODO : maybe add some try/catch (see ARef.java)
   (when-not (validator new-state)
     (throw (Exception. "Validator rejected reference state"))))
@@ -1752,6 +1767,23 @@
     (-notify-watches a old-state new-state)
     new-state))
 
+(defn ^Function? get-validator
+  "Gets the validator-fn for an atom."
+  [^Atom atom]
+  (.-validator atom))
+
+(defn set-validator!
+  "Sets the validator-fn for an atom. validator-fn must be nil or a
+  side-effect-free fn of one argument, which will be passed the intended
+  new state on any state change. If the new state is unacceptable, the
+  validator-fn should return false or throw an Error. If the current state
+  is not acceptable to the new validator, an Error will be thrown and the
+  validator will not be changed."
+  [^Atom atom ^Function? f]
+  (when f
+    (validate-atom-state f (-deref atom)))
+  (set! (.-validator atom) f))
+
 (defn ^Atom atom
   ([x]
    (Atom. x nil nil {}))
@@ -1761,6 +1793,15 @@
    (when validator
      (validate-atom-state validator x))
    (Atom. x meta validator {})))
+
+(defn alter-meta!
+  "Atomically sets the metadata for a atom to be:
+
+  (apply f its-current-meta args)
+
+  f must be free of side-effects"
+  [^Atom atom f & args]
+  (set! (.-meta atom) (apply f (.-meta atom) args)))
 
 (defn ^Atom add-watch
   "Adds a watch function to an atom reference. The watch fn must be a

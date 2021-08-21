@@ -2556,6 +2556,10 @@
       (compile-namespace 'cljd.test-clojure.for)))
 
   (time
+    (binding [*hosted* false]
+      (compile-namespace 'cljd.test-clojure.core-test)))
+
+  (time
     (binding [*hosted* true]
       (compile-namespace 'cljd.test-clojure.string)))
 
