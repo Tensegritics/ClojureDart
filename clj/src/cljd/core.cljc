@@ -4321,6 +4321,11 @@
               (recur (next s) (inc idx)))
           ary)))))
 
+(defn reverse
+  "Returns a seq of the items in coll in reverse order. Not lazy."
+  [coll]
+  (reduce conj () coll))
+
 (defn apply
   ([f args]
    (if (satisfies? IFn f)
@@ -4889,6 +4894,18 @@
        ~(if (empty? steps)
           g
           (last steps)))))
+
+(defmacro memfn
+  "Expands into code that creates a fn that expects to be passed an
+  object and any args and calls the named instance method on the
+  object passing the args. Use when you want to treat a Java method as
+  a first-class fn. name may be type-hinted with the method receiver's
+  type in order to avoid reflective calls."
+  [name & args]
+  (let [t (with-meta (gensym "target")
+            (meta name))]
+    `(fn [~t ~@args]
+       (. ~t (~name ~@args)))))
 
 (defn keep
   "Returns a lazy sequence of the non-nil results of (f item). Note,
