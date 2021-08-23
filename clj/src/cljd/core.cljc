@@ -1943,6 +1943,34 @@
   [val]
   (Volatile. val))
 
+(defprotocol IExceptionInfo
+  (-ex-data [e]))
+
+(extend-type fallback
+  IExceptionInfo
+  (-ex-data [e] nil))
+
+(defn ex-data
+  "Returns exception data (a map) if ex is an IExceptionInfo.
+   Otherwise returns nil."
+  [ex]
+  (-ex-data ex))
+
+(deftype ExceptionInfo [msg data ex]
+  Object
+  (^:getter message [_] msg)
+  (^:getter cause [_] ex)
+  IExceptionInfo
+  (-ex-data [_] data))
+
+(defn ex-info
+  "Create an instance of ExceptionInfo, a RuntimeException subclass
+   that carries a map of additional data."
+  ([msg map]
+   (ExceptionInfo. msg map nil))
+  ([msg map cause]
+   (ExceptionInfo. msg map cause)))
+
 (defn ^bool not
   "Returns true if x is logical false, false otherwise."
   {:inline (fn [x] `^bool (if ~x false true))

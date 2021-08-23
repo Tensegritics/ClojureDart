@@ -55,7 +55,7 @@
       (is (some? (get-validator a)))
       (set-validator! a nil)
       (is (nil? (get-validator a)))
-      #_(let [e1 (ex-info "" {})]
+      (let [e1 (ex-info "" {})]
         (try
           (set-validator! a (fn [_] (throw e1)))
           (catch Object e2
