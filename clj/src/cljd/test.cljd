@@ -116,46 +116,26 @@
 
    RUNNING TESTS
 
-   Run tests with the function \"(run-tests namespaces...)\":
+   At the commande line:
 
-   (run-tests 'your.namespace 'some.other.namespace)
-
-   If you don't specify any namespaces, the current namespace is
-   used.  To run all tests in all namespaces, use \"(run-all-tests)\".
-
-   By default, these functions will search for all tests defined in
-   a namespace and run them in an undefined order.  However, if you
-   are composing tests, as in the \"arithmetic\" example above, you
-   probably do not want the \"addition\" and \"subtraction\" tests run
-   separately.  In that case, you must define a special function
-   named \"test-ns-hook\" that runs your tests in the correct order:
-
-   (defn test-ns-hook []
-     (arithmetic))
-
-   Note: test-ns-hook prevents execution of fixtures (see below).
-
-
-   OMITTING TESTS FROM PRODUCTION CODE
-
-   You can bind the variable \"*load-tests*\" to false when loading or
-   compiling code in production.  This will prevent any tests from
-   being created by \"with-test\" or \"deftest\".
-
+   dart test # run all tests
+   dart test -N my.ns/ # run one test ns
+   dart test -N my.ns/my.test # run one test
 
    FIXTURES
 
    Fixtures allow you to run code before and after tests, to set up
    the context in which tests should be run.
 
-   A fixture is just a function that calls another function passed as
-   an argument.  It looks like this:
+   A fixture is just a function of two arities.  It looks like this:
 
-   (defn my-fixture [f]
+   (defn my-fixture
+    ([]
       Perform setup, establish bindings, whatever.
-     (f)  Then call the function we were passed.
-      Tear-down / clean-up code here.
-    )
+      Return value will be passed as argument to the 1-arg arity.
+      Thus you can pass references to resources to free etc.)
+    ([resources]
+     Tear-down / clean-up code here)
 
    Fixtures are attached to namespaces in one of two ways.  \"each\"
    fixtures are run repeatedly, once for each test function created

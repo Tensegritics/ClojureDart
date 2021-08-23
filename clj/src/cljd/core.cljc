@@ -731,8 +731,14 @@
       :else (.write ^StringSink sink (.toString o)))))
 
 (defn ^bool string?
+  "Return true if x is a String"
   [x]
   (dart/is? x String))
+
+(defn number?
+  "Returns true if x is a Number"
+  [x]
+  (dart/is? x num))
 
 (extend-type String
   IPrint
