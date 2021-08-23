@@ -402,6 +402,16 @@
       (recur more (assoc opts k v))
       [opts body])))
 
+(defn resolve-protocol-mname-to-dart-mname*
+  "Takes a protocol map and a method (as symbol) and the number of arguments passed
+  to this method.
+  Returns the name (as symbol) of the dart method backing this clojure method."
+  [protocol mname args-count type-env]
+  (or
+    (let [mname' (get-in protocol [:sigs mname args-count :dart/name] mname)]
+      (with-meta mname' (meta mname)))
+    (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " (:name protocol) ".")))))
+
 (defn resolve-protocol-mname-to-dart-mname
   "Takes two symbols (a protocol and one of its method) and the number
   of arguments passed to this method.
@@ -409,13 +419,10 @@
   [pname mname args-count type-env]
   (let [[tag protocol] (resolve-symbol pname {:type-vars type-env})]
     (when (and (= :def tag) (= :protocol (:type protocol)))
-      (or
-        (let [mname' (get-in protocol [:sigs mname args-count :dart/name] mname)]
-          (with-meta mname' (meta mname)))
-        (throw (Exception. (str "No method " mname " with " args-count " arg(s) for protocol " pname ".")))))))
+      (resolve-protocol-mname-to-dart-mname* protocol mname args-count type-env))))
 
-(defn resolve-protocol-method [pname mname args type-env]
-  (some-> (resolve-protocol-mname-to-dart-mname pname mname (count args) type-env)
+(defn resolve-protocol-method [protocol mname args type-env]
+  (some-> (resolve-protocol-mname-to-dart-mname* protocol mname (count args) type-env)
     (vector (into [] (map #(cond-> % (symbol? %) (vary-meta dissoc :tag))) args))))
 
 (defn dart-member-lookup [class member]
@@ -492,36 +499,35 @@
       (vary-meta assoc :tag (:tag (meta decl))))))
 
 (defn resolve-dart-method
-  [class-name mname args type-env]
-  (when-some [type (resolve-type class-name type-env)] ; TODO pass type-vars
-    (if-some [member-info (some-> (dart-member-lookup type (name mname)) actual-member)] ; TODO are there special cases for operators? eg unary-
-      (case (:kind member-info)
-        :field
-        [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args]
-        :method
-        (let [[fixeds opts] (unresolve-params (:parameters member-info))
-              {:as actual :keys [opt-kind] [this & fixed-opts] :fixed-params}
-              (parse-dart-params args)
-              _ (when-not (= (count fixeds) (count fixed-opts))
-                  (throw (Exception. (str "Fixed arity mismatch on " mname " for " class-name))))
-              _ (when-not (case opt-kind :named (set? opts) (vector? opts))
-                  (throw (Exception. (str "Optional mismatch on " mname " for " class-name))))
-              actual-fixeds
-              (into [this] (map transfer-tag fixed-opts fixeds))
-              actual-opts
-              (case opt-kind
-                :named
-                (into []
-                  (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d]))
-                  (:opt-params actual))
-                :positional
-                (mapv transfer-tag (:opt-params actual) opts))]
-          [(vary-meta mname assoc :tag (unresolve-type (:return-type member-info)))
-           (cond-> actual-fixeds
-             (seq actual-opts)
-             (-> (conj (case opt-kind :named '.& '...))
-               (into actual-opts)))]))
-      #_(TODO WARN))))
+  [type mname args type-env]
+  (if-some [member-info (some-> (dart-member-lookup type (name mname)) actual-member)] ; TODO are there special cases for operators? eg unary-
+    (case (:kind member-info)
+      :field
+      [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args]
+      :method
+      (let [[fixeds opts] (unresolve-params (:parameters member-info))
+            {:as actual :keys [opt-kind] [this & fixed-opts] :fixed-params}
+            (parse-dart-params args)
+            _ (when-not (= (count fixeds) (count fixed-opts))
+                (throw (Exception. (str "Fixed arity mismatch on " mname " for " (:type type) " of library " (:lib type)))))
+            _ (when-not (case opt-kind :named (set? opts) (vector? opts))
+                (throw (Exception. (str "Optional mismatch on " mname " for " (:type type) "of library " (:lib type)))))
+            actual-fixeds
+            (into [this] (map transfer-tag fixed-opts fixeds))
+            actual-opts
+            (case opt-kind
+              :named
+              (into []
+                (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d]))
+                (:opt-params actual))
+              :positional
+              (mapv transfer-tag (:opt-params actual) opts))]
+        [(vary-meta mname assoc :tag (unresolve-type (:return-type member-info)))
+         (cond-> actual-fixeds
+           (seq actual-opts)
+           (-> (conj (case opt-kind :named '.& '...))
+             (into actual-opts)))]))
+    #_(TODO WARN)))
 
 (defn- assoc-ns [sym ns]
   (with-meta (symbol ns (name sym)) (meta sym)))
@@ -1394,21 +1400,32 @@
   (let [last-seen-type (atom nil)]
     (map
       (fn [spec]
-        (if (seq? spec)
+        (cond
+          (seq? spec)
           (let [[mname arglist & body] spec
                 mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
                 [mname arglist']
-                (or (some-> @last-seen-type (resolve-protocol-method mname arglist type-env))
-                  (some-> @last-seen-type (resolve-dart-method mname arglist type-env))
-                  [mname arglist])]
+                (case (:type @last-seen-type)
+                  :protocol (some-> @last-seen-type (resolve-protocol-method mname arglist type-env))
+                  (or (some-> @last-seen-type (resolve-dart-method mname arglist type-env))
+                    [mname arglist]))]
             `(~mname ~(parse-dart-params arglist')
               (let [~@(mapcat (fn [a a']
                                 (when-some [t (:tag (meta a))]
                                   (when-not (= t (:tag (meta a')))
                                     [a a']))) arglist arglist')]
                 ~@body)))
-          (reset! last-seen-type spec)))
-        specs)))
+          (:mixin (meta spec)) (do (reset! last-seen-type (resolve-type spec type-env)) spec)
+          :else
+          (let [[tag x] (resolve-non-local-symbol spec type-env)]
+            (reset! last-seen-type x)
+            (case tag
+              :def (case (:type x)
+                     :class spec
+                     :protocol (symbol (name (:ns x)) (name (:iface x))))
+              :dart spec
+              (throw (Exception. (str "Can't resolve " spec)))))))
+      specs)))
 
 (defn- emit-class-specs [opts specs env]
   (let [{:keys [extends] :or {extends 'Object}} opts
@@ -1420,14 +1437,7 @@
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
         methods (remove symbol? specs)  ; crude
         mixins (filter (comp :mixin meta) classes)
-        ifaces-or-protocols (remove (comp :mixin meta) classes)
-        ifaces (map #(let [[tag x] (resolve-symbol % env)]
-                       (case tag
-                         :def (case (:type x)
-                                :class %
-                                :protocol (symbol (name (:ns x)) (name (:iface x))))
-                         :dart %
-                         (throw (Exception. (str "Can't resolve " %))))) ifaces-or-protocols)
+        ifaces (remove (comp :mixin meta) classes)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))
         dart-methods (map #(emit-method % env) methods)]
     {:extends (emit-type base env)
@@ -1459,20 +1469,36 @@
                   (let [[bindings' meth'] (method-extract-super-call meth this-super)]
                     [(into bindings bindings') (conj meths meth')]))
           [[] []] (:methods class))
-        class (assoc class :methods methods)
         closed-overs (concat
                        (transduce (map #(method-closed-overs % env)) into #{}
-                         (:methods class))
+                         methods)
                        (map first super-fn-bindings))
+        env-for-ctor-call
+        (-> env
+          (into (map (fn [v] [v v])) closed-overs)
+          (into (map (fn [[f]] [f f])) super-fn-bindings)
+          (assoc this-this 'this))
+        no-meta (or (:no-meta opts) (seq positional-ctor-args) (seq named-ctor-args))
+        meta-field (when-not no-meta (dart-local 'meta env))
+        {meta-methods :methods meta-implements :implements}
+        (when meta-field
+          (emit-class-specs {}
+            `[cljd.core/IMeta
+              (~'-meta [_#] ~meta-field)
+              cljd.core/IWithMeta
+              (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs))]
+              (assoc env-for-ctor-call meta-field meta-field)))
         _ (swap! nses do-def class-name {:dart/name mclass-name :type :class})
         class (-> class
                 (assoc
                   :name (emit-type mclass-name env)
                   :ctor class-name
-                  :fields closed-overs
+                  :fields (cond-> closed-overs meta-field (conj meta-field))
+                  :methods (concat meta-methods methods)
+                  :implements (concat meta-implements (:implements class))
                   :ctor-params
                   (concat
-                    (map #(list '. %) closed-overs)
+                    (map #(list '. %) (cond->> closed-overs meta-field (cons meta-field)))
                     positional-ctor-params
                     named-ctor-params))
                 (assoc-in [:super-ctor :args]
@@ -1481,14 +1507,9 @@
                       named-ctor-params))))
         reify-ctor-call (list*
                          'new class-name
-                         (concat closed-overs
+                         (concat (cond->> closed-overs meta-field (cons nil))
                            positional-ctor-args
-                           (take-nth 2 (next named-ctor-args))))
-        env-for-ctor-call
-        (-> env
-              (into (map (fn [v] [v v])) closed-overs)
-              (into (map (fn [[f]] [f f])) super-fn-bindings)
-              (assoc this-this 'this))]
+                           (take-nth 2 (next named-ctor-args))))]
     (swap! nses do-def class-name
            {:dart/name class-name
             :type :class

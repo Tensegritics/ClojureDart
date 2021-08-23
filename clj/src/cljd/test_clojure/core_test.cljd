@@ -19,8 +19,8 @@
     (is (= {"x" "y"} (meta ^{"x" "y"} [])))
     ))
 
-#_(deftest test-fn-with-metadata
-  (let [f (fn [x] (* x 2))
+(deftest test-fn-with-metadata
+  (let [f (fn ([]) ([x] (* x 2))) ; TODO handle dart fns
         m {:foo "bar"}
         mf (with-meta f m)]
     (testing "Testing functions with metadata"
