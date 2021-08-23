@@ -126,7 +126,7 @@
                    (if (-> nses :libs (get lib) :dart-alias)
                      nses
                      (let [alias (some #(when-not (get (:aliases nses) %) %)
-                                   (cons base (map #(str "_" (inc %)) (range))))]
+                                   (cons base (map #(str base "_" (inc %)) (range))))]
                        (-> nses
                          (assoc-in [:libs lib] {:dart-alias alias :ns ns})
                          (assoc-in [:aliases alias] lib))))))]
