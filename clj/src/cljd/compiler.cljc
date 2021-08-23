@@ -113,6 +113,7 @@
 (def nses (atom {:current-ns 'user
                  :libs {"dart:core" {:dart-alias "dc" :ns nil}} ; dc can't clash with user aliases because they go through dart-global
                  :aliases {"dc" "dart:core"}
+                 :ifn-mixins {}
                  'user ns-prototype}))
 
 (defn global-lib-alias [lib ns]
@@ -1056,12 +1057,11 @@
 
 (defn- variadic? [[params]] (some #{'&} params))
 
-(defn- ensure-ifn-arities-mixin [fixed-arities base-vararg-arity]
-  (let [fixed-arities (set fixed-arities)
-        max-fixed-arity (some->> fixed-arities seq (reduce max))
+(defn- emit-ifn-arities-mixin [fixed-arities base-vararg-arity]
+  (let [max-fixed-arity (some->> fixed-arities seq (reduce max))
         min-fixed-arity (some->> fixed-arities seq (reduce min))
         n (or base-vararg-arity max-fixed-arity)
-        mixin-name (munge (apply str "IFnMixin-" (map (fn [i] (cond (= i base-vararg-arity) "Z" (fixed-arities i) "X" :else "u")) (range (inc n)))) {})
+        mixin-name (munge (str "IFnMixin-" (apply str (map (fn [i] (if (fixed-arities i) "X"  "u")) (range n))) (cond (= base-vararg-arity max-fixed-arity) "Y" base-vararg-arity "Z" :else "X")) {})
         synth-params (mapv #(symbol (str "arg" (inc %))) (range (max n (dec *threshold*))))
         more-param (gensym 'more)
         this 'this
@@ -1166,7 +1166,16 @@
          ~@call+apply)
       {})
     (swap! nses assoc :current-ns current-ns)
-    (symbol "cljd.core" (name mixin-name))))
+    mixin-name))
+
+(defn- ensure-ifn-arities-mixin [fixed-arities base-vararg-arity]
+  (let [fixed-arities (set fixed-arities)
+        path [:ifn-mixins fixed-arities base-vararg-arity]]
+    (or (get-in @nses path)
+      (let [mixin-name (emit-ifn-arities-mixin fixed-arities base-vararg-arity)
+            mixin-name (symbol "cljd.core" (name mixin-name))]
+        (swap! nses assoc-in path mixin-name)
+        mixin-name))))
 
 (defn- emit-ifn [async var-name name bodies env]
   (let [fixed-bodies (remove variadic? bodies)

@@ -273,17 +273,14 @@
   (let [trim (memfn trim)]
     (is (= ["abc" "def"] (map trim ["   abc   " "  def   "])))))
 
-;; =============================================================================
-;; CLJS Tickets
-
 (deftest test-383
   (testing "Testing CLJS-383"
     ;; TODO : move up `let` when tests are reliable
     (let [f1 (fn f1 ([] 0) ([a] 1) ([a b] 2) ([a b c & more] 3))
           f2 (fn f2 ([x] :foo) ([x y & more] (apply f1 y more)))]
       (is (= 1 (f2 1 2))))
-    (is (let [f (fn ([]) ([a & more] more))]
-          (nil? (f :foo))))))
+    (let [f (fn ([]) ([a & more] more))]
+      (is (nil? (f :foo))))))
 
 (deftest test-513
   (testing "Testing CLJS-513"

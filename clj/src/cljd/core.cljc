@@ -1374,9 +1374,7 @@
 (extend-type Function
   IWithMeta
   (-with-meta [f m]
-    (-with-meta
-      (fn [& args]
-        (.apply Function f (some-> positional (.toList)))) m)))
+    (-with-meta #(.apply Function f %&) m)))
 
 (defn with-meta
   "Returns an object of the same type and value as obj, with
