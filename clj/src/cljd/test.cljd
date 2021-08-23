@@ -157,19 +157,7 @@
    Attach \"once\" fixtures to the current namespace like this:
    (use-fixtures :once fixture1 fixture2 ...)
 
-   Note: Fixtures and test-ns-hook are mutually incompatible.  If you
-   are using test-ns-hook, fixture functions will *never* be run.
-
-
-   SAVING TEST OUTPUT TO A FILE
-
-   All the test reporting functions write to the var *test-out*.  By
-   default, this is the same as *out*, but you can rebind it to any
-   PrintWriter.  For example, it could be a file opened with
-   clojure.java.io/writer.
-
-
-   EXTENDING TEST-IS (ADVANCED)
+   EXTENDING TEST-IS (ADVANCED & NOT YET SUPPORTED)
 
    You can extend the behavior of the \"is\" macro by defining new
    methods for the \"assert-expr\" multimethod.  These methods are
@@ -329,13 +317,19 @@
              :error
              (do
                (prn (:exception match-state))
-               (prn (:stacktrace match-state))))))))))
+               (prn (:stacktrace match-state))))
+           (when-some [[group & more-groups] (seq *groups*)]
+             (print "occured in: ")
+             (when more-groups (newline))
+             (println group)
+             (doseq [g more-groups] (println g)))))))))
 
 ;;; ASSERTION MACROS
 
 ;; You use these in your tests.
 
-(def ^:dynamic *asserts-counter*)
+(def ^:dynamic *groups* ())
+(def ^:dynamic *in-test* false)
 
 (defmacro is
   "Generic assertion macro.  'form' is any predicate test.
@@ -353,17 +347,14 @@
   re-find) the regular expression re."
   ([form] `(is ~form nil))
   ([form msg]
-   `(let [n# (set! *asserts-counter* (inc *asserts-counter*))]
-      (dt/test (str "#" n#)
-        (fn []
-          (let [r# (result
-                     (try
-                       ~(assert-expr &env msg form)
-                       (catch Object t# st#
-                              {:type :error
-                               :exception t#
-                               :stacktrace st#})))]
-            (dt/expect r# (cljd-test-matcher '~form))))))))
+   `(let [r# (result
+               (try
+                 ~(assert-expr &env msg form)
+                 (catch Object t# st#
+                        {:type :error
+                         :exception t#
+                         :stacktrace st#})))]
+      (dt/expect r# (cljd-test-matcher '~form)))))
 
 (defmacro are
   "Checks multiple assertions with a template expression.
@@ -394,8 +385,7 @@
   "Adds a new string to the list of testing contexts.  May be nested,
   but must occur inside a test function (deftest)."
   [string & body]
-  `(dt/group ~string
-     (fn [] (binding [*asserts-counter* 0] ~@body))))
+  `(binding [*groups* (conj *groups* ~string)] ~@body))
 
 ;;; DEFINING TESTS
 
@@ -442,11 +432,16 @@
         the-ns (nses current-ns)]
     `(do
        (defn ~(vary-meta name assoc ::test true) []
-         (dt/group ~(str (:current-ns (:nses &env)) "/" name)
-           (fn []
-             ~(when (the-ns 'cljd-test-each-fixtures)
-                `(register-fixtures ~'cljd-test-each-fixtures))
-             (binding [*asserts-counter* 0] ~@body))))
+         (let [name# ~(str (:current-ns (:nses &env)) "/" name)
+               thunk#
+               (fn []
+                 ~(when (the-ns 'cljd-test-each-fixtures)
+                    `(register-fixtures ~'cljd-test-each-fixtures))
+                 (testing name# ~@body))]
+           (if *in-test*
+             (thunk#)
+             (binding [*in-test* true]
+               (dt/test name# thunk#)))))
        (defrunner-main))))
 
 (defmacro deftest-
