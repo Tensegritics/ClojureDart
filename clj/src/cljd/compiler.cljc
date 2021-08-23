@@ -205,18 +205,21 @@
 
 (defn resolve-type
   "Resolves a type to map with keys :qname :lib :type and :type-parameters."
-  [sym type-vars]
-  (when-some [[tag info] (resolve-non-local-symbol sym type-vars)]
-    (case tag
-      :dart info
-      :def (case (:type info)
-             :class
-             {:qname (symbol (str (dart-alias-for-ns (:ns info))
-                               "." (:dart/name info)))
-              :lib (-> @nses (get (:ns info)) :lib)
-              :type (name sym)
-              :type-parameters [#_TODO]})
-      (throw (ex-info (str "Can't resolve type " sym) {:type-vars type-vars})))))
+  ([sym type-vars]
+   (or (resolve-type sym type-vars nil) (str "Can't resolve type: " sym)))
+  ([sym type-vars not-found]
+   (when-some [[tag info] (resolve-non-local-symbol sym type-vars)]
+     (case tag
+       :dart info
+       :def (case (:type info)
+              :class
+              {:qname (symbol (str (dart-alias-for-ns (:ns info))
+                                "." (:dart/name info)))
+               :lib (-> @nses (get (:ns info)) :lib)
+               :type (name sym)
+               :type-parameters [#_TODO]}
+              not-found)
+       not-found))))
 
 (defn unresolve-type [{:keys [is-param lib type type-parameters nullable]}]
   (if is-param
@@ -241,7 +244,7 @@
     ('#{void dart:core/void} tag) "void"
     :else
     (let [tag! (non-nullable tag)
-          atype (or (resolve-type tag! type-vars) (when *hosted* (resolve-type (symbol (name tag!)) type-vars))
+          atype (or (resolve-type tag! type-vars nil) (when *hosted* (resolve-type (symbol (name tag!)) type-vars nil))
                   (throw (Exception. (str "Can't resolve type " tag! "."))))
           typename
           (if (:is-param atype) (:type atype) (name (:qname atype)))
