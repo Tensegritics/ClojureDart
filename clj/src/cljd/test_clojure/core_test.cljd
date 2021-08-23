@@ -20,7 +20,7 @@
     ))
 
 (deftest test-fn-with-metadata
-  (let [f (fn ([]) ([x] (* x 2))) ; TODO handle dart fns
+  (let [f (fn [x] (* x 2))
         m {:foo "bar"}
         mf (with-meta f m)]
     (testing "Testing functions with metadata"
@@ -29,7 +29,6 @@
       (is (= 4 (mf 2)))
       (is (= 4 (apply mf [2])))
       (is (= (meta mf) m)))))
-
 
 (deftest test-atoms-and-volatile
   (let [a (atom 0)]
@@ -280,9 +279,9 @@
 (deftest test-383
   (testing "Testing CLJS-383"
     ;; TODO : move up `let` when tests are reliable
-    (is (let [f1 (fn f1 ([] 0) ([a] 1) ([a b] 2) ([a b c & more] 3))
-              f2 (fn f2 ([x] :foo) ([x y & more] (apply f1 y more)))]
-          (= 1 (f2 1 2))))
+    (let [f1 (fn f1 ([] 0) ([a] 1) ([a b] 2) ([a b c & more] 3))
+          f2 (fn f2 ([x] :foo) ([x y & more] (apply f1 y more)))]
+      (is (= 1 (f2 1 2))))
     (is (let [f (fn ([]) ([a & more] more))]
           (nil? (f :foo))))))
 

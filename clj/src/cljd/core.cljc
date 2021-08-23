@@ -1370,6 +1370,14 @@
   (-with-meta [o meta]
     "Returns a new object with value of o and metadata meta added to it."))
 
+;; NOTE : if we ever decide to go 100% on ifn, delete this
+(extend-type Function
+  IWithMeta
+  (-with-meta [f m]
+    (-with-meta
+      (fn [& args]
+        (.apply Function f (some-> positional (.toList)))) m)))
+
 (defn with-meta
   "Returns an object of the same type and value as obj, with
     map m as its metadata."
@@ -1387,6 +1395,10 @@
 (defprotocol IMeta
   "Protocol for accessing the metadata of an object."
   (-meta [o] "Returns the metadata of object o."))
+
+(extend-type fallback
+  IMeta
+  (-meta [_] nil))
 
 (defn meta
   {:inline (fn [obj] `(-meta ~obj))
@@ -4695,6 +4707,11 @@
       (when (pred (first s))
         (cons (first s) (take-while pred (rest s))))))))
 
+(defn split-with
+  "Returns a vector of [(take-while pred coll) (drop-while pred coll)]"
+  [pred coll]
+  [(take-while pred coll) (drop-while pred coll)])
+
 (defn take-nth
   "Returns a lazy seq of every nth item in coll.  Returns a stateful
   transducer when no collection is provided."
@@ -5605,6 +5622,7 @@
         (next vs))
       (persistent! map))))
 
+
 ; TODO
 (declare subvec gensym keys)
 
@@ -5612,4 +5630,7 @@
   (prn (Map/of {:a 1}))
   (prn (get (Map/of {:a 1}) :a))
   (prn (:a (Map/of {:a 1})))
+  (let [f1 (fn f1 ([] 0) ([a] 1) ([a b] 2) ([a b c & more] 3))
+        f2 (fn f2 ([x] :foo) ([x y & more] (apply f1 y more)))]
+    (prn (= 1 (f2 1 2))))
   )
