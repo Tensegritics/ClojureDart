@@ -4310,14 +4310,15 @@
 
 (defn ^List to-array
   [coll]
-  ;; TODO : use more concrete implem of to-array for DS ?
   (if (dart/is? coll List)
-    (.toList coll)
-    (let [ary #dart []]
-      (loop [s (seq coll)]
+    (.toList coll .& :growable false)
+    (let [length (count coll)
+          ^#/(List dynamic) ary (.filled List length nil)]
+      (loop [s (seq coll)
+             ^int idx 0]
         (if-not (nil? s)
-          (do (.add ary (first s))
-              (recur (next s)))
+          (do (aset ary idx (first s))
+              (recur (next s) (inc idx)))
           ary)))))
 
 (defn apply
