@@ -273,3 +273,26 @@
     (is (= "c" (substr "abcdefg" 2 3))))
   (let [trim (memfn trim)]
     (is (= ["abc" "def"] (map trim ["   abc   " "  def   "])))))
+
+;; =============================================================================
+;; CLJS Tickets
+
+(deftest test-383
+  (testing "Testing CLJS-383"
+    ;; TODO : move up `let` when tests are reliable
+    (is (let [f1 (fn f1 ([] 0) ([a] 1) ([a b] 2) ([a b c & more] 3))
+              f2 (fn f2 ([x] :foo) ([x y & more] (apply f1 y more)))]
+          (= 1 (f2 1 2))))
+    (is (let [f (fn ([]) ([a & more] more))]
+          (nil? (f :foo))))))
+
+(deftest test-513
+  (testing "Testing CLJS-513"
+    (let [sentinel (Object.)]
+      (is (identical? sentinel (try (throw "ee") (catch Object _ sentinel)))))))
+
+(defprotocol IFoo (foo [this]))
+
+(deftest test-reify-meta
+  (is (= (meta (with-meta (reify IFoo (foo [this] :foo)) {:foo :bar}))
+        {:foo :bar})))
