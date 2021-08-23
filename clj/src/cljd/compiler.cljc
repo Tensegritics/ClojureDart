@@ -146,14 +146,14 @@
             [dart-alias lib]))))))
 
 (defn- resolve-dart-type
-  [sym env]
+  [sym type-vars]
   (let [{:keys [libs current-ns] :as nses} @nses
         {:keys [aliases]} (nses current-ns)]
     (else->>
       (if ('#{void dart:core/void} sym)
         {:type "void"
          :qname 'void})
-      (if (contains? (:type-vars env #{}) sym)
+      (if (contains? type-vars sym)
         {:type (name sym) :is-param true})
       (if-some [[dart-alias lib] (ensure-import-lib (namespace sym))]
         {:qname (symbol (str dart-alias "." (name sym)))
@@ -162,9 +162,27 @@
          :type-parameters
          (vec
            (for [t (:type-params (meta sym))]
-             (or (resolve-type t env)
-               (throw (Exception. (str "Can't resolve type parameter" t " on type " sym "."))))))})
+             (or (resolve-type t type-vars)
+               (throw (Exception. (str "Can't resolve type parameter " t " on type " sym "."))))))})
       nil)))
+
+(defn- resolve-non-local-symbol [sym type-vars]
+  (let [{:keys [libs] :as nses} @nses
+        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
+    (else->>
+      (if-some [v (current-ns sym)] [:def v])
+      (if-some [v (mappings sym)]
+        (recur (with-meta v (meta sym)) type-vars))
+      (let [sym-ns (namespace sym)
+            lib-ns (if (= "clojure.core" sym-ns)
+                     "cljd.core"
+                     (some-> (get aliases sym-ns) libs :ns name))])
+      (if (some-> lib-ns (not= sym-ns))
+        (recur (with-meta (symbol lib-ns (name sym)) (meta sym)) type-vars))
+      (if-some [info (some-> sym-ns symbol nses (get (symbol (name sym))))]
+        [:def info])
+      (if-some [atype (resolve-dart-type sym type-vars)]
+        [:dart atype]))))
 
 (defn resolve-symbol
   "Returns either a pair [tag value] or nil when the symbol can't be resolved.
@@ -175,23 +193,9 @@
    - for :def it's what's is in nses,
    - for :dart it's the aliased dart symbol."
   [sym env]
-  (let [{:keys [libs] :as nses} @nses
-        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))]
-    (else->>
-      (if-some [v (env sym)] [:local v])
-      (if-some [v (current-ns sym)] [:def v])
-      (if-some [v (mappings sym)]
-        (recur (with-meta v (meta sym)) env))
-      (let [sym-ns (namespace sym)
-            lib-ns (if (= "clojure.core" sym-ns)
-                     "cljd.core"
-                     (some-> (get aliases sym-ns) libs :ns name))])
-      (if (some-> lib-ns (not= sym-ns))
-        (recur (with-meta (symbol lib-ns (name sym)) (meta sym)) env))
-      (if-some [info (some-> sym-ns symbol nses (get (symbol (name sym))))]
-        [:def info])
-      (if-some [atype (resolve-dart-type sym env)]
-        [:dart atype]))))
+  (if-some [v (env sym)]
+    [:local v]
+    (resolve-non-local-symbol sym (:type-vars env))))
 
 (defn dart-alias-for-ns [ns]
   (let [{:keys [current-ns] :as nses} @nses
@@ -200,8 +204,8 @@
 
 (defn resolve-type
   "Resolves a type to map with keys :qname :lib :type and :type-parameters."
-  [sym env]
-  (when-some [[tag info] (resolve-symbol sym env)]
+  [sym type-vars]
+  (when-some [[tag info] (resolve-non-local-symbol sym type-vars)]
     (case tag
       :dart info
       :def (case (:type info)
@@ -209,9 +213,9 @@
              {:qname (symbol (str (dart-alias-for-ns (:ns info))
                                "." (:dart/name info)))
               :lib (-> @nses (get (:ns info)) :lib)
-                :type (name sym)
+              :type (name sym)
               :type-parameters [#_TODO]})
-      (throw (ex-info (str "oops " sym) {:env env})))))
+      (throw (ex-info (str "Can't resolve type " sym) {:type-vars type-vars})))))
 
 (defn unresolve-type [{:keys [is-param lib type type-parameters nullable]}]
   (if is-param
@@ -230,13 +234,13 @@
     tag))
 
 (defn emit-type
-  [tag env]
+  [tag {:keys [type-vars] :as env}]
   (cond
     (= 'some tag) "dc.dynamic"
     ('#{void dart:core/void} tag) "void"
     :else
     (let [tag! (non-nullable tag)
-          atype (or (resolve-type tag! env) (when *hosted* (resolve-type (symbol (name tag!)) env))
+          atype (or (resolve-type tag! type-vars) (when *hosted* (resolve-type (symbol (name tag!)) type-vars))
                   (throw (Exception. (str "Can't resolve type " tag! "."))))
           typename
           (if (:is-param atype) (:type atype) (name (:qname atype)))
@@ -432,7 +436,7 @@
                        (zipmap (map :name type-params) (:type-parameters class))
                        (zero? nargs)
                        (zipmap (map :name type-params)
-                         (repeat (resolve-type 'dart:core/dynamic {})))
+                         (repeat (resolve-type 'dart:core/dynamic #{})))
                        :else
                        (throw (Exception. (str "Expecting " nparams " type arguments to " class ", got " nargs "."))))]
           [#(let [v (type-env' %)]
@@ -489,7 +493,7 @@
 
 (defn resolve-dart-method
   [class-name mname args type-env]
-  (when-some [type (resolve-type class-name {:type-vars type-env})] ; TODO pass type-vars
+  (when-some [type (resolve-type class-name type-env)] ; TODO pass type-vars
     (if-some [member-info (some-> (dart-member-lookup type (name mname)) actual-member)] ; TODO are there special cases for operators? eg unary-
       (case (:kind member-info)
         :field
