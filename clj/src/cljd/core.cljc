@@ -1525,11 +1525,11 @@
         (and (nil? nsx) nsy) -1
         nsx (if (nil? nsy)
               1
-              (let [nsc (.compareTo nsx nsy)]
+              (let [nsc (.compareTo ^Comparable nsx nsy)]
                 (if (zero? nsc)
-                  (.compareTo (.-name x) (.-name y))
+                  (.compareTo ^Comparable (.-name x) (.-name y))
                   nsc)))
-        :else (.compareTo (.-name x) (.-name y)))))
+        :else (.compareTo ^Comparable (.-name x) (.-name y)))))
   Object
   (hashCode [_] _hash)
   (== [this other] (-equiv this other)))
@@ -1599,11 +1599,11 @@
         (and (nil? nsx) nsy) -1
         nsx (if (nil? nsy)
               1
-              (let [nsc (.compareTo nsx nsy)]
+              (let [nsc (.compareTo ^Comparable nsx nsy)]
                 (if (zero? nsc)
-                  (.compareTo (.-name x) (.-name y))
+                  (.compareTo ^Comparable (.-name x) (.-name y))
                   nsc)))
-        :else (.compareTo (.-name x) (.-name y))))))
+        :else (.compareTo ^Comparable (.-name x) (.-name y))))))
 
 (defn ^bool symbol?
   "Return true if x is a Symbol"
@@ -5682,6 +5682,21 @@
     (nil? x) -1
     (nil? y) 1
     :else (.compareTo ^Comparable x y)))
+
+(defn sort
+  "Returns a sorted sequence of the items in coll. If no comparator is
+  supplied, uses compare.  The comparator function must act as a Comparator.
+  Guaranteed to be stable: equal elements will
+  not be reordered.  If coll is a Dart List, it will be modified.  To
+  avoid this, sort a copy of the List."
+  ([coll]
+   (sort compare coll))
+  ([comp coll]
+   (if (seq coll)
+     (let [a (to-array coll)]
+       (.sort ^List a comp)
+       (seq a))
+     ())))
 
 ; TODO
 (declare subvec gensym keys)

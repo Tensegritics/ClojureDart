@@ -306,15 +306,22 @@
       (is (= "original" (y))))))
 
 (deftest test-compare-fn
-  (is (compare 'a 'b))
-  (is (compare 'a 'a))
-  (is (compare :a :a))
-  (is (compare :a :b))
-  (is (compare :a/b :a/b))
-  (is (compare [:a :b] [:a :b]))
-  (is (compare [:a :b] [:a :c]))
-  (is (compare [:a :b] (first {:a :b})))
-  (is (compare (first {:a :b}) (first {:a :b}))))
+  (testing "Testing compare default function"
+    (is (compare 'a 'b))
+    (is (compare 'a 'a))
+    (is (compare :a :a))
+    (is (compare :a :b))
+    (is (compare :a/b :a/b))
+    (is (compare [:a :b] [:a :b]))
+    (is (compare [:a :b] [:a :c]))
+    (is (compare [:a :b] (first {:a :b})))
+    (is (compare (first {:a :b}) (first {:a :b}))))
+
+  (testing "Testing sort function"
+    (is (= '(-100 1 2 3 100) (sort [3 2 1 100 -100])))
+    (is (= '(:a :b :c) (sort [:a :c :b])))
+    (is (= '([:a :b] [:c :d]) (sort {:c :d :a :b})))
+    (is (= '(3 2 1) (sort (fn [x y] (if (< x y) 1 -1)) [1 2 3])))))
 
 #_(deftest test-kv-reduce
   (letfn [(kvr-test [data expect]
