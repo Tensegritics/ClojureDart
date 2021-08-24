@@ -1578,7 +1578,7 @@
   (-with-meta [s new-meta]
     (if (identical? new-meta meta)
       s
-      (Symbol. ns name _hash new-meta)))
+      (Symbol. ns name new-meta _hash)))
   INamed
   (-name [_] name)
   (-namespace [_] ns)

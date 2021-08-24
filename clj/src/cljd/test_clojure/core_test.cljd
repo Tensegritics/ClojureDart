@@ -340,3 +340,27 @@
                              [[:v0 :v1] [[0 :v0] [1 :v1]]]]]
         (is (kvr-test data expect)))
       (is (= {:init :val} (reduce-kv assoc {:init :val} nil))))))
+
+(deftest test-2067
+  (is (= 0 (reduce-kv
+             (fn [x k _]
+               (when (zero? k)
+                 (reduced k)))
+             nil (zipmap (range 17) (repeat 0))))))
+
+(deftest test-435
+  (is (= (assoc {} 154618822656 1 261993005056 1)
+        {154618822656 1 261993005056 1})))
+
+(deftest test-458
+  (is (= (get-in {:a {:b 1}} [:a :b :c] :nothing-there)
+        :nothing-there)))
+
+(deftest test-464
+  (is (nil? (get-in {:foo {:bar 2}} [:foo :bar :baz]))))
+
+(deftest test-symbol-meta
+  (is (= (meta (with-meta 'foo {:tag 'int})) {:tag 'int}))
+  #_#_#_(is (= (meta (quote ^{:bar true} foo)) {:bar true}))
+  (is (= (meta (quote ^:bar foo)) {:bar true}))
+  (is (= (meta (first '[^:bar x])) {:bar true})))
