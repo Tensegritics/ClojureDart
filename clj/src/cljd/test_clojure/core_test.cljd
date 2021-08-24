@@ -292,3 +292,49 @@
 (deftest test-reify-meta
   (is (= (meta (with-meta (reify IFoo (foo [this] :foo)) {:foo :bar}))
         {:foo :bar})))
+
+(deftest test-401-411
+  (is (= "original" (let [x "original"
+                          oce (fn [] x)
+                          x "overwritten"]
+                      (oce)))))
+
+(deftest test-letfn-shadowing
+  (letfn [(x [] "original")
+          (y [] (x))]
+    (let [x (fn [] "overwritten")]
+      (is (= "original" (y))))))
+
+(deftest test-compare-fn
+  (is (compare 'a 'b))
+  (is (compare 'a 'a))
+  (is (compare :a :a))
+  (is (compare :a :b))
+  (is (compare :a/b :a/b))
+  (is (compare [:a :b] [:a :b]))
+  (is (compare [:a :b] [:a :c]))
+  (is (compare [:a :b] (first {:a :b})))
+  (is (compare (first {:a :b}) (first {:a :b}))))
+
+#_(deftest test-kv-reduce
+  (letfn [(kvr-test [data expect]
+            (and
+              (= :reduced
+                (reduce-kv
+                  (fn [_ _ _] (reduced :reduced))
+                  [] data))
+              (= (sort expect)
+                (sort
+                  (reduce-kv
+                    (fn [r k v] (-> r (conj [k v])))
+                    [] data)))))]
+    (testing "Testing IKVReduce"
+      (doseq [[data expect] [[(obj-map :k0 :v0 :k1 :v1) [[:k0 :v0] [:k1 :v1]]]
+                             [(hash-map :k0 :v0 :k1 :v1) [[:k0 :v0] [:k1 :v1]]]
+                             [(array-map :k0 :v0 :k1 :v1) [[:k0 :v0] [:k1 :v1]]]
+                             [[:v0 :v1] [[0 :v0] [1 :v1]]]]]
+        (is (kvr-test data expect)))
+      (is (= {:init :val} (reduce-kv assoc {:init :val} nil))))))
+
+
+#_(defn bbbbbbb ([a b c d e f g h i & more]))

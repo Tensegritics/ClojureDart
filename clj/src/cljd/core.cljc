@@ -1515,6 +1515,20 @@
   INamed
   (-name [_] name)
   (-namespace [_] ns)
+  #/(Comparable Keyword)
+  (compareTo [x ^Keyword y]
+    (let [nsx (.-ns x)
+          nsy (.-ns y)]
+      (cond
+        (= x y) 0
+        (and (nil? nsx) nsy) -1
+        nsx (if (nil? nsy)
+              1
+              (let [nsc (.compareTo nsx nsy)]
+                (if (zero? nsc)
+                  (.compareTo (.-name x) (.-name y))
+                  nsc)))
+        :else (.compareTo (.-name x) (.-name y)))))
   Object
   (hashCode [_] _hash)
   (== [this other] (-equiv this other)))
@@ -1574,7 +1588,21 @@
       (.== (.-ns this) (.-ns other))
       (.== name (.-name other))))
   IHash
-  (-hash [s] (ensure-hash _hash (hash-symbol s))))
+  (-hash [s] (ensure-hash _hash (hash-symbol s)))
+  #/(Comparable Symbol)
+  (compareTo [x ^Symbol y]
+    (let [nsx (.-ns x)
+          nsy (.-ns y)]
+      (cond
+        (= x y) 0
+        (and (nil? nsx) nsy) -1
+        nsx (if (nil? nsy)
+              1
+              (let [nsc (.compareTo nsx nsy)]
+                (if (zero? nsc)
+                  (.compareTo (.-name x) (.-name y))
+                  nsc)))
+        :else (.compareTo (.-name x) (.-name y))))))
 
 (defn ^bool symbol?
   "Return true if x is a Symbol"
@@ -3023,6 +3051,22 @@
         (set! i (inc i))
         true))))
 
+(defn- ^int compare-indexed
+  "Used as foundation for indexed DS as comparator function."
+  [x y]
+  (let [cntx (-count x)
+        cnty (-count y)]
+    (cond
+      (< cntx cnty) -1
+      (< cnty cntx) 1
+      :else (loop [idx 0]
+              (if (< idx cntx)
+                (let [c (.-compareTo (-nth x idx) (-nth y idx))]
+                  (if (zero? c)
+                    (recur (inc idx))
+                    c))
+                0)))))
+
 (deftype #/(PersistentVector E)
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
   ^:mixin EquivSequentialHashMixin
@@ -3170,7 +3214,13 @@
       (RSeq. coll (dec cnt) nil)))
   #_#_IIterable
   (-iterator [this]
-    (ranged-iterator this 0 cnt)))
+    (ranged-iterator this 0 cnt))
+
+  Comparable
+  (compareTo [x y]
+    (if (vector? y)
+      (compare-indexed x y)
+      (throw (ArgumentError. (str "Cannot compare " x " to " y))))))
 
 (defn ^bool vector? [x]
   (satisfies? IVector x))
@@ -3596,7 +3646,12 @@
   (-invoke [node k]
     (-nth node k))
   (-invoke [node k not-found]
-    (-nth node k not-found)))
+    (-nth node k not-found))
+  Comparable
+  (compareTo [x y]
+    (if (vector? y)
+      (compare-indexed x y)
+      (throw (ArgumentError. (str "Cannot compare " x " to " y))))))
 
 ; cgrand's
 (deftype #/(BitmapIterator E)
@@ -5620,6 +5675,12 @@
         (next vs))
       (persistent! map))))
 
+(defn ^int compare [x y]
+  (cond
+    (identical? x y) 0
+    (nil? x) -1
+    (nil? y) 1
+    :else (.compareTo ^Comparable x y)))
 
 ; TODO
 (declare subvec gensym keys)
