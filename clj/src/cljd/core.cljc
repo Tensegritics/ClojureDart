@@ -1453,7 +1453,8 @@
 (defn ^bool -equiv-sequential
   "Assumes x is sequential."
   [x y]
-  (and (sequential? y)
+  (and
+    (or (sequential? y) (dart/is? y List))
     (or (not (counted? x)) (not (counted? y))
       (== (count x) (count y)))
     (or (not (-hash-realized? x)) (not (-hash-realized? y))
