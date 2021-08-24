@@ -364,3 +364,52 @@
   #_#_#_(is (= (meta (quote ^{:bar true} foo)) {:bar true}))
   (is (= (meta (quote ^:bar foo)) {:bar true}))
   (is (= (meta (first '[^:bar x])) {:bar true})))
+
+(deftest test-467
+  (is (= (reduce-kv + 0 (apply hash-map (range 1000)))
+        (reduce + (range 1000)))))
+
+(deftest test-493
+  (is (nil? (get 42 :anything)))
+  (is (= (get 42 :anything :not-found) :not-found))
+  (is (nil? (first (map get [42] [:anything]))))
+  (is (= (first (map get [42] [:anything] [:not-found])) :not-found)))
+
+(deftest test-481
+  (let [fs (atom [])]
+    (doseq [x (range 4)
+            :let [y (inc x)
+                  f (fn [] y)]]
+      (swap! fs conj f))
+    (is (= (map #(%) @fs) '(1 2 3 4)))))
+
+(deftest test-518
+  (is (nil? (:test "test"))))
+
+(deftest test-582
+  (is (= #{1 2} (set [1 2 2])))
+  (is (= #{1 2} (hash-set 1 2 2)))
+  (is (= #{1 2} (apply hash-set [1 2 2]))))
+
+(deftest test-585
+  (is (= (last (map identity (into [] (range 32)))) 31))
+  (is (= (into #{} (range 32))
+        (set (map identity (into [] (range 32)))))))
+
+(def foo580 {:a (fn []) :b (fn [] (foo580 :a))})
+
+(deftest test-580
+  (is (nil? (((:b foo580))))))
+
+(deftest test-587
+  (is (== (first (filter #(== % 9999) (range))) 9999)))
+
+(deftest test-604
+  (is (= () (concat nil [])))
+  (is (= () (concat [] []))))
+
+(deftest test-600
+  (is (= "foobar" (apply str (concat "foo" "bar")))))
+
+(deftest test-608
+  (is (= '("") (re-seq #"\s*" ""))))

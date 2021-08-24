@@ -5145,7 +5145,7 @@
         (let [c (chunk-first s)]
           (chunk-cons
             (chunk (chunk-reduce #(if-let [x (pred %2)]
-                                    (doto %1 (chunk-append x))
+                                    (doto %1 (chunk-append %2))
                                     %1)
                      (chunk-buffer (count c)) c))
             (filter pred (chunk-rest s))))
@@ -5716,4 +5716,8 @@
   (let [f1 (fn f1 ([] 0) ([a] 1) ([a b] 2) ([a b c & more] 3))
         f2 (fn f2 ([x] :foo) ([x y & more] (apply f1 y more)))]
     (prn (= 1 (f2 1 2))))
+  (prn (with-meta 'foo {:tag 'dart:core/int}))
+  (prn (take 1 (filter #(== % 9999) (range))))
+
+  (prn (chunked-seq? (seq (range))))
   )
