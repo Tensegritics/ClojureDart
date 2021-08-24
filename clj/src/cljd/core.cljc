@@ -1014,6 +1014,10 @@
     "Reduces an associative collection and returns the result. f should be
      a function that takes three arguments."))
 
+(extend-type Null
+  IKVReduce
+  (-kv-reduce [coll f init] init))
+
 (defn reduce-kv
   "Reduces an associative collection. f should be a function of 3
   arguments. Returns the result of applying f to init, the first key
