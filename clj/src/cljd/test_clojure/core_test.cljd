@@ -323,7 +323,7 @@
     (is (= '([:a :b] [:c :d]) (sort {:c :d :a :b})))
     (is (= '(3 2 1) (sort (fn [x y] (if (< x y) 1 -1)) [1 2 3])))))
 
-#_(deftest test-kv-reduce
+(deftest test-kv-reduce
   (letfn [(kvr-test [data expect]
             (and
               (= :reduced
@@ -336,12 +336,7 @@
                     (fn [r k v] (-> r (conj [k v])))
                     [] data)))))]
     (testing "Testing IKVReduce"
-      (doseq [[data expect] [[(obj-map :k0 :v0 :k1 :v1) [[:k0 :v0] [:k1 :v1]]]
-                             [(hash-map :k0 :v0 :k1 :v1) [[:k0 :v0] [:k1 :v1]]]
-                             [(array-map :k0 :v0 :k1 :v1) [[:k0 :v0] [:k1 :v1]]]
+      (doseq [[data expect] [[(hash-map :k0 :v0 :k1 :v1) [[:k0 :v0] [:k1 :v1]]]
                              [[:v0 :v1] [[0 :v0] [1 :v1]]]]]
         (is (kvr-test data expect)))
       (is (= {:init :val} (reduce-kv assoc {:init :val} nil))))))
-
-
-#_(defn bbbbbbb ([a b c d e f g h i & more]))

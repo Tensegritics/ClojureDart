@@ -2747,21 +2747,25 @@
     true                   (Cons. nil x (seq coll) -1)))
 
 (deftype #/(IteratorSeq E)
-  [value ^Iterator iter ^:mutable ^some _rest]
+  [value ^Iterator iter ^:mutable ^some _rest ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/ListMixin E)
+  ^:mixin EquivSequentialHashMixin
   ^:mixin #/(SeqListMixin E)
   (^#/(IteratorSeq R) #/(cast R) [coll]
-   (IteratorSeq. value iter _rest))
+   (IteratorSeq. value iter _rest __hash))
   ISeqable
   (-seq [this] this)
   ISeq
   (-first [coll] value)
   (-rest [coll] (or _rest (set! _rest (or (iterator-seq iter) ()))))
-  (-next [coll] (-seq (-rest coll))))
+  (-next [coll] (-seq (-rest coll)))
+  IHash
+  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
+  (-hash-realized? [coll] (.!= -1 __hash)))
 
 (defn ^some iterator-seq [^Iterator iter]
   (when (.moveNext iter)
-    (IteratorSeq. (.-current iter) iter nil)))
+    (IteratorSeq. (.-current iter) iter nil -1)))
 
 (extend-type Iterable
   ISeqable
