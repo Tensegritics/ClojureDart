@@ -1546,6 +1546,7 @@
                           {:keys [dart/type] :as m} (dart-meta f env)
                           m (cond-> m
                               mutable (assoc :dart/mutable true)
+                              abstract (assoc :dart/late true)
                               type (assoc :dart/nat-type type))]]
                 [f (vary-meta (munge f env) merge m)]))
         dart-fields (map env fields)
@@ -2019,8 +2020,8 @@
   (some->> implements seq (str/join ", ") (print " implements"))
   (print " {\n")
   (doseq [field fields
-          :let [{:dart/keys [mutable type]} (meta field)]]
-    (print (str (cond (not mutable) "final " (not type) "var ") (some-> type (str " ")) field ";\n")))
+          :let [{:dart/keys [late mutable type]} (meta field)]]
+    (print (str (if late "late " "") (cond (not mutable) "final " (not type) "var ") (some-> type (str " ")) field ";\n")))
 
   (when-not abstract
     (newline)

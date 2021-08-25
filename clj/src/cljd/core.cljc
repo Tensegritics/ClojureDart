@@ -1507,10 +1507,13 @@
                 (= (get y (first xkv) never-equiv) (second xkv)))
               x)))))))
 
-(deftype ^:abstract EquivSequentialHashMixin []
+(deftype ^:abstract EquivSequentialHashMixin [^:mutable ^int __hash]
   ISequential
   IEquiv
-  (-equiv [x y] (-equiv-sequential x y)))
+  (-equiv [x y] (-equiv-sequential x y))
+  IHash
+  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
+  (-hash-realized? [coll] (.!= -1 __hash)))
 
 (deftype Keyword [^String? ns ^String name ^int _hash]
   ^:mixin ToStringMixin
@@ -2674,9 +2677,6 @@
   (-conj [coll o] (Cons. nil o coll -1))
   IEmptyableCollection
   (-empty [coll] ())
-  IHash
-  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
-  (-hash-realized? [coll] (.!= -1 __hash))
   ISeqable
   (-seq [coll] coll))
 
@@ -2735,9 +2735,6 @@
   (-conj [coll o] (PersistentList. meta o coll (inc count) -1))
   IEmptyableCollection
   (-empty [coll] (-with-meta () meta))
-  IHash
-  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
-  (-hash-realized? [coll] (.!= -1 __hash))
   ISeqable
   (-seq [coll] (when (< 0 count) coll))
   ICounted
@@ -2779,10 +2776,7 @@
   ISeq
   (-first [coll] value)
   (-rest [coll] (or _rest (set! _rest (or (iterator-seq iter) ()))))
-  (-next [coll] (-seq (-rest coll)))
-  IHash
-  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
-  (-hash-realized? [coll] (.!= -1 __hash)))
+  (-next [coll] (-seq (-rest coll))))
 
 (defn ^some iterator-seq [^Iterator iter]
   (when (.moveNext iter)
@@ -2862,9 +2856,6 @@
               (deref val)
               (recur val (inc idx))))
           acc))))
-  IHash
-  (-hash [coll] (ensure-hash __hash (m3-hash-int (.-hashCode (.substring string i)))))
-  (-hash-realized? [coll] (.!= -1 __hash))
   ; TODO : not reversible in clj (is in cljs)
   #_#_IReversible
   (-rseq [coll]
@@ -3150,9 +3141,6 @@
           (PersistentVector. meta (inc cnt) new-shift new-root #dart ^:fixed [o] -1)))))
   IEmptyableCollection
   (-empty [coll] (-with-meta [] meta))
-  IHash
-  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
-  (-hash-realized? [coll] (.!= -1 __hash))
   ISeqable
   (-seq [coll]
     (cond
@@ -3358,10 +3346,7 @@
   ICollection
   (-conj [this o] (cons o this))
   IEmptyableCollection
-  (-empty [coll] ())
-  IHash
-  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
-  (-hash-realized? [coll] (.!= -1 __hash)))
+  (-empty [coll] ()))
 
 (defn chunk-cons [chunk rest]
   (if (< 0 (count chunk))
@@ -3418,9 +3403,6 @@
                              (unchecked-array-for (.-root vec) (.-shift vec) end)
                              (.-tail vec))
           end 0 nil -1))))
-  IHash
-  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
-  (-hash-realized? [coll] (.!= -1 __hash))
   IReduce
   (-reduce [coll f] (pv-reduce vec f (+ i off)))
   (-reduce [coll f start] (pv-reduce vec f (+ i off) start)))
@@ -3613,9 +3595,6 @@
   IMapEntry
   (-key [node] _k)
   (-val [node] _v)
-  IHash
-  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll)))
-  (-hash-realized? [coll] (.!= -1 __hash))
   IMeta
   (-meta [node] nil)
   IStack
