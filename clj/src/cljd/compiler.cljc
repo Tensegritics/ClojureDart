@@ -1157,7 +1157,9 @@
 (defn- ensure-ifn-arities-mixin [fixed-arities base-vararg-arity]
   (let [fixed-arities (set fixed-arities)
         path [:ifn-mixins fixed-arities base-vararg-arity]]
-    (or (get-in @nses path)
+    (or (when-some [mixin (get-in @nses path)]
+          (when (get-in @nses [(symbol (namespace mixin)) (symbol (name mixin))])
+            mixin))
       (let [mixin-name (emit-ifn-arities-mixin fixed-arities base-vararg-arity)
             mixin-name (symbol "cljd.core" (name mixin-name))]
         (swap! nses assoc-in path mixin-name)
