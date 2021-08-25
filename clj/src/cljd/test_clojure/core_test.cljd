@@ -442,3 +442,60 @@
   (testing "Testing CLJS-663, invalid keywords"
     (is (= (keyword 123) nil))
     (is (= (keyword (.now dart:core/DateTime)) nil))))
+
+(def some-x 1)
+(def some-y 1)
+
+(deftest test-583
+  (is (= (count #{some-x some-y}) 1)))
+
+(deftest test-584
+  (is (= (count {some-x :foo some-y :bar}) 1)))
+
+(deftest test-725
+  (testing "Testing CLJS-725, drop"
+    (is (= (apply vector (drop-while (partial = 1) [1 2 3])) [2 3]))
+    (is (= (apply list (drop-while (partial = 1) [1 2 3])) '(2 3)))
+    (is (= (set (drop 1 #dart [1 2 3])) #{2 3}))))
+
+(deftest test-724
+  (is (nil? (first (rest (rest (rest (range 3))))))))
+
+(deftest test-767
+  (testing "Testing CLJS-767, invalid assoc"
+    (doseq [n [nil "-1" "" "0" "1" false true (Object.)]]
+      (is (= :fail (try (assoc [1 2] n 4)
+                        (catch Object e :fail))))
+      (is (= :fail (try (assoc (subvec [1 2 3] 2) n 4)
+                        (catch Object e :fail))))
+      (is (= :fail (try (assoc (range 1 3) n 4)
+                        (catch Object e :fail)))))))
+
+(deftest test-768
+  (testing "Testing CLJS-768, invalid assoc!"
+    (doseq [n [nil "-1" "" "0" "1" false true (Object.)]]
+      (is (= :fail (try (assoc! (transient [1 2]) n 4)
+                        (catch Object e :fail)))))))
+
+#_(deftest test-728
+  (testing "Testing CLJS-728, lookup with default"
+    (doseq [n [nil "-1" "" "0" "1" false true (Object.)]]
+      (is (nil? (get [1 2] n)))
+      (is (= :fail (try (nth [1 2] n) (catch Object e :fail))))
+      (is (= 4 (get [1 2] n 4)))
+      (is (= :fail (try (nth [1 2] n 4) (catch Object e :fail))))
+
+      (is (nil? (get (subvec [1 2] 1) n)))
+      (is (= :fail (try (nth (subvec [1 2] 1) n) (catch Object e :fail))))
+      (is (= 4 (get (subvec [1 2] 1) n 4)))
+      (is (= :fail (try (nth (subvec [1 2] 1) n 4) (catch Object e :fail))))
+
+      (is (nil? (get (transient [1 2]) n)))
+      (is (= :fail (try (nth (transient [1 2]) n) (catch Object e :fail))))
+      (is (= 4 (get (transient [1 2]) n 4)))
+      (is (= :fail (try (nth (transient [1 2]) n 4) (catch Object e :fail))))
+
+      (is (nil? (get (range 1 3) n)))
+      (is (= :fail (try (nth (range 1 3) n) (catch Object e :fail))))
+      (is (= 4 (get (range 1 3) n 4)))
+      (is (= :fail (try (nth (range 1 3) n 4) (catch Object e :fail)))))))
