@@ -188,7 +188,7 @@
                 ;;todo - restore propagation of fn name
                 ;;must figure out how to convey primitive hints to self calls first
 								;;(cons `fn fdecl)
-								(with-meta (cons 'clojure.core/fn fdecl) {:rettag (:tag m) :async (:async m)})))))
+								(with-meta (cons `fn fdecl) {:rettag (:tag m) :async (:async m)})))))
 
 (def
  ^{:macro true
@@ -5345,9 +5345,9 @@
                arg (gensym 'coll__)
                wrap
                (fn wrap [mods body]
-                 (clojure.core/if-some [[mod expr & more-mods] (seq mods)]
+                 (if-some [[mod expr & more-mods] (seq mods)]
                    (let [body (wrap more-mods body)]
-                     (clojure.core/case mod
+                     (case mod
                        :let `(let ~expr ~body)
                        :while `(if ~expr ~body (or ~@ors))
                        :when `(if ~expr ~body (recur (next ~arg)))))
@@ -5398,9 +5398,9 @@
                 exit# (or ~@(next ors))
                 :else (recur (chunk-next ~arg))))))
        (chunked-wrap [mods body]
-         (clojure.core/if-some [[mod expr & more-mods] (seq mods)]
+         (if-some [[mod expr & more-mods] (seq mods)]
            (let [body (chunked-wrap more-mods body)]
-             (clojure.core/case mod
+             (case mod
                :let `(let ~expr ~body)
                :while `(if ~expr ~body true)
                :when `(when ~expr ~body)))
@@ -5421,9 +5421,9 @@
                   acc (gensym 'acc__)
                   wrap
                   (fn wrap [mods body]
-                    (clojure.core/if-some [[mod expr & more-mods] (seq mods)]
+                    (if-some [[mod expr & more-mods] (seq mods)]
                       (let [body (wrap more-mods body)]
-                        (clojure.core/case mod
+                        (case mod
                           :let `(let ~expr ~body)
                           :while  `(if ~expr ~body (reduced ~acc))
                           :when `(when ~expr ~body)))
