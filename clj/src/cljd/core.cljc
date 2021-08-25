@@ -796,7 +796,7 @@
   [x]
   (if (string? x) x (-name x)))
 
-(defn ^String namespace
+(defn ^String? namespace
   "Returns the namespace String of a symbol or keyword, or nil if not present."
   {:inline (fn [x] `(-namespace ~x))
    :inline-arities #{1}}
@@ -808,7 +808,7 @@
   (-seq [o]
     "Returns a seq of o, or nil if o is empty."))
 
-(defn seqable?
+(defn ^bool seqable?
   "Return true if the seq function is supported for x."
   [x]
   (satisfies? ISeqable x))
