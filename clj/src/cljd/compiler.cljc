@@ -593,18 +593,6 @@
                      (. (.extensions ~proto ~this) ~name ~@all-args))))))
         (list proto)))))
 
-(defn- expand-case [expr & clauses]
-  (cond
-    (not (symbol? expr))
-    `(let* [test# ~expr] (~'case test# ~@clauses))
-    (even? (count clauses))
-    `(~'case ~expr ~@clauses (throw (.value dart:core/ArgumentError ~expr nil "No matching clause.")))
-    :else
-    (let [clauses (vec (partition-all 2 clauses))
-          [default] (peek clauses)
-          clauses (pop clauses)]
-      (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))))
-
 (defn- ensure-bodies [body-or-bodies]
   (cond-> body-or-bodies (vector? (first body-or-bodies)) list))
 
@@ -682,15 +670,8 @@
                        nil)]
         (cond
           (env f) form
-          #?@(:clj ; macro overrides
-              [(= 'ns f) form
-               (= 'letfn f) form
-               (= 'reify f)
-               (let [[opts specs] (roll-leading-opts args)]
-                 (list* 'reify* opts specs))
-               (= 'defprotocol f) (apply expand-defprotocol args)
-               ('#{case clojure.core/case cljd.core/case} f) (apply expand-case args)
-               (= 'extend-type f) (apply expand-extend-type args)])
+          (= 'defprotocol f) (apply expand-defprotocol args)
+          (= 'extend-type f) (apply expand-extend-type args)
           (= '. f) form
           macro-fn
           (apply macro-fn form (assoc env :nses @nses) (next form))

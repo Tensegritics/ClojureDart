@@ -342,11 +342,27 @@
       (even? (count bindings)) "an even number of forms in binding vector")
   `(let* ~(destructure bindings) ~@body))
 
+(defmacro case [expr & clauses]
+  (cond
+    (not (symbol? expr))
+    `(let* [test# ~expr] (case test# ~@clauses))
+    (even? (count clauses))
+    `(~'case ~expr ~@clauses (throw (ArgumentError/value ~expr nil "No matching clause.")))
+    :else
+    (let [clauses (vec (partition-all 2 clauses))
+          [default] (peek clauses)
+          clauses (pop clauses)]
+      (list 'case* expr (for [[v e] clauses] [(if (seq? v) v (list v)) e]) default))))
+
 (defn- ^:macro-support roll-leading-opts [body]
   (loop [[k v & more :as body] (seq body) opts {}]
     (if (and body (keyword? k))
       (recur more (assoc opts k v))
       [opts body])))
+
+(defmacro reify [& body]
+  (let [[opts specs] (roll-leading-opts body)]
+    (list* 'reify* opts specs)))
 
 (defmacro deftype [& args]
   (let [[class-name fields & args] args
