@@ -1099,6 +1099,14 @@
   (-assoc-n [coll n val]
     "Returns a new vector with value val added at position n."))
 
+(defprotocol ISubvecable
+  (-subvec [vector start end]
+    "Returns a persistent vector of the items in vector from
+  start (inclusive) to end (exclusive). This operation is O(1).
+  This is meant to be called by suvec so implementation are free
+  to assume that (<= 0 start), (< start end), (<= end (count v))
+  and (not= [start end] [0 (count v]) are true."))
+
 (defprotocol IAssociative
   "Protocol for adding associativity to collections."
   (-assoc [coll k v]
@@ -3035,13 +3043,14 @@
              arr (if (<= tail-off from) tail (unchecked-array-for root shift from))]
          (pv-reduce pv f (inc from) (aget arr (bit-and from 31)))))))
   ([^PersistentVector pv f ^int from init]
-   (let [cnt (.-cnt pv)
-         tail (.-tail pv)
+   (pv-reduce pv f from (.-cnt pv) init))
+  ([^PersistentVector pv f ^int from ^int to init]
+   (let [tail (.-tail pv)
          root (.-root pv)
          shift (.-shift pv)]
-     (if (<= cnt from)
+     (if (<= to from)
        init
-       (let [tail-off (bit-and-not (dec cnt) 31)]
+       (let [tail-off (bit-and-not (dec (.-cnt pv)) 31)]
          (loop [acc init
                 i from
                 arr (if (<= tail-off from) tail (unchecked-array-for root shift from))]
@@ -3049,21 +3058,44 @@
                  i' (inc i)]
              (cond
                (reduced? acc) (deref acc)
-               (< i' cnt)
+               (< i' to)
                (recur acc i' (cond
                                (< 0 (bit-and i' 31)) arr
                                (== tail-off i') tail
                                :else (unchecked-array-for root shift i')))
                :else acc))))))))
 
+(defn- pv-kv-reduce [^PersistentVector pv f ^int from ^int to init]
+  (if (< from to)
+    (let [tail-off (bit-and-not (dec (.-cnt pv)) 31)
+          root (.-root pv)
+          shift (.-shift pv)
+          tail (.-tail pv)]
+      (loop [acc init
+             i from
+             arr (if (zero? tail-off) tail (unchecked-array-for root shift i))]
+        (if (< i to)
+          (let [val (f acc i (aget arr (bit-and i 31)))
+                i' (inc i)]
+            (if (reduced? val)
+              (deref val)
+              (recur val i' (cond
+                              (< 0 (bit-and i' 31)) arr
+                              (== tail-off i') tail
+                              (< i' to) (unchecked-array-for root shift i')
+                              :else nil))))
+          acc)))
+    init))
+
 (deftype #/(PVIterator E)
   [^PersistentVector v
    ^:mutable ^int i
+   ^int to
    ^:mutable ^List curr]
   #/(Iterator E)
   (current [iter] (aget curr (bit-and (dec i) 31)))
   (moveNext [iter]
-    (and (< i (.-cnt v))
+    (and (< i to)
       (do
         (when (zero? (bit-and i 31))
           (set! curr (if (<= (bit-and-not (dec (.-cnt v)) 31) i)
@@ -3092,7 +3124,7 @@
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
-  (iterator [v] (PVIterator. v 0 tail)) ; tail assignment is only to pass a non-null list
+  (iterator [v] (PVIterator. v 0 cnt tail)) ; tail assignment is only to pass a non-null list
   ^:mixin #/(SeqListMixin E)
   (^#/(PersistentVector R) #/(cast R) [coll]
    (PersistentVector. meta cnt shift root tail __hash))
@@ -3199,24 +3231,7 @@
   (-reduce [pv f init] (pv-reduce pv f 0 init))
   IKVReduce
   (-kv-reduce [pv f init]
-    (if (zero? cnt)
-      init
-      (let [tail-off (bit-and-not (dec cnt) 31)]
-        (loop [acc init
-               i 0
-               arr (if (zero? tail-off) tail (unchecked-array-for root shift 0))]
-          (if (< i cnt)
-            (let [val (f acc i (aget arr (bit-and i 31)))
-                  i' (inc i)]
-              (if (reduced? val)
-                (deref val)
-                (recur val i' (cond
-                                (< 0 (bit-and i' 31)) arr
-                                (== tail-off i') tail
-                                ;; stoppage
-                                (== i' cnt) nil
-                                :else (unchecked-array-for root shift i')))))
-            acc)))))
+    (pv-kv-reduce pv f 0 cnt init))
   IFn
   (-invoke [coll k]
     (-nth coll k))
@@ -3230,20 +3245,139 @@
   (-rseq [coll]
     (when (pos? cnt)
       (RSeq. coll (dec cnt) nil)))
-  #_#_IIterable
-  (-iterator [this]
-    (ranged-iterator this 0 cnt))
-
   Comparable
   (compareTo [x y]
     (if (vector? y)
       (compare-indexed x y)
-      (throw (ArgumentError. (str "Cannot compare " x " to " y))))))
+      (throw (ArgumentError. (str "Cannot compare " x " to " y)))))
+  ISubvecable
+  (-subvec [coll start end]
+    (SubVec. nil coll start end -1)))
 
 (defn ^bool vector? [x]
   (satisfies? IVector x))
 
 (def -EMPTY-VECTOR (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
+
+(deftype #/(SubVec E)
+  [meta v ^int start ^int end ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
+  ^:mixin #/(dart-coll/ListMixin E)
+  (iterator [coll]
+    (PVIterator. v start end (.-tail v)))
+  ^:mixin #/(SeqListMixin E)
+  (^#/(SubVec R) #/(cast R) [coll]
+   (SubVec. meta v start end __hash))
+  ^:mixin ToStringMixin
+  IPrint
+  (-print [o sink] (print-sequential "[" "]" o sink))
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (SubVec. new-meta v start end __hash)))
+  IMeta
+  (-meta [coll] meta)
+  IStack
+  (-peek [coll]
+    (when (< start end)
+      (-nth v (dec end))))
+  (-pop [coll]
+    (if (< start end)
+      (SubVec. meta v start (dec end) -1)
+      (throw (Exception. "Can't pop empty vector"))))
+  ICollection
+  (-conj [coll o]
+    (SubVec. meta (-assoc-n v end o) start (inc end) -1))
+  IEmptyableCollection
+  (-empty [coll] (-with-meta [] meta))
+  ISeqable
+  (-seq [coll] (iterator-seq (.-iterator coll)))
+  ICounted
+  (-count [coll] (- end start))
+  IIndexed
+  (-nth [coll n]
+    (let [i (+ start n)]
+      (when (or (<= end i) (< n 0))
+        (throw (ArgumentError. (str "No item " n " in vector of length " (- end start)))))
+      (-nth v i)))
+  (-nth [coll n not-found]
+    (let [i (+ start n)]
+      (if (or (<= end i) (< n 0))
+        not-found
+        (-nth v i not-found))))
+  ILookup
+  (-lookup [coll k]
+    (-lookup coll k nil))
+  (-lookup [coll k not-found]
+    (if (dart/is? k int)
+      (-nth coll k not-found)
+      not-found))
+  (-contains-key? [coll k]
+    (if (dart/is? k int)
+      (and (<= 0 k) (< (+ start k) end))
+      false))
+  IAssociative
+  (-assoc [coll k v]
+    (if (dart/is? k int)
+      (-assoc-n coll k v)
+      (throw (ArgumentError. "Vector's key for assoc must be a number."))))
+  IFind
+  (-find [coll n]
+    (when-some [v' (-lookup coll n nil)]
+      (PersistentMapEntry. n v' -1)))
+  IVector
+  (-assoc-n [coll n val]
+    (let [i (+ start n)]
+      (when (or (< end i) (< n 0))
+        (throw (ArgumentError. (str "Index " n " out of bounds  [0," (- end start) "]"))))
+      (SubVec. meta (assoc v i val) start (math/max end ^int (inc i)) -1)))
+  IReduce
+  (-reduce [sv f]
+    (if (< start end)
+      (pv-reduce v f (inc start) end (-nth v start))
+      (f)))
+  (-reduce [sv f init]
+    (pv-reduce v f start end init))
+  IKVReduce
+  (-kv-reduce [sv f init]
+    (pv-kv-reduce v f start end init))
+  IFn
+  (-invoke [coll k]
+    (-nth coll k))
+  (-invoke [coll k not-found]
+    (-nth coll k not-found))
+  Comparable
+  (compareTo [x y]
+    (if (vector? y)
+      (compare-indexed x y)
+      (throw (ArgumentError. (str "Cannot compare " x " to " y)))))
+  ISubvecable
+  (-subvec [coll start1 end1]
+    (SubVec. nil v (+ start ^int start1) (+ end ^int end1) -1)))
+
+(defn subvec
+  "Returns a persistent vector of the items in vector from
+  start (inclusive) to end (exclusive).  If end is not supplied,
+  defaults to (count vector). This operation is O(1) and very fast, as
+  the resulting vector shares structure with the original and no
+  trimming is done."
+  ([v ^num start]
+   (subvec v start (-count v)))
+  ([v ^num start ^num end]
+   (let [n (-count v)
+         start (.toInt start)
+         end (.toInt end)]
+     (cond
+       (not (satisfies? ISubvecable v))
+       (throw (ArgumentError. "v must satisfy ISubvecable"))
+       (or (neg? start)
+         (< end start)
+         (< n end))
+       (throw (ArgumentError. "Index out of bounds"))
+       (and (zero? start) (== end n)) v
+       (< start end) (-subvec v start end)
+       :else []))))
 
 ;; chunks
 
@@ -3660,7 +3794,10 @@
   (compareTo [x y]
     (if (vector? y)
       (compare-indexed x y)
-      (throw (ArgumentError. (str "Cannot compare " x " to " y))))))
+      (throw (ArgumentError. (str "Cannot compare " x " to " y)))))
+  ISubvecable
+  (-subvec [coll start end]
+    (if (zero? start) [_k] [_v])))
 
 ; cgrand's
 (deftype #/(BitmapIterator E)
@@ -4961,6 +5098,32 @@
                      (cons (map first ss) (step (map rest ss)))))))]
      (map #(apply f %) (step (list* c1 c2 c3 colls))))))
 
+(defn map-indexed
+  "Returns a lazy sequence consisting of the result of applying f to 0
+  and the first item of coll, followed by applying f to 1 and the second
+  item in coll, etc, until coll is exhausted. Thus function f should
+  accept 2 arguments, index and item. Returns a stateful transducer when
+  no collection is provided."
+  ([f]
+   (fn [rf]
+     (let [i (volatile! -1)]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (rf result (f (vswap! i inc) input)))))))
+  ([f coll]
+   (letfn [(mapi [idx coll]
+             (lazy-seq
+               (when-let [s (seq coll)]
+                 (if (chunked-seq? s)
+                   (let [c (chunk-first s)
+                         b (chunk-buffer (count c))
+                         idx (chunk-reduce (fn [i x] (chunk-append b (f i x)) (inc i)) idx c)]
+                     (chunk-cons (chunk b) (mapi idx f (chunk-rest s))))
+                   (cons (f idx (first s)) (mapi (inc idx) (rest s)))))))]
+     (mapi 0 coll))))
+
 (defmacro doto
   "Evaluates x then calls all of the methods and functions with the
   value of x supplied at the front of the given arguments.  The forms
@@ -5333,6 +5496,17 @@
   ([xform f init coll]
    (let [f (xform f)]
      (f (reduce f init coll)))))
+
+(defn completing
+  "Takes a reducing function f of 2 args and returns a fn suitable for
+  transduce by adding an arity-1 signature that calls cf (default -
+  identity) on the result argument."
+  ([f] (completing f identity))
+  ([f cf]
+   (fn
+     ([] (f))
+     ([x] (cf x))
+     ([x y] (f x y)))))
 
 (defn into
   "Returns a new coll consisting of to-coll with all of the items of
@@ -5743,7 +5917,7 @@
      ())))
 
 ; TODO
-(declare subvec gensym keys)
+(declare gensym keys)
 
 (defn ^:async main []
   (prn (Map/of {:a 1}))
