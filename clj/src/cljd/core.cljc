@@ -1559,10 +1559,15 @@
   in the keyword strings, it will be added automatically."
   ([s] (cond
          (keyword? s) s
-         #_#_(symbol? s) (symbol (namespace s) (name s))
-         (string? s) (Keyword. nil s (hash-combine 0 (hash-string* s)))))
+         (symbol? s) (keyword (namespace s) (name s))
+         (= "/" s) (keyword nil name)
+         (string? s) (let [idx (.indexOf s "/")]
+                       (cond
+                         (< idx 0) (keyword nil s)
+                         (zero? idx) (keyword "" (.substring s 1))
+                         :else (keyword (.substring s 0 idx) (.substring s (inc idx)))))))
   ([ns name]
-   (Keyword. ns name (hash-combine (hash-string* ns) (hash-string* name)))))
+   (Keyword. ns name (hash-combine (if ns (hash-string* ns) 0) (hash-string* name)))))
 
 (defn ^bool keyword?
   [x]

@@ -413,3 +413,26 @@
 
 (deftest test-608
   (is (= '("") (re-seq #"\s*" ""))))
+
+(deftype KeywordTest []
+  cljd.core/ILookup
+  (-lookup [o k] :nothing)
+  (-lookup [o k not-found] not-found))
+
+(deftest tset-638
+  (is (= (:a (KeywordTest.)) :nothing)))
+
+(deftest test-648
+  (let [a (reify cljd.core/IHash (-hash [_] 42))
+        b (reify cljd.core/IHash (-hash [_] 42))
+        s (set (range 128))]
+    (testing "Testing CLJS-648 (CLJ-1285)"
+      (is (= (-> (conj s a b) transient (disj! a) persistent! (conj a))
+            (-> (conj s a b) transient (disj! a) persistent! (conj a)))))))
+
+(deftest test-660
+  (testing "Testing CLJS-660, namespace handling"
+    (is (= (-> 'a.b keyword ((juxt namespace name))) [nil "a.b"]))
+    (is (= (-> 'a.b/c keyword ((juxt namespace name))) ["a.b" "c"]))
+    (is (= (-> "a.b" keyword ((juxt namespace name))) [nil "a.b"]))
+    (is (= (-> "a.b/c" keyword ((juxt namespace name))) ["a.b" "c"]))))
