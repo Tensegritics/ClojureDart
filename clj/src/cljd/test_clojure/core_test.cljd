@@ -435,4 +435,10 @@
     (is (= (-> 'a.b keyword ((juxt namespace name))) [nil "a.b"]))
     (is (= (-> 'a.b/c keyword ((juxt namespace name))) ["a.b" "c"]))
     (is (= (-> "a.b" keyword ((juxt namespace name))) [nil "a.b"]))
-    (is (= (-> "a.b/c" keyword ((juxt namespace name))) ["a.b" "c"]))))
+    (is (= (-> "a.b/c" keyword ((juxt namespace name))) ["a.b" "c"]))
+    (is (= (-> "/b/c/d" keyword ((juxt namespace name))) ["" "b/c/d"]))))
+
+(deftest test-663
+  (testing "Testing CLJS-663, invalid keywords"
+    (is (= (keyword 123) nil))
+    (is (= (keyword (.now dart:core/DateTime)) nil))))
