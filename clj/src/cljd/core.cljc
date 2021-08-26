@@ -1231,7 +1231,7 @@
     (cond
       (== 0 n) (.-key me)
       (== 1 n) (.-value me)
-      :else (throw (IndexError. n me))))
+      :else (throw (ArgumentError. "Index out of bounds"))))
   (-nth [me n not-found]
     (cond
       (== 0 n) (.-key me)
@@ -1246,19 +1246,20 @@
 (extend-type fallback
   IIndexed
   (-nth [coll n]
-    (when (neg? n) (throw (IndexError. n coll)))
+    (when (neg? n) (throw (ArgumentError. "Index out of bounds")))
     (loop [xs (seq coll) ^int i n]
       (cond
-        (nil? xs) (throw (IndexError. n coll))
+        (nil? xs) (throw (ArgumentError. "Index out of bounds"))
         (zero? i) (first xs)
         :else (recur (next xs) (.- i 1)))))
   (-nth [coll n not-found]
-    (when (neg? n) not-found)
-    (loop [xs (seq coll) ^int i n]
-      (cond
-        (nil? xs) not-found
-        (zero? i) (first xs)
-        :else (recur (next xs) (.- i 1))))))
+    (if (neg? n)
+      not-found
+      (loop [xs (seq coll) ^int i n]
+        (cond
+          (nil? xs) not-found
+          (zero? i) (first xs)
+          :else (recur (next xs) (.- i 1)))))))
 
 (defn nth
   #_{:inline-arities #{2 3}
@@ -2639,19 +2640,20 @@
   (length [coll] (-count coll))
   IIndexed
   (-nth [coll n]
-    (when (neg? n) (throw (IndexError. n coll)))
+    (when (neg? n) (throw (ArgumentError. "Index out of bounds")))
     (loop [xs (-seq coll) ^int i n]
       (cond
-        (nil? xs) (throw (IndexError. n coll))
+        (nil? xs) (throw (ArgumentError. "Index out of bounds"))
         (zero? i) (first xs)
         :else (recur (next xs) (.- i 1)))))
   (-nth [coll n not-found]
-    (when (neg? n) not-found)
-    (loop [xs (-seq coll) ^int i n]
-      (cond
-        (nil? xs) not-found
-        (zero? i) (first xs)
-        :else (recur (next xs) (.- i 1))))))
+    (if (neg? n)
+      not-found
+      (loop [xs (-seq coll) ^int i n]
+        (cond
+          (nil? xs) not-found
+          (zero? i) (first xs)
+          :else (recur (next xs) (.- i 1)))))))
 
 (defmacro ensure-hash [hash-key hash-expr]
   #_(core/assert (clojure.core/symbol? hash-key) "hash-key is substituted twice")
@@ -2964,10 +2966,7 @@
   (-conj [coll o] (cons o coll))
   IEmptyableCollection
   ;; TODO understand why clj & cljs are different on that one
-  (-empty [coll] ())
-  IHash
-  (-hash-realized? [coll] (.!= -1 __hash))
-  (-hash [coll] (ensure-hash __hash (hash-ordered-coll coll))))
+  (-empty [coll] ()))
 
 (defmacro lazy-seq
   "Takes a body of expressions that returns an ISeq or nil, and yields

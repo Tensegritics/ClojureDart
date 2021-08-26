@@ -565,3 +565,21 @@
     (is (false? (contains? sv :kw))))
   (let [sv (subvec [0 1 2 3 4] 2 2)]
     (is (false? (contains? sv 0)))))
+
+(deftype MapWithNoIKVReduce [backing-map]
+  cljd.core/IMap
+  (-dissoc [_ _] nil)
+
+  cljd.core/ISeqable
+  (-seq [_] (seq backing-map)))
+
+(deftest test-cljs-2083
+  (testing "maps which do not implement IKVReduce can be compared"
+    (is (true?  (-equiv-map (MapWithNoIKVReduce. {:a 1 :b 2 :c 3}) {:a 1 :b 2 :c 3})))
+    (is (false? (-equiv-map (MapWithNoIKVReduce. {:a 1 :b 2 :c 3}) {:a 1 :b 2 :c 4})))))
+
+(deftest test-cljs-2113
+  (is (thrown? ArgumentError (nth (range 2) -2)))
+  (is (thrown? ArgumentError (nth (range 2 1 0) -2)))
+  (is (= ::not-found (nth (range 2) -2 ::not-found)))
+  (is (= ::not-found (nth (range 2 1 0) -2 ::not-found))))
