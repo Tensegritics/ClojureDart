@@ -157,8 +157,8 @@
     (is (= nil (s/index-of s \z)))
     (is (= nil (s/index-of s "z" 2)))
     (is (= nil (s/index-of s \z  2)))
-    (is (= nil (s/index-of s "z" 100))
-    (is (= nil (s/index-of s "z" -10))))))
+    (is (= nil (s/index-of s "z" 100)))
+    (is (= nil (s/index-of s "z" -10)))))
 
 (deftest t-last-index-of
   (let [s "banana"]
@@ -172,16 +172,16 @@
     (is (= nil (s/last-index-of s "z")))
     (is (= nil (s/last-index-of s "z" 1)))
     (is (= nil (s/last-index-of s \z  1)))
-    (is (= nil (s/last-index-of s "z" 100))
-    (is (= nil (s/last-index-of s "z" -10))))))
+    (is (= nil (s/last-index-of s "z" 100)))
+    (is (= nil (s/last-index-of s "z" -10)))))
 
 (deftest t-starts-with?
   (is (s/starts-with? "clojure west" "clojure"))
   (is (not (s/starts-with? "conj" "clojure"))))
 
 (deftest t-ends-with?
-  (is (s/ends-with? "Clojure West" "West")
-  (is (not (s/ends-with? "Conj" "West")))))
+  (is (s/ends-with? "Clojure West" "West"))
+  (is (not (s/ends-with? "Conj" "West"))))
 
 (deftest t-includes?
   (let [s "Clojure Applied Book"]
