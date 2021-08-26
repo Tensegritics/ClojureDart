@@ -583,3 +583,30 @@
   (is (thrown? ArgumentError (nth (range 2 1 0) -2)))
   (is (= ::not-found (nth (range 2) -2 ::not-found)))
   (is (= ::not-found (nth (range 2 1 0) -2 ::not-found))))
+
+(deftype Partial [f args]
+  cljd.core/IFn
+  (-invoke [this a]
+    (apply (apply partial f args) [a])))
+
+(deftest test-cljs-2133
+  (testing "Invalid variadic IFn implementation should work"
+    (let [p (Partial. + [1])]
+      (p 2))))
+
+(def true-2267 true)
+(def false-2267 false)
+(def nil-2267 nil)
+(def empty-string-2267 "")
+(def non-empty-string-2267 "x")
+(def zero-2267 0)
+(def non-zero-2267 1)
+
+(deftest test-cljs-2267
+  (is (= :then (if true-2267 :then :else)))
+  (is (= :else (if false-2267 :then :else)))
+  (is (= :else (if nil-2267 :then :else)))
+  (is (= :then (if empty-string-2267 :then :else)))
+  (is (= :then (if non-empty-string-2267 :then :else)))
+  (is (= :then (if zero-2267 :then :else)))
+  (is (= :then (if non-zero-2267 :then :else))))
