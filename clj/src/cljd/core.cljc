@@ -5663,7 +5663,7 @@
   ([] #{})
   ([& keys] (into #{} keys)))
 
-(defn- -map-lit [^List kvs]
+(defn -map-lit [^List kvs]
   (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
     (if (< i (.-length kvs))
       (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
@@ -5681,12 +5681,16 @@
       (recur (nnext in) (assoc! out (first in) (second in)))
       (persistent! out))))
 
-(defn- -list-lit [^List xs]
+(defn -list-lit [^List xs]
   (loop [^PersistentList l () ^int i (.-length xs)]
     (let [i (dec i)]
       (if (neg? i)
         l
         (recur (-conj l (aget xs i)) i)))))
+
+(defn -vec-owning [^List xs]
+  (assert (<= (count xs) 32))
+  (PersistentVector. meta (count xs) 5 (.-root -EMPTY-VECTOR) xs -1))
 
 (def ^:private ^math/Random RNG (math/Random.))
 
@@ -5907,15 +5911,13 @@
 (defn sort
   "Returns a sorted sequence of the items in coll. If no comparator is
   supplied, uses compare.  The comparator function must act as a Comparator.
-  Guaranteed to be stable: equal elements will
-  not be reordered.  If coll is a Dart List, it will be modified.  To
-  avoid this, sort a copy of the List."
+  Guaranteed to be stable: equal elements will not be reordered."
   ([coll]
    (sort compare coll))
   ([comp coll]
    (if (seq coll)
      (let [a (to-array coll)]
-       (.sort ^List a comp)
+       (.sort ^List a #_comp (if (dart/is? comp #/(dynamic dynamic -> int)) comp (fn ^int [x y] (comp x y))))
        (seq a))
      ())))
 

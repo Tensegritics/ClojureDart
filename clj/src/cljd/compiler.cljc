@@ -817,24 +817,47 @@
     (cond->> dart-fn-call
       (seq bindings) (list 'dart/let bindings))))
 
+(defn emit-dart-literal
+  ([x env] (emit-dart-literal emit x env))
+  ([maybe-quoted-emit x env]
+   (cond
+     (not (vector? x)) (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))
+     (:fixed (meta x))
+     (let [item-tag (:tag (meta x) 'dart:core/dynamic)
+           list-tag (vary-meta 'dart:core/List assoc :type-params [item-tag])]
+       (if-some [[item & more-items] (seq x)]
+         (let [lsym (dart-local (with-meta 'fl {:tag list-tag}) env)]
+           (list 'dart/let
+             (cons
+               [lsym (with-lifted [item (maybe-quoted-emit item env)] env
+                       (list 'dart/. (emit list-tag env) "filled" (count x) item))]
+               (map-indexed (fn [i item]
+                      [nil (with-lifted [item (maybe-quoted-emit item env)] env
+                             (list 'dart/. lsym "[]=" (inc i) item))])
+                 more-items))
+             lsym))
+         `(.empty ~list-tag)))
+     :else
+     (let [[bindings items]
+           (reduce (fn [[bindings fn-call] x]
+                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
+                       [(concat bindings' bindings) (cons x' fn-call)]))
+             [nil ()] (rseq x))]
+       (cond->> (vec items) (seq bindings) (list 'dart/let bindings))))))
+
 (defn emit-coll
   ([coll env] (emit-coll emit coll env))
   ([maybe-quoted-emit coll env]
    (if (seq coll)
      (let [items (into [] (if (map? coll) cat identity) coll)
-           [bindings items]
-           (reduce (fn [[bindings fn-call] x]
-                     (let [[bindings' x'] (lift-arg (seq bindings) (maybe-quoted-emit x env) "item" env)]
-                       [(concat bindings' bindings) (cons x' fn-call)]))
-             [nil ()] (rseq items))
            fn-sym (cond
                     (map? coll) 'cljd.core/-map-lit
-                    (vector? coll) 'cljd.core/vec
+                    (vector? coll) (if (< 32 (count coll)) 'cljd.core/vec 'cljd.core/-vec-owning)
                     (set? coll) 'cljd.core/set
                     (seq? coll) 'cljd.core/-list-lit
-                    :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
-           fn-call (list (emit fn-sym env) (vec items))]
-       (cond->> fn-call (seq bindings) (list 'dart/let bindings)))
+                    :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll}))) ]
+       (with-lifted [fixed-list (emit-dart-literal maybe-quoted-emit (with-meta (vec items) {:fixed true}) env)] env
+         (list (emit fn-sym env) fixed-list)))
      (emit
        (cond
          (map? coll) 'cljd.core/-EMPTY-MAP
@@ -843,29 +866,6 @@
          (seq? coll) 'cljd.core/-EMPTY-LIST ; should we use apply list?
          :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
        env))))
-
-(defn emit-dart-literal [x env]
-  (cond
-    (not (vector? x)) (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))
-    (:fixed (meta x))
-    (let [item-tag (:tag (meta x) 'dart:core/dynamic)
-          list-tag (vary-meta 'dart:core/List assoc :type-params [item-tag])]
-      (->
-        (if-some [[item] (seq x)]
-          (let [lsym `fl#]
-            `(let [~lsym (. ~list-tag filled ~(count x) ~item)]
-               ~@(map-indexed (fn [i x] `(. ~lsym "[]=" ~(inc i) ~x)) (next x))
-               ~lsym))
-          `(.empty ~list-tag))
-        (vary-meta assoc :tag list-tag)
-        (emit env)))
-    :else
-    (let [[bindings items]
-          (reduce (fn [[bindings fn-call] x]
-                    (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
-                      [(concat bindings' bindings) (cons x' fn-call)]))
-            [nil ()] (rseq x))]
-     (cond->> (vec items) (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class env)
