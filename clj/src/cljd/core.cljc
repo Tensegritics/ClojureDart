@@ -1971,7 +1971,7 @@
      [old-state (swap! a f x y)]))
   ([^Atom a f x y & more]
    (let [old-state (.-state a)]
-     [old-state (swap! a f x y more)])))
+     [old-state (apply swap! a f x y more)])))
 
 (defprotocol IEmptyableCollection
   "Protocol for creating an empty collection."
