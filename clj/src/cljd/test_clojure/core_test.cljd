@@ -610,3 +610,14 @@
   (is (= :then (if non-empty-string-2267 :then :else)))
   (is (= :then (if zero-2267 :then :else)))
   (is (= :then (if non-zero-2267 :then :else))))
+
+(deftest test-cljs-2403
+  (are [f k coll expected] (= expected (apply f k coll))
+    min-key :x [{:x 1000} {:x 1001} {:x 1002} {:x 1000 :second true}] {:x 1000 :second true}
+    max-key :x [{:x 1000} {:x 999} {:x 998} {:x 1000 :second true}] {:x 1000 :second true}))
+
+(deftest swap-vals-returns-old-value
+  (let [a (atom 0)]
+    (is (= [0 1] (swap-vals! a inc)))
+    (is (= [1 2] (swap-vals! a inc)))
+    (is (= 2 @a))))

@@ -1961,13 +1961,17 @@
   multiple times, and thus should be free of side effects.
   Returns [old new], the value of the atom before and after the swap."
   ([^Atom a f]
-   (reset-vals! a (swap! a f)))
+   (let [old-state (.-state a)]
+     [old-state (swap! a f)]))
   ([^Atom a f x]
-   (reset-vals! a (swap! a f x)))
+   (let [old-state (.-state a)]
+     [old-state (swap! a f x)]))
   ([^Atom a f x y]
-   (reset-vals! a (swap! a f x y)))
+   (let [old-state (.-state a)]
+     [old-state (swap! a f x y)]))
   ([^Atom a f x y & more]
-   (reset-vals! a (swap! a f x y more))))
+   (let [old-state (.-state a)]
+     [old-state (swap! a f x y more)])))
 
 (defprotocol IEmptyableCollection
   "Protocol for creating an empty collection."
@@ -5914,6 +5918,42 @@
        (.sort ^List a comp)
        (seq a))
      ())))
+
+(defn min-key
+  "Returns the x for which (k x), a number, is least.
+
+  If there are multiple such xs, the last one is returned."
+  ([k x] x)
+  ([k x y] (if (< (k x) (k y)) x y))
+  ([k x y & more]
+   (let [kx (k x) ky (k y)
+         [v kv] (if (< kx ky) [x kx] [y ky])]
+     (loop [v v kv kv more more]
+       (if more
+         (let [w (first more)
+               kw (k w)]
+           (if (<= kw kv)
+             (recur w kw (next more))
+             (recur v kv (next more))))
+         v)))))
+
+(defn max-key
+  "Returns the x for which (k x), a number, is greatest.
+
+  If there are multiple such xs, the last one is returned."
+  ([k x] x)
+  ([k x y] (if (> (k x) (k y)) x y))
+  ([k x y & more]
+   (let [kx (k x) ky (k y)
+         [v kv] (if (> kx ky) [x kx] [y ky])]
+     (loop [v v kv kv more more]
+       (if more
+         (let [w (first more)
+               kw (k w)]
+           (if (>= kw kv)
+             (recur w kw (next more))
+             (recur v kv (next more))))
+         v)))))
 
 ; TODO
 (declare gensym keys)
