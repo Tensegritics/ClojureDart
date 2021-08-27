@@ -700,3 +700,39 @@
     (is (== \b (nth "ab" 1.5 :not-found)))
     (is (thrown? RangeError (nth "ab" 2)))
     (is (= :not-found (nth "ab" 2 :not-found)))))
+
+(defn fn-2741* ([x]) ([x y]))
+(def fn-2741 fn-2741*)
+
+(deftest test-cljs-2741
+  (is (thrown? Error ((fn ([x]) ([x y])))))
+  (is (thrown? Error ((fn ([x]) ([x y])) 1 2 3)))
+  (is (thrown? Error (fn-2741)))
+  (is (thrown? Error (fn-2741 1 2 3)))
+  (is (thrown? Error ({})))
+  (is (thrown? Error ({} 1 2 3))))
+
+(deftest test-cljs-2799
+  (is (thrown? Error (nth (repeat :x) -1)))
+  (is (= ::not-found (nth (repeat :x) -1 ::not-found))))
+
+(deftest uri-predicate
+  (testing "Testing uri?"
+    (is (not (uri? "http://clojurescript.org")))
+    (is (not (uri? 42)))
+    (is (not (uri? [])))
+    (is (not (uri? {})))
+    (is (uri? (.dataFromString Uri "http://clojurescript.org")))))
+
+(deftest test-cljs-2832
+  (is (true? ((comp not empty?) "foo")))
+  (is (false? ((comp not empty?) "")))
+  (is (thrown? Exception ((not empty?) "foo")))
+  (is (thrown? Exception ((not empty?) ""))))
+
+(deftest test-cljs-2864
+  (is (= "" (str)))
+  (is (= "a" (str "a")))
+  (is (= "1" (str 1)))
+  (is (= "xyzzy" (str "x" "y" "z" "z" "y")))
+  (is (= "a1b2c3" (str "a" 1 "b" 2 "c" 3))))

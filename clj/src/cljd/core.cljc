@@ -5991,6 +5991,10 @@
              (recur v kv (next more))))
          v)))))
 
+(defn uri?
+  "Return true if x is a dart:core/Uri"
+  [x] (dart/is? x Uri))
+
 ; TODO
 (declare gensym keys)
 
