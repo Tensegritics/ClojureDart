@@ -1213,7 +1213,7 @@
   IIndexed
   (-nth [l n] (. l "[]" n))
   (-nth [l n not-found]
-    (if (< -1 n (.-length l))
+    (if (and (<= 0 n) (< n (.-length l)))
       (. l "[]" n)
       not-found)))
 
@@ -1221,7 +1221,7 @@
   IIndexed
   (-nth [l n] (. l "[]" n))
   (-nth [l n not-found]
-    (if (< n (.-length l))
+    (if (and (<= 0 n) (< n (.-length l)))
       (. l "[]" n)
       not-found)))
 
@@ -1301,6 +1301,40 @@
       not-found))
   (-contains-key? [m k]
     (.containsKey m k)))
+
+(extend-type List
+  ILookup
+  (-lookup [o k]
+    (when (dart/is? k num)
+      (let [k (.toInt k)]
+        (when (and (<= 0 k) (< k (.-length o)))
+          (. o "[]" k)))))
+  (-lookup [o k not-found]
+    (if-some [v (-lookup o k)]
+      v
+      not-found))
+  (-contains-key? [o k]
+    (when-not (dart/is? k num)
+      (throw (ArgumentError. (str "contains? not supported on type" (.-runtimeType k)))))
+    (let [k (.toInt k)]
+      (and (<= 0 k) (< k (.-length o))))))
+
+(extend-type String
+  ILookup
+  (-lookup [o k]
+    (when (dart/is? k num)
+      (let [k (.toInt k)]
+        (when (and (<= 0 k) (< k (.-length o)))
+          (. o "[]" k)))))
+  (-lookup [o k not-found]
+    (if-some [v (-lookup o k)]
+      v
+      not-found))
+  (-contains-key? [o k]
+    (when-not (dart/is? k num)
+      (throw (ArgumentError. (str "contains? not supported on type" (.-runtimeType k)))))
+    (let [k (.toInt k)]
+      (and (<= 0 k) (< k (.-length o))))))
 
 (defn get
   "Returns the value mapped to key, not-found or nil if key not present."
