@@ -5671,7 +5671,7 @@
                      nil
                      ~expr)]
               body))]
-    (emit seq-exprs)))
+    (some-> seq-exprs seq emit)))
 
 (defn vec [coll]
   (into [] coll))
