@@ -1043,6 +1043,11 @@
 
 (defn- variadic? [[params]] (some #{'&} params))
 
+(defn- resolve-invoke [n]
+  (if (<= *threshold* n)
+    (symbol (str "$_invoke$ext" n))
+    (resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc n) #{})))
+
 (defn- emit-ifn-arities-mixin [fixed-arities base-vararg-arity]
   (let [max-fixed-arity (some->> fixed-arities seq (reduce max))
         min-fixed-arity (some->> fixed-arities seq (reduce min))
@@ -1097,31 +1102,33 @@
                     ~@(some-> vararg-call list)) ; if present vararg is the default
                  vararg-call))))
         call+apply
-        (let [[this & call-args] (cond->> synth-params (not base-vararg-arity) (take (inc max-fixed-arity)))
+        (let [call-args (cond->> synth-params (not base-vararg-arity) (take (inc max-fixed-arity)))
               fixed-args (cond->> call-args base-vararg-arity (take base-vararg-arity))
               base-arity (or min-fixed-arity base-vararg-arity)
               base-args (take base-arity call-args)
               opt-args (drop base-arity call-args)
-              default-value (str (gensym "default"))
+              default-value `^:const (cljd.core/Keyword. nil "missing" -1) ; wrong hash by design
               fixed-arities-expr
               (for [args+1 (next (reductions conj (vec base-args)
-                                             (cond->> opt-args base-vararg-arity (take (- base-vararg-arity base-arity)))))]
-                [args+1 `(. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (count args+1) #{}) ~@(pop args+1))])]
+                                   (cond->> opt-args base-vararg-arity (take (- base-vararg-arity base-arity)))))
+                    :let [n+1 (count args+1)]]
+                [args+1 `(. ~this
+                           ~(resolve-invoke (dec n+1))
+                           ~@(pop args+1))])]
           `((~'call [~this ~@base-args ... ~@(interleave opt-args (repeat default-value))]
              (cond
                ~@(mapcat (fn [[args+1 expr]] `((.== ~(peek args+1) ~default-value) ~expr)) fixed-arities-expr)
-               true ~(if base-vararg-arity
-                       (if-some [[first-rest-arg :as rest-args] (seq (drop base-vararg-arity call-args))]
-                         `(if (.== ~first-rest-arg ~default-value)
-                            (. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)) #{})
+               :else ~(if base-vararg-arity
+                        (if-some [[first-rest-arg :as rest-args] (seq (drop base-vararg-arity call-args))]
+                          `(if (dart:core/identical ~first-rest-arg ~default-value)
+                             (. ~this ~(resolve-invoke (count fixed-args))
                                ~@fixed-args)
-                            (. ~this ~vararg-mname ~@fixed-args
-                              (seq (.toList
-                                     (.takeWhile ~(tagged-literal 'dart (vec rest-args))
-                                       (fn [e#] (.!= e# ~default-value)))))))
-                         `(. ~this ~vararg-mname ~@fixed-args nil))
-                       `(. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)) #{})
-                               ~@fixed-args))))
+                             (. ~this ~vararg-mname ~@fixed-args
+                               (seq (.toList
+                                      (.takeWhile ~(tagged-literal 'dart (vec rest-args))
+                                        (fn [e#] (.!= e# ~default-value)))))))
+                          `(. ~this ~vararg-mname ~@fixed-args nil))
+                        `(. ~this ~(resolve-invoke (count fixed-args)) ~@fixed-args))))
             (~'-apply [~this ~more-param]
              (let [~more-param (seq ~more-param)]
                ~(reduce (fn [body [args+1 expr]]
@@ -1130,17 +1137,17 @@
                              (let* [~(peek args+1) (first ~more-param)
                                     ~more-param (next ~more-param)]
                                ~body)))
-                        `(if (nil? ~more-param)
-                           (. ~this ~(resolve-protocol-mname-to-dart-mname 'cljd.core/IFn '-invoke (inc (count fixed-args)) #{})
-                              ~@fixed-args)
-                           ~(if base-vararg-arity
-                              `(. ~this ~vararg-mname ~@fixed-args ~more-param)
-                              `(throw (dart:core/ArgumentError. "No matching arity"))))
-                        (reverse
-                         (concat
-                          (for [args+1 (next (reductions conj [] base-args))]
-                            [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
-                          fixed-arities-expr)))))))
+                  (let [vararg-call (if base-vararg-arity
+                                      `(. ~this ~vararg-mname ~@fixed-args ~more-param)
+                                      `(throw (dart:core/ArgumentError. "No matching arity")))
+                        fixed-method (when (fixed-arities base-vararg-arity) (resolve-invoke base-vararg-arity))]
+                    (cond->> vararg-call
+                      fixed-method (list `if `(nil? ~more-param) `(. ~this ~fixed-method ~@fixed-args))))
+                  (reverse
+                    (concat
+                      (for [args+1 (next (reductions conj [] base-args))]
+                        [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
+                      fixed-arities-expr)))))))
         [{:keys [current-ns]}] (swap-vals! nses assoc :current-ns 'cljd.core)]
     (emit
       `(deftype ~(vary-meta (dont-munge mixin-name nil) assoc :abstract true) []
@@ -1379,6 +1386,7 @@
                                         :macro-host-fn macro-host-fn}))))]
         (when bootstrap-def
           (binding [*ns* host-ns]
+            (ns-unmap *ns* sym) ; get rid of warnings
             (eval bootstrap-def)))
         (assoc-in nses [the-ns sym] (assoc m :meta (merge msym (:meta m)))))
       *hosted* ; second pass
@@ -2556,35 +2564,36 @@
   (binding [*lib-path* "examples/hello-flutter/lib"]
     (compile-namespace 'hello-flutter.core))
 
-  (time
-    (binding [*hosted* true]
-      (compile-namespace 'cljd.core)))
+  (do
+    (time
+      (binding [*hosted* true]
+        (compile-namespace 'cljd.core)))
 
-  (time
-    (compile-namespace 'cljd.string))
+    (time
+      (compile-namespace 'cljd.string))
 
-  (time
-    (compile-namespace 'cljd.walk))
+    (time
+      (compile-namespace 'cljd.walk))
 
-  (time
-    (binding [*hosted* true]
-      (compile-namespace 'cljd.template)))
+    (time
+      (binding [*hosted* true]
+        (compile-namespace 'cljd.template)))
 
-  (time
-    (binding [*hosted* true]
-      (compile-namespace 'cljd.test)))
+    (time
+      (binding [*hosted* true]
+        (compile-namespace 'cljd.test)))
 
-  (time
-    (binding [*hosted* true]
-      (compile-namespace 'cljd.test-clojure.for)))
+    (time
+      (binding [*hosted* true]
+        (compile-namespace 'cljd.test-clojure.for)))
 
-  (time
-    (binding [*hosted* false]
-      (compile-namespace 'cljd.test-clojure.core-test)))
+    (time
+      (binding [*hosted* false]
+        (compile-namespace 'cljd.test-clojure.core-test)))
 
-  (time
-    (binding [*hosted* true]
-      (compile-namespace 'cljd.test-clojure.string)))
+    (time
+      (binding [*hosted* true]
+        (compile-namespace 'cljd.test-clojure.string))))
 
   (time
     (compile-namespace 'cljd.main))
