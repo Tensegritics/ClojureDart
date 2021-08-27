@@ -2813,22 +2813,29 @@
     true                   (Cons. nil x (seq coll) -1)))
 
 (deftype #/(IteratorSeq E)
-  [value ^Iterator iter ^:mutable ^some _rest ^:mutable ^int __hash]
+  [meta value ^Iterator iter ^:mutable ^some _rest ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(SeqListMixin E)
   (^#/(IteratorSeq R) #/(cast R) [coll]
-   (IteratorSeq. value iter _rest __hash))
+   (IteratorSeq. meta value iter _rest __hash))
   ISeqable
   (-seq [this] this)
   ISeq
   (-first [coll] value)
   (-rest [coll] (or _rest (set! _rest (or (iterator-seq iter) ()))))
-  (-next [coll] (-seq (-rest coll))))
+  (-next [coll] (-seq (-rest coll)))
+  IMeta
+  (-meta [coll] meta)
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (IteratorSeq. new-meta value iter _rest __hash))))
 
 (defn ^some iterator-seq [^Iterator iter]
   (when (.moveNext iter)
-    (IteratorSeq. (.-current iter) iter nil -1)))
+    (IteratorSeq. nil (.-current iter) iter nil -1)))
 
 (extend-type Iterable
   ISeqable
@@ -3771,10 +3778,10 @@
   IStack
   (-peek [node] _v)
   (-pop [node]
-    (PersistentVector. meta 1 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k] -1))
+    (PersistentVector. nil 1 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k] -1))
   ICollection
   (-conj [node o]
-    (PersistentVector. meta 3 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v o]  -1))
+    (PersistentVector. nil 3 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v o]  -1))
   IEmptyableCollection
   (-empty [node] nil)
   ISeqable
@@ -3800,7 +3807,7 @@
   IAssociative
   (-assoc [node k v]
     (->
-      (PersistentVector. meta 2 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v]  -1)
+      (PersistentVector. nil 2 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v]  -1)
       (-assoc k v)))
   #_#_IFind
   (-find [node k]
@@ -3811,7 +3818,7 @@
   IVector
   (-assoc-n [node n v]
     (->
-      (PersistentVector. meta 2 5 (.-root -EMPTY-VECTOR)
+      (PersistentVector. nil 2 5 (.-root -EMPTY-VECTOR)
         #dart ^:fixed [_k _v]  -1)
       (-assoc-n n v)))
   IReduce
@@ -5748,7 +5755,7 @@
 
 (defn -vec-owning [^List xs]
   (assert (<= (count xs) 32))
-  (PersistentVector. meta (count xs) 5 (.-root -EMPTY-VECTOR) xs -1))
+  (PersistentVector. nil (count xs) 5 (.-root -EMPTY-VECTOR) xs -1))
 
 (def ^:private ^math/Random RNG (math/Random.))
 
@@ -5976,8 +5983,18 @@
    (if (seq coll)
      (let [a (to-array coll)]
        (.sort ^List a #_comp (if (dart/is? comp #/(dynamic dynamic -> int)) comp (fn ^int [x y] (comp x y))))
-       (seq a))
+       (with-meta (seq a) (meta coll)))
      ())))
+
+(defn sort-by
+  "Returns a sorted sequence of the items in coll, where the sort
+   order is determined by comparing (keyfn item).  Comp can be
+   boolean-valued comparison funcion, or a -/0/+ valued comparator.
+   Comp defaults to compare."
+  ([keyfn coll]
+   (sort-by keyfn compare coll))
+  ([keyfn comp coll]
+   (sort (fn ^int [x y] (comp (keyfn x) (keyfn y))) coll)))
 
 (defn min-key
   "Returns the x for which (k x), a number, is least.
