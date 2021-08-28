@@ -3021,6 +3021,74 @@
   [& body]
   `(new cljd.core/LazySeq nil (fn [] ~@body) nil -1))
 
+;;; Rseq
+
+(deftype #/(RSeqIterator E)
+  [^PersistentVector v
+   ^:mutable ^int i
+   ^:mutable ^List curr]
+  #/(Iterator E)
+  (current [iter] (aget curr (bit-and i 31)))
+  (moveNext [iter]
+    (and (< 0 i)
+      (do
+        (when (zero? (bit-and i 31))
+          (set! curr (unchecked-array-for (.-root v) (.-shift v) i)))
+        (set! i (dec i))
+        true))))
+
+(deftype #/(RSeq E)
+  [meta v ^int i ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
+  ^:mixin #/(dart-coll/ListMixin E)
+  (iterator [coll]
+    (if (dart/is? v PersistentMapEntry)
+      (.-iterator ^:dart ^:fixed [(val v) (key v)])
+      (RSeqIterator. v (inc i) (.-tail v))))
+  ^:mixin #/(SeqListMixin E)
+  (^#/(RSeq R) #/(cast R) [coll]
+   (RSeq. meta v i __hash))
+  ^:mixin ToStringMixin
+  IMeta
+  (-meta [coll] meta)
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (RSeq. new-meta v i __hash)))
+  ISeqable
+  (-seq [coll] coll)
+  ISequential
+  ISeq
+  (-first [coll]
+    (-nth v i))
+  (-rest [coll]
+    (if (pos? i)
+      (RSeq. nil v (dec i) __hash)
+      ()))
+  (-next [coll]
+    (when (pos? i)
+      (RSeq. nil v (dec i) __hash)))
+  ICounted
+  (-count [coll] (inc i))
+  ICollection
+  (-conj [coll o]
+    (cons o coll))
+  IEmptyableCollection
+  (-empty [coll] ()))
+
+(defn rseq
+  "Returns, in constant time, a seq of the items in rev (which
+  can be a vector or sorted-map), in reverse order. If rev is empty returns nil"
+  [rev]
+  ;; TODO : change message
+  (when-not (vector? rev)
+    (throw (Exception. (str "class " (.-runtimeType rev) " is not reversible."))))
+  (let [cnt (count rev)]
+    (if (zero? cnt)
+      nil
+      (RSeq. nil rev (dec cnt) -1))))
+
 ;;; PersistentVector
 
 (deftype VectorNode [edit ^List arr])

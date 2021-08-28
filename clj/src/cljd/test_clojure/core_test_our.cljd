@@ -1,0 +1,23 @@
+;   Copyright (c) Baptiste Dupuch & Christophe Grand. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+;;  Tests for ClojureDart (not copied from clj/cljs code base)
+;;
+
+(ns cljd.test-clojure.core-test-our
+  (:use [cljd.test :only [deftest is testing are]]))
+
+(deftest testing-rseq
+  (testing "Testing rseq function"
+    (is (= '(4 3 2 1) (rseq [1 2 3 4])))
+    (is (nil? (first (rseq []))))
+    (is (= (rseq (first {:a :b})) [:b :a]))
+    (is (= 9 (reduce (fn [acc x] (if (= 1 x) (reduced acc) (+ acc x))) 0 (rseq (vec (range 5))))))
+    (is (= '(3 2 1) (rseq (subvec [0 1 2 3] 1))))
+    (is (nil? (meta (rseq (with-meta [1] {:a :b})))))
+    (is (= (meta (with-meta (rseq [1 2 3]) {:a :b})) {:a :b}))))

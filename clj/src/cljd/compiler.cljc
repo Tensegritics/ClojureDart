@@ -2591,9 +2591,14 @@
       (binding [*hosted* false]
         (compile-namespace 'cljd.test-clojure.core-test)))
 
-    (time
-      (binding [*hosted* true]
-        (compile-namespace 'cljd.test-clojure.string))))
+
+  (time
+    (binding [*hosted* false]
+      (compile-namespace 'cljd.test-clojure.core-test-our)))
+
+  (time
+    (binding [*hosted* true]
+      (compile-namespace 'cljd.test-clojure.string)))
 
   (time
     (compile-namespace 'cljd.main))
@@ -2601,4 +2606,4 @@
   (time
     (compile-namespace 'cljd.user))
 
-  )
+  ))

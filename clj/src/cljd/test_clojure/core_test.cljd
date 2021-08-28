@@ -6,7 +6,7 @@
 ;   the terms of this license.
 ;   You must not remove this notice, or any other, from this software.
 
-;;  Tests for the Clojure 'for' macro
+;;  Tests for the ClojureDart compiler (copied from clj/cljs code base)
 ;;
 ;;  by Chouser
 ;;  Created Dec 2008
