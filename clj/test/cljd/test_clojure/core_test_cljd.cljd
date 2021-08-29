@@ -9,7 +9,7 @@
 ;;  Tests for ClojureDart (not copied from clj/cljs code base)
 ;;
 
-(ns cljd.test-clojure.core-test-our
+(ns cljd.test-clojure.core-test-cljd
   (:use [cljd.test :only [deftest is testing are]]))
 
 (deftest testing-rseq
@@ -20,4 +20,5 @@
     (is (= 9 (reduce (fn [acc x] (if (= 1 x) (reduced acc) (+ acc x))) 0 (rseq (vec (range 5))))))
     (is (= '(3 2 1) (rseq (subvec [0 1 2 3] 1))))
     (is (nil? (meta (rseq (with-meta [1] {:a :b})))))
-    (is (= (meta (with-meta (rseq [1 2 3]) {:a :b})) {:a :b}))))
+    (is (= (meta (with-meta (rseq [1 2 3]) {:a :b})) {:a :b}))
+    (is (= (rseq (vec (range 100))) (range 99 -1 -1)))))

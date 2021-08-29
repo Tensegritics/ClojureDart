@@ -2594,7 +2594,7 @@
 
     (time
       (binding [*hosted* false]
-        (compile-namespace 'cljd.test-clojure.core-test-our)))
+        (compile-namespace 'cljd.test-clojure.core-test-cljd)))
 
     (time
       (binding [*hosted* true]
