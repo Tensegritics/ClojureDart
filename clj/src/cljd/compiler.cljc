@@ -1654,11 +1654,12 @@
       :local v
       :def
       (let [{dart-name :dart/name the-ns :ns} v]
-          (if (= (:current-ns @nses) the-ns)
-            dart-name
-            (with-meta (symbol (str (ensure-import-ns the-ns) "." dart-name))
-              (meta dart-name))))
-      :dart (vary-meta (:qname v) assoc :dart/fn-type :native)
+          (with-meta (symbol (str (ensure-import-ns the-ns) "." dart-name))
+            (meta dart-name)))
+      :dart (try
+              (vary-meta (:qname v) assoc :dart/fn-type :native)
+              (catch Exception e
+                (throw (ex-info "oops" {:v v :x x} e))))
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
 
 (defn emit-var [[_ s] env]
