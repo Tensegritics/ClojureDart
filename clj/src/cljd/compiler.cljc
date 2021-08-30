@@ -678,12 +678,12 @@
           (.endsWith f-name ".")
           (with-meta
             (list* 'new
-              (symbol (namespace f) (subs f-name 0 (dec (count f-name))))
+              (with-meta (symbol (namespace f) (subs f-name 0 (dec (count f-name)))) (meta f))
               args)
             (meta form))
           (.startsWith f-name ".")
           (with-meta
-            (list* '. (first args) (symbol (subs f-name 1)) (next args))
+            (list* '. (first args) (with-meta (symbol (subs f-name 1)) (meta f)) (next args))
             (meta form))
           :else
           (if-some [[type member] (resolve-static-member f)]
@@ -878,8 +878,11 @@
 (defn emit-dot [[_ obj member & args :as form] env]
   (if (seq? member)
     (recur (list* '. obj member) env)
-    (let [member (name member)
-          [_ prop name] (re-matches #"(-)?(.+)" member)
+    (let [[_ prop name] (re-matches #"(-)?(.+)" (name member))
+          name (if-some [ts (seq (:type-params (meta member)))]
+                 (str name "<" (str/join "," (map emit-type ts)) ">")
+                 name)
+          ; TODO name + < map emit-type >
           prop (and prop (nil? args))
           op (if prop 'dart/.- 'dart/.)
           [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
@@ -903,7 +906,7 @@
                            (println "Dynamic invocation warning. Reference to" (if prop "field" "method")
                              member "can't be resolved." obj)))
                        dart-obj))]
-      (swap! -interops update-in [type member] (fnil conj #{}) (:line (meta form)))
+      (swap! -interops update-in [type name] (fnil conj #{}) (:line (meta form)))
       (cond->> (list* op dart-obj name dart-args)
         (seq bindings) (list 'dart/let bindings)))))
 
