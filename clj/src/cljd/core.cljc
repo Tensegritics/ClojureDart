@@ -2837,6 +2837,19 @@
   (when (.moveNext iter)
     (IteratorSeq. nil (.-current iter) iter nil -1)))
 
+(defn ^some chunked-iterator-seq
+  ([^Iterator iter] (chunked-iterator-seq iter 32))
+  ([^Iterator iter ^int chunk-size]
+   (when (.moveNext iter)
+     (lazy-seq
+       (let [buf (chunk-buffer chunk-size)]
+         (chunk-append buf (.-current iter))
+         (loop [rem (dec chunk-size)]
+           (when (and (pos? rem) (.moveNext iter))
+             (chunk-append buf (.-current iter))
+             (recur (dec rem))))
+         (chunk-cons (chunk buf) (chunked-iterator-seq iter chunk-size)))))))
+
 (extend-type Iterable
   ISeqable
   (-seq [coll] (iterator-seq (.-iterator coll))))
@@ -6104,6 +6117,122 @@
   "Return true if x is a dart:core/Uri"
   [x] (dart/is? x Uri))
 
+(deftype #/(XformIterator E)
+  [^List buf ^:mutable ^int i move-next]
+  #/(Iterator E)
+  (current [_] (aget buf i))
+  (moveNext [_]
+    (set! i (inc i))
+    (or (< i (.-length buf))
+      (do
+        (.clear buf)
+        (set! i 0)
+        (loop []
+          (if (move-next)
+            (or (pos? (.-length buf))
+              (recur))
+            (pos? (.-length buf))))))))
+
+(defn- xform-iterator [xform mk-move-next]
+  (let [buffer #dart []
+        rf (fn
+             ([acc] false)
+             ([acc x] (.add buffer x)))]
+    (XformIterator. buffer 0 (mk-move-next (xform rf)))))
+
+(defn ^Iterator iterator
+  ([coll]
+   (if (dart/is? coll Iterable)
+     (.-iterator coll)
+     (.-iterator (or (seq coll) ()))))
+  ([xform coll]
+   (let [it (iterator coll)]
+     (xform-iterator xform
+       (fn [rf]
+         (fn []
+           (if (.moveNext it)
+             (let [acc (rf true (.-current it))]
+               (or (not (reduced? acc)) (rf true)))
+             (rf true)))))))
+  ([xform c1 c2]
+   (let [it1 (iterator c1)
+         it2 (iterator c2)]
+     (xform-iterator xform
+       (fn [rf]
+         (fn []
+           (if (and (.moveNext it1) (.moveNext it2))
+             (let [acc (rf true (.-current it1) (.-current it2))]
+               (or (not (reduced? acc)) (rf true)))
+             (rf true)))))))
+  ([xform c1 c2 c3]
+   (let [it1 (iterator c1)
+         it2 (iterator c2)
+         it3 (iterator c3)]
+     (xform-iterator xform
+       (fn [rf]
+         (fn []
+           (if (and (.moveNext it1) (.moveNext it2) (.moveNext it3))
+             (let [acc (rf true (.-current it1) (.-current it2) (.-current it3))]
+               (or (not (reduced? acc)) (rf true)))
+             (rf true)))))))
+  ([xform it1 it2 it3 & its]
+   (let [its (map iterator (list* it1 it2 it3 its))]
+     (xform-iterator xform
+       (fn [rf]
+         (fn []
+           (if (every? #(.moveNext ^Iterator %) its)
+             (let [acc (apply rf true (map #(.-current ^Iterator %) its))]
+               (or (not (reduced? acc)) (rf true)))
+             (rf true))))))))
+
+(defn sequence
+  "Coerces coll to a (possibly empty) sequence, if it is not already
+  one. Will not force a lazy seq. (sequence nil) yields (), When a
+  transducer is supplied, returns a lazy sequence of applications of
+  the transform to the items in coll(s), i.e. to the set of first
+  items of each coll, followed by the set of second
+  items in each coll, until any one of the colls is exhausted.  Any
+  remaining items in other colls are ignored. The transform should accept
+  number-of-colls arguments"
+  ([coll]
+     (if (seq? coll) coll
+         (or (seq coll) ())))
+  ([xform coll]
+     (or (chunked-iterator-seq (iterator xform coll)) ()))
+  ([xform coll & colls]
+     (or (chunked-iterator-seq (apply iterator xform coll colls)) ())))
+
+(deftype #/(Eduction E) [xform coll ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
+  ^:mixin #/(dart-coll/IterableMixin E)
+  (iterator [_] (iterator xform coll))
+  (#/(cast R) [_] (Eduction. xform coll __hash))
+  ISeqable
+  (-seq [_] (seq (sequence xform coll)))
+  IReduce
+  (-reduce [_ rf]
+    (let [it (iterator xform coll)]
+      (if (.moveNext it)
+        (loop [acc (.-current it)]
+          (if (.moveNext it)
+            (let [acc (rf acc (.-current it))]
+              (if (reduced? acc)
+                (unreduced acc)
+                (recur acc)))
+            acc))
+        (rf))))
+  (-reduce [_ rf init]
+    (-reduce coll (xform (completing rf)) init)))
+
+(defn eduction
+  "Returns a reducible/iterable application of the transducers
+  to the items in coll. Transducers are applied in order as if
+  combined with comp. Note that these applications will be
+  performed every time reduce/iterator is called."
+  {:arglists '([xform* coll])}
+  [& xforms]
+  (Eduction. (apply comp (butlast xforms)) (last xforms) -1))
+
 ; TODO
 (declare gensym keys)
 
@@ -6122,4 +6251,9 @@
   (prn (namespace (keyword "a.b/c")))
   (prn (name (keyword "a.b/c")))
   (-> "a.b/c" keyword ((juxt namespace name)))
-  )
+
+  (prn (iterator-seq (iterator (comp (map vector) cat (take 5) (filter number?)) (range 10) "abc")))
+  (prn (sequence (comp (map vector) cat (take 5) (filter number?)) (range 10) "abc"))
+  (prn (reduce conj [] (eduction (take 5) (filter odd?) (range 10))))
+  (prn (reduce * (eduction (take 5) (filter odd?) (range 10))))
+  (prn (reduce + (eduction (take 5) (filter odd?) (range 10)))))
