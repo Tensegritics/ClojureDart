@@ -880,7 +880,7 @@
     (recur (list* '. obj member) env)
     (let [[_ prop name] (re-matches #"(-)?(.+)" (name member))
           name (if-some [ts (seq (:type-params (meta member)))]
-                 (str name "<" (str/join "," (map emit-type ts)) ">")
+                 (str name "<" (str/join "," (map #(emit-type % env) ts)) ">")
                  name)
           ; TODO name + < map emit-type >
           prop (and prop (nil? args))
