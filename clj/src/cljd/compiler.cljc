@@ -704,9 +704,6 @@
 
 (declare emit infer-type)
 
-(defn atomic?
-  [x] (not (coll? x)))
-
 (defn has-recur?
   "Takes a dartsexp and returns true when it contains an open recur."
   [x]
@@ -717,8 +714,13 @@
         tmp (-> hint (dart-local env) (vary-meta merge (infer-type dart-expr) hint-hint))]
     [tmp dart-expr]))
 
+(defn lift-safe? [expr]
+  (or (not (coll? x))
+    (and (seq? expr)
+      (case (first expr) dart/fn true false))))
+
 (defn liftable
-  "Takes a dartsexp and returns a [bindings expr] where expr is atomic
+  "Takes a dartsexp and returns a [bindings expr] where expr is atomic (or a dart fn)
    or nil if there are no bindings to lift."
   [x env]
   (case (when (seq? x) (first x))
@@ -726,7 +728,7 @@
     (let [[_ bindings expr] x]
       (if-some [[bindings' expr] (liftable expr env)]
          [(concat bindings bindings') expr]
-         (if (atomic? expr)
+         (if (lift-safe? expr)
            [bindings expr]
            ;; this case should not happen
            (let [[tmp :as binding] (dart-binding "" expr env)]
@@ -748,7 +750,7 @@
 (defn- lift-arg [must-lift x hint env]
   (or (liftable x env)
       (cond
-        (atomic? x) [nil x]
+        (lift-safe? x) [nil x]
         must-lift
         (let [[tmp :as binding] (dart-binding hint x env)]
           [[binding] tmp])
