@@ -715,7 +715,7 @@
     [tmp dart-expr]))
 
 (defn lift-safe? [expr]
-  (or (not (coll? x))
+  (or (not (coll? expr))
     (and (seq? expr)
       (case (first expr) dart/fn true false))))
 
