@@ -5400,6 +5400,38 @@
             (keep f (rest s))
             (cons x (keep f (rest s))))))))))
 
+(defn keep-indexed
+  "Returns a lazy sequence of the non-nil results of (f index item). Note,
+  this means false return values will be included.  f must be free of
+  side-effects.  Returns a stateful transducer when no collection is
+  provided."
+  ([f]
+   (fn [rf]
+     (let [iv (volatile! -1)]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (let [i (vswap! iv inc)
+                v (f i input)]
+            (if (nil? v)
+              result
+              (rf result v))))))))
+  ([f coll]
+   (letfn [(keepi [idx coll]
+             (lazy-seq
+               (when-let [s (seq coll)]
+                 (if (chunked-seq? s)
+                   (let [c (chunk-first s)
+                         b (chunk-buffer (count c))
+                         idx (chunk-reduce (fn [i x] (when-some [r (f i x)] (chunk-append b r)) (inc i)) idx c)]
+                     (chunk-cons (chunk b) (keepi idx (chunk-rest s))))
+                   (let [x (f idx (first s))]
+                     (if (nil? x)
+                       (keepi (inc idx) (rest s))
+                       (cons x (keepi (inc idx) (rest s)))))))))]
+     (keepi 0 coll))))
+
 (defn ^:private preserving-reduced
   [rf]
   #(let [ret (rf %1 %2)]
@@ -5623,6 +5655,39 @@
             fv (f fst)
             run (cons fst (take-while #(= fv (f %)) (next s)))]
         (cons run (partition-by f (lazy-seq (drop (count run) s)))))))))
+
+(defn replace
+  "Given a map of replacement pairs and a vector/collection, returns a
+  vector/seq with any elements = a key in smap replaced with the
+  corresponding val in smap.  Returns a transducer when no collection
+  is provided."
+  ([smap]
+   (map #(if-let [e (find smap %)] (val e) %)))
+  ([smap coll]
+   (if (vector? coll)
+     (reduce (fn [v i]
+               (if-let [e (find smap (nth v i))]
+                 (assoc v i (val e))
+                 v))
+       coll (range (count coll)))
+     (map #(if-let [e (find smap %)] (val e) %) coll))))
+
+(defn dedupe
+  "Returns a lazy sequence removing consecutive duplicates in coll.
+  Returns a transducer when no collection is provided."
+  ([]
+   (fn [rf]
+     (let [pv (volatile! ::none)]
+       (fn
+         ([] (rf))
+         ([result] (rf result))
+         ([result input]
+          (let [prior @pv]
+            (vreset! pv input)
+            (if (= prior input)
+              result
+              (rf result input))))))))
+  ([coll] (sequence (dedupe) coll)))
 
 (defn remove
   "Returns a lazy sequence of the items in coll for which
