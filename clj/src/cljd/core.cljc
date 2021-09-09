@@ -1610,7 +1610,7 @@
   ([s] (cond
          (keyword? s) s
          (symbol? s) (keyword (namespace s) (name s))
-         (= "/" s) (keyword nil name)
+         (= "/" s) (keyword nil s)
          (string? s) (let [idx (.indexOf s "/")]
                        (cond
                          (< idx 0) (keyword nil s)
