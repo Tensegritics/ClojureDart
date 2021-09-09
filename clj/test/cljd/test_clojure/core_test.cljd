@@ -742,24 +742,6 @@
             (max ^num (f! 5) ^num (g! 10))
             (min ^num (f! 5) ^num (g! 10)))))))
 
-(deftest test-compare-fn
-  (testing "Testing compare default function"
-    (is (compare 'a 'b))
-    (is (compare 'a 'a))
-    (is (compare :a :a))
-    (is (compare :a :b))
-    (is (compare :a/b :a/b))
-    (is (compare [:a :b] [:a :b]))
-    (is (compare [:a :b] [:a :c]))
-    (is (compare [:a :b] (first {:a :b})))
-    (is (compare (first {:a :b}) (first {:a :b}))))
-
-  (testing "Testing sort function"
-    (is (= '(-100 1 2 3 100) (sort [3 2 1 100 -100])))
-    (is (= '(:a :b :c) (sort [:a :c :b])))
-    (is (= '([:a :b] [:c :d]) (sort {:c :d :a :b})))
-    (is (= '(3 2 1) (sort (fn [x y] (if (< x y) 1 -1)) [1 2 3])))))
-
 (deftest test-582
   (is (= #{1 2} (set [1 2 2])))
   (is (= #{1 2} (hash-set 1 2 2)))
@@ -817,6 +799,16 @@
     (is (= (keyword 123) nil))
     (is (= (keyword (.now dart:core/DateTime)) nil))))
 
+;; NOTE : no sense in our context
+#_(deftest test-647
+  (let [keys #(vec (js-keys %))
+        z "x"]
+    (testing "Testing CLJS-647, js-keys"
+      (assert (= ["x"]
+                (keys (js-obj "x" "y"))
+                (keys (js-obj (identity "x") "y"))
+                (keys (js-obj z "y")))))))
+
 (def some-x 1)
 (def some-y 1)
 
@@ -835,6 +827,12 @@
 (deftest test-724
   (is (nil? (first (rest (rest (rest (range 3))))))))
 
+;; NOTE : no sense in our context
+#_(deftest test-730
+  (testing "Testing CLJS-730, object? predicate"
+    (is (true? (object? #dart {})))
+    (is (false? (object? nil)))))
+
 (deftest test-767
   (testing "Testing CLJS-767, invalid assoc"
     (doseq [n [nil "-1" "" "0" "1" false true (Object.)]]
@@ -850,6 +848,25 @@
     (doseq [n [nil "-1" "" "0" "1" false true (Object.)]]
       (is (= :fail (try (assoc! (transient [1 2]) n 4)
                         (catch Object e :fail)))))))
+
+;; NOTE : no sense in our context
+#_#_#_(defn cljs-739 [arr names]
+  (let [name (first names)]
+    (if name
+      (recur (conj arr (fn [] (println name)))
+        (rest names))
+      arr)))
+
+(deftest test-739
+  (testing "Testing CLJS-739, with-out-str"
+    (binding [*print-newline* true]
+      (is (= (with-out-str (doseq [fn (cljs-739 [] [:a :b :c :d])] (fn)))
+          ":a\n:b\n:c\n:d\n")))))
+
+(deftest print-ns-maps
+  (testing "Testing CLJS-1786, *print-namespace-maps*"
+    (is (= "#:user{:a 1}" (binding [*print-namespace-maps* true] (pr-str {:user/a 1}))))
+    (is (= "{:user/a 1}" (binding [*print-namespace-maps* false] (pr-str {:user/a 1}))))))
 
 (deftest test-728
   (testing "Testing CLJS-728, lookup with default"
@@ -873,6 +890,49 @@
       (is (= :fail (try (nth (range 1 3) n) (catch Object e :fail))))
       (is (= 4 (get (range 1 3) n 4)))
       (is (= :fail (try (nth (range 1 3) n 4) (catch Object e :fail)))))))
+
+(def cljs-780 (atom {:foo (with-meta [] {:bar '(1 2 3)})}))
+
+(deftest test-780
+  (let [_ (swap! cljs-780 update-in [:foo] vary-meta update-in [:bar] vec)
+        x (-> @cljs-780 :foo meta :bar)]
+    (testing "Testing CLJS-780, update-in + vary-meta"
+      (is (vector? x))
+      (is (= x [1 2 3])))) )
+
+;; TODO
+#_(deftest test-782
+  (testing "Testing CLJS-782, UUID toString"
+    (is (= (.toString #_uuid "550e8400-e29b-41d4-a716-446655440000")
+          "550e8400-e29b-41d4-a716-446655440000"))))
+
+(deftest test-case-keyword
+  (is (= (let [x "a"] (case x :a 1 "a")) "a")))
+
+(deftest test-801
+  (testing "Testing CLJS-801, str"
+    (is (= "0atrue:key/wordsymb/olfalse[1 2 3 4]1234.56789"
+          (str 0 "a" true nil :key/word 'symb/ol false [1 2 3 4] 1234.5678 0x09)))))
+
+(deftest test-compare-fn
+  (testing "Testing compare default function"
+    (is (compare 'a 'b))
+    (is (compare 'a 'a))
+    (is (compare :a :a))
+    (is (compare :a :b))
+    (is (compare :a/b :a/b))
+    (is (compare [:a :b] [:a :b]))
+    (is (compare [:a :b] [:a :c]))
+    (is (compare [:a :b] (first {:a :b})))
+    (is (compare (first {:a :b}) (first {:a :b}))))
+
+  (testing "Testing sort function"
+    (is (= '(-100 1 2 3 100) (sort [3 2 1 100 -100])))
+    (is (= '(:a :b :c) (sort [:a :c :b])))
+    (is (= '([:a :b] [:c :d]) (sort {:c :d :a :b})))
+    (is (= '(3 2 1) (sort (fn [x y] (if (< x y) 1 -1)) [1 2 3])))))
+
+
 
 (deftest subvec-tests
   (testing "Testing subvec works as expected"
