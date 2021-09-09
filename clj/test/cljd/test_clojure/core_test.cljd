@@ -118,9 +118,9 @@
     (is (= 4 (get-in [{:foo 1 :bar [{:baz 1}, {:buzz 2}]}, {:foo 3 :bar [{:baz 3}, {:buzz 4}]}]
                [1 :bar 1 :buzz])))))
 
-#_(deftest test-transducers
+(deftest test-transducers
   (testing "Testing transducers"
-    (is (= (sequence (map inc) (array 1 2 3)) '(2 3 4)))
+    (is (= (sequence (map inc) #dart [1 2 3]) '(2 3 4)))
     (is (= (apply str (sequence (map #(.toUpperCase %)) "foo")) "FOO"))
     (is (== (hash [1 2 3]) (hash (sequence (map inc) (range 3)))))
     (is (= [1 2 3] (sequence (map inc) (range 3))))
@@ -158,8 +158,6 @@
           '([1 2 3] [4 5])))
     (is (= (sequence (keep identity) [1 nil 2 nil 3])
           '(1 2 3)))
-    (is (= (keep-indexed identity [:foo nil :bar nil :baz])
-          (sequence (keep-indexed identity) [:foo nil :bar nil :baz])))
     (let [xform (comp (map inc)
                   (filter even?)
                   (dedupe)
