@@ -911,6 +911,10 @@
      (conj [1 2 3 4] 5) => [1 2 3 4 5]
      (conj '(2 3 4 5) 1) => '(1 2 3 4 5)"))
 
+(extend-type Null
+  ICollection
+  (-conj [coll o] (cons o nil)))
+
 (defn conj
   "conj[oin]. Returns a new collection with the xs
     'added'. (conj nil item) returns (item).  The 'addition' may
