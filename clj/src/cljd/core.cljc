@@ -2128,6 +2128,28 @@
 (defn ^:macro-support ^:private >0? [n] (< 0 n))
 (defn ^:macro-support ^:private >1? [n] (< 1 n))
 
+(defn ^num max
+  {:inline (fn
+             ([x] x)
+             ([x y] `^num (math/max ~x ~y))
+             ([x y & more] (reduce (fn [a b] `^num (math/max ~a ~b)) `^num (math/max ~x ~y) more)))
+   :inline-arities >0?}
+  ([^num x] x)
+  ([^num x ^num y] (math/max x y))
+  ([^num x ^num y & more]
+   (reduce max ^num (math/max x y) more)))
+
+(defn ^num min
+  {:inline (fn
+             ([x] x)
+             ([x y] `^num (math/min ~x ~y))
+             ([x y & more] (reduce (fn [a b] `^num (math/min ~a ~b)) `^num (math/min ~x ~y) more)))
+   :inline-arities >0?}
+  ([^num x] x)
+  ([^num x ^num y] (math/min x y))
+  ([^num x ^num y & more]
+   (reduce min ^num (math/min x y) more)))
+
 (defn ^bool ==
   {:inline (nary-cmp-inline "==")
    :inline-arities >0?}

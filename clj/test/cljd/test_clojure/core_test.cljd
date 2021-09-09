@@ -125,6 +125,191 @@
     (is (= 4 (get-in [{:foo 1 :bar [{:baz 1}, {:buzz 2}]}, {:foo 3 :bar [{:baz 3}, {:buzz 4}]}]
                [1 :bar 1 :buzz])))))
 
+;; NOTE : it has no sense in our context
+#_(deftest test-js-clj-conversions
+  (testing "Testing JS / CLJS data conversions"
+    (testing "js->clj"
+      (is (= {"a" 1, "b" 2} (js->clj (js* "{\"a\":1,\"b\":2}"))))
+      (is (= {"a" nil} (js->clj (js* "{\"a\":null}"))))
+      (is (= {} (js->clj (js* "{}"))))
+      (is (= {"a" true, "b" false} (js->clj (js* "{\"a\":true,\"b\":false}"))))
+      (is (= {:a 1, :b 2} (js->clj (js* "{\"a\":1,\"b\":2}") :keywordize-keys true)))
+      (is (= [[{:a 1, :b 2} {:a 1, :b 2}]]
+                (js->clj (js* "[[{\"a\":1,\"b\":2}, {\"a\":1,\"b\":2}]]") :keywordize-keys true)))
+      (is (= [[{:a 1, :b 2} {:a 1, :b 2}]]
+                (js->clj [[{:a 1, :b 2} {:a 1, :b 2}]])))
+      (is (= (js->clj nil) nil))
+      (let [map-entry (->MapEntry #dart {:foo 1} #dart [1 2] nil)]
+        (is (= (->MapEntry {"foo" 1} [1 2] nil) (js->clj map-entry)))))
+    (testing "clj->js"
+      (is (= (clj->js 'a) "a"))
+      (is (= (clj->js :a) "a"))
+      (is (= (clj->js "a") "a"))
+      (is (= (clj->js 1) 1))
+      (is (= (clj->js nil) (js* "null")))
+      (is (= (clj->js true) (js* "true")))
+      (is (goog/typeOf "array" (clj->js [])))
+      (is (goog/typeOf "array" (clj->js #{})))
+      (is (goog/typeOf "array" (clj->js '())))
+      (is (goog/isObject (clj->js {})))
+      (is (= (gobject/get (clj->js {:a 1}) "a") 1))
+      (is (= (-> (clj->js {:a {:b {{:k :ey} :d}}})
+                   (gobject/get "a")
+                   (gobject/get "b")
+                   (gobject/get "{:k :ey}"))
+                "d")))
+    (is (= (-> (clj->js {:foo/bar "a"})
+               (gobject/get "bar"))
+           "a"))
+    (is (= (-> (clj->js {:foo/bar "a"} :keyword-fn namespace)
+               (gobject/get "foo"))
+          "a"))))
+
+;; TODO
+#_(deftest test-delay
+  (let [a (atom 0)
+        d (delay (swap! a inc))]
+    (testing "Testing delay"
+      (is (false? (realized? d)))
+      (is (zero? @a)) ;; delay hasn't triggered yet
+      (is (= 1 @d)) ;; trigger it
+      (is (= 1 @a)) ;; make sure side effect has happened
+      (is (true? (realized? d)))
+      (is (= 1 @d)) ;; body doesn't happen again
+      (is (= 1 @a)) ;; atom hasn't changed either
+      (is (= (force d) @d))
+      (is (= 1 (force 1))))) ;; you can safely force non-delays
+    )
+
+;; TODO
+#_(deftest test-hierarchy
+  (testing "Testing hierarchy operations"
+    (derive ::rect ::shape)
+    (derive ::square ::rect)
+    (is (= #{:cljs.core-test/shape} (parents ::rect)))
+    (is (= #{:cljs.core-test/rect :cljs.core-test/shape} (ancestors ::square)))
+    (is (= #{:cljs.core-test/rect :cljs.core-test/square} (descendants ::shape)))
+    (is (true? (isa? 42 42)))
+    (is (true? (isa? ::square ::shape)))
+    (derive cljs.core.ObjMap ::collection)
+    (derive cljs.core.PersistentHashSet ::collection)
+    (is (true? (isa? cljs.core.ObjMap ::collection)))
+    (is (true? (isa? cljs.core.PersistentHashSet ::collection)))
+    (is (false? (isa? cljs.core.IndexedSeq ::collection)))
+    ;; ?? (isa? String Object)
+    (is (true? (isa? [::square ::rect] [::shape ::shape])))
+    ;; ?? (ancestors java.util.ArrayList)
+    ;; ?? isa? based dispatch tests
+    ))
+
+;; TODO
+#_#_#_#_(defmulti bar (fn [x y] [x y]))
+(defmethod bar [::rect ::shape] [x y] :rect-shape)
+(defmethod bar [::shape ::rect] [x y] :shape-rect)
+
+;;(bar ::rect ::rect)
+;; -> java.lang.IllegalArgumentException:
+;;  Multiple methods match dispatch value:
+;;  [:cljs.core-test/rect :cljs.core-test/rect] -> [:cljs.core-test/rect :cljs.core-test/shape]
+;;  and [:cljs.core-test/shape :cljs.core-test/rect],
+;;  and neither is preferred
+
+(deftest test-multimethods-1
+  (testing "Testing basic multimethod usage"
+    (is (zero? (count (prefers bar))))
+    (prefer-method bar [::rect ::shape] [::shape ::rect])
+    (is (= 1 (count (prefers bar))))
+    (is (= :rect-shape (bar ::rect ::rect)))
+    (is (= :rect-shape (apply (-get-method bar [::rect ::shape]) [::rect ::shape])))
+    ))
+
+#_(defmulti nested-dispatch (fn [m] (-> m :a :b)))
+#_(defmethod nested-dispatch :c [m] :nested-a)
+#_(defmethod nested-dispatch :default [m] :nested-default)
+
+#_(defmulti nested-dispatch2 ffirst)
+#_(defmethod nested-dispatch2 :a [m] :nested-a)
+#_(defmethod nested-dispatch2 :default [m] :nested-default)
+
+#_(defmulti foo1 (fn [& args] (first args)))
+#_(defmethod foo1 :a [& args] :a-return)
+#_(defmethod foo1 :default [& args] :default-return)
+
+#_(defmulti area :Shape)
+#_(defn rect [wd ht] {:Shape :Rect :wd wd :ht ht})
+#_(defn circle [radius] {:Shape :Circle :radius radius})
+#_(defmethod area :Rect [r]
+    (* (:wd r) (:ht r)))
+#_(defmethod area :Circle [c]
+    (*  Math/PI (* (:radius c) (:radius c))))
+#_(defmethod area :default [x] :oops)
+#_(defmulti foo2 (fn []))
+#_(defmethod foo2 :default [] :foo)
+
+#_(defmulti apply-multi-test (fn ([_] 0) ([_ _] 0) ([_ _ _] 0)))
+#_(defmethod apply-multi-test 0
+  ([x] :one)
+  ([x y] :two)
+  ([x y & r] [:three r]))
+
+;; CLJS-469, helpful exception message on bad dispatch
+#_(defmulti no-dispatch-value :test)
+
+;; custom hierarchy
+#_(def my-map-hierarchy
+  (atom (-> (make-hierarchy)
+          (derive (type (obj-map)) ::map)
+          (derive (type (array-map)) ::map)
+          (derive (type (hash-map)) ::map)
+          (derive (type (sorted-map)) ::map))))
+
+#_(defmulti my-map? type :hierarchy my-map-hierarchy)
+#_(defmethod my-map? ::map [_] true)
+#_(defmethod my-map? :default [_] false)
+
+#_(defmulti foo2' identity)
+#_(defmethod foo2' 0 [x] x)
+
+#_(def three-levels-h (-> (make-hierarchy)
+                        (derive :parent :gparent)
+                        (derive :child :parent)))
+
+#_(defmulti multi-with-h (fn [v] v) :hierarchy #'three-levels-h)
+#_(defmethod multi-with-h :gparent [_] :gparent)
+#_(defmethod multi-with-h :parent [_] :parent)
+
+#_(deftest test-multimethods-2
+  (let [r (rect 4 13)
+        c (circle 12)]
+    (testing "Testing multimethod edge cases"
+      (is (= :nested-a (nested-dispatch {:a {:b :c}})))
+      (is (= :nested-a (nested-dispatch2 [[:a :b]])))
+      (is (= :a-return (foo1 :a)))
+      (is (= :default-return (foo1 1)))
+      (is (= 52 (area r)))
+      (is (= :oops (area {})))
+      ;; CLJS-863
+      (is (= :foo (foo2)))
+      ;; remove method tests
+      (is (= 2 (count (methods bar))))
+      (remove-method bar [::rect ::shape])
+      (is (= 1 (count (methods bar))))
+      (remove-all-methods bar)
+      (is (zero? (count (methods bar))))
+      (is (= [:three '(2)] (apply apply-multi-test [0 1 2])))
+      (is (try
+            (no-dispatch-value {:test :test})
+            (catch js/Error e
+              (not= -1 (.indexOf (.-message e) "cljs.core-test/no-dispatch-value")))))
+      (doseq [m [(obj-map) (array-map) (hash-map) (sorted-map)]]
+        (is (my-map? m)))
+      (doseq [not-m [[] 1 "asdf" :foo]]
+        (is (not (my-map? not-m))))
+      ;; multimethod hashing
+      (is (= foo2' (ffirst {foo2' 1})))
+      (is (= :parent (multi-with-h :child)))
+      )))
+
 (deftest test-transducers
   (testing "Testing transducers"
     (is (= (sequence (map inc) #dart [1 2 3]) '(2 3 4)))
@@ -208,6 +393,132 @@
     (is (-equiv (map inc [1 2 3]) (map inc [1 2 3])))
     (is (-equiv #{:cat :dog :bird} #{:cat :dog :bird}))))
 
+(defn seq-iter-match
+  [^Iterable iterable]
+  (let [i (.-iterator iterable)]
+    (loop [s (seq iterable)
+           n 0]
+      (if (seq s)
+        (do
+          (when-not (.moveNext i)
+            (throw
+              (Exception.
+                (str  "Iterator exhausted before seq at(" n ")" ))))
+          (let [iv (.-current i)
+                sv (first s)]
+            (when-not (= iv sv)
+              (throw
+                (Exception.
+                  (str "Iterator value " iv " and seq value " sv " did not match at ( "  n ")")))))
+          (recur (rest s) (inc n)))
+        (if (.moveNext i)
+          (throw
+            (Exception.
+              (str  "Seq exhausted before iterator at (" n ")")))
+          true)))))
+
+;; TODO
+#_(defrecord TestIterRec [a b])
+
+(deftest coll-iter-seq-match
+  (testing "Direct iterators match sequences"
+    (let [test-map (apply hash-map (range 200))
+          test-set (apply hash-set (range 200))
+          #_#_test-queue (into cljs.core.PersistentQueue.EMPTY (vec (range 100)))
+          #_#_test-record (into (TestIterRec. 1 2) {:c 3 :d 4})]
+      (is (= true (seq-iter-match (.-entries test-map))))
+      (is (= true (seq-iter-match test-set)))
+      #_(is (= true (seq-iter-match test-queue)))
+      #_(is (= true (seq-iter-match test-record))))))
+
+;; NOTE: no sense in our context
+#_(deftest test-es6-interfaces
+  (testing "ES6 collection interfaces"
+    (let [iter (es6-iterator [1 2 3])]
+      (testing "basic iterations"
+        (is (= (.-value (.next iter)) 1))
+        (is (= (.-value (.next iter)) 2))
+        (is (= (.-value (.next iter)) 3))
+        (is (.-done (.next iter)))))
+    (is (.has {:foo "bar"} :foo))
+    (is (= (.get {:foo "bar"} :foo) "bar"))
+    (is (= (.get {:foo "bar"} :bar :default) :default))
+    (let [iter (.keys {:foo "bar" :baz "woz"})]
+      (testing "map key iteration"
+        (is (#{:foo :baz} (.-value (.next iter))))
+        (is (#{:foo :baz} (.-value (.next iter))))
+        (is (.-done (.next iter)))))
+    (let [eiter (.entries {:foo "bar" :baz "woz"})]
+      (testing "map entry iteration"
+        (let [entries #{(seq #dart [:foo "bar"]) (seq #dart [:baz "woz"])}]
+          (is (entries (seq (.-value (.next eiter)))))
+          (is (entries (seq (.-value (.next eiter))))))
+        (is (.-done (.next eiter)))))
+    (let [iter (.values {:foo "bar" :baz "woz"})]
+      (testing "map value iteration"
+        (is (#{"bar" "woz"} (.-value (.next iter))))
+        (is (#{"bar" "woz"} (.-value (.next iter))))
+        (is (.-done (.next iter)))))
+    (is (.has #{:cat :bird :dog} :bird))
+    (let [iter (.keys #{:cat :bird :dog})]
+      (testing "set key iteration"
+        (is (#{:cat :bird :dog} (.-value (.next iter))))
+        (is (#{:cat :bird :dog} (.-value (.next iter))))
+        (is (#{:cat :bird :dog} (.-value (.next iter))))
+        (is (.-done (.next iter)))))
+    (let [iter (.entries #{:cat :bird :dog})]
+      (testing "set entry iteration"
+        (is (#{[:cat :cat] [:bird :bird] [:dog :dog]} (seq (.-value (.next iter)))))
+        (is (#{[:cat :cat] [:bird :bird] [:dog :dog]} (seq (.-value (.next iter)))))
+        (is (#{[:cat :cat] [:bird :bird] [:dog :dog]} (seq (.-value (.next iter)))))
+        (is (.-done (.next iter)))))
+    (let [iter (.values #{:cat :bird :dog})]
+      (testing "set value iteration"
+        (is (#{:cat :bird :dog} (.-value (.next iter))))
+        (is (#{:cat :bird :dog} (.-value (.next iter))))
+        (is (#{:cat :bird :dog} (.-value (.next iter))))
+        (is (.-done (.next iter)))))
+    ))
+
+;; TODO
+#_(deftest test-reader-literals
+  (testing "Testing reader literals"
+    (is (= queue [1] (into cljs.core.PersistentQueue.EMPTY [1])))
+    (is (not= queue [1 2] (into cljs.core.PersistentQueue.EMPTY [1])))
+    (is (= inst "2010-11-12T18:14:15.666-00:00"
+          inst "2010-11-12T13:14:15.666-05:00"))
+    (is (= uuid "550e8400-e29b-41d4-a716-446655440000"
+          uuid "550e8400-e29b-41d4-a716-446655440000"))
+
+    ))
+
+;; TODO
+#_(deftest test-uuid
+  (testing "Testing UUID"
+    (is (= (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+          (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")))
+    (is (not (identical? (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+               (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000"))))
+    (is (= 42 (get {(cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000") 42}
+                (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+                :not-at-all-found)))
+    (is (= :not-at-all-found
+          (get {(cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000") 42}
+            (cljs.core/uuid "666e8400-e29b-41d4-a716-446655440000")
+            :not-at-all-found)))
+    (is (= -1 (compare (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+                (cljs.core/uuid "666e8400-e29b-41d4-a716-446655440000"))))
+    (is (=  1 (compare (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+                (cljs.core/uuid "550e8400-a29b-41d4-a716-446655440000"))))
+    (is (=  0 (compare (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+                (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")))))
+  (testing "UUID hashing"
+    (let [id   "550e8400-e29b-41d4-a716-446655440000"
+          uuid (cljs.core/uuid id)
+          expected (hash id)]
+      (is (= expected (hash uuid)))
+      (is (= expected (.-__hash uuid))))))
+
 (def constantly-nil (constantly nil))
 
 (deftest some->test
@@ -272,11 +583,25 @@
     (is (= 13 (apply aset [array 2 0 13])))
     (is (= 13 (aget array 2 0)))))
 
+;; NOTE: no sense in our context
+#_(deftest unchecked-get-test
+  (is (= 1 (unchecked-get #dart {:a 1} "a")))
+  (is (nil? (unchecked-get #dart {:a 1} "b")))
+    (is (nil? (unchecked-get #dart {:a 1} nil))))
+
+;; NOTE: no sense in our context
+#_(deftest js-invoke-test
+  (let [o (doto (js-obj) (gobject/set "my sum" (fn [a b] (+ a b))))]
+    (is (= 5 (js-invoke o "my sum" 2 3)))))
+
 (deftest memfn-test
   (let [substr (memfn substring start length)]
     (is (= "c" (substr "abcdefg" 2 3))))
   (let [trim (memfn trim)]
     (is (= ["abc" "def"] (map trim ["   abc   " "  def   "])))))
+
+;; =============================================================================
+;; Tickets
 
 (deftest test-383
   (testing "Testing CLJS-383"
@@ -310,23 +635,10 @@
     (let [x (fn [] "overwritten")]
       (is (= "original" (y))))))
 
-(deftest test-compare-fn
-  (testing "Testing compare default function"
-    (is (compare 'a 'b))
-    (is (compare 'a 'a))
-    (is (compare :a :a))
-    (is (compare :a :b))
-    (is (compare :a/b :a/b))
-    (is (compare [:a :b] [:a :b]))
-    (is (compare [:a :b] [:a :c]))
-    (is (compare [:a :b] (first {:a :b})))
-    (is (compare (first {:a :b}) (first {:a :b}))))
-
-  (testing "Testing sort function"
-    (is (= '(-100 1 2 3 100) (sort [3 2 1 100 -100])))
-    (is (= '(:a :b :c) (sort [:a :c :b])))
-    (is (= '([:a :b] [:c :d]) (sort {:c :d :a :b})))
-    (is (= '(3 2 1) (sort (fn [x y] (if (< x y) 1 -1)) [1 2 3])))))
+;; TODO
+#_(deftest test-459
+  (is (= (reduce-kv conj [] (sorted-map :foo 1 :bar 2))
+        [:bar 2 :foo 1])))
 
 (deftest test-kv-reduce
   (letfn [(kvr-test [data expect]
@@ -346,6 +658,19 @@
         (is (kvr-test data expect)))
       (is (= {:init :val} (reduce-kv assoc {:init :val} nil))))))
 
+;; TODO
+#_(deftest test-data-conveying-exceptions
+  (is (= {:foo 1}
+        (try (throw (ex-info "asdf" {:foo 1}))
+             (catch ExceptionInfo e
+               (ex-data e)))))
+  (is (instance? js/Error (ex-info "asdf" {:foo 1})))
+  (is (= (pr-str (ex-info "abc" {:x 1})) "#error {:message \"abc\", :data {:x 1}}"))
+  (is (= (pr-str (ex-info "abc" {:x 1} "def")) "#error {:message \"abc\", :data {:x 1}, :cause \"def\"}"))
+  (is (= (.toString (ex-info "abc" {:x 1} "def")) "#error {:message \"abc\", :data {:x 1}, :cause \"def\"}"))
+  (is (= (str (ex-info "abc" {:x 1} "def")) "#error {:message \"abc\", :data {:x 1}, :cause \"def\"}"))
+  (is (not (instance? cljs.core.ExceptionInfo (js/Error.)))))
+
 (deftest test-2067
   (is (= 0 (reduce-kv
              (fn [x k _]
@@ -364,6 +689,7 @@
 (deftest test-464
   (is (nil? (get-in {:foo {:bar 2}} [:foo :bar :baz]))))
 
+;; TODO
 (deftest test-symbol-meta
   (is (= (meta (with-meta 'foo {:tag 'int})) {:tag 'int}))
   #_#_#_(is (= (meta (quote ^{:bar true} foo)) {:bar true}))
@@ -388,8 +714,51 @@
       (swap! fs conj f))
     (is (= (map #(%) @fs) '(1 2 3 4)))))
 
+;; NOTE : no sense in our context
+#_#_(def exists?-test-val 'foo)
+
+(deftest test-495
+  (testing "Testing CLJS-495, exists?"
+    (is (false? (exists? js/jQuery)))
+    (is (exists? exists?-test-val))))
+
+#_(deftest test-2764
+  (testing "Testing CLJS-2764, exists? on multi-segment symbols"
+    (is (false? (exists? this.ns.does.not.exist)))
+    (is (true? (exists? cljs.core.first)))
+    (is (true? (exists? cljs.core/first)))
+    (is (true? (exists? (:foo {:foo 1}))))
+    (is (false? (exists? (:foo {}))))))
+
 (deftest test-518
   (is (nil? (:test "test"))))
+
+(deftest test-541
+  (letfn [(f! [x] (print \f) x)
+          (g! [x] (print \g) x)]
+    (is (= "ffgfg"
+          (with-out-str
+            (dart/is? (f! 'foo) cljd.core/Symbol)
+            (max ^num (f! 5) ^num (g! 10))
+            (min ^num (f! 5) ^num (g! 10)))))))
+
+(deftest test-compare-fn
+  (testing "Testing compare default function"
+    (is (compare 'a 'b))
+    (is (compare 'a 'a))
+    (is (compare :a :a))
+    (is (compare :a :b))
+    (is (compare :a/b :a/b))
+    (is (compare [:a :b] [:a :b]))
+    (is (compare [:a :b] [:a :c]))
+    (is (compare [:a :b] (first {:a :b})))
+    (is (compare (first {:a :b}) (first {:a :b}))))
+
+  (testing "Testing sort function"
+    (is (= '(-100 1 2 3 100) (sort [3 2 1 100 -100])))
+    (is (= '(:a :b :c) (sort [:a :c :b])))
+    (is (= '([:a :b] [:c :d]) (sort {:c :d :a :b})))
+    (is (= '(3 2 1) (sort (fn [x y] (if (< x y) 1 -1)) [1 2 3])))))
 
 (deftest test-582
   (is (= #{1 2} (set [1 2 2])))
