@@ -5542,6 +5542,13 @@
             (cons f (filter pred r))
             (filter pred r))))))))
 
+(defn run!
+  "Runs the supplied procedure (via reduce), for purposes of side
+  effects, on successive items in the collection. Returns nil"
+  [proc coll]
+  (reduce #(proc %2) nil coll)
+  nil)
+
 (defn dorun
   "When lazy sequences are produced via functions that have side
   effects, any effects other than those needed to produce the first

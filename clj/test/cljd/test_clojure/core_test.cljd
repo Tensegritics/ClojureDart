@@ -16,8 +16,7 @@
 
 #_(deftest test-metadata
   (testing "Testing metadata"
-    (is (= {"x" "y"} (meta ^{"x" "y"} [])))
-    ))
+    (is (= {"x" "y"} (meta ^{"x" "y"} [])))))
 
 (deftest test-fn-with-metadata
   (let [f (fn [x] (* x 2))
@@ -83,13 +82,21 @@
     (is (not (contains? nil 42)))
     (is (contains? "f" 0))
     (is (not (contains? "f" 55))))
-
-
   (testing "Testing contains? with ILookup protocol"
     (let [ds (reify cljd.core/ILookup
                (-contains-key? [_ k] (= k :valid)))]
       (is (contains? ds :valid))
       (is (not (contains? ds :invalid))))))
+
+(deftest test-run!
+  (testing "Testing run!"
+    (let [a (atom 0)]
+      (run! (fn [n]
+              (swap! a + n))
+        (range 5))
+      (is (= 10 @a)))
+    (is (nil? (run! identity [1])))
+    (is (nil? (run! reduced (range))))))
 
 (deftest test-in-operations
   (testing "Testing update-in"
