@@ -5269,7 +5269,7 @@
                    (let [c (chunk-first s)
                          b (chunk-buffer (count c))
                          idx (chunk-reduce (fn [i x] (chunk-append b (f i x)) (inc i)) idx c)]
-                     (chunk-cons (chunk b) (mapi idx f (chunk-rest s))))
+                     (chunk-cons (chunk b) (mapi idx (chunk-rest s))))
                    (cons (f idx (first s)) (mapi (inc idx) (rest s)))))))]
      (mapi 0 coll))))
 
