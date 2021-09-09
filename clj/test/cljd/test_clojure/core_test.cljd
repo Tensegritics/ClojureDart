@@ -808,3 +808,11 @@
 (deftest test-cljs-2959
   (is (= {:a true} (meta (sort (with-meta (range 10) {:a true})))))
   (is (= {:a true} (meta (sort-by :a (with-meta (seq [{:a 5} {:a 2} {:a 3}]) {:a true}))))))
+
+(deftest test-cljs-3054
+  (testing "`into` behaves the same as Clojure"
+    (is (nil? (into nil #{})))
+    (is (= '(3 2 1) (into nil [1 2 3]))))
+  ; TODO
+  #_(testing "calling `set/union` with nilable sets returns a nilable set"
+    (is (nil? (set/union #{} nil nil)))))

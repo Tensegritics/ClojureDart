@@ -5950,17 +5950,16 @@
 
 (defn shuffle
   "Return a random permutation of coll"
-  [^List source]
+  [source]
   (let [source! (reduce conj! (transient []) source)
         length (count source!)]
-    (loop [idx (dec length)]
-      (if (< 1 idx)
-        (let [pos (rand-int idx)
-              v (nth source! pos)]
-          (assoc! source! pos (nth source! idx))
-          (assoc! source! idx v)
-          (recur (dec idx)))
-        (persistent! source!)))))
+    (loop [tv source! i length]
+      (let [i-1 (dec i)]
+        (if (pos? i-1)
+          (let [j (rand-int i)
+                tmp (nth tv i-1)]
+            (recur (-> tv (assoc! i-1 (nth tv j)) (assoc! j tmp)) i-1))
+          (persistent! tv))))))
 
 (defn get-dynamic-binding [k else]
   (if-some [binding (get -DYNAMIC-BINDINGS k)]
