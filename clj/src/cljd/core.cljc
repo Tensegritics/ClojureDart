@@ -4896,6 +4896,12 @@
   (when-let [s (seq coll)]
     (or (pred (first s)) (recur pred (next s)))))
 
+(defn ^bool any?
+  "Returns true given any argument."
+  [x] true)
+
+(def not-any? (comp not some))
+
 (defn fnil
   "Takes a function f, and returns a function that calls f, replacing
   a nil first argument to f with the supplied value x. Higher arity
