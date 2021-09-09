@@ -5926,11 +5926,11 @@
 
 (def ^:private ^math/Random RNG (math/Random.))
 
-(defn rand-int
+(defn ^int rand-int
   "Returns a random integer between 0 (inclusive) and n (exclusive)."
   [n] (.nextInt RNG n))
 
-(defn rand
+(defn ^double rand
   "Returns a random floating point number between 0 (inclusive) and
   n (default 1) (exclusive)."
   ([] (.nextDouble RNG))
@@ -5943,6 +5943,20 @@
    (filter (fn [_] (< (rand) prob))))
   ([prob coll]
    (filter (fn [_] (< (rand) prob)) coll)))
+
+(defn shuffle
+  "Return a random permutation of coll"
+  [^List source]
+  (let [source! (reduce conj! (transient []) source)
+        length (count source!)]
+    (loop [idx (dec length)]
+      (if (< 1 idx)
+        (let [pos (rand-int idx)
+              v (nth source! pos)]
+          (assoc! source! pos (nth source! idx))
+          (assoc! source! idx v)
+          (recur (dec idx)))
+        (persistent! source!)))))
 
 (defn get-dynamic-binding [k else]
   (if-some [binding (get -DYNAMIC-BINDINGS k)]
