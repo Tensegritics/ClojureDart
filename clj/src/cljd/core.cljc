@@ -5695,6 +5695,29 @@
   ([pred coll]
    (filter (complement pred) coll)))
 
+(defn tree-seq
+  "Returns a lazy sequence of the nodes in a tree, via a depth-first walk.
+   branch? must be a fn of one arg that returns true if passed a node
+   that can have children (but may not).  children must be a fn of one
+   arg that returns a sequence of the children. Will only be called on
+   nodes for which branch? returns true. Root is the root node of the
+  tree."
+  [branch? children root]
+  (let [walk (fn walk [node]
+               (lazy-seq
+                 (cons node
+                   (when (branch? node)
+                     (mapcat walk (children node))))))]
+    (walk root)))
+
+(defn flatten
+  "Takes any nested combination of sequential things (lists, vectors,
+  etc.) and returns their contents as a single, flat lazy sequence.
+  (flatten nil) returns an empty sequence."
+  [x]
+  (filter (complement sequential?)
+    (rest (tree-seq sequential? seq x))))
+
 (defn transduce
   "reduce with a transformation of f (xf). If init is not
   supplied, (f) will be called to produce it. f should be a reducing
@@ -5912,6 +5935,14 @@
   n (default 1) (exclusive)."
   ([] (.nextDouble RNG))
   ([n] (* (.nextDouble RNG) n)))
+
+(defn random-sample
+  "Returns items from coll with random probability of prob (0.0 -
+  1.0).  Returns a transducer when no collection is provided."
+  ([prob]
+   (filter (fn [_] (< (rand) prob))))
+  ([prob coll]
+   (filter (fn [_] (< (rand) prob)) coll)))
 
 (defn get-dynamic-binding [k else]
   (if-some [binding (get -DYNAMIC-BINDINGS k)]
