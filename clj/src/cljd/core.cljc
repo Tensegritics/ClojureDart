@@ -5372,8 +5372,6 @@
   "Returns a lazy sequence of the non-nil results of (f item). Note,
   this means false return values will be included.  f must be free of
   side-effects.  Returns a transducer when no collection is provided."
-  {:added "1.2"
-   :static true}
   ([f]
    (fn [rf]
      (fn
@@ -6183,27 +6181,29 @@
   [x] (dart/is? x Uri))
 
 (deftype #/(XformIterator E)
-  [^List buf ^:mutable ^int i move-next]
+  [^List buf ^:mutable ^int i move-next ^:mutable ^bool in-progress]
   #/(Iterator E)
-  (current [_] (aget buf i))
-  (moveNext [_]
+  (current [_]
+    (aget buf i))
+  (moveNext [coll]
     (set! i (inc i))
     (or (< i (.-length buf))
       (do
         (.clear buf)
         (set! i 0)
         (loop []
-          (if (move-next)
+          (if (and in-progress (move-next))
             (or (pos? (.-length buf))
               (recur))
-            (pos? (.-length buf))))))))
+            (do (set! in-progress false)
+                (pos? (.-length buf)))))))))
 
 (defn- xform-iterator [xform mk-move-next]
   (let [buffer #dart []
         rf (fn
              ([acc] false)
              ([acc x] (.add buffer x)))]
-    (XformIterator. buffer 0 (mk-move-next (xform rf)))))
+    (XformIterator. buffer 0 (mk-move-next (xform rf)) true)))
 
 (defn ^Iterator iterator
   ([coll]
@@ -6265,7 +6265,7 @@
   ([xform coll]
      (or (chunked-iterator-seq (iterator xform coll)) ()))
   ([xform coll & colls]
-     (or (chunked-iterator-seq (apply iterator xform coll colls)) ())))
+   (or (chunked-iterator-seq (apply iterator xform coll colls)) ())))
 
 (deftype #/(Eduction E) [xform coll ^:mutable ^int __hash]
   ^:mixin EquivSequentialHashMixin
