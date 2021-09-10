@@ -981,6 +981,32 @@
       (is (identical? (add-watch w :foo (fn [])) w))
       (is (identical? (remove-watch w :foo) w)))))
 
+(deftype MyCustomAtom [^:mutable state]
+  :extends (cljd.core/Atom. state nil nil {})
+  cljd.core/IDeref
+  (-deref [_] state)
+  cljd.core/IReset
+  (-reset! [_ newval]
+    (set! state newval)))
+
+(deftest test-919-generic-cas
+  (testing "testing CLJS-919, CAS should on custom atom types"
+    (let [a0 (MyCustomAtom. 10)
+          a1 (MyCustomAtom. 0)]
+      (compare-and-set! a0 0 20)
+      (compare-and-set! a1 0 20)
+      (is (== @a0 10))
+      (is (== @a1 20)))))
+
+(deftest test-map-new-transducers
+  (testing "Test distinct, interpose, map-indexed transducers"
+    (is (= [1 2 3]
+          (transduce (distinct) conj [] [1 1 2 2 3 3])))
+    (is (= [1 :foo 2 :foo 3]
+          (transduce (interpose :foo) conj [] [1 2 3])))
+    (is (= [[0 1] [1 2] [2 3]]
+          (transduce (map-indexed (fn [i x] [i x])) conj [] [1 2 3])))))
+
 (deftest test-compare-fn
   (testing "Testing compare default function"
     (is (compare 'a 'b))
