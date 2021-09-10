@@ -48,7 +48,6 @@
   (let [a (atom [1] :validator coll? :meta {:a 1})]
     (testing "Testing atom validators"
       (is (= (get-validator a) coll?))
-      ;; TODO
       (is (thrown? Exception (reset! a 1)))
       (is (thrown? Exception (set-validator! a number?)))
       (is (some? (get-validator a)))
@@ -166,14 +165,13 @@
                (gobject/get "foo"))
           "a"))))
 
-;; TODO
-#_(deftest test-delay
+(deftest test-delay
   (let [a (atom 0)
-        d (delay (swap! a inc))]
+        d (delay ^int (swap! a inc))]
     (testing "Testing delay"
       (is (false? (realized? d)))
       (is (zero? @a)) ;; delay hasn't triggered yet
-      (is (= 1 @d)) ;; trigger it
+      (is (= 1 ^int (deref d))) ;; trigger it
       (is (= 1 @a)) ;; make sure side effect has happened
       (is (true? (realized? d)))
       (is (= 1 @d)) ;; body doesn't happen again

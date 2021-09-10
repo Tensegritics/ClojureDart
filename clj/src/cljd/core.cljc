@@ -2013,6 +2013,31 @@
    (let [old-state (.-state a)]
      [old-state (apply swap! a f x y more)])))
 
+;; TODO add printing
+(deftype Delay [^:mutable val ^:mutable ^Function? f]
+  IDeref
+  (-deref [this]
+    (when f
+      (set! val (f))
+      (set! f nil))
+    val)
+  IPending
+  (-realized? [this] (nil? f)))
+
+(defn delay?
+  "returns true if x is a Delay created with delay"
+  [x] (dart/is? x Delay))
+
+(defn force
+  "If x is a Delay, returns the (possibly cached) value of its expression, else returns x"
+  [x]
+  (if (delay? x)
+    (deref x)
+    x))
+
+(defmacro delay [& body]
+  `(new cljd.core/Delay nil (fn [] ~@body)))
+
 (defprotocol IEmptyableCollection
   "Protocol for creating an empty collection."
   (-empty [coll]
