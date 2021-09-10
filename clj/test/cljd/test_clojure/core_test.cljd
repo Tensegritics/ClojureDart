@@ -1219,6 +1219,86 @@
                         (+ acc x)))
           [2 4 6 :stop 8 10]))))
 
+(deftest test-cljs-1721
+  (is (= 1          (get-in {:a #dart [1 2 3 4]} [:a 0] :not-found)))
+  (is (= :not-found (get-in {:a #dart [1 2 3 4]} [:a 4] :not-found)))
+  (is (= "d"        (get-in {:a "data"} [:a 0] :not-found)))
+  (is (= :not-found (get-in {:a "data"} [:a 4] :not-found))))
+
+(deftest test-cljs-1739
+  (is (= (-> {:a 1 :b 2 :c 3 :d 4 :e 5 :f 6 :g 7 :h 8 :i 9}
+           rest rest rest rest rest rest rest rest rest)
+        ())))
+
+(deftest test-cljs-1744
+  (doseq [i (range 1 64)]
+    (let [m (zipmap (range i) (range i))]
+      (is (= () (last (take (inc i) (iterate rest m))))))))
+
+;; TODO: do not pass
+#_(def cljd.test-clojure.core-test/foo-1274 42)
+
+#_(deftest test-cljs-1274
+  (is (= foo-1274 42))
+    (is (= cljd.test-clojure.core-test/foo-1274 42)))
+
+;; TODO
+#_#_(defrecord CLJS1780 [a b c])
+
+(deftest test-cljs-1780
+  (let [record (->CLJS1780 1 2 3)]
+    (is (= (into #{} (sequence (map identity)
+                               record))
+           #{[:a 1] [:b 2] [:c 3]}))
+    (is (= (into #{} (sequence (map identity)
+                               (assoc record :d 4 :e 5)) )
+          #{[:a 1] [:b 2] [:c 3] [:d 4] [:e 5]}))))
+
+(deftest test-cljs-1775
+  (is (nil? (get "foo" nil)))
+  (is (= 42 (get {nil 42} nil) 42))
+  (is (= (get #dart [\h \i] 1.7 :not-found) \i))
+  (is (= (get "hi" 1.7 :not-found) \i)))
+
+(deftest test-cljs-1748
+  (is (thrown? Error (nth #dart[0 1 2]  3)))
+  (is (thrown? Error (nth #dart[0 1 2] -1)))
+  (is (= (nth #dart[0 1 2]  3 :not-found) :not-found))
+  (is (= (nth #dart[0 1 2] -1 :not-found) :not-found))
+
+  (is (thrown? Error (nth "012"  3)))
+  (is (thrown? Error (nth "012" -1)))
+  (is (= (nth "012"  3 :not-found) :not-found))
+  (is (= (nth "012" -1 :not-found) :not-found)))
+
+;; TODO: do not pass
+#_#_#_(let [foo-1536 2]
+  (def foo-1536 foo-1536))
+
+(let [foo-1536-2 1]
+  (defn foo-1536-2 []
+    foo-1536-2))
+
+(deftest test-cljs-1536
+  (is (= foo-1536 2))
+  (is (= (foo-1536-2) 1))
+  ;; these two lines generate a `:redef-in-file` warning, which is caused by `cljs.test/is`
+  (is (= ((let [z 1] (defn z [] z))) 1))
+  (is (= (let [w 1] ((defn w [] w))) 1)))
+
+(deftest test-cljs-1837
+  (testing "halt-when transducer"
+    (is (= (transduce (halt-when #{1}) conj [] [5 4 1 2 3])
+          1))
+    (is (= (transduce (halt-when #{1} (fn [ret input] input)) conj [] [5 4 1 2 3])
+          1))
+    (is (= (transduce (halt-when #{1} (fn [ret input] ret)) conj [] [5 4 1 2 3])
+          [5 4]))
+    (is (= (transduce (halt-when #{1} (fn [ret input] (conj ret input))) conj [] [5 4 1 2 3])
+          [5 4 1]))
+    (is (= (into [] (halt-when #{1} (fn [ret in] (conj! ret in)))  [2 3 1]))
+      [2 3 1])))
+
 (deftest test-compare-fn
   (testing "Testing compare default function"
     (is (compare 'a 'b))
