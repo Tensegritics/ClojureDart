@@ -5236,6 +5236,22 @@
                       (cat (first zs) (next zs)))))))]
      (cat (concat x y) zs))))
 
+(defn reductions
+  "Returns a lazy seq of the intermediate values of the reduction (as
+  per reduce) of coll by f, starting with init."
+  ([f coll]
+   (lazy-seq
+     (if-let [s (seq coll)]
+       (reductions f (first s) (rest s))
+       (list (f)))))
+  ([f init coll]
+   (if (reduced? init)
+     (list @init)
+     (cons init
+       (lazy-seq
+         (when-let [s (seq coll)]
+           (reductions f (f init (first s)) (rest s))))))))
+
 (defn map
   "Returns a lazy sequence consisting of the result of applying f to
   the set of first items of each coll, followed by applying f to the

@@ -12,6 +12,7 @@
 ;;  Created Dec 2008
 
 (ns cljd.test-clojure.core-test
+  (:require [cljd.string :as s])
   (:use [cljd.test :only [deftest is testing are]]))
 
 #_(deftest test-metadata
@@ -1006,6 +1007,217 @@
           (transduce (interpose :foo) conj [] [1 2 3])))
     (is (= [[0 1] [1 2] [2 3]]
           (transduce (map-indexed (fn [i x] [i x])) conj [] [1 2 3])))))
+
+;; TODO
+#_#_#_#_(defn foo-var [f]
+  (fn [x]
+    (f x)))
+
+(defn foo-set [x]
+  (first x))
+
+(deftest test-cljs-982-var-deref
+  (let [f (foo-var #'foo-set)]
+    (is (= (f [1 2 3]) 1))
+    (set! foo-set (fn [x] :oops))
+    (is (= (f [1 2 3]) :oops))))
+
+(deftest test-cljs-993
+  (is (nil? (binding [*print-level* 4])))
+  (is (= (binding [*print-level* 4] *print-level*) 4))
+  (is (nil? (try
+              (binding [*print-level* 4]
+                (throw (js/Error.)))
+              (catch js/Error e
+                *print-level*)))))
+
+#_(defn meta-test-fn
+  "A docstring"
+  {:foo :bar, :baz 12345, :whatever "String Metadata"}
+  [a b]
+  (+ a b))
+
+#_(deftest test-cljs-1046
+  (let [m (meta #'meta-test-fn)]
+    (is (= "A docstring" (:doc m)))
+    (is (= :bar (:foo m)))
+    (is (= 12345 (:baz m)))
+    (is (= "String Metadata" (:whatever m)))))
+
+
+#_#_(defmulti cljs-1144 identity :default ::default)
+
+(deftest test-cljs-1144
+  (is (not= map (dispatch-fn cljs-1144)))
+  (is (= identity (dispatch-fn cljs-1144)))
+  (is (= ::default (default-dispatch-val cljs-1144))))
+
+(defn foo-1187 [] (print "foo!"))
+
+(defn bar-1187 [] (print "bar!"))
+
+(defn print-foo-1187 [fb]
+  (apply
+    (case fb
+      :foo foo-1187
+      :bar bar-1187) []))
+
+;; TODO
+#_(defn print-foo-1187-bis [fb]
+  (apply
+    (case fb
+      :foo #'foo-1187
+      :bar #'bar-1187) []))
+
+#_(deftest test-var?
+  (is (var? #'inc))
+  (is (not (var? 1))))
+
+(deftest test-cljs-1187
+  (testing "Internal var nodes analyzed in expression context"
+    (is (= (with-out-str (print-foo-1187 :foo))
+          "foo!"))))
+
+;; TODO
+#_#_(deftest test-var-arglists
+  (is (= (-> #'first meta :arglists) '([coll])))
+  (is (= (-> #'hash-map meta :arglists) '([& keyvals])))
+  (is (= (-> #'map meta :arglists)
+        '([f] [f coll] [f c1 c2] [f c1 c2 c3] [f c1 c2 c3 & colls]))))
+
+(deftest tagged-literals
+  (let [tl (tagged-literal 'x "y")]
+    (is (tagged-literal? tl))
+    (is (not (tagged-literal? {:tag 'x :form "y"})))
+    (is (= (:tag tl) 'x))
+    (is (= (:form tl) "y"))
+    (is (= tl (tagged-literal 'x "y")))
+    (is (not= tl (tagged-literal 'z "y")))
+    (is (not= tl (tagged-literal 'x "z")))
+    (is (= (hash tl) (hash (tagged-literal 'x "y"))))
+    (is (= "#foo [1]" (str (tagged-literal 'foo [1]))))))
+
+(defn- incme []
+  (let [incme (fn [a queue & args] (inc a))]
+    (incme 1 [1] :color "#fff")))
+
+(deftest test-cljs-1225
+  (is (= (incme) 2)))
+
+(defn my-conj
+  [acc x]
+  (conj acc x))
+
+(deftest test-cljs-1209
+  (is (= (reduce my-conj [] (eduction (map identity) [1 2 3]))
+        [1 2 3])))
+
+(deftest test-get-with-float
+  (is (= (get #dart [\h \i] 1.7) \i))
+  (is (= (get "hi" 1.7) \i)))
+
+; NOTE : no sense in our context
+#_#_(defn foo-1284
+  ([] nil)
+  ([x0 & xs] [x0 xs]))
+
+(deftest test-cljs-1284
+  (let [xs (IndexedSeq. #_js [] 0 nil)
+        ys (IndexedSeq. #_js [1] 3 nil)]
+    (is (nil? (first xs)))
+    (is (nil? (seq xs)))
+    (is (= (rest xs) ()))
+    (is (= (pr-str xs) "()"))
+    (is (= (foo-1284 0) [0 ()]))
+    (is (= (pr-str (foo-1284 0)) "[0 ()]"))
+    (is (zero? (count ys)))
+    (is (= (transduce (map inc) conj [] ys) []))))
+
+(deftest test-symbol-from-string
+  (let [x (symbol "dart:core/List")]
+    (is (= x 'dart:core/List))
+    (is (= (hash x) (hash 'dart:core/List)))
+    (is (= (namespace x) "dart:core"))
+    (is (= (name x) "List"))))
+
+(deftest test-1276
+  (is (= #'first #'first))
+  (is (not= #'first #'last)))
+
+(deftest test-1248
+  (let [v (vary-meta #'first assoc :foo 'bar)]
+    (is (= (-> v meta :foo) 'bar))))
+
+(deftest test-1210
+  (is (= ((fn []
+            (let [{:keys [arguments]} {}
+                  arguments (or arguments [])]
+              arguments)))
+        [])))
+
+;; TODO
+#_#_(deftest test-munge-demunge
+  (is (= 'cljs.core/first?
+         (demunge (munge 'cljs.core/first?)))))
+
+(deftest test-munge
+  (is (= "a_b" (munge "a-b")))
+  (is (= "a_SLASH_b" (munge "a/b")))
+  (is (= "_DOT__DOT_" (munge "..")))
+  (is (= "abstract$" (munge "abstract")))
+  (is (= 'abc (munge 'abc)))
+  (is (= "toString" (munge "toString"))))
+
+;; TODO: not working for some reason..
+#_#_(defprotocol IFooBar
+  (amethod [t]))
+
+(deftest test-cljs-1451
+  (testing "caca"
+    (is (= "foobar"
+          (amethod (reify IFooBar (amethod [_] "foobar")))))))
+
+(deftest test-cljs-1569
+  (is (= (meta (with-meta (seq [1 2 3]) {:a 1})) {:a 1})))
+
+(deftest test-cljs-1420
+  (is (= :2-arity
+        (get-in
+          (reify
+            cljd.core/ILookup
+            (-lookup [o k] :2-arity)
+            (-lookup [o k not-found] :3-arity))
+          [:foo]))))
+
+; NOTE : no sense in our context
+#_(deftest test-cljs-1594
+  (is  (not (js/isNaN (hash js/Infinity))))
+  (is  (not (js/isNaN (hash js/-Infinity))))
+  (is  (not (js/isNaN (hash js/NaN))))
+  (is  (=  (hash-set js/Infinity js/-Infinity 0 1 2 3 4 5 6 7 8)
+         (set  (keys  (zipmap  [js/Infinity js/-Infinity 0 1 2 3 4 5 6 7 8]  (repeat nil)))))))
+
+;; TODO: fix tests
+(deftest test-cljs-1590
+  (is (= [""] (s/split "" #"\n")))
+  #_(is (= [] (s/split "\n\n\n" #"\n")))
+  (is (= [""] (s/split-lines "")))
+  #_(is (= [] (s/split-lines "\n\n\n"))))
+
+(deftest test-reductions-obeys-reduced
+  (is (= [0 :x]
+        (reductions (constantly (reduced :x))
+          (range))))
+  (is (= [:x]
+        (reductions (fn [acc x] x)
+          (reduced :x)
+          (range))))
+  (is (= [2 6 12 12]
+        (reductions (fn [acc x]
+                      (if (= x :stop)
+                        (reduced acc)
+                        (+ acc x)))
+          [2 4 6 :stop 8 10]))))
 
 (deftest test-compare-fn
   (testing "Testing compare default function"
