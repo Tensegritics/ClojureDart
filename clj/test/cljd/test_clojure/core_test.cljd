@@ -1299,43 +1299,13 @@
     (is (= (into [] (halt-when #{1} (fn [ret in] (conj! ret in)))  [2 3 1]))
       [2 3 1])))
 
-(deftest test-compare-fn
-  (testing "Testing compare default function"
-    (is (compare 'a 'b))
-    (is (compare 'a 'a))
-    (is (compare :a :a))
-    (is (compare :a :b))
-    (is (compare :a/b :a/b))
-    (is (compare [:a :b] [:a :b]))
-    (is (compare [:a :b] [:a :c]))
-    (is (compare [:a :b] (first {:a :b})))
-    (is (compare (first {:a :b}) (first {:a :b}))))
-
-  (testing "Testing sort function"
-    (is (= '(-100 1 2 3 100) (sort [3 2 1 100 -100])))
-    (is (= '(:a :b :c) (sort [:a :c :b])))
-    (is (= '([:a :b] [:c :d]) (sort {:c :d :a :b})))
-    (is (= '(3 2 1) (sort (fn [x y] (if (< x y) 1 -1)) [1 2 3])))))
-
-
-
-(deftest subvec-tests
-  (testing "Testing subvec works as expected"
-    (is (= (subvec [0 1] 1) [1]))
-    (is (= (subvec [0 1] 0 1) [0]))
-    (is (= (subvec [0 1] 2) []))
-    (is (= (subvec [0 1] 1 1) []))
-
-    (is (= (conj (subvec [0 1] 1 1) 1) [1]))
-    (is (= ((subvec [0 1] 1) 0) 1))
-
-    (is (= (nth (subvec [0 1 2 3 4] 2) 0) 2))
-    (is (= (nth (subvec [0 1 2 3 4] 2) 1000 :default) :default))
-
-    (is (= (subvec (first {0 1}) 1) [1]))
-    (is (= (subvec (first {0 1}) 0) [0 1]))
-    (is (= (subvec (first {0 1}) 2) []))
-    (is (= (subvec (first {0 1}) 1 1) []))))
+; NOTE : no sense in our context
+#_(deftest test-cljs-1839
+  (let [x #dart {:foo (fn [])}
+        foo (.-foo x)]
+    (is (instance? foo (new foo)))
+    (is (instance? foo (foo.)))
+    (is (instance? foo (new (.-foo x))))))
 
 (deftest test-cljs-1845
   (let [sv (subvec [0 1 2 3 4 5 7 8 9] 2 6)]
@@ -1346,6 +1316,26 @@
     (is (thrown? Error (assoc sv 5 0)))
     (is (thrown? Error (assoc sv -1 0)))))
 
+(deftest test-cljs-1829
+  (is (= (get "0123" -1 :not-found) :not-found))
+  (is (= (get #dart [0 1 2 3] -1 :not-found) :not-found))
+  (is (= (get "0123" nil :not-found) :not-found))
+  (is (= (get #dart [0 1 2 3] nil :not-found) :not-found)))
+
+(deftest test-cljs-2028
+  (let [x (sequence (filter pos?) [1 2 -1])]
+    (is (not (realized? x)))
+    (is (= x [1 2]))
+    (is (realized? x))))
+
+(deftest test-1518
+  (testing "Test evaluate expression once - keyword tests"
+    (let [m {:a :b
+             :b :c}
+          x (atom :a)]
+      (case (swap! x m) :a 0 :default)
+      (is (= :b @x)))))
+
 (deftest test-cljs-2021
   (let [check-if-throws #(try (%) (catch Object e :fail))]
     (is (= :fail (check-if-throws #(subvec nil 0 0))))
@@ -1353,12 +1343,30 @@
     (is (= :fail (check-if-throws #(subvec '(:foo) 0 1))))
     (is (= :fail (check-if-throws #(subvec #{:foo} 0 1))))))
 
-(deftest test-cljs-1685
-  (testing "nil start or end param throws error"
-    (is (= :fail (try (subvec nil nil)
-                      (catch Error e :fail))))
-    (is (= :fail (try (subvec nil 1 nil)
-                      (catch Error e :fail))))))
+;; TODO
+#_(deftest test-cljs-2075
+  (testing "PersistentTreeMap kv-reduce should honor reduced"
+    (let [sm (sorted-map 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7)]
+      (is (= [1 2 3 4] (reduce-kv (fn [m k v] (if (= 5 k) (reduced m) (conj m k))) [] sm))))))
+
+#_#_(defrecord CLJS2079 [a b])
+
+(deftest test-cljs-2079
+  (testing "Records and maps should not be equal"
+    (let [am (array-map :a 1 :b 2)
+          hm (hash-map :a 1 :b 2)
+          sm (sorted-map :a 1 :b 2)
+          r (->CLJS2079 1 2)]
+      (is (= am hm sm))
+
+      (is (not= r am))
+      (is (not= am r))
+
+      (is (not= r hm))
+      (is (not= hm r))
+
+      (is (not= r sm))
+      (is (not= sm r)))))
 
 (deftype MapWithNoIKVReduce [backing-map]
   cljd.core/IMap
@@ -1372,11 +1380,34 @@
     (is (true?  (-equiv-map (MapWithNoIKVReduce. {:a 1 :b 2 :c 3}) {:a 1 :b 2 :c 3})))
     (is (false? (-equiv-map (MapWithNoIKVReduce. {:a 1 :b 2 :c 3}) {:a 1 :b 2 :c 4})))))
 
+(deftest test-cljs-1685
+  (testing "nil start or end param throws error"
+    (is (= :fail (try (subvec nil nil)
+                      (catch Error e :fail))))
+    (is (= :fail (try (subvec nil 1 nil)
+                      (catch Error e :fail))))))
+
+; NOTE : no sense in our context
+#_#_(def ^:const cljs-2104 "cljs-2104")
+
+(deftest test-const-emission
+  (testing "const exprs emission context, not definition context (CLJS-2104)"
+    (is (= cljs-2104 "cljs-2104"))
+    (is (= (if-some [x true]
+             cljs-2104
+             "unreachable")
+          "cljs-2104"))))
+
 (deftest test-cljs-2113
   (is (thrown? ArgumentError (nth (range 2) -2)))
   (is (thrown? ArgumentError (nth (range 2 1 0) -2)))
   (is (= ::not-found (nth (range 2) -2 ::not-found)))
   (is (= ::not-found (nth (range 2 1 0) -2 ::not-found))))
+
+;; TODO
+#_(deftest test-cljs-2109
+  (testing "Syntax quoted dotted symbol without namespace should resolve to itself"
+    (is (= 'clojure.core `clojure.core))))
 
 (deftype Partial [f args]
   cljd.core/IFn
@@ -1387,6 +1418,32 @@
   (testing "Invalid variadic IFn implementation should work"
     (let [p (Partial. + [1])]
       (p 2))))
+
+;; TODO
+#_#_#_#_(deftest test-resolve
+  (testing "Resolve should return valid var"
+    (is (= 1 ((resolve 'first) [1 2 3])))))
+
+(deftest test-cljs-1998
+  (testing "printing an Object with a null constructor"
+    (is (= "#object[Object]" (pr-str (.create js/Object nil))))))
+
+(deftest test-cljs-2184
+  (testing "ns-publics"
+    (is (contains? (ns-publics 'clojure.string) 'join))
+    (is (not (contains? (ns-publics 'clojure.string) 'replace-all)))
+    (is (= (find (ns-publics 'clojure.string) 'join)
+          ['join #'clojure.string/join])))
+  (testing "ns-imports"
+    (is (contains? (ns-imports 'clojure.string) 'StringBuffer))
+    (is (= (find (ns-imports 'clojure.string) 'StringBuffer)
+          ['StringBuffer goog.string.StringBuffer]))))
+
+(deftest test-cljs-2190
+  (binding [*print-namespace-maps* true]
+    (testing "printing a javascript map with a slash on keyword"
+      (is (= "#dart {\"foo/bar\" 33}" (pr-str (doto (js-obj) (gobject/set "foo/bar" 33)))))
+      (is (= "#dart {\"foo/bar\" #:var{:quux 66}}" (pr-str (doto (js-obj) (gobject/set "foo/bar" {:var/quux 66}))))))))
 
 (def true-2267 true)
 (def false-2267 false)
@@ -1404,6 +1461,18 @@
   (is (= :then (if non-empty-string-2267 :then :else)))
   (is (= :then (if zero-2267 :then :else)))
   (is (= :then (if non-zero-2267 :then :else))))
+
+; NOTE : no sense in our context
+#_#_(deftest test-cljs-2278
+  (is (= "#dart {:alpha 1, \"beta gamma\" 2, \"delta/epsilon\" 3}" (pr-str #dart {"alpha" 1 "beta gamma" 2 "delta/epsilon" 3})))
+  (is (= "#dart {\":abc\" 1}" (pr-str #dart {":abc" 1})))
+  (is (= "#dart {\"0abc\" 1}" (pr-str #dart {"0abc" 1})))
+  (is (= "#dart {:abc-def 1}" (pr-str #dart {"abc-def" 1})))
+  (is (= "#dart {:x*+?!-' 1}" (pr-str #dart {"x*+?!-'" 1}))))
+
+(deftest test-cljs-2282
+  (is (= "#dart {:_abc 1}" (pr-str #dart {"_abc" 1})))
+  (is (= "#dart {:*compiler* 1}" (pr-str #dart {"*compiler*" 1}))))
 
 (deftest test-cljs-2403
   (are [f k coll expected] (= expected (apply f k coll))
@@ -1434,6 +1503,25 @@
   (let [a (atom :usual-value)]
     (is (= :usual-value (reset! a (first (reset-vals! a :almost-never-seen-value)))))))
 
+;; TODO
+#_(deftest test-cljs-2374
+  (is (= "##NaN" (pr-str js/NaN)))
+  (is (= "##Inf" (pr-str js/Infinity)))
+    (is (= "##-Inf" (pr-str js/-Infinity))))
+
+(deftest test-cljs-2449
+  (is (= 1 (let [catch identity] (catch 1))))
+  (is (= 1 (let [finally identity] (finally 1)))))
+
+;; TODO
+#_#_#_(deftype Foo2407 [x y])
+(defrecord Bar2407 [x y])
+
+(deftest test-cljs-2407
+  (is (= "Positional factory function for cljs.core-test/Foo2407." (:doc (meta #'->Foo2407))))
+  (is (= "Positional factory function for cljs.core-test/Bar2407." (:doc (meta #'->Bar2407))))
+  (is (= "Factory function for cljs.core-test/Bar2407, taking a map of keywords to field values." (:doc (meta #'map->Bar2407)))))
+
 (deftest test-cljs-2283
   (is (nil? (doseq []))))
 
@@ -1453,6 +1541,21 @@
 (deftest test-cljs-2001
   (is (map-entry? (cljd.core/PersistentMapEntry. :key :val -1)))
   (is (not (map-entry? [:key :val]))))
+
+(deftype Foo2455 []
+  cljd.core/ISequential)
+
+(deftest test-cljs-2455
+  (is (= :x (nth (eduction [:x]) 0)))
+  (is (thrown? ArgumentError (nth (eduction [:x]) 1)))
+  (is (= :x (nth (eduction [:x]) 0 :not-found)))
+  (is (= :not-found (nth (eduction [:x]) 1 :not-found)))
+  ;; Calling nth on a type satisfying ISequential should attempt coercion
+  (is (thrown? Exception (nth (->Foo2455) 0))))
+
+; NOTE : no sense in our context
+#_(deftest test-cljs-2457
+  (is (thrown-with-msg? js/Error #".* is not ISeqable" (seq #dart {:a 1 :b 2}))))
 
 (deftest test-cljs-2537
   (is (true?  (contains? (to-array [7 13 41]) -0.5)))
@@ -1494,6 +1597,36 @@
     (is (== \b (nth "ab" 1.5 :not-found)))
     (is (thrown? RangeError (nth "ab" 2)))
     (is (= :not-found (nth "ab" 2 :not-found)))))
+
+;; TODO
+#_(deftest test-cljs-2549
+  (let [tap (fn [_])]
+    (add-tap tap)
+    (is (set? @tapset))
+    (is (contains? @tapset tap))
+    (remove-tap tap)))
+
+;; TODO
+#_(deftest test-cljs-2552
+    (is (boolean? (tap> nil))))
+
+;; TODO
+#_(deftest test-cljs-2693
+  (is (chunked-seq? (range 5)))
+  (is (satisfies? cljd.core/IChunk (chunk-first (range 5))))
+  (is (nil? (chunk-next (range 32))))
+  (is (satisfies? cljd.core/IChunk (chunk-first (chunk-next (range 33)))))
+  (is (satisfies? cljd.core/IChunk (chunk-first (chunk-rest (range 33)))))
+  (is (not (chunked-seq? (range 2 -2 0))))
+  (is (chunked-seq? (range)))
+  (is (= 5 (count (chunk-first (range 5)))))
+  (is (= 32 (count (chunk-first (range)))))
+  (is (= 17 (nth (chunk-first (range 100)) 17)))
+  (is (= ::not-found (nth (chunk-first (range 100)) 35 ::not-found)))
+  (is (= 0 (first (range 5))))
+  (is (= 1 (second (range 5))))
+  (is (= (range 1 5) (rest (range 5))))
+  (is (= (range 1 5) (next (range 5)))))
 
 (defn fn-2741* ([x]) ([x y]))
 (def fn-2741 fn-2741*)
@@ -1692,3 +1825,41 @@
             (for [e s :when (and (sequential? e) (every? (fn [x] x) e))]
               e))
           [[]]))))
+
+
+
+(deftest test-compare-fn
+  (testing "Testing compare default function"
+    (is (compare 'a 'b))
+    (is (compare 'a 'a))
+    (is (compare :a :a))
+    (is (compare :a :b))
+    (is (compare :a/b :a/b))
+    (is (compare [:a :b] [:a :b]))
+    (is (compare [:a :b] [:a :c]))
+    (is (compare [:a :b] (first {:a :b})))
+    (is (compare (first {:a :b}) (first {:a :b}))))
+
+  (testing "Testing sort function"
+    (is (= '(-100 1 2 3 100) (sort [3 2 1 100 -100])))
+    (is (= '(:a :b :c) (sort [:a :c :b])))
+    (is (= '([:a :b] [:c :d]) (sort {:c :d :a :b})))
+    (is (= '(3 2 1) (sort (fn [x y] (if (< x y) 1 -1)) [1 2 3])))))
+
+(deftest subvec-tests
+  (testing "Testing subvec works as expected"
+    (is (= (subvec [0 1] 1) [1]))
+    (is (= (subvec [0 1] 0 1) [0]))
+    (is (= (subvec [0 1] 2) []))
+    (is (= (subvec [0 1] 1 1) []))
+
+    (is (= (conj (subvec [0 1] 1 1) 1) [1]))
+    (is (= ((subvec [0 1] 1) 0) 1))
+
+    (is (= (nth (subvec [0 1 2 3 4] 2) 0) 2))
+    (is (= (nth (subvec [0 1 2 3 4] 2) 1000 :default) :default))
+
+    (is (= (subvec (first {0 1}) 1) [1]))
+    (is (= (subvec (first {0 1}) 0) [0 1]))
+    (is (= (subvec (first {0 1}) 2) []))
+    (is (= (subvec (first {0 1}) 1 1) []))))
