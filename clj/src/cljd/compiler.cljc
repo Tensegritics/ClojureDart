@@ -1037,13 +1037,14 @@
       (list 'dart/let [binding]
         (list 'dart/case tmp
           (for [[h groups] by-hashes]
-            [[h]
-             (reduce (fn [else [v e]]
-                       ; TODO constant extraction
-                       (list 'dart/if (emit (list 'cljd.core/= (list 'quote v) expr) env)
-                         (emit e env)
-                         else))
-               '(dart/continue _default) (rseq groups))])
+            (list
+              [h]
+              (reduce (fn [else [v e]]
+                        ; TODO constant extraction
+                        (list 'dart/if (emit (list 'cljd.core/= (list 'quote v) expr) env)
+                          (emit e env)
+                          else))
+                '(dart/continue _default) (rseq groups))))
           (emit default env))))))
 
 (defn- variadic? [[params]] (some #{'&} params))

@@ -1969,12 +1969,14 @@
       (deref a)
       ;=> 1"
   [^Atom reference key ^Function fn]
-  (-add-watch reference key fn))
+  (-add-watch reference key fn)
+  reference)
 
 (defn ^Atom remove-watch
   "Removes a watch (set by add-watch) from a reference"
   [^Atom reference key]
-  (-remove-watch reference key))
+  (-remove-watch reference key)
+  reference)
 
 (defn swap!
   "Atomically swaps the value of atom to be:
@@ -2128,6 +2130,7 @@
 (defn ^:macro-support ^:private >0? [n] (< 0 n))
 (defn ^:macro-support ^:private >1? [n] (< 1 n))
 
+;; TODO: handle type inference for inlines function
 (defn ^num max
   {:inline (fn
              ([x] x)

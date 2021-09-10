@@ -914,6 +914,73 @@
     (is (= "0atrue:key/wordsymb/olfalse[1 2 3 4]1234.56789"
           (str 0 "a" true nil :key/word 'symb/ol false [1 2 3 4] 1234.5678 0x09)))))
 
+(defn case-recur [value]
+  (case value
+    :a (recur :b)
+    :b 0))
+
+(deftest test-812
+  (testing "Testing CLJS-812, case with recur"
+    (is (= (case-recur :a) 0))))
+
+;; TODO
+#_(deftest test-816
+  (testing "Testing CLJS-816, rename-keys"
+    (is (= (set/rename-keys {:a "one" :b "two"} {:a :z}) {:z "one" :b "two"}))
+    (is (= (set/rename-keys {:a "one" :b "two"} {:a :z :c :y}) {:z "one" :b "two"}))
+    (is (= (set/rename-keys {:a "one" :b "two" :c "three"} {:a :b :b :a})
+          {:a "two" :b "one" :c "three"}))) )
+
+; NOTE : no sense in our context
+#_(deftest test-881
+  (testing "Testing CLJS-881, duplicate keys in array maps"
+    (is (= [:foo] (keys (apply array-map [:foo 1 :foo 2]))))))
+
+(deftest test-810
+  (let [not-strings [true false nil 1 (fn [])]]
+    (testing "Testing CLJS-810, exception on bad input to regex fns"
+      (is (every? #(= :failed (try (re-find #"." %)
+                                   (catch TypeError _ :failed))) not-strings))
+      (is (every? #(= :failed (try (re-matches #"." %)
+                                   (catch TypeError _ :failed))) not-strings))
+      (is (every? #(= :failed (try (re-find #"nomatch" %)
+                                   (catch TypeError _ :failed))) not-strings))
+      (is (every? #(= :failed (try (re-matches #"nomatch" %)
+                                   (catch TypeError _ :failed))) not-strings))
+      (is (every? #(= :failed (try (re-seq #"." %)
+                                   (catch TypeError _ :failed))) not-strings))
+      (is (every? #(= :failed (try (re-seq #"nomatch" %)
+                                   (catch TypeError _ :failed))) not-strings)))))
+
+(deftest test-853
+  (testing "Testing CLJS-853, function metadata"
+    (is (= {:foo true} (meta (with-meta (fn []) {:foo true}))))))
+
+(deftest test-807
+  (testing "Testing CLJS-807, big int, float, big dec literals"
+    (is (= -1 -1N))
+    (is (= 9.007199254740996E15 9007199254740995N))
+    (is (= 1.5 1.5M))
+    (is (= 4.9E-324 5E-324M))))
+
+;; TODO
+#_(deftest test-921-var-meta-name
+  (testing "testing CLJS-921, :name var metadata should be unqualified"
+    (is (= (-> (var first) meta :name) 'first))))
+
+(deftype MyWatchable []
+  :extends (cljd.core/Atom. nil nil nil {})
+  cljd.core/IWatchable
+  (-notify-watches [this oldval newval])
+  (-add-watch [this key f])
+  (-remove-watch [this key]))
+
+(deftest test-920-watch-ops-return-ref
+  (testing "tesing CLJS-920, add-watch/return-watch should return reference"
+    (let [w (MyWatchable.)]
+      (is (identical? (add-watch w :foo (fn [])) w))
+      (is (identical? (remove-watch w :foo) w)))))
+
 (deftest test-compare-fn
   (testing "Testing compare default function"
     (is (compare 'a 'b))
