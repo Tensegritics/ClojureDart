@@ -1738,6 +1738,53 @@
   (is (= {:a true} (meta (sort (with-meta (range 10) {:a true})))))
   (is (= {:a true} (meta (sort-by :a (with-meta (seq [{:a 5} {:a 2} {:a 3}]) {:a true}))))))
 
+; NOTE : no sense in our context
+#_(deftest test-cljs-2991
+  (let [o (js-obj)]
+    (is (object? o))
+    (is (empty? (js-keys o))))
+  (let [o (js-obj "a" 17)]
+    (is (object? o))
+    (is (== 1 (count (js-keys o))))
+    (is (= "a" (aget (js-keys o) 0)))
+    (is (== 17 (gobject/get o "a"))))
+  (let [o (js-obj "a" 17 "b" 27)]
+    (is (object? o))
+    (is (== 2 (count (js-keys o))))
+    (is (== 17 (gobject/get o "a")))
+    (is (== 27 (gobject/get o "b")))))
+
+#_#_#_#_#_(defprotocol ExtMetaProtocol
+  :extend-via-metadata true
+  (ext-meta-protocol [x]))
+
+(defprotocol NonMetaProtocol
+  (non-meta-protocol [x]))
+
+(defrecord SomeMetaImpl [x]
+  ExtMetaProtocol
+  (ext-meta-protocol [_] x)
+  NonMetaProtocol
+  (non-meta-protocol [_] x))
+
+(deftest test-cljs-2960
+  ;; protocol impl via metadata
+  (is (= 1 (ext-meta-protocol (with-meta {} {`ext-meta-protocol (fn [_] 1)}))))
+  ;; metadata before actual impl
+  (is (= 1 (ext-meta-protocol (with-meta (SomeMetaImpl. 2) {`ext-meta-protocol (fn [_] 1)}))))
+  ;; protocol not marked as :extend-via-metadata so fallthrough to no impl
+  (is (thrown? js/Error (non-meta-protocol (with-meta {} {`non-meta-protocol (fn [_] 1)}))))
+  ;; normal impl call just in case
+  (is (= 2 (non-meta-protocol (with-meta (SomeMetaImpl. 2) {`non-meta-protocol (fn [_] 1)})))))
+
+(extend-type PersistentArrayMap
+  ExtMetaProtocol
+  (ext-meta-protocol [m] 2))
+
+#_(deftest test-cljs-3313
+  (testing "metadata protocol fn takes precedence over direct implementation"
+    (= 1 (ext-meta-protocol (with-meta (array-map) {`ext-meta-protocol (fn [_] 1)})))))
+
 (deftest test-cljs-3054
   (testing "`into` behaves the same as Clojure"
     (is (nil? (into nil #{})))
@@ -1770,6 +1817,11 @@
 (deftest test-cljs-3119
   (is (= "a" (get "abc" -0.5)))
   (is (nil? (get "abc" -1))))
+
+;; TODO
+#_(deftest test-cljs-3130
+  (is (thrown-with-msg? js/Error #"Cannot compare f151d12d-7bd5-4409-9352-5900ee07baf7 to a"
+        (compare (uuid "f151d12d-7bd5-4409-9352-5900ee07baf7") "a"))))
 
 (deftest test-cljs-3202
   (is (= :/ (keyword "/")))
