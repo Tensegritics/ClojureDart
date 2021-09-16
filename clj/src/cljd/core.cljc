@@ -3293,7 +3293,7 @@
       (< cnty cntx) 1
       :else (loop [idx 0]
               (if (< idx cntx)
-                (let [c (.-compareTo (-nth x idx) (-nth y idx))]
+                (let [c (.compareTo (-nth x idx) (-nth y idx))]
                   (if (zero? c)
                     (recur (inc idx))
                     c))
@@ -3770,7 +3770,7 @@
     (cond
       (< 5 level)
       (or (tv-pop-tail! tv (- level 5) (aget (.-arr node) subidx))
-        (when (< 0 subidx) (aset (.-arr node) nil) true))
+        (when (< 0 subidx) (aset (.-arr node) subidx nil) true))
       (< 0 subidx) (do (aset (.-arr node) subidx nil) true))))
 
 (deftype TransientVector [^:mutable ^int cnt
