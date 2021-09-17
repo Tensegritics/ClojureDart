@@ -1847,6 +1847,14 @@
 :kind :positional
 :type {:type "int"
 :lib "dart:core"}}]}
+">>>" {:kind :method
+:operator true
+:return-type {:type "int"
+:lib "dart:core"}
+:parameters [{:name shiftAmount
+:kind :positional
+:type {:type "int"
+:lib "dart:core"}}]}
 "modPow" {:kind :method
 :return-type {:type "int"
 :lib "dart:core"}
@@ -2801,7 +2809,7 @@
 :lib "dart:core"}} {:name end
 :kind :positional
 :type {:type "int"
-:lib "dart:core"}} {:name replacement
+:lib "dart:core"}} {:name replacements
 :kind :positional
 :type {:type "Iterable"
 :lib "dart:core"
@@ -6753,6 +6761,7 @@
 :is-param true}]}}]}
 "remove" {:kind :method
 :return-type {:type "V"
+:nullable true
 :is-param true}
 :parameters [{:name key
 :kind :positional
@@ -21809,6 +21818,40 @@
 :type {:type "Function"
 :return-type {:type "V"
 :is-param true}}}]}
+"update" {:kind :method
+:return-type {:type "V"
+:is-param true}
+:parameters [{:name key
+:kind :positional
+:type {:type "K"
+:is-param true}} {:name update
+:kind :positional
+:type {:type "Function"
+:return-type {:type "V"
+:is-param true}
+:parameters [{:name value
+:kind :positional
+:type {:type "V"
+:is-param true}}]}} {:name ifAbsent
+:kind :named
+:type {:type "Function"
+:return-type {:type "V"
+:is-param true}}
+:optional true}]}
+"updateAll" {:kind :method
+:return-type {:type "void"}
+:parameters [{:name update
+:kind :positional
+:type {:type "Function"
+:return-type {:type "V"
+:is-param true}
+:parameters [{:name key
+:kind :positional
+:type {:type "K"
+:is-param true}} {:name value
+:kind :positional
+:type {:type "V"
+:is-param true}}]}}]}
 "addAll" {:kind :method
 :return-type {:type "void"}
 :parameters [{:name other
@@ -22046,7 +22089,16 @@
 :type {:type "Iterable"
 :lib "dart:core"
 :type-parameters [{:type "V"
-:is-param true}]}}}
+:is-param true}]}}
+"entries" {:kind :field
+:getter true
+:type {:type "Iterable"
+:lib "dart:core"
+:type-parameters [{:type "MapEntry"
+:lib "dart:core"
+:type-parameters [{:type "K"
+:is-param true} {:type "V"
+:is-param true}]}]}}}
 "SplayTreeSet"
 {:kind :class
 :type-parameters [{:name "E"}]
