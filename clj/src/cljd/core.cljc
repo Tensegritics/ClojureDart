@@ -2054,8 +2054,8 @@
 (deftype Delay [^:mutable val ^:mutable ^Function? f]
   IDeref
   (-deref [this]
-    (when f
-      (set! val (f))
+    (when-some [^Function f' f]
+      (set! val (f'))
       (set! f nil))
     val)
   IPending

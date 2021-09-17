@@ -198,8 +198,7 @@
         specialize (fn [[tag info] nullable]
                      [tag (case tag
                             :def (update info :dart/type specialize-type nullable sym type-vars)
-                            :dart (specialize-type info nullable sym type-vars))])
-        sym! (non-nullable sym)]
+                            :dart (specialize-type info nullable sym type-vars))])]
     (or (some-> (resolve sym) (specialize false))
       (some-> (non-nullable sym) resolve (specialize true)))))
 
@@ -310,6 +309,7 @@
       (:dart m) (assoc :dart/fn-type :native)
       (:clj m) (assoc :dart/fn-type :ifn)
       type (assoc :dart/type type :dart/truth (dart-type-truthiness type))
+      (= (:qname dc-Function) (:qname type)) (assoc :dart/fn-type :native)
       (= tag 'some) (assoc :dart/truth :some))))
 
 (def reserved-words ; and built-in identifiers for good measure
