@@ -2252,7 +2252,7 @@
   (.remainder num div))
 
 (defn ^num quot
-  {:inline (fn [num div] `(. num "~/" div))
+  {:inline (fn [num div] `(. ~num "~/" ~div))
    :inline-arities #{2}}
   [^num num ^num div]
   (. num "~/" div))
