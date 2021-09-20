@@ -2486,7 +2486,7 @@
             (when-some [[type-param & more-type-params] (seq type-params)]
               (print "<")
               (write-type type-param)
-              (doseq [type-param type-params] (print ", ") (write-type type-param))
+              (doseq [type-param more-type-params] (print ", ") (write-type type-param))
               (print ">"))
             (write-args args)))
         (print (:post locus))
