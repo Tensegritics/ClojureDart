@@ -2251,6 +2251,12 @@
   [num div]
   (.remainder num div))
 
+(defn ^num quot
+  {:inline (fn [^num num ^num div] `(. num "~/" div))
+   :inline-arities #{2}}
+  [^num num ^num div]
+  (. num "~/" div))
+
 (defn ^num +
   {:inline (nary-inline 0 identity "+")
    :inline-arities any?}
