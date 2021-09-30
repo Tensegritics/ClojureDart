@@ -2398,20 +2398,22 @@
         (when-not (= expected actual)
           (throw (ex-info (str "Mismatched argument count to recur, expected: "
                                expected " args, got: " actual) {})))
-        (let [vars (set loop-bindings)
+        (let [loop-rebindings (remove (fn [[v e]] (= v e)) (map vector loop-bindings exprs))
+              vars (into #{} (map first) loop-rebindings)
               vars-usages (->>
-                           (map #(into #{} (keep (disj vars %1))
-                                       (tree-seq coll? seq %2))
-                                loop-bindings exprs)
+                            (map (fn [[v e]]
+                                   (into #{} (keep (disj vars v))
+                                     (tree-seq coll? seq e)))
+                              loop-rebindings)
                            reverse
                            (reductions into)
                            reverse)
               tmps (into {}
-                     (map (fn [v vs]
+                     (map (fn [[v e] vs]
                             (assert (re-matches #".*\$\d+" (name v)))
                             (when (vs v) [v (with-meta (symbol (str v "tmp")) (meta v))]))
-                       loop-bindings vars-usages))]
-          (doseq [[v e] (map vector loop-bindings exprs)]
+                       loop-rebindings vars-usages))]
+          (doseq [[v e] loop-rebindings]
             (write e (if-some [tmp (tmps v)] (var-locus tmp) (assignment-locus v))))
           (doseq [[v tmp] tmps]
             (write tmp (assignment-locus v)))
