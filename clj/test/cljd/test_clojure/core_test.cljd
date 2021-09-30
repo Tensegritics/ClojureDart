@@ -1674,7 +1674,7 @@
 (deftest test-cljs-2832
   (is (true? ((comp not empty?) "foo")))
   (is (false? ((comp not empty?) "")))
-  (is (thrown? Exception ((not empty?) "foo")))
+  #_#_(is (thrown? Exception ((not empty?) "foo")))
   (is (thrown? Exception ((not empty?) ""))))
 
 (deftest test-cljs-2864

@@ -4712,7 +4712,7 @@
     (throw (UnsupportedError. "clear not supported on PersistentHashSet")))
   (length [this] (-count hm))
   (iterator [this] (.-iterator ^#/(Iterable E) (.-keys hm)))
-  (toSet [this] (dart:core/Set.of ^#/(Iterable E) (.-keys hm)))
+  (toSet [this] (Set/of ^#/(Iterable E) (.-keys hm)))
   ;; TODO: not sure of this one
   (^#/(PersistentHashSet R) #/(cast R) [coll]
    (PersistentHashSet. meta hm __hash))
