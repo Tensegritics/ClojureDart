@@ -14,6 +14,21 @@ final Set<String> libsToDo = {};
 
 final Set<String> libsDone = {};
 
+final Map<String, String> packages = {};
+
+String libPathToPackageName(String path) {
+  if (packages[path] != null) return packages[path] as String;
+  for (final pname in packages.keys) {
+    if (path.startsWith(pname)) {
+      String pack = packages[pname] as String;
+      String result = path.replaceRange(0, pname.length, pack);
+      packages[path] = result;
+      return result;
+    }
+  }
+  return path;
+}
+
 bool isPublic(Element e) => e.isPublic;
 
 R fnil<R,E>(R f(E e), E? x, R fallback) => x != null ? f(x) : fallback;
@@ -53,7 +68,7 @@ String emitType(DartType t) {
   return M({':type': "\"${name}\"",
       ':nullable': t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question,
       ':is-param': isParam,
-      ':lib': (isParam || lib == null ? null : "\"$lib\""),
+      ':lib': (isParam || lib == null ? null : "\"${libPathToPackageName(lib)}\""),
       ':type-parameters': t is ParameterizedType ? t.typeArguments.map(emitType) : null
   });
 }
@@ -204,6 +219,7 @@ void main() async {
         if (jc.containsKey("packageUri")) {
           rootUri = ctx.join(rootUri, jc["packageUri"]);
         }
+        packages[rootUri] = 'package:' + jc["name"] + '/';
         includedDependenciesPaths.add(ctx.normalize(ctx.fromUri(rootUri)));
       };
       // TODO see whether we remove current project or not
@@ -215,43 +231,60 @@ void main() async {
     includedPaths: includedDependenciesPaths as List<String>,
     resourceProvider: resourceProvider
   );
-  print("{");
+  print("{"); // open 2
   for (final context in collectionDeps.contexts) {
     final currentSession = context.currentSession;
-    var f = context.contextRoot.analyzedFiles().toList();
-    for (final pathFile in f) {
-      var p = ctx.toUri(pathFile).toString();
-      final libraryElementResult = await currentSession.getLibraryByUri(p);
-      if (libraryElementResult is LibraryElementResult) {
-        final libraryElement = (libraryElementResult as LibraryElementResult).element;
-        if (libsDone.contains(libraryElement.identifier)) continue;
-        libsDone.add(libraryElement.identifier);
-        print("\"${libraryElement.identifier}\" {"); // open 1
-        for (final top in libraryElement.topLevelElements) {
-          if (top.isPublic) top.accept(TopLevelVisitor());
-        }
-        // for (final l in libraryElement.exportedLibraries) {
-        //   // TODO : only take show (or hide)
-        //   for (final top in l.topLevelElements) {
-        //     if (top.isPublic) top.accept(TopLevelVisitor());
-        //   }
-        // }
-        for (final ex in libraryElement.exports) {
-          for (final comb in ex.combinators) {
-            if (comb is ShowElementCombinator) {
-              print(comb.shownNames);
+    var files = context.contextRoot.analyzedFiles().map((n) => ctx.toUri(n).toString()).toList();
+    await analyzePaths(currentSession, files);
+  }
+  do {
+    var libs = libsToDo.difference(libsDone);
+    libsToDo..clear()..addAll(libs);
+    await analyzePaths(collection.contexts.first.currentSession, libsToDo.toList());
+  }
+  while(libsToDo.isNotEmpty);
+  print("}"); // close 2
+}
 
+void addLibIdentifierIfNotContains(Set<String> to, String libPath) {
+  if (to.contains(libPath)) return;
+  to.add(libPath);
+}
+
+Future<void> analyzePaths (session, List<String> paths) async {
+  for (final p in paths) {
+    final libraryElementResult = await session.getLibraryByUri(p);
+    if (libraryElementResult is LibraryElementResult) {
+      final libraryElement = (libraryElementResult as LibraryElementResult).element;
+      if (libsDone.contains(libraryElement.identifier)) continue;
+      libsDone.add(libraryElement.identifier);
+      print("\"${libPathToPackageName(libraryElement.identifier)}\" {"); // open 1
+      for (final top in libraryElement.topLevelElements) {
+        if (top.isPublic) top.accept(TopLevelVisitor());
+      }
+      var exs = libraryElement.exports;
+      if (exs.isNotEmpty) {
+        print(":exports [");
+        for (final ex in libraryElement.exports) {
+          if (ex.exportedLibrary != null) {
+            var n = ex.exportedLibrary?.identifier as String;
+            addLibIdentifierIfNotContains(libsToDo, n);
+            for (final comb in ex.combinators) {
+              if (comb is ShowElementCombinator) {
+                print(M({":lib": "\"${libPathToPackageName(n)}\"", ':shown': comb.shownNames.map((name) => "\"${name}\"").toList()}));
+              }
+              if (comb is HideElementCombinator) {
+                print(M({":lib": "\"${libPathToPackageName(n)}\"", ':hidden': comb.hiddenNames.map((name) => "\"${name}\"").toList()}));
+              }
+            }
+            if (ex.combinators.isEmpty) {
+              print(M({":lib": "\"${n}\""}));
             }
           }
-          if (ex.exportedLibrary != null) {
-            print(ex.exportedLibrary?.identifier);
-            print(libraryElement.identifier);
-          }
         }
-        throw "aa";
-        print("}"); // close 1
+        print("]");
       }
+      print("}"); // close 1
     }
   }
-  print("}"); // close 2
 }
