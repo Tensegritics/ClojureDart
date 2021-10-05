@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:convert';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
 import 'package:analyzer/error/error.dart';
@@ -62,11 +63,16 @@ M({':name': "\"${tp.displayName}\"",
     ':bound': fnil(emitType,tp.bound,null)});
 
 String emitParameter(ParameterElement p) {
-    final name = p.displayName;
-    return M({":name": name.isEmpty ? null : name, ":kind": p.isNamed ? ':named' : ':positional', ':type': emitType(p.type), ':optional': p.isOptional});
+  final name = p.displayName;
+  return M({":name": name.isEmpty ? null : name, ":kind": p.isNamed ? ':named' : ':positional', ':type': emitType(p.type), ':optional': p.isOptional});
 }
 
 class TopLevelVisitor extends ThrowingElementVisitor {
+  void visitImportElement(ImportElement e) {
+    print(e.displayName);
+    throw "coucou";
+  }
+
   void visitClassElement(ClassElement e) {
     print("\"${e.displayName}\"");
     Map<String,dynamic> classData =
@@ -118,35 +124,133 @@ class TopLevelVisitor extends ThrowingElementVisitor {
   void visitExtensionElement(ExtensionElement e) {
     print("; extension ${e.displayName}");
   }
-  void visitFunctionTypeAliasElement(FunctionTypeAliasElement e) {
-    print("; function type alias ${e.displayName}");
-  }
 }
 
+// void main() async {
+//   final entity = File("dummy.dart");
+//   final resourceProvider = OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
+//   //resourceProvider.setOverlay(entity.absolute.path, content: "", modificationStamp:0);
+//   var path = "/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib";
+//   var p = resourceProvider.pathContext;
+//   print(p.isAbsolute(path));
+//   print(p.normalize(path));
+//   final collection = AnalysisContextCollection(
+//     // includedPaths: ["/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/foundation.dart",
+//     //   "/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/widgets.dart"
+//     // ],
+//     includedPaths: ["/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib"],
+//     resourceProvider: resourceProvider);
+//   //libsToDo.add("dart:core");
+//   String basePath = "file:///Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/";
+//   //libsToDo.add(basePath + "/foundation.dart");
+//   //libsToDo.add(basePath + "widgets.dart");
+//   libsToDo.add("package:flutter/widgets.dart");
+//   // libsToDo.add("file://" + entity.absolute.path);
+//   //print(resourceProvider.getFile(basePath + "widgets.dart").toUri());
+//   print("{"); // open 2
+//   //var f = "file:///Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/src/material/tooltip_theme.dart";
+//   //print(p.fromUri(f)); /// Winner
+//   var f = "/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/src/material/tooltip_theme.dart";
+//   // print(p.toUri(f)); /// WINNER
+
+//   // for (final context in collection.contexts) {
+//   //   final currentSession = context.currentSession;
+//   //   print(context.contextRoot.analyzedFiles().toList());
+//   //   // retourne sous cette forme /Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/src/widgets/sliver_fill.dart
+//   //   while(libsToDo.isNotEmpty) {
+//   //     //final libraryElementResult = await currentSession.getLibraryByUri2(lib);
+
+//   //     final lib = libsToDo.first;
+//   //     libsToDo.remove(lib);
+//   //     if (libsDone.contains(lib)) continue;
+//   //     libsDone.add(lib);
+
+//   //     final libraryElementResult = await currentSession.getLibraryByUri("file:///Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/src/material/tooltip_theme.dart");
+//   //     final libraryElement = (libraryElementResult as LibraryElementResult).element;
+
+//   //     print(libraryElement.identifier);
+//   //     print("\"${lib}\" {"); // open 1
+//   //     // for (final top in libraryElement.topLevelElements) {
+//   //     //   if (top.isPublic) top.accept(TopLevelVisitor());
+//   //     // }
+//   //     // for (final l in libraryElement.exportedLibraries) {
+//   //     //   for (final top in l.topLevelElements) {
+//   //     //     if (top.isPublic) top.accept(TopLevelVisitor());
+//   //     //   }
+//   //     // }
+//   //     print("}"); // close 1
+//   //   }
+//   // }
+//   print("}"); // close 2
+// }
+
 void main() async {
-  final entity = File("dummy.dart");
   final resourceProvider = OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
-  resourceProvider.setOverlay(entity.absolute.path, content: "", modificationStamp:0);
+  var ctx = resourceProvider.pathContext;
+  Uri projectDirectoryUri = Directory.current.uri;
   final collection = AnalysisContextCollection(
-    includedPaths: [entity.absolute.path],
-    resourceProvider: resourceProvider);
-  libsToDo.add("dart:core");
-  // libsToDo.add("file://" + entity.absolute.path);
-  print("{"); // open 2
+    includedPaths: [ctx.normalize(projectDirectoryUri.path)],
+    resourceProvider: resourceProvider
+  );
+  final includedDependenciesPaths = <String>[];
   for (final context in collection.contexts) {
     final currentSession = context.currentSession;
-    while(libsToDo.isNotEmpty) {
-      final lib = libsToDo.first;
-      libsToDo.remove(lib);
-      if (libsDone.contains(lib)) continue;
-      libsDone.add(lib);
-      print("\"${lib}\" {"); // open 1
-      final libraryElementResult = await currentSession.getLibraryByUri2(lib);
-      final libraryElement = (libraryElementResult as LibraryElementResult).element;
-      for (final top in libraryElement.topLevelElements) {
-        if (top.isPublic) top.accept(TopLevelVisitor());
+    var packageFileJsonString = context.contextRoot.packagesFile?.readAsStringSync();
+    // TODO throw when package file does not exist
+    if (packageFileJsonString != null) {
+      var jsonContent = json.decode(packageFileJsonString);
+      for (final jc in jsonContent["packages"]) {
+        var rootUri = jc["rootUri"];
+        if (jc.containsKey("packageUri")) {
+          rootUri = ctx.join(rootUri, jc["packageUri"]);
+        }
+        includedDependenciesPaths.add(ctx.normalize(ctx.fromUri(rootUri)));
+      };
+      // TODO see whether we remove current project or not
+      includedDependenciesPaths.removeLast();
+    }
+  }
+  // NOTE : deps analysis
+  final collectionDeps = AnalysisContextCollection(
+    includedPaths: includedDependenciesPaths as List<String>,
+    resourceProvider: resourceProvider
+  );
+  print("{");
+  for (final context in collectionDeps.contexts) {
+    final currentSession = context.currentSession;
+    var f = context.contextRoot.analyzedFiles().toList();
+    for (final pathFile in f) {
+      var p = ctx.toUri(pathFile).toString();
+      final libraryElementResult = await currentSession.getLibraryByUri(p);
+      if (libraryElementResult is LibraryElementResult) {
+        final libraryElement = (libraryElementResult as LibraryElementResult).element;
+        if (libsDone.contains(libraryElement.identifier)) continue;
+        libsDone.add(libraryElement.identifier);
+        print("\"${libraryElement.identifier}\" {"); // open 1
+        for (final top in libraryElement.topLevelElements) {
+          if (top.isPublic) top.accept(TopLevelVisitor());
+        }
+        // for (final l in libraryElement.exportedLibraries) {
+        //   // TODO : only take show (or hide)
+        //   for (final top in l.topLevelElements) {
+        //     if (top.isPublic) top.accept(TopLevelVisitor());
+        //   }
+        // }
+        for (final ex in libraryElement.exports) {
+          for (final comb in ex.combinators) {
+            if (comb is ShowElementCombinator) {
+              print(comb.shownNames);
+
+            }
+          }
+          if (ex.exportedLibrary != null) {
+            print(ex.exportedLibrary?.identifier);
+            print(libraryElement.identifier);
+          }
+        }
+        throw "aa";
+        print("}"); // close 1
       }
-      print("}"); // close 1
     }
   }
   print("}"); // close 2

@@ -1,12 +1,12 @@
 name: clojuredart
 
 environment:
-  sdk: '>=2.12.0 <3.0.0'
+  sdk: '>=2.14.0 <3.0.0'
 
 dependencies:
   watcher:
   vm_service:
   collection: ^1.14.13
-  analyzer: ^1.7.1
-dev_dependencies: 
+  analyzer: ^2.4.0
+dev_dependencies:
   test: ^1.17.11
