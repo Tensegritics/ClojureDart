@@ -65,7 +65,7 @@
           (doto (.start pb-analyzer)
             .waitFor
             .destroy))
-        (throw (ex-message "Can't find ClojureDart on your classpath"))))))
+        (throw (ex-info "Can't find ClojureDart on your classpath" {:classpath (cp/classpath)}))))))
 
 (def cli-options
   [["-v" nil "Verbosity level; may be specified multiple times to increase value"
