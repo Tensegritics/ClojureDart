@@ -120,8 +120,8 @@
     (prn action)
     (if exit-message
       (exit (if ok? 0 1) exit-message)
-      (println "== Warming up `.clojuredart/libs-info.edn` (helps us emit better code)")
-      (warm-up-libs-info!)
-      (case action
-        "watch" (compile-cli :namespaces namespaces :watch true)
-        "compile" (compile-cli :namespaces namespaces :watch false)))))
+      (do (println "== Warming up `.clojuredart/libs-info.edn` (helps us emit better code)")
+          (warm-up-libs-info!)
+          (case action
+            "watch" (compile-cli :namespaces namespaces :watch true)
+            "compile" (compile-cli :namespaces namespaces :watch false))))))
