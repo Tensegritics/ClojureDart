@@ -1,3 +1,4 @@
 {:paths ["clj/src" "clj/test" "resources"]
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
+        org.clojure/java.classpath {:mvn/version "1.0.0"}
         org.clojure/tools.cli {:mvn/version "1.0.206"}}}

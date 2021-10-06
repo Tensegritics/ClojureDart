@@ -11,7 +11,8 @@
             [clojure.tools.cli :as ctc]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.java.classpath :as cp]))
 
 (defn compile-core []
   (compiler/compile-namespace 'cljd.core))
@@ -33,7 +34,6 @@
           (when (pos? (.read (System/in)))
             (recur))))))
 
-(def ^:dynamic *build-file-path*)
 
 ;; TODO : handle errors of processes
 (defn warm-up-libs-info! []
@@ -42,12 +42,13 @@
         dart-tools-json (java.io.File. (str user-dir "/.dart_tool/package_config.json"))]
     (when-not (.exists dart-tools-json)
       (throw (ex-message "Run flutter pub get at your project root before using ClojureDart.")))
-    (when (or (not (.exists lib-info-edn))
+    (when (or (.mkdir (.getParentFile lib-info-edn))
+            (.createNewFile lib-info-edn)
             (< (.lastModified lib-info-edn) (.lastModified dart-tools-json)))
       ;; TODO : big hack... change this some day
-      (binding [*build-file-path* (:file (meta (var *build-file-path*)))]
-        (let [compiler-root-file (-> (java.io.File. *build-file-path*) .getParentFile .getParentFile .getParentFile .getParentFile)
-              pb (doto (ProcessBuilder. ["flutter" "pub" "get"])
+      (if-some [compiler-root-file (some #(when (re-matches #"(.*)ClojureDartPreview\/resources$" (.getAbsolutePath %))
+                                            (-> % .getParentFile)) (cp/classpath))]
+        (let [pb (doto (ProcessBuilder. ["flutter" "pub" "get"])
                    (.directory compiler-root-file))
               pb-analyzer (doto (ProcessBuilder. ["flutter" "pub" "run" (str (.getAbsolutePath compiler-root-file) "/bin/analyzer.dart") user-dir])
                             (.directory compiler-root-file)
@@ -63,7 +64,8 @@
           (prn "== Analyze your project dependencies... ===")
           (doto (.start pb-analyzer)
             .waitFor
-            .destroy))))))
+            .destroy))
+        (throw (ex-message "Can't find ClojureDart on your classpath"))))))
 
 (def cli-options
   [["-v" nil "Verbosity level; may be specified multiple times to increase value"
