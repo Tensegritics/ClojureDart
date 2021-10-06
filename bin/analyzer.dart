@@ -14,6 +14,11 @@ final Set<String> libsToDo = {};
 
 final Set<String> libsDone = {};
 
+String addLibIdentifierIfNotContains(Set<String> to, String libPath) {
+  if (!to.contains(libPath)) to.add(libPath);
+  return libPath;
+}
+
 final Map<String, String> packages = {};
 
 String libPathToPackageName(String path) {
@@ -65,6 +70,7 @@ String emitType(DartType t) {
   final i = name.indexOf("<");
   if (i >= 0) name = name.substring(0, i);
   final isParam = t is TypeParameterType;
+  //if (!isParam || lib != null) addLibIdentifierIfNotContains(libsToDo, lib as String);
   return M({':type': "\"${name}\"",
       ':nullable': t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question,
       ':is-param': isParam,
@@ -141,63 +147,44 @@ class TopLevelVisitor extends ThrowingElementVisitor {
   }
 }
 
-// void main() async {
-//   final entity = File("dummy.dart");
-//   final resourceProvider = OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
-//   //resourceProvider.setOverlay(entity.absolute.path, content: "", modificationStamp:0);
-//   var path = "/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib";
-//   var p = resourceProvider.pathContext;
-//   print(p.isAbsolute(path));
-//   print(p.normalize(path));
-//   final collection = AnalysisContextCollection(
-//     // includedPaths: ["/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/foundation.dart",
-//     //   "/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/widgets.dart"
-//     // ],
-//     includedPaths: ["/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib"],
-//     resourceProvider: resourceProvider);
-//   //libsToDo.add("dart:core");
-//   String basePath = "file:///Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/";
-//   //libsToDo.add(basePath + "/foundation.dart");
-//   //libsToDo.add(basePath + "widgets.dart");
-//   libsToDo.add("package:flutter/widgets.dart");
-//   // libsToDo.add("file://" + entity.absolute.path);
-//   //print(resourceProvider.getFile(basePath + "widgets.dart").toUri());
-//   print("{"); // open 2
-//   //var f = "file:///Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/src/material/tooltip_theme.dart";
-//   //print(p.fromUri(f)); /// Winner
-//   var f = "/Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/src/material/tooltip_theme.dart";
-//   // print(p.toUri(f)); /// WINNER
+Future<void> analyzePaths (session, List<String> paths) async {
+  for (final p in paths) {
+    final libraryElementResult = await session.getLibraryByUri(p);
+    if (libsDone.contains(p)) continue;
+    libsDone.add(p);
+    if (libraryElementResult is LibraryElementResult) {
+      final libraryElement = (libraryElementResult as LibraryElementResult).element;
+      print("\"${addLibIdentifierIfNotContains(libsDone, libPathToPackageName(libraryElement.identifier))}\" {"); // open 1
+      for (final top in libraryElement.topLevelElements) {
+        if (top.isPublic) top.accept(TopLevelVisitor());
+      }
+      var exs = libraryElement.exports;
+      if (exs.isNotEmpty) {
+        print(":exports [");
+        for (final ex in libraryElement.exports) {
+          if (ex.exportedLibrary != null) {
+            var n = ex.exportedLibrary?.identifier as String;
+            addLibIdentifierIfNotContains(libsToDo, n);
+            for (final comb in ex.combinators) {
+              if (comb is ShowElementCombinator) {
+                print(M({":lib": "\"${libPathToPackageName(n)}\"", ':shown': comb.shownNames.map((name) => "\"${name}\"").toList()}));
+              }
+              if (comb is HideElementCombinator) {
+                print(M({":lib": "\"${libPathToPackageName(n)}\"", ':hidden': comb.hiddenNames.map((name) => "\"${name}\"").toList()}));
+              }
+            }
+            if (ex.combinators.isEmpty) {
+              print(M({":lib": "\"${n}\""}));
+            }
+          }
+        }
+        print("]");
+      }
+      print("}"); // close 1
+    }
+  }
+}
 
-//   // for (final context in collection.contexts) {
-//   //   final currentSession = context.currentSession;
-//   //   print(context.contextRoot.analyzedFiles().toList());
-//   //   // retourne sous cette forme /Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/src/widgets/sliver_fill.dart
-//   //   while(libsToDo.isNotEmpty) {
-//   //     //final libraryElementResult = await currentSession.getLibraryByUri2(lib);
-
-//   //     final lib = libsToDo.first;
-//   //     libsToDo.remove(lib);
-//   //     if (libsDone.contains(lib)) continue;
-//   //     libsDone.add(lib);
-
-//   //     final libraryElementResult = await currentSession.getLibraryByUri("file:///Users/baptistedupuch/Projects/flutter/flutter/packages/flutter/lib/src/material/tooltip_theme.dart");
-//   //     final libraryElement = (libraryElementResult as LibraryElementResult).element;
-
-//   //     print(libraryElement.identifier);
-//   //     print("\"${lib}\" {"); // open 1
-//   //     // for (final top in libraryElement.topLevelElements) {
-//   //     //   if (top.isPublic) top.accept(TopLevelVisitor());
-//   //     // }
-//   //     // for (final l in libraryElement.exportedLibraries) {
-//   //     //   for (final top in l.topLevelElements) {
-//   //     //     if (top.isPublic) top.accept(TopLevelVisitor());
-//   //     //   }
-//   //     // }
-//   //     print("}"); // close 1
-//   //   }
-//   // }
-//   print("}"); // close 2
-// }
 
 void main() async {
   final resourceProvider = OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
@@ -235,6 +222,7 @@ void main() async {
   for (final context in collectionDeps.contexts) {
     final currentSession = context.currentSession;
     var files = context.contextRoot.analyzedFiles().map((n) => ctx.toUri(n).toString()).toList();
+    files.removeWhere((p) => ctx.extension(p) != '.dart');
     await analyzePaths(currentSession, files);
   }
   do {
@@ -244,47 +232,4 @@ void main() async {
   }
   while(libsToDo.isNotEmpty);
   print("}"); // close 2
-}
-
-void addLibIdentifierIfNotContains(Set<String> to, String libPath) {
-  if (to.contains(libPath)) return;
-  to.add(libPath);
-}
-
-Future<void> analyzePaths (session, List<String> paths) async {
-  for (final p in paths) {
-    final libraryElementResult = await session.getLibraryByUri(p);
-    if (libraryElementResult is LibraryElementResult) {
-      final libraryElement = (libraryElementResult as LibraryElementResult).element;
-      if (libsDone.contains(libraryElement.identifier)) continue;
-      libsDone.add(libraryElement.identifier);
-      print("\"${libPathToPackageName(libraryElement.identifier)}\" {"); // open 1
-      for (final top in libraryElement.topLevelElements) {
-        if (top.isPublic) top.accept(TopLevelVisitor());
-      }
-      var exs = libraryElement.exports;
-      if (exs.isNotEmpty) {
-        print(":exports [");
-        for (final ex in libraryElement.exports) {
-          if (ex.exportedLibrary != null) {
-            var n = ex.exportedLibrary?.identifier as String;
-            addLibIdentifierIfNotContains(libsToDo, n);
-            for (final comb in ex.combinators) {
-              if (comb is ShowElementCombinator) {
-                print(M({":lib": "\"${libPathToPackageName(n)}\"", ':shown': comb.shownNames.map((name) => "\"${name}\"").toList()}));
-              }
-              if (comb is HideElementCombinator) {
-                print(M({":lib": "\"${libPathToPackageName(n)}\"", ':hidden': comb.hiddenNames.map((name) => "\"${name}\"").toList()}));
-              }
-            }
-            if (ex.combinators.isEmpty) {
-              print(M({":lib": "\"${n}\""}));
-            }
-          }
-        }
-        print("]");
-      }
-      print("}"); // close 1
-    }
-  }
 }
