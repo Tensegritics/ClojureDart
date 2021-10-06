@@ -186,10 +186,13 @@ Future<void> analyzePaths (session, List<String> paths) async {
 }
 
 
-void main() async {
+void main(args) async {
   final resourceProvider = OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
   var ctx = resourceProvider.pathContext;
-  Uri projectDirectoryUri = Directory.current.uri;
+  late Directory dir;
+  if (args.isEmpty) dir = Directory.current;
+  else dir = Directory(args.first);
+  Uri projectDirectoryUri = dir.uri;
   final collection = AnalysisContextCollection(
     includedPaths: [ctx.normalize(projectDirectoryUri.path)],
     resourceProvider: resourceProvider
@@ -225,6 +228,7 @@ void main() async {
     files.removeWhere((p) => ctx.extension(p) != '.dart');
     await analyzePaths(currentSession, files);
   }
+  /// Only necessary for dart:* libs
   do {
     var libs = libsToDo.difference(libsDone);
     libsToDo..clear()..addAll(libs);

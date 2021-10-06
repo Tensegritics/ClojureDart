@@ -45,7 +45,23 @@
               :type-parameters []})
 
 (def dart-libs-info
-  (-> "core-libs.edn" clojure.java.io/resource clojure.java.io/reader clojure.lang.LineNumberingPushbackReader. clojure.edn/read))
+  #_(-> "core-libs.edn" clojure.java.io/resource clojure.java.io/reader clojure.lang.LineNumberingPushbackReader. clojure.edn/read)
+  (let [dart-libs-info
+        (-> (str (System/getProperty "user.dir") "/.clojuredart/libs-info.edn")
+          java.io.File.
+          clojure.java.io/reader
+          clojure.lang.LineNumberingPushbackReader.
+          clojure.edn/read)
+        export (fn export [{exports :exports :as v}]
+                 (-> (into v (map (fn [{:keys [lib shown hidden]}]
+                                    (cond
+                                      shown
+                                      (select-keys (export (dart-libs-info lib)) shown)
+                                      hidden
+                                      (reduce dissoc (export (dart-libs-info lib)) hidden)
+                                      :else (export (dart-libs-info lib))))) exports)
+                   (dissoc :exports)))]
+    (into {} (map (fn [[k v]] [k (export v)])) dart-libs-info)))
 
 (def ^:dynamic *hosted* false)
 (def ^:dynamic *host-eval* false)

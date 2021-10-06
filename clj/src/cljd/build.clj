@@ -10,7 +10,8 @@
   (:require [cljd.compiler :as compiler]
             [clojure.tools.cli :as ctc]
             [clojure.string :as str]
-            [clojure.stacktrace :as st]))
+            [clojure.stacktrace :as st]
+            [clojure.java.io :as io]))
 
 (defn compile-core []
   (compiler/compile-namespace 'cljd.core))
@@ -30,6 +31,38 @@
           (println "Press ENTER to recompile files :")
           (when (pos? (.read (System/in)))
             (recur))))))
+
+(def ^:dynamic *build-file-path*)
+
+;; TODO : handle errors of processes
+(defn warm-up-libs-info! []
+  (let [user-dir (System/getProperty "user.dir")
+        lib-info-edn (java.io.File. (str user-dir "/.clojuredart/libs-info.edn"))
+        dart-tools-json (java.io.File. (str user-dir "/.dart_tool/package_config.json"))]
+    (when-not (.exists dart-tools-json)
+      (throw (ex-message "Run flutter pub get at your project root before using ClojureDart.")))
+    (when (or (not (.exists lib-info-edn))
+            (< (.lastModified lib-info-edn) (.lastModified dart-tools-json)))
+      ;; TODO : big hack... change this some day
+      (binding [*build-file-path* (:file (meta (var *build-file-path*)))]
+        (let [compiler-root-file (-> (java.io.File. *build-file-path*) .getParentFile .getParentFile .getParentFile .getParentFile)
+              pb (doto (ProcessBuilder. ["flutter" "pub" "get"])
+                   (.directory compiler-root-file))
+              pb-analyzer (doto (ProcessBuilder. ["flutter" "pub" "run" (str (.getAbsolutePath compiler-root-file) "/bin/analyzer.dart") user-dir])
+                            (.directory compiler-root-file)
+                            (.redirectOutput lib-info-edn))
+              _ (prn "== Download Clojuredart deps... ===")
+              process (.start pb)]
+          (with-open [r (io/reader (.getInputStream process))]
+            (loop []
+              (when (doto (.readLine r) prn)
+                (recur)))
+            (.waitFor process))
+          (.destroy process)
+          (prn "== Analyze your project dependencies... ===")
+          (doto (.start pb-analyzer)
+            .waitFor
+            .destroy))))))
 
 (def cli-options
   [["-v" nil "Verbosity level; may be specified multiple times to increase value"
@@ -87,6 +120,8 @@
     (prn action)
     (if exit-message
       (exit (if ok? 0 1) exit-message)
+      (println "== Warming up `.clojuredart/libs-info.edn` (helps us emit better code)")
+      (warm-up-libs-info!)
       (case action
         "watch" (compile-cli :namespaces namespaces :watch true)
         "compile" (compile-cli :namespaces namespaces :watch false)))))
