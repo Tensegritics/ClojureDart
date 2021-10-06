@@ -19,7 +19,8 @@
 (defn compile-cli
   [& {:keys [watch namespaces] :or {watch false}}]
   (binding [compiler/*lib-path* (str (System/getProperty "user.dir") "/lib/")
-            compiler/*hosted* true]
+            compiler/*hosted* true
+            compiler/dart-libs-info (compiler/load-libs-info)]
     (println "== Compiling core.cljd -> core.dart ===")
     (compile-core)
     (loop []
