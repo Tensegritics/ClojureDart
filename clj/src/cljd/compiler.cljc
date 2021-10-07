@@ -965,9 +965,9 @@
 (defn emit-dot [[_ obj member & args :as form] env]
   (if (seq? member)
     (recur (list* '. obj member) env)
-    (let [[_ prop name] (re-matches #"(-)?(.+)" (name member))
+    (let [[_ prop member-name] (re-matches #"(-)?(.+)" (name member))
           _ (when (and prop args) (throw (ex-info (str "Can't pass arguments to a property access" (pr-str form)) {:form form})))
-          name (if prop name (into [name] (map #(emit-type % env)) (:type-params (meta member))))
+          name (if prop member-name (into [member-name] (map #(emit-type % env)) (:type-params (meta member))))
           op (if prop 'dart/.- 'dart/.)
           [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
           type! (must-cast-this dart-obj nil)
@@ -976,19 +976,12 @@
                      (:type-params (meta obj)) (symbol (type-str  (emit-type obj env))) ; not great,  unreadable symbol, revisit later
                      ; non static
                      type! (list 'dart/as dart-obj type!)
-                     :else dart-obj)
-          ;; TODO SELFHOST with mirrors one can check membership
-          #_#_dart-obj (if (not= type nat-type)
-                     (list 'dart/as dart-obj type)
-                     (do
-                       ;; Can't do it properly in crosscompilation
-                       #_(when (or (nil? type) (= type "dc.dynamic")) ; TODO refine with mirrors and add *warn-on-dynamic*
-                         (binding [*out* *err*]
-                           ; TODO add file and line info (preserve meta through macroexpansion)
-                           (println "Dynamic invocation warning. Reference to" (if prop "field" "method")
-                             member "can't be resolved." obj)))
-                       dart-obj))]
-      #_(swap! -interops update-in [type name] (fnil conj #{}) (:line (meta form)))
+                     :else dart-obj)]
+      (if-some [member-info (some-> (dart-member-lookup type! member-name) actual-member)]
+        nil
+        (binding [*out* *err*]
+          (println "WARNING: Can't resolve member" member-name "on type" (:type type!) " of lib " (:lib type!) ". Line" (:line (meta form)))
+          (swap! -interops update-in [type member-name] (fnil conj #{}) (:line (meta form)))))
       (cond->> (list* op dart-obj name dart-args)
         (seq bindings) (list 'dart/let bindings)))))
 
