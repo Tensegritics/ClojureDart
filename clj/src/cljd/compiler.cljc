@@ -210,7 +210,7 @@
         {:qname sym :type typename :is-param true})
       (if-some [[dart-alias lib] (ensure-import-lib typens)]
         {:qname (symbol (str dart-alias "." typename))
-         :lib lib
+         :lib (-> (get-in dart-libs-info [lib typename :lib] lib))
          :type typename})
       nil)))
 
@@ -2742,9 +2742,11 @@
   (binding [*lib-path* "examples/hello-flutter/lib"]
     (compile-namespace 'hello-flutter.core))
 
+  (def li (load-libs-info))
   (do
     (time
-      (binding [*hosted* true]
+      (binding [*hosted* true
+                dart-libs-info li]
         (compile-namespace 'cljd.core)))
 
     (time
