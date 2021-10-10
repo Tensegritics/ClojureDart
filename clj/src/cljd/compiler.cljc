@@ -977,20 +977,24 @@
                      (not= nat-type type!) (list 'dart/as dart-obj type!)
                      :else dart-obj)
           member-info (some-> (dart-member-lookup type! member-name) actual-member)
-          prop' (case (:kind member-info)
+          prop (case (:kind member-info)
                  :field true
                  (nil :method) prop)
-          name (if prop' member-name (into [member-name] (map #(emit-type % env)) (:type-params (meta member))))
-          op (if prop' 'dart/.- 'dart/.)
+          name (if prop member-name (into [member-name] (map #(emit-type % env)) (:type-params (meta member))))
+          op (if prop 'dart/.- 'dart/.)
           expr-type (cond
-                      (not prop') (:return-type member-info)
-                      prop nil ; TODO type delegate
-                      :else (:type member-info))]
+                      (not prop) (:return-type member-info)
+                      (= :method (:kind member-info)) nil ; TODO type delegate
+                      :else (:type member-info))
+          expr (cond-> (list* op dart-obj name dart-args)
+                 expr-type (vary-meta assoc :dart/type expr-type :dart/nat-type expr-type
+                             :dart/truth (dart-type-truthiness expr-type)
+                             :dart/inferred true))]
       (when-not member-info
         (binding [*out* *err*]
           (println "WARNING: Can't resolve member" member-name "on type" (:type type!) " of lib " (:lib type!) ". Line" (:line (meta form)))
           (swap! -interops update-in [type member-name] (fnil conj #{}) (:line (meta form)))))
-      (cond->> (list* op dart-obj name dart-args)
+      (cond->> expr
         (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-set! [[_ target expr] env]
