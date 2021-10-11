@@ -196,6 +196,22 @@
             (swap! nses assoc-in [current-ns :imports lib] {})
             [dart-alias lib]))))))
 
+(defn- implements?
+  "Returns true if dart-x implements dart-clazz, nil otherwise."
+  [{typez :type libz :lib :as dart-clazz} {typex :type libx :lib :as dart-x}]
+  (let [{:keys [lib type :as dart-clazz]} (assoc dart-clazz :lib (get-in dart-libs-info [libz typez :lib])) ; exports
+        dart-x (assoc dart-x :lib (get-in dart-libs-info [libx typex :lib])) ;exports
+        super (fn super [{:keys [lib type] :as c}]
+                (let [t (get-in dart-libs-info [lib type])
+                      i (:interfaces t)
+                      m (:mixins t)
+                      s (:super t)]
+                  (concat
+                    (when s (cons s (super s)))
+                    (mapcat super m)
+                    (mapcat #(cons % (super %)) i))))]
+    (some #(and (= type (:type %)) (= lib (:lib %)) true) (cons dart-x (super dart-x)))))
+
 (defn- resolve-dart-type
   [sym type-vars]
   (let [{:keys [libs current-ns] :as nses} @nses
@@ -209,9 +225,10 @@
       (if (and (nil? typens) (contains? type-vars (symbol typename)))
         {:qname sym :type typename :is-param true})
       (if-some [[dart-alias lib] (ensure-import-lib typens)]
-        {:qname (symbol (str dart-alias "." typename))
-         :lib (-> (get-in dart-libs-info [lib typename :lib] lib))
-         :type typename})
+        ;; NOTE: in the resulting type map :dart-alias and :lib may
+        ;; refer to different libs in the case of an export
+        (assoc (get-in dart-libs-info [lib typename])
+          :qname (symbol (str dart-alias "." typename))))
       nil)))
 
 (defn non-nullable [tag]
