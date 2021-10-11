@@ -329,10 +329,7 @@
 (defn emit-type
   [tag {:keys [type-vars] :as env}]
   (cond
-    (= 'some tag) '{:qname dc.dynamic,
-                    :lib "dart:core",
-                    :type "dynamic",
-                    :type-parameters []}
+    (= 'some tag) dc-dynamic
     ('#{void dart:core/void} tag) '{:type "void", :qname void}
     :else
     (or (resolve-type tag type-vars nil) (when *hosted* (resolve-type (symbol (name tag)) type-vars nil))
