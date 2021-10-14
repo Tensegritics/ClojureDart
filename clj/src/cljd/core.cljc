@@ -790,7 +790,7 @@
   [x]
   (dart/is? x String))
 
-(defn number?
+(defn ^bool number?
   "Returns true if x is a Number"
   [x]
   (dart/is? x num))
@@ -1754,7 +1754,7 @@
     (when-not (nil? coll)
       (throw (Exception. (str "Find not supported on " (.-runtimeType coll)))))))
 
-(defn find
+(defn ^some find
   "Returns the map entry for key, or nil if key not present."
   [map key]
   (-find map key))
@@ -2652,14 +2652,14 @@
     (. young "[]=" o h))
   (^int? lookup [this o]
    (or (. young "[]" o)
-     (when-some [h (. old "[]" o)]
+     (when-some [^int h (. old "[]" o)]
        (.insert this o h)
        h))))
 
 (def ^HashCache -hash-string-cache (HashCache. (new #/(Map dynamic int)) (new #/(Map dynamic int))))
 
 (defn hash-string [s]
-  (or ^:some (.lookup -hash-string-cache s)
+  (or ^some (.lookup -hash-string-cache s)
     (let [h (hash-string* s)]
       (.insert -hash-string-cache s h)
       h)))
@@ -6538,10 +6538,51 @@
   (prn (keyword "a.b/c"))
   (prn (namespace (keyword "a.b/c")))
   (prn (name (keyword "a.b/c")))
-  (-> "a.b/c" keyword ((juxt namespace name)))
+  (prn "Sentinel")
+  (prn (-> "a.b/c" keyword ((juxt namespace name))))
 
   (prn (iterator-seq (iterator (comp (map vector) cat (take 5) (filter number?)) (range 10) "abc")))
-  (prn (sequence (comp (map vector) cat (take 5) (filter number?)) (range 10) "abc"))
+  (prn (reduce conj [] (eduction (take 5) (filter odd?) (range 10))))
+  (prn (sequence [1 2 3]))
+  (prn "LAAA")
+  (prn (into [] (comp (map vector) cat (take 3) (filter number?)) (range 10)))
+  (prn (sequence (comp (map inc) (take 2)) [1 2 3]))
+  (prn (sequence (comp (map vector) cat (take 3) (filter number?)) (range 30) "abc"))
   (prn (reduce conj [] (eduction (take 5) (filter odd?) (range 10))))
   (prn (reduce * (eduction (take 5) (filter odd?) (range 10))))
-  (prn (reduce + (eduction (take 5) (filter odd?) (range 10)))))
+  (prn (reduce + (eduction (take 5) (filter odd?) (range 10))))
+
+
+  (prn (shuffle [1 2 3 4 5]))
+  (prn (shuffle #dart [1 2 3 4 5]))
+
+
+  (prn (satisfies? IEditableCollection nil))
+  (prn (conj nil 1))
+  (prn (reduce conj nil [1 2 3]))
+  (prn (into nil [1 2 3 4]))
+
+  (prn (max 1 2 3 4 5 6))
+
+  (let [a (atom 0)
+        d (delay (swap! a inc))]
+    (prn (deref d))
+    (prn (= 1 (deref d))))
+
+  ;; tests
+  (prn (condp some [1 2 3 4]
+         #{0 6 7} :>> inc
+         #{4 5 9} :>> dec
+         #{1 2 3} :>> #(+ % 3)))
+
+  (prn (condp (comp seq re-seq) "foo=bar"
+         #"[+](\w+)"    :>> #(vector (-> % first (nth 1) keyword) true)
+         #"[-](\w+)"    :>> #(vector (-> % first (nth 1) keyword) false)
+         #"(\w+)=(\S+)" :>> #(let [x (first %)]
+                               [(keyword (nth x 1)) (nth x 2)])))
+
+  ;; exception
+  #_(condp some [1 2 3 4]
+    #{0 6 7} :>> inc
+    #{5 9}   :>> dec)
+  )
