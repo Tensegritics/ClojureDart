@@ -1670,7 +1670,7 @@
   [x]
   (and (keyword? x) (namespace x) true))
 
-(defn ident?
+(defn ^bool ident?
   "Return true if x is a symbol or keyword"
   [x] (or (keyword? x) (symbol? x)))
 
