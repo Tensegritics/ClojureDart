@@ -241,12 +241,16 @@
 (defn- ensure-import-lib [lib-or-alias]
   (when lib-or-alias
     (let [{:keys [libs current-ns] :as all-nses} @nses
-          {:keys [aliases]} (all-nses current-ns)]
+          {:keys [aliases imports]} (all-nses current-ns)]
       (if-some [lib (get aliases lib-or-alias)]
+        ; already imported
         (some-> lib libs :dart-alias (vector lib))
-        (when-some [[_ dart-alias] (re-matches #"\$lib:(.*)" lib-or-alias)]
+        ; not imported, retrieve globally defined alias and import
+        (when-some [dart-alias (or (second (re-matches #"\$lib:(.*)" lib-or-alias))
+                                 (:dart-alias (libs lib-or-alias)))]
           (when-some [lib (get (:aliases all-nses) dart-alias)]
-            (swap! nses assoc-in [current-ns :imports lib] {})
+            (when-not (get imports lib) ; sometimes the lib was imported but we didn't detect it earlier
+              (swap! nses assoc-in [current-ns :imports lib] {}))
             [dart-alias lib]))))))
 
 (defn- implements?
@@ -281,7 +285,7 @@
       (if-some [[dart-alias lib] (ensure-import-lib typens)]
         ;; NOTE: in the resulting type map :dart-alias and :lib may
         ;; refer to different libs in the case of an export
-        (or (get-in dart-libs-info [lib typename])
+        (or (some-> (get-in dart-libs-info [lib typename]) (doto (-> :lib ensure-import-lib)))
           {:qname (symbol (str dart-alias "." typename))
            :type typename}
           ;; TODO : handle dart:core/identical function in analyzer before uncommenting this
