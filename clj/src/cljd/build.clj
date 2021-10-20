@@ -63,9 +63,13 @@
             (.waitFor process))
           (.destroy process)
           (prn "== Analyze your project dependencies... ===")
-          (doto (.start pb-analyzer)
-            .waitFor
-            .destroy))
+          (let [process-analyze (.start pb-analyzer)]
+            (with-open [r (io/reader (.getErrorStream process-analyze))]
+              (loop []
+                (when (doto (.readLine r) prn)
+                  (recur)))
+              (.waitFor process-analyze))
+            (.destroy process-analyze)))
         (throw (ex-info "Can't find ClojureDart on your classpath" {:classpath (cp/classpath)}))))))
 
 (def cli-options
@@ -121,7 +125,6 @@
 
 (defn -main [& args]
   (let [{:keys [action options exit-message namespaces ok?]} (validate-args args)]
-    (prn action)
     (if exit-message
       (exit (if ok? 0 1) exit-message)
       (do (println "== Warming up `.clojuredart/libs-info.edn` (helps us emit better code)")
