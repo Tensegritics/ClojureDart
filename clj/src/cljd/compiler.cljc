@@ -100,7 +100,8 @@
                       (update-if :type-parameters #(into [] (map qualify-entity) %)))
             :constructor (-> entity
                            (update-if :parameters #(into [] (map qualify-entity) %))
-                           (update-if :type-parameters #(into [] (map qualify-entity) %)))
+                           (update-if :type-parameters #(into [] (map qualify-entity) %))
+                           (update :return-type qualify-entity))
             (:named :positional) (update entity :type qualify-entity)
             (cond-> (-> (assoc entity :qname (e->qname entity))
                       (update-if :type-parameters #(into [] (map qualify-entity) %)))
@@ -631,7 +632,12 @@
       (update :return-type actual-type type-env)
       (update :parameters actual-parameters type-env))
     :field
-    (update member-info :type actual-type type-env)))
+    (update member-info :type actual-type type-env)
+    :constructor
+    ;; TODO: what about type-parameters
+    (-> member-info
+      (update :return-type actual-type type-env)
+      (update :parameters actual-parameters type-env))))
 
 (defn unresolve-params
   "Takes a list of parameters from the analyzer and returns a pair
@@ -820,6 +826,9 @@
             [f-type f-v] (resolve-symbol f env)
             macro-fn (case f-type
                        :def (-> f-v :meta :macro-host-fn)
+                       :dart (case (:kind f-v)
+                               :class (fn [form _ & _] (with-meta (cons 'new form) (meta form)))
+                               nil)
                        nil)]
         (cond
           (env f) form
@@ -844,7 +853,11 @@
               (list* '. type member args)
               (meta form))
             form)))
-      form)
+      (if-let [[type member] (and (symbol? form) (resolve-static-member form))]
+        (with-meta
+          (list '. type member)
+          (meta form))
+        form))
     (propagate-hints form)))
 
 (defn macroexpand [env form]
@@ -1084,7 +1097,8 @@
 
           prop (case (:kind member-info)
                  :field true
-                 (nil :method) prop)
+                 (nil :method) prop
+                 :constructor prop)
           name (if prop member-name (into [member-name] (map #(emit-type % env)) (:type-params (meta member))))
           op (if prop 'dart/.- 'dart/.)
           expr-type (cond
@@ -1889,7 +1903,9 @@
           (with-meta (symbol (str (ensure-import-ns the-ns) "." dart-name))
             (meta dart-name))))
       :dart (try
-              (vary-meta (:qname v) assoc :dart/fn-type :native)
+              (with-meta (:qname v) {:dart/type v
+                                     :dart/fn-type :native
+                                     :dart/nat-type (or (some-> (meta x) :tag emit-type) v)})
               (catch Exception e
                 (throw (ex-info "oops" {:v v :x x} e))))
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))

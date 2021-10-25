@@ -117,6 +117,7 @@ class TopLevelVisitor extends ThrowingElementVisitor {
     for(final c in e.constructors.where(isPublic)) {
       classData["\"${c.displayName}\""]=
       M({':kind': ':constructor',
+          ':return-type': emitType(c.returnType),
           ':parameters': c.parameters.map(emitParameter),
           ':type-parameters': c.typeParameters.map(emitTypeParameter)
       });
