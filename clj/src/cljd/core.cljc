@@ -1944,7 +1944,7 @@
 
 (defn- set-and-validate-atom-state! [^Atom a new-state]
   (when-some [validator (.-validator a)]
-    (validate-atom-state validator new-state))
+    (validate-atom-state ^Function validator new-state))
   (let [old-state (.-state a)]
     (set! (.-state a) new-state)
     (-notify-watches a old-state new-state)
@@ -6269,7 +6269,7 @@
              :unicode (.-isUnicode re)
              :dotAll (.-isDotAll re))]
     (when-some [m (.matchAsPrefix re s)]
-      (re-groups m))))
+      (re-groups ^Match m))))
 
 (defn re-seq
   "Returns a lazy sequence of successive matches of pattern in string,

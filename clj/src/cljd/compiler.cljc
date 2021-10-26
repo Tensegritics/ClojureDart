@@ -1068,14 +1068,17 @@
     (recur (list* '. obj member) env)
     (let [[_ prop member-name] (re-matches #"(-)?(.+)" (name member))
           _ (when (and prop args) (throw (ex-info (str "Can't pass arguments to a property access" (pr-str form)) {:form form})))
-          [bindings [dart-obj & dart-args]] (emit-args (cons obj args) env)
+          [dart-obj-bindings dart-obj]  (lift-arg nil (emit obj env) "obj" env)
           {:dart/keys [type nat-type]} (infer-type dart-obj)
           type! (cond-> type (:nullable type) (assoc :nullable false))
+          here-type (or (some-> obj meta :tag (emit-type env)) type!)
+          [bindings dart-args] (emit-args args env)
+          bindings (concat dart-obj-bindings bindings)
           dart-obj (cond
                      ; static only
                      (:type-params (meta obj)) (symbol (type-str  (emit-type obj env))) ; not great,  unreadable symbol, revisit later
-                     ; non static
-                     (not= nat-type type!) (list 'dart/as dart-obj type!)
+                     ; tagged obj by user
+                     (not= here-type nat-type) (list 'dart/as dart-obj here-type)
                      :else dart-obj)
           member-info (some-> (dart-member-lookup type! member-name) actual-member)
           member-info (case (:qname type)
@@ -1097,8 +1100,7 @@
 
           prop (case (:kind member-info)
                  :field true
-                 (nil :method) prop
-                 :constructor prop)
+                 (nil :method :constructor) prop)
           name (if prop member-name (into [member-name] (map #(emit-type % env)) (:type-params (meta member))))
           op (if prop 'dart/.- 'dart/.)
           expr-type (cond
@@ -1427,7 +1429,8 @@
   "Like dart-local but with no natural type as dart fns params must be dynamic."
   ([env] (dart-fn-param "" env))
   ([hint env]
-   (vary-meta (dart-local hint env) dissoc :dart/nat-type)))
+   #_(vary-meta (dart-local hint env) dissoc :dart/nat-type)
+   (dart-local hint env)))
 
 (defn- emit-dart-fn [async fn-name [params & body] env]
   (let [ret-type (some-> (or (:tag (meta fn-name)) (:tag (meta params))) (emit-type env))
