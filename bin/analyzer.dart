@@ -80,7 +80,8 @@ String emitType(DartType t) {
 }
 
 String emitTypeParameter(TypeParameterElement tp) =>
-M({':name': "\"${tp.displayName}\"",
+M({':type': "\"${tp.displayName}\"",
+    ':is-param': true,
     ':bound': fnil(emitType,tp.bound,null)});
 
 String emitParameter(ParameterElement p) {
@@ -186,7 +187,6 @@ Future<void> analyzePaths (session, List<String> paths) async {
   }
 }
 
-
 void main(args) async {
   final resourceProvider = OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
   var ctx = resourceProvider.pathContext;
@@ -211,10 +211,14 @@ void main(args) async {
           rootUri = ctx.join(rootUri, jc["packageUri"]);
         }
         packages[rootUri] = 'package:' + jc["name"] + '/';
-        includedDependenciesPaths.add(ctx.normalize(ctx.fromUri(rootUri)));
+        String normalizedPath = ctx.normalize(ctx.fromUri(rootUri));
+        if (!ctx.isRelative(normalizedPath)) {
+          includedDependenciesPaths.add(normalizedPath);
+        } else {
+          stderr.write("WARNING: could not analyze '" + jc["name"] + "' package \n");
+          // TODO: better message on consequences
+        }
       };
-      // TODO see whether we remove current project or not
-      includedDependenciesPaths.removeLast();
     }
   }
   // NOTE : deps analysis

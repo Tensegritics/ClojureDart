@@ -62,7 +62,7 @@ Design notes for clojure.string:
 
 (defn- ^String re-unquote-replacement
   [^String replacement]
-  (.replaceAllMapped replacement #"\\(.)" (fn nnn ^String [^Match m] (.group m 1))))
+  (.replaceAllMapped replacement #"\\(.)" (fn ^String [^Match m] (.group m 1))))
 
 (defn- replacer
   [replacement]
