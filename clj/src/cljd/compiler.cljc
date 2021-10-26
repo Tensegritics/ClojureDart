@@ -604,6 +604,9 @@
                            (repeat (resolve-type 'dart:core/dynamic #{})))
                          :else
                          (throw (Exception. (str "Expecting " nparams " type arguments to " class ", got " nargs "."))))]
+          (case (:kind member-info)
+            :field (some-> member-info :type :lib ensure-import-lib)
+            (:method :constructor) (some-> member-info :return-type :lib ensure-import-lib))
           [#(let [v (type-env' %)]
               (or (when (:is-param v)
                     (cond-> (type-env (:type v))
