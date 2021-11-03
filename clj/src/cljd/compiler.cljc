@@ -1061,7 +1061,11 @@
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class env)
         [bindings dart-args] (emit-args args env)]
-    (cond->> (list* 'dart/new dart-type dart-args)
+    (cond->> (with-meta (list* 'dart/new dart-type dart-args)
+               {:dart/type dart-type
+                :dart/nat-type dart-type
+                :dart/inferred true
+                :dart/truth (dart-type-truthiness dart-type)})
       (seq bindings) (list 'dart/let bindings))))
 
 (def -interops (atom {}))
@@ -2416,7 +2420,7 @@
        (case (first x)
          dart/let (infer-type (last x))
          dart/fn {:dart/fn-type :native :dart/type dc-Function :dart/nat-type dc-Function :dart/truth :truthy}
-         dart/new {:dart/type (second x)
+         #_#_dart/new {:dart/type (second x)
                    :dart/nat-type (second x)
                    :dart/truth (dart-type-truthiness (second x))}
          #_#_dart/.-
