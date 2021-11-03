@@ -2054,7 +2054,11 @@
   #_(when (or (not (symbol? type)) (env type))
     (throw (ex-info (str "The second argument to dart/is? must be a literal type. Got: " (pr-str type)) {:type type})))
   (with-lifted [x (emit x env)] env
-    (list 'dart/is x (emit-type type env))))
+    (with-meta (list 'dart/is x (emit-type type env))
+      {:dart/type     dc-bool
+       :dart/nat-type dc-bool
+       :dart/inferred true
+       :dart/truth    :boolean})))
 
 (defn emit-dart-assert [[_ test msg] env]
   (list 'dart/assert (ensure-dart-expr (emit test env) env)
@@ -2080,13 +2084,13 @@
           (nil? x) nil
           (and (seq? x) (seq x)) ; non-empty seqs only
           (let [emit (case (first x)
-                       . emit-dot
+                       . emit-dot ;; local inference done
                        set! emit-set!
-                       dart/is? emit-dart-is
+                       dart/is? emit-dart-is ;; local inference done
                        dart/await emit-dart-await
                        dart/assert emit-dart-assert
                        throw emit-throw
-                       new emit-new
+                       new emit-new ;; local inference done
                        ns emit-ns
                        try emit-try
                        case* emit-case*
@@ -2443,7 +2447,7 @@
                   :dart/nat-type type
                   :dart/truth (dart-type-truthiness type)})
                nil)))
-         dart/is {:dart/type dc-bool :dart/nat-type dc-bool :dart/truth :boolean}
+         #_#_dart/is {:dart/type dc-bool :dart/nat-type dc-bool :dart/truth :boolean}
          dart/as (let [[_ _ type] x]
                    {:dart/type type
                     :dart/nat-type type
