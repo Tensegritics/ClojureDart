@@ -1187,7 +1187,11 @@
     (list 'dart/loop dart-bindings (emit (list* 'let* [] body) env))))
 
 (defn emit-recur [[_ & exprs] env]
-  (cons 'dart/recur (map #(emit % env) exprs)))
+  (with-meta (cons 'dart/recur (map #(emit % env) exprs))
+    {:dart/type     dc-Never
+     :dart/nat-type dc-Never
+     :dart/truth    nil
+     :dart/inferred true}))
 
 (defn emit-if [[_ test then else] env]
   (cond
@@ -2048,7 +2052,11 @@
 
 (defn emit-throw [[_ expr] env]
   ;; always emit throw as a statement (in case it gets promoted to rethrow)
-  (list 'dart/let [[nil (list 'dart/throw (emit expr env))]] nil))
+  (with-meta (list 'dart/let [[nil (list 'dart/throw (emit expr env))]] nil)
+    {:dart/type     dc-Never
+     :dart/nat-type dc-Never
+     :dart/truth    nil
+     :dart/inferred true}))
 
 (defn emit-dart-is [[_ x type] env]
   #_(when (or (not (symbol? type)) (env type))
@@ -2415,13 +2423,47 @@
        ;; TODO use mirrors
        (= 'dc.identical x) {:dart/fn-type :native :dart/type dc-Function :dart/nat-type dc-Function
                             :dart/ret-type dc-bool :dart/ret-truth :boolean}
-       #_#_(nil? x) {:dart/truth :falsy}
+       (= 'dc.print x) {:dart/fn-type :native :dart/type dc-Function :dart/nat-type dc-Function
+                        :dart/ret-type dc-void :dart/ret-truth :falsy}
+       (nil? x) {:dart/type dc-Null :dart/nat-type dc-Null :dart/truth :falsy}
        (boolean? x) {:dart/type dc-bool :dart/nat-type dc-bool :dart/truth :boolean}
        (string? x) {:dart/type dc-String :dart/nat-type dc-String :dart/truth :truthy}
        (double? x) {:dart/type dc-double :dart/nat-type dc-double :dart/truth :truthy}
        (integer? x) {:dart/type dc-int :dart/nat-type dc-int :dart/truth :truthy}
        (seq? x)
        (case (first x)
+         dart/loop (infer-type (last x))
+         dart/if
+         (let [[_ _ dart-then dart-else] x
+               then-i (infer-type dart-then)
+               else-i (infer-type dart-else)]
+           (case (get-in then-i [:dart/type :qname])
+             (void dc.Null)
+             (case (get-in else-i [:dart/type :qname])
+               (void dc.Null dc.Never) {:dart/type     dc-Null
+                                        :dart/nat-type dc-Null
+                                        :dart/truth    :falsy}
+               dc.dynamic else-i
+               (when (:dart/type else-i)
+                 (-> else-i
+                   (assoc-in [:dart/type :nullable] true)
+                   (assoc-in [:dart/nat-type :nullable] true)
+                   (assoc :dart/truth nil))))
+             dc.Never else-i
+             dc.dynamic then-i
+             (if (= (:dart/type then-i) (:dart/type else-i))
+               then-i
+               (case (get-in else-i [:dart/type :qname])
+                 (void dc.Null)
+                 (when (:dart/type then-i)
+                   (some-> then-i
+                     (assoc-in [:dart/type :nullable] true)
+                     (assoc-in [:dart/nat-type :nullable] true)
+                     (assoc :dart/truth nil)))
+                 dc.Never then-i
+                 {:dart/type     dc-dynamic
+                  :dart/nat-type dc-dynamic
+                  :dart/truth    nil}))))
          dart/let (infer-type (last x))
          dart/fn {:dart/fn-type :native :dart/type dc-Function :dart/nat-type dc-Function :dart/truth :truthy}
          #_#_dart/new {:dart/type (second x)
@@ -2435,7 +2477,7 @@
                {:dart/keys [fn-type ret-type ret-truth]} (infer-type a)
                [methname type-params] (if (sequential? meth) [(name (first meth)) (second meth)] [meth nil])]
            (if (= :ifn fn-type)
-             {:dart/type ret-type :dart/truth ret-truth}
+             (when ret-type {:dart/type ret-type :dart/truth ret-truth})
              (case methname
                ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "^^" "||")
                {:dart/type dc-bool :dart/nat-type dc-bool :dart/truth :boolean}
