@@ -1466,7 +1466,7 @@
         dart-body (cond->> dart-body
                     recur-params
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
-        #_#_dart-body (if ret-type
+        dart-body (if ret-type
                     (with-lifted [dart-expr dart-body] env
                       (list 'dart/as dart-expr ret-type))
                     dart-body)

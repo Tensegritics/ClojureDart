@@ -62,6 +62,7 @@ Design notes for clojure.string:
 
 (defn- ^String re-unquote-replacement
   [^String replacement]
+  ;; TODO : replace this when inference can analyze what fn signature should be
   (.replaceAllMapped replacement #"\\(.)" (fn ^String [^Match m] (.group m 1))))
 
 (defn- replacer
