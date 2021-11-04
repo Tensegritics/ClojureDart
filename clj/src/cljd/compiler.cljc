@@ -23,6 +23,10 @@
                  :lib "dart:core",
                  :type "Object",
                  :type-parameters []})
+(def dc-Future '{:type "Future",
+                 :lib "dart:async",
+                 :type-parameters [{:type "T", :is-param true, :qname T}],
+                 :qname d_async.Future})
 (def dc-Null '{:qname dc.Null,
                :lib "dart:core",
                :type "Null",
@@ -983,7 +987,7 @@
                               (list 'dart/as dart-f t)
                               dart-f) dart-args))
         ifn-call (when-not (= :dart fn-type)
-                   (let [dart-f (if fn-type
+                   (let [dart-f (if (and fn-type (not (get-in (infer-type dart-f) [:dart/type :nullable])))
                                   dart-f
                                   ; cast when unknown
                                   (list 'dart/as dart-f (emit-type 'cljd.core/IFn$iface {})))]
@@ -1462,15 +1466,24 @@
         dart-body (cond->> dart-body
                     recur-params
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
-        dart-body (if ret-type
+        #_#_dart-body (if ret-type
                     (with-lifted [dart-expr dart-body] env
                       (list 'dart/as dart-expr ret-type))
                     dart-body)
+        ret-type (cond-> (or ret-type (:dart/type (infer-type dart-body)))
+                   async (->> vector (assoc dc-Future :type-parameters)))
+        ;; TODO async
         dart-fn
         (-> (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)
-          (vary-meta assoc :dart/ret-type ret-type))]
+          (vary-meta assoc
+            :dart/ret-type ret-type
+            :dart/ret-truth (dart-type-truthiness ret-type)
+            :dart/fn-type :native
+            :dart/type dc-Function
+            :dart/nat-type dc-Function
+            :dart/truth :truthy))]
     (if fn-name
-      (let [dart-fn-name (env fn-name)]
+      (let [dart-fn-name (with-meta (env fn-name) (meta dart-fn))]
         (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name))
       dart-fn)))
 
@@ -2074,7 +2087,13 @@
 
 (defn emit-dart-await [[_ x] env]
   (with-lifted [x (emit x env)] env
-    (list 'dart/await x)))
+    (with-meta (list 'dart/await x)
+      (let [ret-type (some-> (infer-type x) :dart/type :type-parameters first)]
+        (when ret-type
+          {:dart/type     ret-type
+           :dart/nat-type ret-type
+           :dart/inferred true
+           :dart/truth    (dart-type-truthiness ret-type)})))))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -2416,7 +2435,39 @@
    "/" widen-num-op})
 
 (defn infer-type [x]
-  (let [m (meta x)]
+  (let [m (meta x)
+        infer-branch (fn [dart-left-infer dart-right-infer]
+                       (case (get-in dart-left-infer [:dart/type :qname])
+                         (void dc.Null)
+                         (case (get-in dart-right-infer [:dart/type :qname])
+                           (void dc.Null dc.Never) {:dart/type     dc-Null
+                                                    :dart/nat-type dc-Null
+                                                    :dart/truth    :falsy}
+                           dc.dynamic dart-right-infer
+                           (when (:dart/type dart-right-infer)
+                             (-> dart-right-infer
+                               (assoc-in [:dart/type :nullable] true)
+                               (assoc-in [:dart/nat-type :nullable] true)
+                               (assoc :dart/truth nil))))
+                         dc.Never dart-right-infer
+                         dc.dynamic dart-left-infer
+                         (if (= (dissoc (:dart/type dart-left-infer) :nullable) (dissoc (:dart/type dart-right-infer) :nullable))
+                           (when (:dart/type dart-left-infer)
+                             (assoc-in dart-left-infer [:dart/type :nullable]
+                               (or (get-in dart-left-infer [:dart/type :nullable])
+                                 (get-in dart-right-infer [:dart/type :nullable])
+                                 false)))
+                           (case (get-in dart-right-infer [:dart/type :qname])
+                             (void dc.Null)
+                             (when (:dart/type dart-left-infer)
+                               (-> dart-left-infer
+                                 (assoc-in [:dart/type :nullable] true)
+                                 (assoc-in [:dart/nat-type :nullable] true)
+                                 (assoc :dart/truth nil)))
+                             dc.Never dart-left-infer
+                             {:dart/type     dc-dynamic
+                              :dart/nat-type dc-dynamic
+                              :dart/truth    nil}))))]
     (->
      (cond
        (:dart/inferred m) m
@@ -2433,37 +2484,15 @@
        (seq? x)
        (case (first x)
          dart/loop (infer-type (last x))
+         dart/try
+         (let [[_ dart-expr dart-catches-expr] x]
+           (reduce (fn [acc item]
+                     (if (= (:dart/type acc) dc-dynamic)
+                       (reduced acc)
+                       (infer-branch acc item))) (infer-type dart-expr) (map #(infer-type (last %)) dart-catches-expr)))
          dart/if
-         (let [[_ _ dart-then dart-else] x
-               then-i (infer-type dart-then)
-               else-i (infer-type dart-else)]
-           (case (get-in then-i [:dart/type :qname])
-             (void dc.Null)
-             (case (get-in else-i [:dart/type :qname])
-               (void dc.Null dc.Never) {:dart/type     dc-Null
-                                        :dart/nat-type dc-Null
-                                        :dart/truth    :falsy}
-               dc.dynamic else-i
-               (when (:dart/type else-i)
-                 (-> else-i
-                   (assoc-in [:dart/type :nullable] true)
-                   (assoc-in [:dart/nat-type :nullable] true)
-                   (assoc :dart/truth nil))))
-             dc.Never else-i
-             dc.dynamic then-i
-             (if (= (:dart/type then-i) (:dart/type else-i))
-               then-i
-               (case (get-in else-i [:dart/type :qname])
-                 (void dc.Null)
-                 (when (:dart/type then-i)
-                   (some-> then-i
-                     (assoc-in [:dart/type :nullable] true)
-                     (assoc-in [:dart/nat-type :nullable] true)
-                     (assoc :dart/truth nil)))
-                 dc.Never then-i
-                 {:dart/type     dc-dynamic
-                  :dart/nat-type dc-dynamic
-                  :dart/truth    nil}))))
+         (let [[_ _ dart-then dart-else] x]
+           (infer-branch (infer-type dart-then) (infer-type dart-else)))
          dart/let (infer-type (last x))
          dart/fn {:dart/fn-type :native :dart/type dc-Function :dart/nat-type dc-Function :dart/truth :truthy}
          #_#_dart/new {:dart/type (second x)
@@ -2494,9 +2523,10 @@
                    {:dart/type type
                     :dart/nat-type type
                     :dart/truth (dart-type-truthiness type)})
-         (when-some [{:keys [dart/ret-type dart/ret-truth]} (infer-type (first x))]
-           {:dart/type ret-type
-            :dart/truth (or ret-truth (dart-type-truthiness ret-type))}))
+         (let [{:keys [dart/ret-type dart/ret-truth]} (infer-type (first x))]
+           (when ret-type
+             {:dart/type ret-type
+              :dart/truth (or ret-truth (dart-type-truthiness ret-type))})))
        :else nil)
      (merge m)
      (assoc :dart/inferred true))))
