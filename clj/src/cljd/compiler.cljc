@@ -381,7 +381,13 @@
   ([sym type-vars not-found]
    (when-some [[tag info] (resolve-non-local-symbol sym type-vars)]
      (case tag
-       :dart info
+       :dart (case (:qname info)
+               dc.Function
+               ;; TODO enrich type-vars with locally defined type params
+               (if-some [pt (seq (:params-types (meta sym)))]
+                 (assoc info :parameters-types (map #(resolve-type % type-vars) pt))
+                 info)
+               info)
        :def (case (:type info)
               :class (:dart/type info)
               not-found)
