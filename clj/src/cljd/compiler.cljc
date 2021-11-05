@@ -1489,18 +1489,21 @@
                     (with-lifted [dart-expr dart-body] env
                       (list 'dart/as dart-expr ret-type))
                     dart-body)
-        ret-type (cond-> (or ret-type (:dart/type (infer-type dart-body)))
-                   async (->> vector (assoc dc-Future :type-parameters)))
+        ret-type (let [ret-type' (or ret-type (:dart/type (infer-type dart-body)))]
+                   (cond-> ret-type'
+                     ;; We don't want to emit a fn with dc.Never type as it would lead to subtle bugs
+                     (and (nil? ret-type) (= (:qname dc-Never) (:qname ret-type'))) dc-dynamic
+                     async (->> vector (assoc dc-Future :type-parameters))))
         ;; TODO async
         dart-fn
         (-> (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)
           (vary-meta assoc
-            :dart/ret-type ret-type
+            :dart/ret-type  ret-type
             :dart/ret-truth (dart-type-truthiness ret-type)
-            :dart/fn-type :native
-            :dart/type dc-Function
-            :dart/nat-type dc-Function
-            :dart/truth :truthy))]
+            :dart/fn-type   :native
+            :dart/type      dc-Function
+            :dart/nat-type  dc-Function
+            :dart/truth     :truthy))]
     (if fn-name
       (let [dart-fn-name (with-meta (env fn-name) (meta dart-fn))]
         (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name))

@@ -74,4 +74,8 @@
     (let [d ^:async (fn nom [a] (if (odd? a) (nom (inc a)) 4))]
       (is (dart/is? d #/(dynamic -> (Future int)))))
     (let [e ^:async (fn ^num nom [a] (if (odd? a) (nom (inc a)) 4))]
-      (is (dart/is? e #/(dynamic -> (Future num)))))))
+      (is (dart/is? e #/(dynamic -> (Future num)))))
+    (let [f (fn ^dart:core/Never nom [] (nom))]
+      (is (dart/is? f #/( -> dart:core/Never))))
+    (let [g (fn nom [] (nom))]
+      (is (dart/is? g #/( -> dynamic))))))
