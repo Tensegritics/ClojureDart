@@ -1459,7 +1459,19 @@
                            (emit d env)])
         env (into env (zipmap (concat fixed-params (map first opt-params))
                         (concat dart-fixed-params (map first dart-opt-params))))
-        dart-body (emit (cons 'do body) env)
+        dart-body (if (or (nil? fn-name) ret-type)
+                    (emit (cons 'do body) env)
+                    (let [env' (update env fn-name vary-meta assoc
+                                 :dart/ret-type dc-Never
+                                 :dart/type dc-Never
+                                 :dart/nat-type dc-Never
+                                 :dart/ret-truth nil)
+                          {:dart/keys [type nat-type truth]} (-> (emit (cons 'do body) env') infer-type)]
+                      (emit (cons 'do body) (update env fn-name vary-meta assoc
+                                              :dart/ret-type type
+                                              :dart/type type
+                                              :dart/nat-type type
+                                              :dart/ret-truth truth))))
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         dart-fixed-params (if recur-params
                             (map #(dart-fn-param % env) fixed-params) ; regen new fixed params
@@ -1495,7 +1507,9 @@
         bodies (cond-> bodies name next)
         [body & more-bodies :as bodies] (ensure-bodies bodies)
         fn-type (if (or more-bodies (variadic? body)) :ifn :native)
-        env (cond-> env name (assoc name (vary-meta (dart-local name env) assoc :dart/fn-type fn-type)))]
+        env (cond-> env
+              name (assoc name (vary-meta (dart-local name env)
+                                 #(assoc % :dart/fn-type fn-type :dart/ret-type (:dart/type %) :dart/ret-truth (dart-type-truthiness (:dart/type %))))))]
     (case fn-type
       :ifn (emit-ifn async var-name name bodies env)
       (emit-dart-fn async name body env))))
@@ -2437,6 +2451,7 @@
 
 (defn infer-type [x]
   (let [m (meta x)
+        ;; TODO : handle special case of num
         infer-branch (fn [dart-left-infer dart-right-infer]
                        (case (get-in dart-left-infer [:dart/type :qname])
                          (void dc.Null)
