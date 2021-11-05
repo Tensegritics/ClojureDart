@@ -10,6 +10,7 @@
 ;;
 
 (ns cljd.test-clojure.core-test-cljd
+  (:require ["dart:async" :as async])
   (:use [cljd.test :only [deftest is testing are]]))
 
 (deftest testing-rseq
@@ -22,3 +23,55 @@
     (is (nil? (meta (rseq (with-meta [1] {:a :b})))))
     (is (= (meta (with-meta (rseq [1 2 3]) {:a :b})) {:a :b}))
     (is (= (rseq (vec (range 100))) (range 99 -1 -1)))))
+
+(deftest testing-dart-literal-typehints
+  (testing "#dart[] List are typehints"
+    (is (dart/is? #dart[1 2] #/(List dynamic)))
+    (is (dart/is? #dart ^int [1 2] #/(List int)))
+    (is (dart/is? #dart ^:fixed ^int [1 2] #/(List int)))
+    (let [a #dart ^int [1 2]
+          b a
+          c b
+          d c]
+      (dart/is? d #/(List int)))))
+
+(deftest testing-if-typehints
+  (testing "if typehints"
+    (let [a (if (odd? 3) true false)]
+      (is (dart/is? a bool)))
+    (let [a (when (odd? 3) true false)]
+      (is (dart/is? a bool?)))
+    (let [a (if (odd? 3) 3 4)]
+      (is (dart/is? a int)))
+    (let [a (if (odd? 3) 3 nil)]
+      (is (dart/is? a int?)))
+    (let [a (if (odd? 3) 3 4.3)]
+      (is (dart/is? a dynamic)))
+    (let [a (when-let [a (if (odd? 3) 3 4)] a)]
+      (is (dart/is? a int?)))
+    (let [a (if (odd? 2) (throw (Exception. "exception")) "aa")]
+      (is (dart/is? a String)))
+    (let [a (if (odd? 2) nil nil)]
+      (is (dart/is? a Null)))))
+
+(deftest testing-loop-typehints
+  (testing "loop typehints"
+    (let [a (loop [i 0] (if (< i 10) (recur (inc i)) "a"))]
+      (is (dart/is? a String)))
+    (let [a (loop [i 0] (if (< i 10) (recur (inc i)) 1))]
+      (is (dart/is? a int)))
+    (let [a (loop [i 0] (if (< i 10) (recur (inc i)) ^dynamic (do 1)))]
+      (is (dart/is? a dynamic)))))
+
+(deftest testing-inline-fn-typehints
+  (testing "inline fn typehints"
+    (let [a (fn [] 1)]
+      (is (dart/is? a #/( -> int)))) ;; int Function()
+    (let [b ^:async (fn [] 1)]
+      (is (dart/is? b  #/( -> (Future int)))))
+    (let [c ^:async (fn [a] (if (odd? a) 3 4))]
+      (is (dart/is? c #/(dynamic -> (Future int)))))
+    (let [d ^:async (fn nom [a] (if (odd? a) (nom (inc a)) 4))]
+      (is (dart/is? d #/(dynamic -> (Future int)))))
+    (let [e ^:async (fn ^num nom [a] (if (odd? a) (nom (inc a)) 4))]
+      (is (dart/is? e #/(dynamic -> (Future num)))))))
