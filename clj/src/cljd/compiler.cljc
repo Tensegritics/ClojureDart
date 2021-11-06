@@ -1492,9 +1492,8 @@
         ret-type (let [ret-type' (or ret-type (:dart/type (infer-type dart-body)))]
                    (cond-> ret-type'
                      ;; We don't want to emit a fn with dc.Never type as it would lead to subtle bugs
-                     (and (nil? ret-type) (= (:qname dc-Never) (:qname ret-type'))) dc-dynamic
+                     (and (nil? ret-type) (= (:qname ret-type') (:qname dc-Never))) (and dc-dynamic)
                      async (->> vector (assoc dc-Future :type-parameters))))
-        ;; TODO async
         dart-fn
         (-> (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)
           (vary-meta assoc
@@ -1518,7 +1517,10 @@
         fn-type (if (or more-bodies (variadic? body)) :ifn :native)
         env (cond-> env
               name (assoc name (vary-meta (dart-local name env)
-                                 #(assoc % :dart/fn-type fn-type :dart/ret-type (:dart/type %) :dart/ret-truth (dart-type-truthiness (:dart/type %))))))]
+                                 #(assoc %
+                                    :dart/fn-type   fn-type
+                                    :dart/ret-type  (:dart/type %)
+                                    :dart/ret-truth (dart-type-truthiness (:dart/type %))))))]
     (case fn-type
       :ifn (emit-ifn async var-name name bodies env)
       (emit-dart-fn async name body env))))
@@ -2988,6 +2990,10 @@
 (comment
   (binding [*lib-path* "examples/hello-flutter/lib"]
     (compile-namespace 'hello-flutter.core))
+
+
+  ;; TODO : decrease this number to < 1000
+  ;; 7138 dynamic
 
   (def li (load-libs-info))
   (binding [dart-libs-info li]

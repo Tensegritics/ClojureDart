@@ -78,4 +78,8 @@
     (let [f (fn ^dart:core/Never nom [] (nom))]
       (is (dart/is? f #/( -> dart:core/Never))))
     (let [g (fn nom [] (nom))]
-      (is (dart/is? g #/( -> dynamic))))))
+      (is (dart/is? g #/( -> dynamic))))
+    (let [h (fn [] nil)]
+      (is (dart/is? h #/( -> Null))))
+    (let [i ^:async (fn [] nil)]
+      (is (dart/is? i #/( -> (Future Null)))))))
