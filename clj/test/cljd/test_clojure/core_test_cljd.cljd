@@ -83,3 +83,12 @@
       (is (dart/is? h #/( -> Null))))
     (let [i ^:async (fn [] nil)]
       (is (dart/is? i #/( -> (Future Null)))))))
+
+(deftest testing-dart-new-dont-need-to-be-lifted
+  (testing "dart/new can be inlined"
+    (is (dart/is?
+          #dart [(dart:core/Symbol. "one") (dart:core/Symbol. "two") (dart:core/Symbol. "three")]
+          #/(List Symbol)))
+    (is (dart/is?
+          #dart [(dart:core/Symbol. "one") (dart:core/Symbol. (let [a "a" b "b"] (str a b)))]
+          #/(List Symbol)))))

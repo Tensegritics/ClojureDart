@@ -895,8 +895,9 @@
 
 (defn lift-safe? [expr]
   (or (not (coll? expr))
+    (and (vector? expr) (-> expr meta :dart/type :qname (= 'dc.List)))
     (and (seq? expr)
-      (case (first expr) dart/fn true false))))
+      (case (first expr) (dart/fn dart/new) true false))))
 
 (defn liftable
   "Takes a dartsexp and returns a [bindings expr] where expr is atomic (or a dart fn)
