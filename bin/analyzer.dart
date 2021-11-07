@@ -100,6 +100,7 @@ class TopLevelVisitor extends ThrowingElementVisitor {
     Map<String,dynamic> classData =
     {':kind': ':class',
       ':lib': '"${libPathToPackageName(e.library.identifier)}"',
+      ':const': e.unnamedConstructor?.isConst,
       ':type-parameters': e.typeParameters.map(emitTypeParameter),
       ':super': fnil(emitType,e.supertype,null),
       ':mixins': e.mixins.map(emitType),
