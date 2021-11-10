@@ -1729,7 +1729,7 @@
    (cond
      (symbol? name) name
      (string? name) (let [idx (.indexOf name "/")]
-                      (if (< idx -1)
+                      (if (< idx 0)
                         (symbol nil name)
                         (symbol (.substring name 0 idx)
                           (.substring name (inc idx)))))

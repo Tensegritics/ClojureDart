@@ -87,7 +87,8 @@
    "{" ^:async (fn [^ReaderInput rdr] (await (read-hash-map rdr)))
    "}" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
    "[" ^:async (fn [^ReaderInput rdr] (await (read-vector rdr)))
-   "]" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))})
+   "]" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
+   "'" ^:async (fn [^ReaderInput rdr] (list (symbol nil "quote") (await (read rdr -1))))})
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
 
@@ -149,6 +150,7 @@
     (await (read rdr -1))))
 
 (defn ^:async main []
+  (as-> (await (read-string "'(true false false)")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "(true true nil)")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "[true true nil]")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "{true true nil nil}")) r (prn r (.-runtimeType r)))
