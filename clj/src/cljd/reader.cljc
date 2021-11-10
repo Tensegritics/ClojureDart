@@ -32,7 +32,6 @@
            (.resume subscription)
            (.-future completer)))))
   (^void unread [this ^String s]
-   (prn s)
    (assert (nil? buffer))
    (assert (not (nil? subscription)))
    (set! buffer (when-not (== "" s) s))
@@ -47,21 +46,35 @@
   (doto (ReaderInput. (.-stream controller) nil nil nil) (.init_stream_subscription)))
 
 ;; read-* functions
-(declare ^:async ^:clj read)
+(declare ^:async ^:dart read)
+
+(defn ^int cu0 [^String ch] (.codeUnitAt ch 0))
 
 (defn ^#/(Future cljd.core/PersistentList) ^:async read-list [^ReaderInput rdr]
-  (let [result #dart[]
-        cu (.codeUnitAt ")" 0)]
+  (let [result #dart[]]
     (loop []
-      (let [val (await (read rdr cu))]
+      (let [val (await (read rdr (cu0 ")")))]
         (if (== val rdr)
           (apply list result)
           (do (.add result val)
               (recur)))))))
 
+(defn ^#/(Future cljd.core/PersistentHashMap) ^:async read-hash-map [^ReaderInput rdr]
+  (let [result #dart[]]
+    (loop []
+      (let [val (await (read rdr (cu0 "}")))]
+        (if (== val rdr)
+          (if (zero? (bit-and 1 (.-length result)))
+            (-map-lit result)
+            (throw (FormatException. "Map literal must contain an even number of forms")))
+          (do (.add result val)
+              (recur)))))))
+
 (def macros
-  {"("  ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
-   ")" ^:async (fn [_] "THROW HERE")})
+  {"(" ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
+   ")" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
+   "{" ^:async (fn [^ReaderInput rdr] (await (read-hash-map rdr)))
+   "}" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))})
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
 
@@ -123,4 +136,6 @@
     (await (read rdr -1))))
 
 (defn ^:async main []
-  (prn (await (read-string "(true true nil)"))))
+  (prn (await (read-string "(true true nil)")))
+  (prn (await (read-string "{true true false false}")))
+  (prn (await (read-string "{true true false}"))))
