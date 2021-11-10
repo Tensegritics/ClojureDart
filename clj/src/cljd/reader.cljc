@@ -55,7 +55,7 @@
     (loop []
       (let [val (await (read rdr (cu0 ")")))]
         (if (== val rdr)
-          (apply list result)
+          (-list-lit result)
           (do (.add result val)
               (recur)))))))
 
@@ -70,11 +70,24 @@
           (do (.add result val)
               (recur)))))))
 
+(defn ^#/(Future cljd.core/PersistentVector) ^:async read-vector [^ReaderInput rdr]
+  (let [result #dart[]]
+    (loop []
+      (let [val (await (read rdr (cu0 "]")))]
+        (if (== val rdr)
+          (if (< 32 (.-length result))
+            (vec result)
+            (-vec-owning result))
+          (do (.add result val)
+              (recur)))))))
+
 (def macros
   {"(" ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
    ")" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
    "{" ^:async (fn [^ReaderInput rdr] (await (read-hash-map rdr)))
-   "}" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))})
+   "}" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
+   "[" ^:async (fn [^ReaderInput rdr] (await (read-vector rdr)))
+   "]" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))})
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
 
@@ -136,6 +149,7 @@
     (await (read rdr -1))))
 
 (defn ^:async main []
-  (prn (await (read-string "(true true nil)")))
-  (prn (await (read-string "{true true false false}")))
-  (prn (await (read-string "{true true false}"))))
+  (as-> (await (read-string "(true true nil)")) r (prn r (.-runtimeType r)))
+  (as-> (await (read-string "[true true nil]")) r (prn r (.-runtimeType r)))
+  (as-> (await (read-string "{true true nil nil}")) r (prn r (.-runtimeType r)))
+  (as-> (await (read-string "{true true nil [true true]}")) r (prn r (.-runtimeType r))))
