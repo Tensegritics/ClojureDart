@@ -116,8 +116,11 @@
         rdr
         (throw (FormatException. (str "Unexpected EOF, expected " (String/fromCharCode delim))))))))
 
-(defn ^:async main []
+(defn ^#/(Future dynamic) ^:async read-string [^String s]
   (let [controller (new #/(async/StreamController String))
         rdr (make-reader-input controller)]
-    (.add controller "(true true nil)")
-    (prn (.-runtimeType (get (await (read rdr -1)) 0)))))
+    (.add controller s)
+    (await (read rdr -1))))
+
+(defn ^:async main []
+  (prn (await (read-string "(true true nil)"))))
