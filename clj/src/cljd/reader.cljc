@@ -92,6 +92,21 @@
           (recur)))
       rdr)))
 
+(defn ^:async read-meta [^ReaderInput rdr]
+  (let [meta (await (read rdr -1))
+        meta (if (or (symbol? meta) (string? meta))
+               {:tag meta}
+               (if (keyword? meta)
+                 {meta true}
+                 (if (map? meta)
+                   meta
+                   (throw (FormatException. "Metadata must be Symbol,Keyword,String or Map")))))
+        obj (await (read rdr -1))]
+    (if (satisfies? cljd.core/IWithMeta obj)
+      (with-meta obj meta)
+      ;;TODO handle IReference with reset-meta
+      (throw (FormatException. "Metadata can only be applied to IMetas")))))
+
 (def macros
   {"(" ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
    ")" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
@@ -101,7 +116,8 @@
    "]" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
    "'" ^:async (fn [^ReaderInput rdr] (list (symbol nil "quote") (await (read rdr -1))))
    "@" ^:async (fn [^ReaderInput rdr] (list 'cljd.core/deref (await (read rdr -1))))
-   ";" ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))})
+   ";" ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
+   "^" ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))})
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
 
@@ -166,6 +182,7 @@
 
 (defn ^:async main []
   (as-> (await (read-string "nil")) r (prn r (.-runtimeType r)))
+  (as-> (await (read-string "^{true true} [nil nil]")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "'(true false false)")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "@true")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string ";;coucou text \n (true true)")) r (prn r (.-runtimeType r)))
