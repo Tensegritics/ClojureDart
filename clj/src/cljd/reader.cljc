@@ -36,11 +36,11 @@
    (assert (not (nil? subscription)))
    (set! buffer (when-not (== "" s) s))
    nil)
-  (^#/(async/FutureOr void) close [this]
+  #_(^#/(Future void) ^:async close [this]
    (when-some [sub subscription]
-     (let [cancel (.cancel sub)]
-       (set! subscription nil)
-       cancel))))
+     (await (.cancel sub))
+     (set! subscription nil)
+     nil)))
 
 (defn ^ReaderInput make-reader-input [^#/(async/StreamController String) controller]
   (doto (ReaderInput. (.-stream controller) nil nil nil) (.init_stream_subscription)))
@@ -81,6 +81,17 @@
           (do (.add result val)
               (recur)))))))
 
+(def ^RegExp COMMENT-CONTENT-REGEXP #"[^\r\n]*")
+
+(defn ^:async read-comment [^ReaderInput rdr]
+  (loop []
+    (if-some [s (await (.read rdr))]
+      (let [index (or (some-> (.matchAsPrefix COMMENT-CONTENT-REGEXP s) .end) 0)]
+        (if (< index (.-length s))
+          (doto rdr (.unread (.substring s index)))
+          (recur)))
+      rdr)))
+
 (def macros
   {"(" ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
    ")" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
@@ -88,7 +99,9 @@
    "}" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
    "[" ^:async (fn [^ReaderInput rdr] (await (read-vector rdr)))
    "]" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
-   "'" ^:async (fn [^ReaderInput rdr] (list (symbol nil "quote") (await (read rdr -1))))})
+   "'" ^:async (fn [^ReaderInput rdr] (list (symbol nil "quote") (await (read rdr -1))))
+   "@" ^:async (fn [^ReaderInput rdr] (list 'cljd.core/deref (await (read rdr -1))))
+   ";" ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))})
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
 
@@ -147,10 +160,15 @@
   (let [controller (new #/(async/StreamController String))
         rdr (make-reader-input controller)]
     (.add controller s)
-    (await (read rdr -1))))
+    (let [res (read rdr -1)]
+      (.close controller)
+      (await res))))
 
 (defn ^:async main []
+  (as-> (await (read-string "nil")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "'(true false false)")) r (prn r (.-runtimeType r)))
+  (as-> (await (read-string "@true")) r (prn r (.-runtimeType r)))
+  (as-> (await (read-string ";;coucou text \n (true true)")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "(true true nil)")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "[true true nil]")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "{true true nil nil}")) r (prn r (.-runtimeType r)))
