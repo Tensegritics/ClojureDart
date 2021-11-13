@@ -107,6 +107,42 @@
       ;;TODO handle IReference with reset-meta
       (throw (FormatException. "Metadata can only be applied to IMetas")))))
 
+(def ^RegExp STRING-CONTENT-REGEXP (RegExp. "(?:[^\"\\\\]|\\\\.)*"))
+(def ^RegExp STRING-ESC-REGEXP (RegExp. "\\(?:u([0-9a-fA-F]{0,4})|([0-7]{1,3})|(.))"))
+
+(defn ^:async read-string-content [^ReaderInput rdr]
+  (let [f ^:async (fn ^String [^ReaderInput rdr]
+                    (let [sb (StringBuffer.)]
+                      (loop []
+                        (if-some [^String string (await (.read rdr))]
+                          (let [^int i (or (some-> (.matchAsPrefix STRING-CONTENT-REGEXP string) (.-end)) 0)]
+                            (.write sb (.substring string 0 i))
+                            (if (< i (.-length string))
+                              (do (.unread rdr (.substring string (inc i)))
+                                  (.toString sb))
+                              (recur)))
+                          (throw (FormatException. "Unexpected EOF while reading a string."))))))]
+    #_(.replaceAllMapped (await (f rdr))
+      STRING-ESC-REGEXP
+      (fn [^Match m]
+        (if-some [^String m1 (.group m 1)]
+          (if (< (.-length m1) 4)
+            (throw (FormatException. (str "Unsupported escape for character: \\u" m1 " \\u MUST be followed by 4 hexadecimal digits")))
+            (String/fromCharCode (int/parse m1 .& :radix 16)))
+          (if-some [^String m2 (.group m 2)]
+            (String/fromCharCode (int/parse m2 .& :radix 8))
+            (let [m3 (.group m 3)]
+              (case m3
+                "\"" (str m3)
+                "\\" (str m3)
+                "b" "\b"
+                "n" "\n"
+                "r" "\r"
+                "t" "\t"
+                "f" "\f"
+                (throw (FormatException. (str "Unsupported escape character: \\" m3)))))))))
+    (await (f rdr))))
+
 (def macros
   {"(" ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
    ")" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
@@ -117,7 +153,8 @@
    "'" ^:async (fn [^ReaderInput rdr] (list (symbol nil "quote") (await (read rdr -1))))
    "@" ^:async (fn [^ReaderInput rdr] (list 'cljd.core/deref (await (read rdr -1))))
    ";" ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
-   "^" ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))})
+   "^" ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
+   "\"" ^:async (fn [^ReaderInput rdr] (await (read-string-content rdr)))})
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
 
@@ -182,6 +219,8 @@
 
 (defn ^:async main []
   (as-> (await (read-string "nil")) r (prn r (.-runtimeType r)))
+  (as-> (await (read-string "^{true true} [\"nil\" nil]")) r (prn r (meta r) (.-runtimeType r)))
+  #_(as-> (await (read-string "^{true true} [\"n\\\"il\" nil]")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "^{true true} [nil nil]")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "'(true false false)")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "@true")) r (prn r (.-runtimeType r)))
