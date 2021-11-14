@@ -183,13 +183,14 @@
 
 
 (def ^RegExp INT-REGEXP (RegExp. "([-+]?)(?:(0)|([1-9][0-9]*)|0[xX]([0-9A-Fa-f]+)|0([0-7]+)|([1-9][0-9]?)[rR]([0-9A-Za-z]+)|0[0-9]+)(N)?$"))
+(def ^RegExp DOUBLE-REGEXP (RegExp. "([-+]?[0-9]+([.][0-9]*)?([eE][-+]?[0-9]+)?)(M)?$"))
 
 (defn interpret-token [^String token]
   (case token
     "nil" nil
     "true" true
     "false" false
-    (when-some [m (.matchAsPrefix INT-REGEXP token)]
+    (if-some [m (.matchAsPrefix INT-REGEXP token)]
       (let [parse (if ^some (.group m 8)
                     (if (== "-" (.group m 1))
                       (fn ^BigInt [^String s ^int radix] (- (BigInt/parse s .& :radix radix)))
@@ -197,14 +198,17 @@
                     (if (== "-" (.group m 1))
                       (fn ^int [^String s ^int radix] (- (int/parse s .& :radix radix)))
                       (fn ^int [^String s ^int radix] (int/parse s .& :radix radix))))]
-        (prn (.group m 2) (.group m 3) (.group m 2))
         (cond
           (not (nil? (.group m 2))) 0
           (not (nil? (.group m 3))) (parse (.group m 3) 10)
           (not (nil? (.group m 4))) (parse (.group m 4) 16)
           (not (nil? (.group m 5))) (parse (.group m 5) 8)
           (not (nil? (.group m 7))) (parse (.group m 7) (int/parse ^String (.group m 6)))
-          :else (throw (FormatException. "Invalid number.")))))))
+          :else (throw (FormatException. "Invalid number."))))
+      (if-some [m (.matchAsPrefix DOUBLE-REGEXP token)]
+        (if (.group m 4)
+          (throw (FormatException. "BigDecimal not supported yet."))
+          (double/parse token))))))
 
 (defn ^#/(Future dynamic) ^:async read
   [^ReaderInput rdr ^int delim]
@@ -238,6 +242,7 @@
 
 (defn ^:async main []
   (as-> (await (read-string "(12 12N -12 0x12 0X12 0x1ff)")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "(12.3 0.2 -1.2 0.0)")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "nil")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "^{true true} [\"nil\" nil]")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "^{true true} [\"n\\\"il\" nil]")) r (prn r (meta r) (.-runtimeType r)))
