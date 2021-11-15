@@ -143,18 +143,28 @@
                 (throw (FormatException. (str "Unsupported escape character: \\" m3)))))))))
     (await (f rdr))))
 
+(def dispatch-macros
+  {"_" ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)})
+
 (def macros
-  {"(" ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
-   ")" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
-   "{" ^:async (fn [^ReaderInput rdr] (await (read-hash-map rdr)))
-   "}" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
-   "[" ^:async (fn [^ReaderInput rdr] (await (read-vector rdr)))
-   "]" ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
-   "'" ^:async (fn [^ReaderInput rdr] (list (symbol nil "quote") (await (read rdr -1))))
-   "@" ^:async (fn [^ReaderInput rdr] (list 'cljd.core/deref (await (read rdr -1))))
-   ";" ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
-   "^" ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
-   "\"" ^:async (fn [^ReaderInput rdr] (await (read-string-content rdr)))})
+  {"("  ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
+   ")"  ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
+   "{"  ^:async (fn [^ReaderInput rdr] (await (read-hash-map rdr)))
+   "}"  ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
+   "["  ^:async (fn [^ReaderInput rdr] (await (read-vector rdr)))
+   "]"  ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
+   "'"  ^:async (fn [^ReaderInput rdr] (list (symbol nil "quote") (await (read rdr -1))))
+   "@"  ^:async (fn [^ReaderInput rdr] (list 'cljd.core/deref (await (read rdr -1))))
+   ";"  ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
+   "^"  ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
+   "\"" ^:async (fn [^ReaderInput rdr] (await (read-string-content rdr)))
+   "#"  ^:async (fn [^ReaderInput rdr]
+                  (if-some [string (await (.read rdr))]
+                    (if-some [macroreader (dispatch-macros (aget string 0))]
+                     (do (.unread rdr (.substring string 1))
+                         (await (macroreader rdr)))
+                     (throw (FormatException. (str "Unepxected dispatch sequence: #" (aget string 0)))))
+                   (throw (FormatException. "EOF while reading dispatch sequence.")))) })
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
 
@@ -256,6 +266,7 @@
   (as-> (await (read-string "(12 12N -12 0x12 0X12 0x1ff)")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "(12.3 0.2 -1.2 0.0)")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "(:aaa :aa/bb :aa:adsf:sdf :dd///)")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "(:aaa #_(1 2 3) 1 2 3 )")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "nil")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "^{true true} [\"nil\" nil]")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "^{true true} [\"n\\\"il\" nil]")) r (prn r (meta r) (.-runtimeType r)))
