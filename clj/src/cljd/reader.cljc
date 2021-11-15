@@ -184,6 +184,7 @@
 
 (def ^RegExp INT-REGEXP (RegExp. "([-+]?)(?:(0)|([1-9][0-9]*)|0[xX]([0-9A-Fa-f]+)|0([0-7]+)|([1-9][0-9]?)[rR]([0-9A-Za-z]+)|0[0-9]+)(N)?$"))
 (def ^RegExp DOUBLE-REGEXP (RegExp. "([-+]?[0-9]+([.][0-9]*)?([eE][-+]?[0-9]+)?)(M)?$"))
+(def ^RegExp SYMBOL-REGEXP (RegExp. "(?:([:]{2})|([:]))?(?:([^0-9/:].*)/)?(/|[^0-9/:][^/]*)$"))
 
 (defn interpret-token [^String token]
   (case token
@@ -208,7 +209,18 @@
       (if-some [m (.matchAsPrefix DOUBLE-REGEXP token)]
         (if (.group m 4)
           (throw (FormatException. "BigDecimal not supported yet."))
-          (double/parse token))))))
+          (double/parse token))
+        (if (or (< 0 (.lastIndexOf token "::")) (.endsWith token ":"))
+          (throw (FormatException. (str "Invalid token: " token)))
+          (if-some [^Match m (.matchAsPrefix SYMBOL-REGEXP token)]
+            (cond
+              (not (nil? (.group m 1))) (throw (Exception. "TO IMPLEMENT"))
+              (not (nil? (.group m 3))) (let [ns (.group m 3)]
+                                          (when (.endsWith ns ":")
+                                            (throw (FormatException. (str "Invalid token: " token))))
+                                          (keyword ns (.group m 4)))
+              :else (keyword nil (.group m 4)))
+            (throw (FormatException. (str "Invalid token: " token)))))))))
 
 (defn ^#/(Future dynamic) ^:async read
   [^ReaderInput rdr ^int delim]
@@ -243,6 +255,7 @@
 (defn ^:async main []
   (as-> (await (read-string "(12 12N -12 0x12 0X12 0x1ff)")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "(12.3 0.2 -1.2 0.0)")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "(:aaa :aa/bb :aa:adsf:sdf :dd///)")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "nil")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "^{true true} [\"nil\" nil]")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "^{true true} [\"n\\\"il\" nil]")) r (prn r (meta r) (.-runtimeType r)))
