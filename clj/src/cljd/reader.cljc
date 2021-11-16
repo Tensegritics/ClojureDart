@@ -70,6 +70,15 @@
           (do (.add result val)
               (recur)))))))
 
+(defn ^#/(Future cljd.core/PersistentHashSet) ^:async read-hash-set [^ReaderInput rdr]
+  (let [result #dart[]]
+    (loop []
+      (let [val (await (read rdr (cu0 "}")))]
+        (if (== val rdr)
+          (set result)
+          (do (.add result val)
+              (recur)))))))
+
 (defn ^#/(Future cljd.core/PersistentVector) ^:async read-vector [^ReaderInput rdr]
   (let [result #dart[]]
     (loop []
@@ -144,7 +153,9 @@
     (await (f rdr))))
 
 (def dispatch-macros
-  {"_" ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)})
+  {"_" ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
+   "^" ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
+   "{" ^:async (fn [^ReaderInput rdr] (await (read-hash-set rdr)))})
 
 (def macros
   {"("  ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
@@ -267,6 +278,7 @@
   (as-> (await (read-string "(12.3 0.2 -1.2 0.0)")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "(:aaa :aa/bb :aa:adsf:sdf :dd///)")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "(:aaa #_(1 2 3) 1 2 3 )")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "#{:aaa #_(1 2 3) 1 2 3}")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "nil")) r (prn r (.-runtimeType r)))
   (as-> (await (read-string "^{true true} [\"nil\" nil]")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "^{true true} [\"n\\\"il\" nil]")) r (prn r (meta r) (.-runtimeType r)))
