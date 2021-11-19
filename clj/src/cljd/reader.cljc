@@ -162,15 +162,25 @@
     (interpret-token (await (read-token rdr "%")))
     (let [string (await (.read rdr))
           ch (cu0 (aget string 0))]
-      (.unread rdr (.substring string 1))
       (if (or (< ch 0) (terminating? ch))
-        (let [sym (symbol "param")] (set! *arg-env* (assoc *arg-env* 1 sym)) sym)
-        (if-some [^Match m (.matchAsPrefix #"(?:(\d+)|(&)).*$" string)]
-          (let [g1 (.group m 1)
-                g2 (.group m 2)]
-            (cond
-              g1 (let [sym (symbol (str "param" g1))] (set! *arg-env* (assoc *arg-env* (int/parse g1) sym)) sym)
-              g2 (do (set! *arg-env* (assoc *arg-env* -1 'parammore)) 'parammore)))
+        (let [sym (symbol "param")]
+          (.unread rdr (.substring string 1))
+          (set! *arg-env* (assoc *arg-env* 1 sym))
+          sym)
+        (if-some [^Match m (.matchAsPrefix #"(?:([\d]+)|(&))([^\d&]).*$" string)]
+          (if-some [^String g3 (.group m 3)]
+            (if (terminating? (cu0 g3))
+              (let [g1 (.group m 1)
+                    g2 (.group m 2)]
+                (cond
+                  g1 (let [sym (symbol (str "param" g1))]
+                       (.unread rdr (.substring string (.-length g1)))
+                       (set! *arg-env* (assoc *arg-env* (int/parse g1) sym))
+                       sym)
+                  g2 (do (.unread rdr (.substring string 1))
+                         (set! *arg-env* (assoc *arg-env* -1 'parammore))
+                         'parammore)))
+              (throw (FormatException. "arg literal must be %, %& or %integer"))))
           (throw (FormatException. "arg literal must be %, %& or %integer")))))))
 
 (defn ^:async read-fn [^ReaderInput rdr]
@@ -178,9 +188,8 @@
     (throw (FormatException. "Nested #()s are not allowed")))
   (binding [*arg-env* {}]
     (let [result (await (read-list rdr))
-          arg-count (cond-> (some->> (or (keys *arg-env*) [0]) (apply max))
+          arg-count (cond-> (->> (keys *arg-env*) (apply max 0))
                       (*arg-env* -1) (+ 2))]
-      (prn *arg-env*)
       (list 'fn*
         (reduce #(let [[n param] %2]
                    (if (< n 0)
@@ -314,8 +323,10 @@
       (await res))))
 
 (defn ^:async main []
-  (as-> (await (read-string "#(:aa % 1 %2 %& 2 3 4)")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "#(1)")) r (prn r (meta r) (.-runtimeType r))))
+  #_(as-> (await (read-string "#(:aa % 1 %2 %& 2 3 4)")) r (prn r (meta r) (.-runtimeType r)))
+  #_(as-> (await (read-string "#(1)")) r (prn r (meta r) (.-runtimeType r)))
+
+  (as-> (await (read-string "#(+ 3 [%&])")) r (prn r (meta r) (.-runtimeType r))))
 
 #_(defn ^:async main []
   (as-> (await (read-string "(12 12N -12 0x12 0X12 0x1ff)")) r (prn r (meta r) (.-runtimeType r)))
