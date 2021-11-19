@@ -152,10 +152,49 @@
                 (throw (FormatException. (str "Unsupported escape character: \\" m3)))))))))
     (await (f rdr))))
 
+(def ^:dynamic *arg-env* nil)
+
+(declare ^:dart interpret-token ^:dart ^:async read-token ^:dart terminating?)
+
+(defn ^:async read-arg [^ReaderInput rdr]
+  ;; funny case `(let [% 1] %)` > 1
+  (if (nil? *arg-env*)
+    (interpret-token (await (read-token rdr "%")))
+    (let [string (await (.read rdr))
+          ch (cu0 (aget string 0))]
+      (.unread rdr (.substring string 1))
+      (if (or (< ch 0) (terminating? ch))
+        (let [sym (symbol "param")] (set! *arg-env* (assoc *arg-env* 1 sym)) sym)
+        (if-some [^Match m (.matchAsPrefix #"(?:(\d+)|(&)).*$" string)]
+          (let [g1 (.group m 1)
+                g2 (.group m 2)]
+            (cond
+              g1 (let [sym (symbol (str "param" g1))] (set! *arg-env* (assoc *arg-env* (int/parse g1) sym)) sym)
+              g2 (do (set! *arg-env* (assoc *arg-env* -1 'parammore)) 'parammore)))
+          (throw (FormatException. "arg literal must be %, %& or %integer")))))))
+
+(defn ^:async read-fn [^ReaderInput rdr]
+  (when-not (nil? *arg-env*)
+    (throw (FormatException. "Nested #()s are not allowed")))
+  (binding [*arg-env* {}]
+    (let [result (await (read-list rdr))
+          arg-count (cond-> (some->> (or (keys *arg-env*) [0]) (apply max))
+                      (*arg-env* -1) (+ 2))]
+      (prn *arg-env*)
+      (list 'fn*
+        (reduce #(let [[n param] %2]
+                   (if (< n 0)
+                     (-> (assoc %1 (dec arg-count) param)
+                       (assoc (- arg-count 2) '&))
+                     (assoc %1 (dec n) param)))
+          (vec (repeat arg-count '_)) *arg-env*)
+        result))))
+
 (def dispatch-macros
   {"_" ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
    "^" ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
-   "{" ^:async (fn [^ReaderInput rdr] (await (read-hash-set rdr)))})
+   "{" ^:async (fn [^ReaderInput rdr] (await (read-hash-set rdr)))
+   "(" ^:async (fn [^ReaderInput rdr] (await (read-fn rdr)))})
 
 (def macros
   {"("  ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
@@ -169,12 +208,13 @@
    ";"  ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
    "^"  ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
    "\"" ^:async (fn [^ReaderInput rdr] (await (read-string-content rdr)))
+   "%"  ^:async (fn [^ReaderInput rdr] (await (read-arg rdr)))
    "#"  ^:async (fn [^ReaderInput rdr]
                   (if-some [string (await (.read rdr))]
                     (if-some [macroreader (dispatch-macros (aget string 0))]
-                     (do (.unread rdr (.substring string 1))
-                         (await (macroreader rdr)))
-                     (throw (FormatException. (str "Unepxected dispatch sequence: #" (aget string 0)))))
+                        (do (.unread rdr (.substring string 1))
+                            (await (macroreader rdr)))
+                        (throw (FormatException. (str "Unepxected dispatch sequence: #" (aget string 0)))))
                    (throw (FormatException. "EOF while reading dispatch sequence.")))) })
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
@@ -182,13 +222,13 @@
 (defn ^bool terminating? [^int code-unit]
   (let [ch (String/fromCharCode code-unit)]
     (cond
-      (< -1 (.indexOf "'#" ch)) false
+      (< -1 (.indexOf "'#%" ch)) false
       (macros ch) true
       (< 0 (or (some-> (.matchAsPrefix SPACE-REGEXP ch) .end) 0)) true
       :else false)))
 
-(defn ^#/(Future String) ^:async read-token [^ReaderInput rdr]
-  (let [sb (StringBuffer.)]
+(defn ^#/(Future String) ^:async read-token [^ReaderInput rdr ^String init]
+  (let [sb (StringBuffer. init)]
     (loop [^int index 0
            ^String string ""]
       (if (== index (.-length string))
@@ -260,7 +300,7 @@
                         (recur)
                         val)))
                 (do (.unread rdr (.substring string index))
-                    (-> (await (read-token rdr)) interpret-token)))))))
+                    (-> (await (read-token rdr "")) interpret-token)))))))
       (if (< delim 0)
         rdr
         (throw (FormatException. (str "Unexpected EOF, expected " (String/fromCharCode delim))))))))
@@ -274,7 +314,12 @@
       (await res))))
 
 (defn ^:async main []
+  (as-> (await (read-string "#(:aa % 1 %2 %& 2 3 4)")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "#(1)")) r (prn r (meta r) (.-runtimeType r))))
+
+#_(defn ^:async main []
   (as-> (await (read-string "(12 12N -12 0x12 0X12 0x1ff)")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string ":sdfds&sdf%dd")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "(12.3 0.2 -1.2 0.0)")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "(:aaa :aa/bb :aa:adsf:sdf :dd///)")) r (prn r (meta r) (.-runtimeType r)))
   (as-> (await (read-string "(:aaa #_(1 2 3) 1 2 3 )")) r (prn r (meta r) (.-runtimeType r)))
