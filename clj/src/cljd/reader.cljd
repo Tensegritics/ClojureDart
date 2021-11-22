@@ -328,7 +328,7 @@
   #_(as-> (await (read-string "#(:aa % 1 %2 %& 2 3 4)")) r (prn r (meta r) (.-runtimeType r)))
   #_(as-> (await (read-string "#(1)")) r (prn r (meta r) (.-runtimeType r)))
 
-  (as-> (await (read-string "#(+ 3 [%&])")) r (prn r (meta r) (.-runtimeType r))))
+  (as-> (await (read-string "#(+ #_3 [%&])")) r (prn r (meta r) (.-runtimeType r))))
 
 #_(defn ^:async main []
   (as-> (await (read-string "(12 12N -12 0x12 0X12 0x1ff)")) r (prn r (meta r) (.-runtimeType r)))
