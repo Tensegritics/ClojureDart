@@ -191,13 +191,13 @@
           arg-count (cond-> (->> (keys *arg-env*) (apply max 0))
                       (*arg-env* -1) (+ 2))]
       (list 'fn*
-        (reduce #(let [[n param] %2]
-                   (if (< n 0)
-                     (-> (assoc %1 (dec arg-count) param)
-                       (assoc (- arg-count 2) '&))
-                     (assoc %1 (dec n) param)))
-          (vec (repeat arg-count '_)) *arg-env*)
-        result))))
+        (list (reduce #(let [[n param] %2]
+                         (if (< n 0)
+                           (-> (assoc %1 (dec arg-count) param)
+                             (assoc (- arg-count 2) '&))
+                           (assoc %1 (dec n) param)))
+                (vec (repeat arg-count '_)) *arg-env*)
+          result)))))
 
 (def dispatch-macros
   {"_" ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
@@ -290,8 +290,12 @@
               (not (nil? (.group m 3))) (let [ns (.group m 3)]
                                           (when (.endsWith ns ":")
                                             (throw (FormatException. (str "Invalid token: " token))))
-                                          (keyword ns (.group m 4)))
-              :else (keyword nil (.group m 4)))
+                                          (if (.group m 2)
+                                            (keyword ns (.group m 4))
+                                            (symbol ns (.group m 4))))
+              :else (if (.group m 2)
+                      (keyword nil (.group m 4))
+                      (symbol nil (.group m 4))))
             (throw (FormatException. (str "Invalid token: " token)))))))))
 
 (defn ^#/(Future dynamic) ^:async read
