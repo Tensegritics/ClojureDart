@@ -203,7 +203,9 @@
   {"_" ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
    "^" ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
    "{" ^:async (fn [^ReaderInput rdr] (await (read-hash-set rdr)))
-   "(" ^:async (fn [^ReaderInput rdr] (await (read-fn rdr)))})
+   "(" ^:async (fn [^ReaderInput rdr] (await (read-fn rdr)))
+   "!" ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
+   "<" ^:async (fn [^ReaderInput rdr] (throw (FormatException. "Unreadable form")))})
 
 (def macros
   {"("  ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
