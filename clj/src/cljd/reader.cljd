@@ -199,6 +199,56 @@
                 (vec (repeat arg-count '_)) *arg-env*)
           result)))))
 
+(defn ^:async read-unquote [^ReaderInput rdr]
+  (let [string (await (.read rdr))
+        char (aget string 0)]
+    (if (< (cu0 char) 0)
+      (throw (FormatException. "EOF while reading character"))
+      (if (== char "@")
+        (do (.unread rdr (.substring string 1))
+            (list 'cljd.core/unquote-splicing (await (read rdr -1))))
+        (do (.unread rdr string)
+            (list 'cljd.core/unquote (await (read rdr -1))))))))
+
+(declare ^:dart sq-expand-list)
+
+(defn unquote? [form]
+  (and (seq? form) (= 'cljd.core/unquote (first form))))
+
+(defn unquote-splicing? [form]
+  (and (seq? form) (= 'cljd.core/unquote-splicing (first form))))
+
+(defn- syntax-quote [form]
+  (cond
+    (number? form) form
+    (string? form) form
+    (keyword? form) form
+    (unquote? form) (second form)
+    (unquote-splicing? form) (throw (FormatException. "splice not in list"))
+    ;; TODO records
+    (vector? form)
+    (list 'cljd.core/apply 'cljd.core/vector (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form))))
+    (set? form)
+    (list 'cljd.core/apply 'cljd.core/hash-set (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form))))
+    (map? form)
+    (list 'cljd.core/apply 'cljd.core/hash-map (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list (apply concat form)))))
+    (or (list? form) (seq? form))
+    (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form)))
+    :else (throw (FormatException. "Unknown Collection type"))))
+
+(defn- sq-expand-list [s]
+  (map #(cond
+          (unquote? %) (list 'cljd.core/list (second %))
+          (unquote-splicing? %) (second %)
+          :else (list 'cljd.core/list (syntax-quote %))) s))
+
+(defn ^:async read-syntax-quote [^ReaderInput rdr]
+  (loop [result nil]
+    (let [val (await (read rdr -1))]
+      (if (== val rdr)
+        result
+        (recur (syntax-quote val))))))
+
 (def dispatch-macros
   {"_" ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
    "^" ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
@@ -215,11 +265,13 @@
    "["  ^:async (fn [^ReaderInput rdr] (await (read-vector rdr)))
    "]"  ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
    "'"  ^:async (fn [^ReaderInput rdr] (list (symbol nil "quote") (await (read rdr -1))))
+   "`"  ^:async (fn [^ReaderInput rdr] (await (read-syntax-quote rdr)))
    "@"  ^:async (fn [^ReaderInput rdr] (list 'cljd.core/deref (await (read rdr -1))))
    ";"  ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
    "^"  ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
    "\"" ^:async (fn [^ReaderInput rdr] (await (read-string-content rdr)))
    "%"  ^:async (fn [^ReaderInput rdr] (await (read-arg rdr)))
+   "~"  ^:async (fn [^ReaderInput rdr] (await (read-unquote rdr)))
    "#"  ^:async (fn [^ReaderInput rdr]
                   (if-some [string (await (.read rdr))]
                     (if-some [macroreader (dispatch-macros (aget string 0))]
@@ -331,8 +383,14 @@
 (defn ^:async main []
   #_(as-> (await (read-string "#(:aa % 1 %2 %& 2 3 4)")) r (prn r (meta r) (.-runtimeType r)))
   #_(as-> (await (read-string "#(1)")) r (prn r (meta r) (.-runtimeType r)))
+  #_(as-> (await (read-string "#(+ #_3 [%&])")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "`[1 2 3]")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "`#{1 2 3}")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "`{1 2 3 {:a :b}}")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "`{1 2 3 (:a :b)}")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "`{1 2 3 ~a}")) r (prn r (meta r) (.-runtimeType r)))
+  (as-> (await (read-string "`{1 2 3 ~@a}")) r (prn r (meta r) (.-runtimeType r))))
 
-  (as-> (await (read-string "#(+ #_3 [%&])")) r (prn r (meta r) (.-runtimeType r))))
 
 #_(defn ^:async main []
   (as-> (await (read-string "(12 12N -12 0x12 0X12 0x1ff)")) r (prn r (meta r) (.-runtimeType r)))
