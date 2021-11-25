@@ -347,6 +347,7 @@
                       (recur (with-meta (symbol lib-ns (name sym)) (meta sym))))
                     (if-some [info (some-> sym-ns symbol nses (get (symbol (name sym))))]
                       [:def info])
+                    (when-not (non-nullable sym))
                     (if-some [atype (resolve-dart-type sym type-vars)]
                       [:dart atype])))
         specialize (fn [[tag info] nullable]
@@ -2278,9 +2279,9 @@
 (defn var-locus
   ([varname] (var-locus (-> varname meta :dart/type) varname))
   ([vartype varname]
-   {:pre (str (or (type-str vartype) "var") " " varname "=")
+   {:pre (str (or (some-> vartype type-str) "var") " " varname "=")
     :post ";\n"
-    :decl (str (or (type-str vartype) "var") " " varname ";\n")
+    :decl (str (or (some-> vartype type-str) "var") " " varname ";\n")
     :fork (assignment-locus varname)}))
 
 (defn final-locus
@@ -3033,6 +3034,11 @@
 
       (time
         (binding [*hosted* true]
-          (compile-namespace 'cljd.test-clojure.string)))))
+          (compile-namespace 'cljd.test-clojure.string)))
+
+      (time
+        (binding [*hosted* false
+                  dart-libs-info li]
+          (compile-namespace 'cljd.reader)))))
 
   )
