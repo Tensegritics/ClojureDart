@@ -124,18 +124,21 @@
   (is (thrown-with-msg? FormatException
         #"Map literal must contain an even number of forms"
         (await (r/read-string "{foo bar bar}"))))
+  ;; TODO at some point
   #_(is (thrown-with-msg? FormatException
           #"Map literal contains duplicate key: foo"
           (await (r/read-string "{foo bar foo bar}")))))
 
-#_(deftest read-set
-  (is (= '#{} (r/read-string "#{}")))
-  (is (= '#{foo bar} (r/read-string "#{foo bar}")))
-  (is (= '#{foo #{bar} baz} (r/read-string "#{foo #{bar} baz}")))
-  (is (thrown-with-msg? js/Error #"Set literal contains duplicate key: foo"
-                        (r/read-string "#{foo foo}")))
-  (is (thrown-with-msg? js/Error #"Set literal contains duplicate keys: foo, bar"
-                        (r/read-string "#{foo foo bar bar}"))))
+(deftest read-set
+  (is (= '#{} (await (r/read-string "#{}"))))
+  (is (= '#{foo bar} (await (r/read-string "#{foo bar}"))))
+  (is (= '#{foo #{bar} baz} (await (r/read-string "#{foo #{bar} baz}"))))
+  ;; TODO at some point
+  #_(is (thrown-with-msg? js/Error #"Set literal contains duplicate key: foo"
+          (r/read-string "#{foo foo}")))
+  ;; TODO at some point
+  #_(is (thrown-with-msg? js/Error #"Set literal contains duplicate keys: foo, bar"
+        (r/read-string "#{foo foo bar bar}"))))
 
 #_(deftest read-metadata
   (is (= {:foo true} (meta (r/read-string "^:foo 'bar"))))
