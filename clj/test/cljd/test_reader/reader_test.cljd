@@ -97,15 +97,15 @@
         #"Invalid character literal \\ud800"
         (r/read-string "\\ud800"))))
 
-#_(deftest read-string*
-  (is (= "foo bar" (r/read-string "\"foo bar\"")))
-  (is (= "foo\\bar" (r/read-string "\"foo\\\\bar\"")))
-  (is (= "foo\000bar" (r/read-string "\"foo\\000bar\"")))
-  (is (= "foo\u0194bar" (r/read-string "\"foo\\u0194bar\"")))
-  (is (= "foo\123bar" (r/read-string "\"foo\\123bar\"")))
-  (is (= "\060" (r/read-string "\"\\060\"")))
-  (is (= "\340" (r/read-string "\"\\340\"")))
-  (is (= "\377" (r/read-string "\"\\377\""))))
+(deftest read-string*
+  (is (= "foo bar" (await (r/read-string "\"foo bar\""))))
+  (is (= "foo\\bar" (await (r/read-string "\"foo\\\\bar\""))))
+  (is (= "foo\000bar" (await (r/read-string "\"foo\\000bar\""))))
+  (is (= "foo\u0194bar" (await (r/read-string "\"foo\\u0194bar\""))))
+  (is (= "foo\123bar" (await (r/read-string "\"foo\\123bar\""))))
+  (is (= "\060" (await (r/read-string "\"\\060\""))))
+  (is (= "\340" (await (r/read-string "\"\\340\""))))
+  (is (= "\377" (await (r/read-string "\"\\377\"")))))
 
 #_(deftest read-list
   (is (= '() (r/read-string "()")))
