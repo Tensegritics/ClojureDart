@@ -75,10 +75,10 @@
   #_(is (= js/Number.POSITIVE_INFINITY (await (r/read-string "##Inf"))))
   #_(is (= js/Number.NEGATIVE_INFINITY (await (r/read-string "##-Inf")))))
 
-#_(deftest read-specials
-  (is (= 'nil nil))
-  (is (= 'false false))
-  (is (= 'true true)))
+(deftest read-specials
+  (is (= 'nil (await (r/read-string "nil"))))
+  (is (= 'false (await (r/read-string "false"))))
+  (is (= 'true (await (r/read-string "true")))))
 
 #_(deftest read-char
   (is (= \f (r/read-string "\\f")))
