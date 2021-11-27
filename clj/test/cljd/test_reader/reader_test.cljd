@@ -107,15 +107,15 @@
   (is (= "\340" (await (r/read-string "\"\\340\""))))
   (is (= "\377" (await (r/read-string "\"\\377\"")))))
 
-#_(deftest read-list
-  (is (= '() (r/read-string "()")))
-  (is (= '(foo bar) (r/read-string "(foo bar)")))
-  (is (= '(foo (bar) baz) (r/read-string "(foo (bar) baz)"))))
+(deftest read-list
+  (is (= '() (await (r/read-string "()"))))
+  (is (= '(foo bar) (await (r/read-string "(foo bar)"))))
+  (is (= '(foo (bar) baz) (await (r/read-string "(foo (bar) baz)")))))
 
-#_(deftest read-vector
-  (is (= '[] (r/read-string "[]")))
-  (is (= '[foo bar] (r/read-string "[foo bar]")))
-  (is (= '[foo [bar] baz] (r/read-string "[foo [bar] baz]"))))
+(deftest read-vector
+  (is (= '[] (await (r/read-string "[]"))))
+  (is (= '[foo bar] (await (r/read-string "[foo bar]"))))
+  (is (= '[foo [bar] baz] (await (r/read-string "[foo [bar] baz]")))))
 
 #_(deftest read-map
   (is (= '{} (r/read-string "{}")))
