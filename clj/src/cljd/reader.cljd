@@ -275,10 +275,10 @@
    "#"  ^:async (fn [^ReaderInput rdr]
                   (if-some [string (await (.read rdr))]
                     (if-some [macroreader (dispatch-macros (aget string 0))]
-                        (do (.unread rdr (.substring string 1))
-                            (await (macroreader rdr)))
-                        (throw (FormatException. (str "Unepxected dispatch sequence: #" (aget string 0)))))
-                   (throw (FormatException. "EOF while reading dispatch sequence.")))) })
+                      (do (.unread rdr (.substring string 1))
+                          (await (macroreader rdr)))
+                      (throw (FormatException. (str "Unepxected dispatch sequence: #" (aget string 0)))))
+                    (throw (FormatException. "EOF while reading dispatch sequence.")))) })
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
 
@@ -329,7 +329,7 @@
           (not (nil? (.group m 4))) (parse (.group m 4) 16)
           (not (nil? (.group m 5))) (parse (.group m 5) 8)
           (not (nil? (.group m 7))) (parse (.group m 7) (int/parse ^String (.group m 6)))
-          :else (throw (FormatException. "Invalid number."))))
+          :else (throw (FormatException. (str "Invalid number: " token ".")))))
       (if-some [m (.matchAsPrefix DOUBLE-REGEXP token)]
         (if (.group m 4)
           (throw (FormatException. "BigDecimal not supported yet."))
@@ -379,34 +379,3 @@
     (let [res (read rdr -1)]
       (.close controller)
       (await res))))
-
-(defn ^:async main []
-  #_(as-> (await (read-string "#(:aa % 1 %2 %& 2 3 4)")) r (prn r (meta r) (.-runtimeType r)))
-  #_(as-> (await (read-string "#(1)")) r (prn r (meta r) (.-runtimeType r)))
-  #_(as-> (await (read-string "#(+ #_3 [%&])")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "`[1 2 3]")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "`#{1 2 3}")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "`{1 2 3 {:a :b}}")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "`{1 2 3 (:a :b)}")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "`{1 2 3 ~a}")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "`{1 2 3 ~@a}")) r (prn r (meta r) (.-runtimeType r))))
-
-
-#_(defn ^:async main []
-  (as-> (await (read-string "(12 12N -12 0x12 0X12 0x1ff)")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string ":sdfds&sdf%dd")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "(12.3 0.2 -1.2 0.0)")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "(:aaa :aa/bb :aa:adsf:sdf :dd///)")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "(:aaa #_(1 2 3) 1 2 3 )")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "#{:aaa #_(1 2 3) 1 2 3}")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "nil")) r (prn r (.-runtimeType r)))
-  (as-> (await (read-string "^{true true} [\"nil\" nil]")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "^{true true} [\"n\\\"il\" nil]")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "^{true true} [nil nil]")) r (prn r (meta r) (.-runtimeType r)))
-  (as-> (await (read-string "'(true false false)")) r (prn r (.-runtimeType r)))
-  (as-> (await (read-string "@true")) r (prn r (.-runtimeType r)))
-  (as-> (await (read-string ";;coucou text \n (true true)")) r (prn r (.-runtimeType r)))
-  (as-> (await (read-string "(true true nil)")) r (prn r (.-runtimeType r)))
-  (as-> (await (read-string "[true true nil]")) r (prn r (.-runtimeType r)))
-  (as-> (await (read-string "{true true nil nil}")) r (prn r (.-runtimeType r)))
-  (as-> (await (read-string "{true true nil [true true]}")) r (prn r (.-runtimeType r))))
