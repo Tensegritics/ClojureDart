@@ -117,15 +117,16 @@
   (is (= '[foo bar] (await (r/read-string "[foo bar]"))))
   (is (= '[foo [bar] baz] (await (r/read-string "[foo [bar] baz]")))))
 
-#_(deftest read-map
-  (is (= '{} (r/read-string "{}")))
-  (is (= '{foo bar} (r/read-string "{foo bar}")))
-  (is (= '{foo {bar baz}} (r/read-string "{foo {bar baz}}")))
-  (is (thrown-with-msg? js/Error
-                        #"Map literals must contain an even number of forms."
-                        (r/read-string "{foo bar bar}")))
-  (is (thrown-with-msg? js/Error #"Map literal contains duplicate key: foo"
-                      (r/read-string "{foo bar foo bar}"))))
+(deftest read-map
+  (is (= '{} (await (r/read-string "{}"))))
+  (is (= '{foo bar} (await (r/read-string "{foo bar}"))))
+  (is (= '{foo {bar baz}} (await (r/read-string "{foo {bar baz}}"))))
+  (is (thrown-with-msg? FormatException
+        #"Map literal must contain an even number of forms"
+        (await (r/read-string "{foo bar bar}"))))
+  #_(is (thrown-with-msg? FormatException
+          #"Map literal contains duplicate key: foo"
+          (await (r/read-string "{foo bar foo bar}")))))
 
 #_(deftest read-set
   (is (= '#{} (r/read-string "#{}")))
