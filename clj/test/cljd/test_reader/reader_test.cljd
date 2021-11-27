@@ -60,19 +60,20 @@
   (is (== 4/2 (r/read-string "+4/2")))
   (is (== -4/2 (r/read-string "-4/2"))))
 
-#_(deftest read-symbol
-  (is (= 'foo (r/read-string "foo")))
-  (is (= 'foo/bar (r/read-string "foo/bar")))
-  (is (= '*+!-_? (r/read-string "*+!-_?")))
-  (is (= 'abc:def:ghi (r/read-string "abc:def:ghi")))
-  (is (= 'abc.def/ghi (r/read-string "abc.def/ghi")))
-  (is (= 'abc/def.ghi (r/read-string "abc/def.ghi")))
-  (is (= 'abc:def/ghi:jkl.mno (r/read-string "abc:def/ghi:jkl.mno")))
-  (is (instance? cljs.core/Symbol (r/read-string "alphabet")))
-  (is (= "foo//" (str (r/read-string "foo//"))))
-  (is (js/isNaN (r/read-string "##NaN")))
-  (is (= js/Number.POSITIVE_INFINITY (r/read-string "##Inf")))
-  (is (= js/Number.NEGATIVE_INFINITY (r/read-string "##-Inf"))))
+(deftest read-symbol
+  (is (= 'foo (await (r/read-string "foo"))))
+  (is (= 'foo/bar (await (r/read-string "foo/bar"))))
+  (is (= '*+!-_? (await (r/read-string "*+!-_?"))))
+  (is (= 'abc:def:ghi (await (r/read-string "abc:def:ghi"))))
+  (is (= 'abc.def/ghi (await (r/read-string "abc.def/ghi"))))
+  (is (= 'abc/def.ghi (await (r/read-string "abc/def.ghi"))))
+  (is (= 'abc:def/ghi:jkl.mno (await (r/read-string "abc:def/ghi:jkl.mno"))))
+  (is (dart/is?  (await (r/read-string "alphabet")) cljd.core/Symbol))
+  (is (= "foo//" (str (await (r/read-string "foo//")))))
+  ;; TODO : think about it
+  #_(is (await (js/isNaN (r/read-string "##NaN"))))
+  #_(is (= js/Number.POSITIVE_INFINITY (await (r/read-string "##Inf"))))
+  #_(is (= js/Number.NEGATIVE_INFINITY (await (r/read-string "##-Inf")))))
 
 #_(deftest read-specials
   (is (= 'nil nil))
