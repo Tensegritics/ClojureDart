@@ -140,22 +140,22 @@
   #_(is (thrown-with-msg? js/Error #"Set literal contains duplicate keys: foo, bar"
         (r/read-string "#{foo foo bar bar}"))))
 
-#_(deftest read-metadata
-  (is (= {:foo true} (meta (r/read-string "^:foo 'bar"))))
-  (is (= {:foo 'bar} (meta (r/read-string "^{:foo bar} 'baz"))))
-  (is (= {:tag "foo"} (meta (r/read-string "^\"foo\" 'bar"))))
-  (is (= {:tag 'String} (meta (r/read-string "^String 'x")))))
+(deftest read-metadata
+  (is (= {:foo true} (meta (await (r/read-string "^:foo 'bar")))))
+  (is (= {:foo 'bar} (meta (await (r/read-string "^{:foo bar} 'baz")))))
+  (is (= {:tag "foo"} (meta (await (r/read-string "^\"foo\" 'bar")))))
+  (is (= {:tag 'String} (meta (await (r/read-string "^String 'x"))))))
 
-#_(deftest read-keyword
-  (is (= :foo-bar (r/read-string ":foo-bar")))
-  (is (= :foo/bar (r/read-string ":foo/bar")))
-  (is (= :*+!-_? (r/read-string ":*+!-_?")))
-  (is (= :abc:def:ghi (r/read-string ":abc:def:ghi")))
-  (is (= :abc.def/ghi (r/read-string ":abc.def/ghi")))
-  (is (= :abc/def.ghi (r/read-string ":abc/def.ghi")))
-  (is (= :abc:def/ghi:jkl.mno (r/read-string ":abc:def/ghi:jkl.mno")))
-  (is (instance? cljs.core.Keyword (r/read-string ":alphabet")))
-  (is (= :bar/bar (binding [*alias-map* '{foo bar}] (r/read-string "::foo/bar")))))
+(deftest read-keyword
+  (is (= :foo-bar (await (r/read-string ":foo-bar"))))
+  (is (= :foo/bar (await (r/read-string ":foo/bar"))))
+  (is (= :*+!-_? (await (r/read-string ":*+!-_?"))))
+  (is (= :abc:def:ghi (await (r/read-string ":abc:def:ghi"))))
+  (is (= :abc.def/ghi (await (r/read-string ":abc.def/ghi"))))
+  (is (= :abc/def.ghi (await (r/read-string ":abc/def.ghi"))))
+  (is (= :abc:def/ghi:jkl.mno (await (r/read-string ":abc:def/ghi:jkl.mno"))))
+  (is (dart/is? (await (r/read-string ":alphabet")) cljd.core/Keyword))
+  #_(is (= :bar/bar (binding [*alias-map* '{foo bar}] (r/read-string "::foo/bar")))))
 
 #_(deftest read-regex
   (is (= (str #"(?i)abc")
