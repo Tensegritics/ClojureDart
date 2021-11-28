@@ -775,6 +775,11 @@
   (-print [o sink]
     (.write ^StringSink sink "nil")))
 
+(extend-type RegExp
+  IPrint
+  (-print [o sink]
+    (.write ^StringSink sink (.-pattern o))))
+
 ;; TODO js does define infinite but not native & VM, handle theses cases
 (extend-type num
   IPrint
@@ -2887,7 +2892,7 @@
 
 (def ^PersistentList -EMPTY-LIST (PersistentList. nil nil nil 0 -1))
 
-(defn list?
+(defn ^bool list?
   "Returns true if x implements PersistentList"
   [x] (dart/is? x PersistentList))
 

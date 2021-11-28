@@ -2133,7 +2133,10 @@
           #?@(:clj [(char? x) (str x)])
           (or (number? x) (boolean? x) (string? x)) x
           (instance? java.util.regex.Pattern x)
-          (emit (list 'new 'dart:core/RegExp (.pattern ^java.util.regex.Pattern x) '.& :unicode true) env)
+          (emit (list 'new 'dart:core/RegExp
+                  #_(list '. 'dart:core/RegExp 'escape (.pattern ^java.util.regex.Pattern x))
+                  (.pattern ^java.util.regex.Pattern x)
+                  #_#_#_'.& :unicode true) env)
           (keyword? x)
           (emit (with-meta (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) {:const true}) env)
           (nil? x) nil
@@ -3039,6 +3042,11 @@
       (time
         (binding [*hosted* false
                   dart-libs-info li]
-          (compile-namespace 'cljd.reader)))))
+          (compile-namespace 'cljd.reader)))
+
+      (time
+        (binding [*hosted* false
+                  dart-libs-info li]
+          (compile-namespace 'cljd.test-reader.reader-test)))))
 
   )

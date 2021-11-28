@@ -157,14 +157,15 @@
   (is (dart/is? (await (r/read-string ":alphabet")) cljd.core/Keyword))
   #_(is (= :bar/bar (binding [*alias-map* '{foo bar}] (r/read-string "::foo/bar")))))
 
-#_(deftest read-regex
-  (is (= (str #"(?i)abc")
-         (str (r/read-string "#\"(?i)abc\""))))
-  (is (= (str #"\[\]?(\")\\")
-         (str (r/read-string "#\"\\[\\]?(\\\")\\\\\"")))))
+(deftest read-regex
+  ;; TODO: handle modifiers
+  #_(is (= (.-pattern #"(?i)abc")
+        (.-pattern (await (r/read-string "#\"(?i)abc\"")))))
+  (is (= (.-pattern #"\[\]?(\")\\")
+        (.-pattern (await (r/read-string "#\"\\[\\]?(\\\")\\\\\""))))))
 
-#_(deftest read-quote
-  (is (= ''foo (r/read-string "'foo"))))
+(deftest read-quote
+  (is (= ''foo (await  (r/read-string "'foo")))))
 
 #_(deftest read-syntax-quote
   (is (= (binding [resolve-symbol (constantly 'cljs.user/x)]

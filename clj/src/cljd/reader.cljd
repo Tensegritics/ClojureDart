@@ -101,6 +101,26 @@
           (recur)))
       rdr)))
 
+(defn ^:async read-regexp [^ReaderInput rdr]
+  (let [sb (StringBuffer.)
+        string (await (.read rdr))]
+    (loop [index 0]
+      (let [ch (aget string index)]
+        (if (== "\"" ch)
+          (do (.unread rdr (.substring string (inc index)))
+              (RegExp. (.toString sb)))
+          (if (< (cu0 ch) 0)
+            (throw (FormatException. "EOF while reading regex"))
+            (do (.write sb ch)
+                (if (== "\\" ch)
+                  (let [index (inc index)
+                        ch (aget string index)]
+                    (if (< (cu0 ch) 0)
+                      (throw (FormatException. "EOF while reading regex"))
+                      (do (.write sb ch)
+                          (recur (inc index)))))
+                  (recur (inc index))))))))))
+
 (defn ^:async read-meta [^ReaderInput rdr]
   (let [meta (await (read rdr -1))
         meta (if (or (symbol? meta) (string? meta))
@@ -249,12 +269,13 @@
         (recur (syntax-quote val))))))
 
 (def dispatch-macros
-  {"_" ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
-   "^" ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
-   "{" ^:async (fn [^ReaderInput rdr] (await (read-hash-set rdr)))
-   "(" ^:async (fn [^ReaderInput rdr] (await (read-fn rdr)))
-   "!" ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
-   "<" ^:async (fn [^ReaderInput rdr] (throw (FormatException. "Unreadable form")))})
+  {"_"  ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
+   "^"  ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
+   "{"  ^:async (fn [^ReaderInput rdr] (await (read-hash-set rdr)))
+   "("  ^:async (fn [^ReaderInput rdr] (await (read-fn rdr)))
+   "!"  ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
+   "\"" ^:async (fn [^ReaderInput rdr] (await (read-regexp rdr)))
+   "<"  ^:async (fn [^ReaderInput rdr] (throw (FormatException. "Unreadable form")))})
 
 (def macros
   {"("  ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
