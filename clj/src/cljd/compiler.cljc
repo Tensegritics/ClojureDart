@@ -889,6 +889,11 @@
   [x]
   (some {'dart/recur true} (tree-seq seq? #(case (first %) (dart/loop dart/fn) nil %) x)))
 
+(defn has-await?
+  "Takes a dartsexp and returns true when it contains an open await."
+  [x]
+  (some {'dart/await true} (tree-seq sequential? #(case (first %) (dart/fn) nil %) x)))
+
 (defn- dart-binding [hint dart-expr env]
   (let [hint-hint (when (symbol? hint) (infer-type (with-meta 'SHOULD_NOT_APPEAR_IN_DART_CODE (dart-meta hint env))))
         tmp (-> hint (dart-local env) (vary-meta merge (infer-type dart-expr) hint-hint))]
@@ -1481,6 +1486,7 @@
                                               :dart/nat-type type
                                               :dart/ret-truth truth))))
         recur-params (when (has-recur? dart-body) dart-fixed-params)
+        async (or async (has-await? dart-body))
         dart-fixed-params (if recur-params
                             (map #(dart-fn-param % env) fixed-params) ; regen new fixed params
                             dart-fixed-params)
@@ -1491,7 +1497,7 @@
                     (with-lifted [dart-expr dart-body] env
                       (list 'dart/as dart-expr ret-type))
                     dart-body)
-        ret-type (let [ret-type' (or ret-type (:dart/type (infer-type dart-body)))]
+        ret-type (let [ret-type' (or ret-type (:dart/type (infer-type dart-body)) dc-dynamic)]
                    (cond-> ret-type'
                      ;; We don't want to emit a fn with dc.Never type as it would lead to subtle bugs
                      (and (nil? ret-type) (= (:qname ret-type') (:qname dc-Never))) (and dc-dynamic)
