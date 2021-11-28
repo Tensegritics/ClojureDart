@@ -275,6 +275,7 @@
    "("  ^:async (fn [^ReaderInput rdr] (await (read-fn rdr)))
    "!"  ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
    "\"" ^:async (fn [^ReaderInput rdr] (await (read-regexp rdr)))
+   "'"  ^:async (fn [^ReaderInput rdr] (list 'var (await (read rdr -1))))
    "<"  ^:async (fn [^ReaderInput rdr] (throw (FormatException. "Unreadable form")))})
 
 (def macros
