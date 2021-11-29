@@ -2,7 +2,14 @@
   (:require ["dart:io" :as io]
             ["dart:async" :as async]))
 
-;; ReaderInput class definition
+(defprotocol IResolver
+  (currentNS [resolver])
+  (resolveClass [resolver sym])
+  (resolveAlias [resolver sym])
+  (resolveVar [resolver sym]))
+
+(def ^:dynamic *resolver* nil)
+
 (deftype ReaderInput [^#/(async/Stream String) in
                       ^:mutable ^#/(async/StreamSubscription? String) subscription
                       ^:mutable ^#/(async/Completer? String?) completer
@@ -237,36 +244,74 @@
 (defn unquote-splicing? [form]
   (and (seq? form) (= 'cljd.core/unquote-splicing (first form))))
 
-(defn- syntax-quote [form]
+;; TODO: should not be in reader.cljd
+(defn special-form? [form]
+  (contains? '#{var def loop recur if case let do fn quote . deftype reify try throw catch finally new & await} form))
+
+; creer les deux dynvars ais *resolver* dans core.cljc
+; definir un proto pour resolver en copiant l'iface de Clj
+; porter en supposant que les deux sont toujours non null
+(defn- syntax-quote [form resolver]
   (cond
+    (special-form? form) (list 'quote form)
+    (symbol? form)
+    (let [nsform (namespace form)
+          nameform (name form)]
+      (->> (cond
+             (and (nil? nsform) (.endsWith nameform "#"))
+             ;; TODO
+             "do something"
+             (and (nil? nsform) (.endsWith nameform "."))
+             (->
+               (resolveClass resolver (symbol nil (.substring nameform 0 (dec (.-length nameform)))))
+               (str ".")
+               (->> (symbol nil)))
+             (and (nil? nsform) (== (aget nameform 0) "."))
+             form
+             :else
+             (let [nsym (let [alias (some->> nsform (symbol nil))
+                              nsym (some->> alias (resolveClass resolver))]
+                          (if (nil? nsym) (resolveAlias resolver alias) nsym))]
+               (if (not (nil? nsym))
+                 (symbol (name nsym) nameform)
+                 (if (nil? nsform)
+                   (let [rsym (resolveClass resolver form)
+                         rsym (if (nil? rsym) (resolveVar resolver form) rsym)]
+                     (if (not (nil? rsym))
+                       rsym
+                       (symbol (name (currentNS resolver)) nameform)))
+                   form))))
+        (list 'quote)))
+    (unquote? form) (second form)
+    (unquote-splicing? form) (throw (FormatException. "splice not in list"))
     (number? form) form
     (string? form) form
     (keyword? form) form
-    (unquote? form) (second form)
-    (unquote-splicing? form) (throw (FormatException. "splice not in list"))
+
     ;; TODO records
     (vector? form)
-    (list 'cljd.core/apply 'cljd.core/vector (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form))))
+    (list 'cljd.core/apply 'cljd.core/vector (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form resolver))))
     (set? form)
-    (list 'cljd.core/apply 'cljd.core/hash-set (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form))))
+    (list 'cljd.core/apply 'cljd.core/hash-set (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form resolver))))
     (map? form)
-    (list 'cljd.core/apply 'cljd.core/hash-map (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list (apply concat form)))))
+    (list 'cljd.core/apply 'cljd.core/hash-map (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list (apply concat form) resolver))))
     (or (list? form) (seq? form))
-    (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form)))
-    :else (throw (FormatException. "Unknown Collection type"))))
+    (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form resolver)))
+    #_#_:else (throw (FormatException. "Unknown Collection type"))
+    :else (list 'quote form)))
 
-(defn- sq-expand-list [s]
+(defn- sq-expand-list [s resolver]
   (map #(cond
           (unquote? %) (list 'cljd.core/list (second %))
           (unquote-splicing? %) (second %)
-          :else (list 'cljd.core/list (syntax-quote %))) s))
+          :else (list 'cljd.core/list (syntax-quote % resolver))) s))
 
 (defn ^:async read-syntax-quote [^ReaderInput rdr]
   (loop [result nil]
     (let [val (await (read rdr -1))]
       (if (== val rdr)
         result
-        (recur (syntax-quote val))))))
+        (recur (syntax-quote val *resolver*))))))
 
 (def dispatch-macros
   {"_"  ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)

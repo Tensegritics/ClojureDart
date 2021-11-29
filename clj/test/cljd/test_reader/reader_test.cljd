@@ -167,21 +167,82 @@
 (deftest read-quote
   (is (= ''foo (await (r/read-string "'foo")))))
 
-#_(deftest read-syntax-quote
-  (is (= (binding [resolve-symbol (constantly 'cljs.user/x)]
-           (r/read-string "`x"))
-         ''cljs.user/x))
+(def cljd-resolver
+  (reify r/IResolver
+    (currentNS [_] 'cljd.user)
+    (resolveClass [_ sym] ('{List dart:core/List + cljd.core/+} sym))
+    (resolveAlias [_ sym] ('{io $lib:d_io foo bar} sym))
+    (resolveVar [_ sym] nil)))
+
+(deftest read-syntax-quote
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`x")))
+        ''cljd.user/x))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`foo/bar")))
+        ''bar/bar))
+  (is (= (second (binding [r/*resolver* cljd-resolver]
+                   (await (r/read-string "`+"))))
+        'cljd.core/+))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(.substring \"s\" 0)")))
+        '(cljd.core/seq (cljd.core/concat
+                          (cljd.core/list (quote .substring))
+                          (cljd.core/list "s")
+                          (cljd.core/list 0)))))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`a.b.c/d")))
+        ''a.b.c/d))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(if true false)")))
+        '(cljd.core/seq (cljd.core/concat
+                          (cljd.core/list (quote if))
+                          (cljd.core/list (quote true))
+                          (cljd.core/list (quote false))))))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(let [a 42] a)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote let))
+             (cljd.core/list
+               (cljd.core/apply
+                 cljd.core/vector
+                 (cljd.core/seq
+                   (cljd.core/concat
+                     (cljd.core/list (quote cljd.user/a))
+                     (cljd.core/list 42)))))
+             (cljd.core/list (quote cljd.user/a))))))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(let [a 42] ~a)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote let))
+             (cljd.core/list
+               (cljd.core/apply
+                 cljd.core/vector
+                 (cljd.core/seq
+                   (cljd.core/concat
+                     (cljd.core/list (quote cljd.user/a))
+                     (cljd.core/list 42)))))
+             (cljd.core/list a)))))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(List. 1 2 3)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote dart:core/List.))
+             (cljd.core/list 1)
+             (cljd.core/list 2)
+             (cljd.core/list 3)))))
 
   #_(let [q (r/read-string "quote")]
-    (is (= 'bar/bar (binding [*alias-map* '{foo bar}]
-                      (second (r/read-string "`foo/bar")))))
-    (is (= q (first (r/read-string "`foo"))))
-    (is (= 'foo (second (r/read-string "`foo"))))
-    (is (= q (first (r/read-string "`+"))))
-    (is (= '+ (second (r/read-string "`+"))))
-    (is (= q (first (r/read-string "`foo/bar"))))
-    (is (= 'foo/bar (second (r/read-string "`foo/bar"))))
-    (is (= 1 (r/read-string "`1")))))
+
+      (is (= q (first (r/read-string "`foo"))))
+      (is (= 'foo (second (r/read-string "`foo"))))
+
+      (is (= '+ (second (r/read-string "`+"))))
+      (is (= q (first (r/read-string "`foo/bar"))))
+      (is (= 'foo/bar (second (r/read-string "`foo/bar"))))
+      (is (= 1 (r/read-string "`1")))))
 
 (deftest read-deref
   (is (= '(cljd.core/deref foo) (await (r/read-string "@foo")))))
@@ -189,8 +250,8 @@
 (deftest read-var
   (is (= '(var foo) (await (r/read-string "#'foo")))))
 
-#_(deftest read-fn
-  (is (= '(fn* [] (foo bar baz)) (r/read-string "#(foo bar baz)"))))
+(deftest read-fn
+  (is (= '(fn* ([] (foo bar baz))) (await (r/read-string "#(foo bar baz)")))))
 
 #_(defn inst [s]
   (js/Date. s))

@@ -2901,7 +2901,8 @@
    '/ dart-type-params-reader})
 
 (def cljd-resolver
-  (reify clojure.lang.LispReader$Resolver
+  (reify #?(:clj clojure.lang.LispReader$Resolver
+            :cljd cljd.reader/IResolver)
     (currentNS [_] (:current-ns @nses))
     (resolveClass [_ sym]
       (let [{:keys [current-ns] :as nses} @nses]
@@ -3046,7 +3047,7 @@
           (compile-namespace 'cljd.test-clojure.string)))
 
       (time
-        (binding [*hosted* false
+        (binding [*hosted* true
                   dart-libs-info li]
           (compile-namespace 'cljd.reader)))
 
