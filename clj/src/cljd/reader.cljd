@@ -248,9 +248,7 @@
 (defn special-form? [form]
   (contains? '#{var def loop recur if case let do fn quote . deftype reify try throw catch finally new & await} form))
 
-; creer les deux dynvars ais *resolver* dans core.cljc
-; definir un proto pour resolver en copiant l'iface de Clj
-; porter en supposant que les deux sont toujours non null
+; TODO gensym
 (defn- syntax-quote [form resolver]
   (cond
     (special-form? form) (list 'quote form)
@@ -262,10 +260,8 @@
              ;; TODO
              "do something"
              (and (nil? nsform) (.endsWith nameform "."))
-             (->
-               (resolveClass resolver (symbol nil (.substring nameform 0 (dec (.-length nameform)))))
-               (str ".")
-               (->> (symbol nil)))
+             (let [rc (resolveClass resolver (symbol nil (.substring nameform 0 (dec (.-length nameform)))))]
+               (symbol (namespace rc) (str (name rc) ".")))
              (and (nil? nsform) (== (aget nameform 0) "."))
              form
              :else
@@ -287,17 +283,18 @@
     (number? form) form
     (string? form) form
     (keyword? form) form
-
-    ;; TODO records
-    (vector? form)
-    (list 'cljd.core/apply 'cljd.core/vector (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form resolver))))
-    (set? form)
-    (list 'cljd.core/apply 'cljd.core/hash-set (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form resolver))))
-    (map? form)
-    (list 'cljd.core/apply 'cljd.core/hash-map (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list (apply concat form) resolver))))
-    (or (list? form) (seq? form))
-    (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form resolver)))
-    #_#_:else (throw (FormatException. "Unknown Collection type"))
+    (coll? form)
+    (cond
+      ;; TODO records
+      (vector? form)
+      (list 'cljd.core/apply 'cljd.core/vector (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form resolver))))
+      (set? form)
+      (list 'cljd.core/apply 'cljd.core/hash-set (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form resolver))))
+      (map? form)
+      (list 'cljd.core/apply 'cljd.core/hash-map (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list (apply concat form) resolver))))
+      (or (list? form) (seq? form))
+      (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form resolver)))
+      :else (throw (FormatException. "Unknown Collection type")))
     :else (list 'quote form)))
 
 (defn- sq-expand-list [s resolver]

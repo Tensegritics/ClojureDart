@@ -976,7 +976,7 @@
      (recur (-conj coll x) (first xs) (next xs))
      (-conj coll x))))
 
-(defn coll?
+(defn ^bool coll?
   "Returns true if x satisfies ICollection"
   [x]
   (if (nil? x)
