@@ -6,7 +6,7 @@ To allow Clojure users to reach to native mobile and desktop apps through Flutte
 
 ## Who is behind it?
 
-Tensegritics an itty-bitty Clojure consultancy by [Baptiste Dupuch](https://github.com/dupuchba) and [Christophe Grand](https://github.com/cgrand).
+Tensegritics, an itty-bitty Clojure consultancy by [Baptiste Dupuch](https://github.com/dupuchba) and [Christophe Grand](https://github.com/cgrand).
 
 ## How can I help?
 
