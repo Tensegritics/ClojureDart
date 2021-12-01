@@ -1,4 +1,4 @@
-# Soon here a Clojure dialect targetting Dart!
+# Soon here a Clojure dialect targeting Dart!
 
 ## Why ClojureDart?
 
