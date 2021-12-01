@@ -171,8 +171,13 @@
   (reify r/IResolver
     (currentNS [_] 'cljd.user)
     (resolveClass [_ sym] ('{List dart:core/List + cljd.core/+} sym))
-    (resolveAlias [_ sym] ('{io $lib:d_io foo bar} sym))
+    (resolveAlias [_ sym] ('{io $lib:d_io foo bar business acme.core.business} sym))
     (resolveVar [_ sym] nil)))
+
+(deftest read-fully-qualified-keyword
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "::business/test")))
+        :acme.core.business/test)))
 
 (deftest read-syntax-quote
   (is (= (binding [r/*resolver* cljd-resolver]
@@ -258,11 +263,7 @@
         '(cljd.core/seq
            (cljd.core/concat
              (cljd.core/list (quote .prop))
-             (cljd.core/list (quote cljd.user/obj))))))
-
-  (is (= (binding [r/*resolver* cljd-resolver]
-           (await (r/read-string "[`(.prop obj) 3 4 [:a :b]]")))
-        '())))
+             (cljd.core/list (quote cljd.user/obj)))))))
 
 (deftest read-deref
   (is (= '(cljd.core/deref foo) (await (r/read-string "@foo")))))

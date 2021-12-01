@@ -375,7 +375,7 @@
 
 (def ^RegExp INT-REGEXP (RegExp. "([-+]?)(?:(0)|([1-9][0-9]*)|0[xX]([0-9A-Fa-f]+)|0([0-7]+)|([1-9][0-9]?)[rR]([0-9A-Za-z]+)|0[0-9]+)(N)?$"))
 (def ^RegExp DOUBLE-REGEXP (RegExp. "([-+]?[0-9]+([.][0-9]*)?([eE][-+]?[0-9]+)?)(M)?$"))
-(def ^RegExp SYMBOL-REGEXP (RegExp. "(?:([:]{2})|([:]))?(?:([^0-9/:].*)/)?(/|[^0-9/:][^/]*)$"))
+(def ^RegExp SYMBOL-REGEXP (RegExp. "(?:([:]{2})|([:]))?(?:([^0-9/:].*)/)?(/|[^0-9/][^/]*)$"))
 
 (defn interpret-token [^String token]
   (case token
@@ -401,21 +401,24 @@
         (if (.group m 4)
           (throw (FormatException. "BigDecimal not supported yet."))
           (double/parse token))
-        (if (or (< 0 (.lastIndexOf token "::")) (.endsWith token ":"))
-          (throw (FormatException. (str "Invalid token: " token)))
-          (if-some [^Match m (.matchAsPrefix SYMBOL-REGEXP token)]
-            (cond
-              (not (nil? (.group m 1))) (throw (Exception. "TO IMPLEMENT"))
-              (not (nil? (.group m 3))) (let [ns (.group m 3)]
-                                          (when (.endsWith ns ":")
-                                            (throw (FormatException. (str "Invalid token: " token))))
-                                          (if (.group m 2)
-                                            (keyword ns (.group m 4))
-                                            (symbol ns (.group m 4))))
-              :else (if (.group m 2)
-                      (keyword nil (.group m 4))
-                      (symbol nil (.group m 4))))
-            (throw (FormatException. (str "Invalid token: " token)))))))))
+        (if-some [^Match m (.matchAsPrefix SYMBOL-REGEXP token)]
+          (let [g1 (.group m 1)
+                g2 (.group m 2)
+                g3 (.group m 3)
+                g4 (.group m 4)]
+            (when (or
+                    (and g3 (.endsWith g3 ":/"))
+                    (.endsWith g4 ":")
+                    (not= -1 (.indexOf token "::" 1)))
+              (FormatException. (str "Invalid token: " token)))
+            (if g1
+              (if-some [nsym (if g3 (resolveAlias *resolver* (symbol nil g3)) (currentNS *resolver*))]
+                (keyword (name nsym) g4)
+                (FormatException. (str "Invalid token: " token)))
+              (if g2
+                (keyword g3 g4)
+                (symbol g3 g4))))
+          (throw (FormatException. (str "Invalid token: " token))))))))
 
 (defn ^#/(Future dynamic) ^:async read
   [^ReaderInput rdr ^int delim]
