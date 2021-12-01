@@ -4702,6 +4702,14 @@
 		   (reduce merge-entry (or m1 {}) (seq m2)))]
       (reduce merge2 maps))))
 
+;; TODO: remodel with defrecord as it should work with defrecord
+(defn keys [map]
+  (chunked-iterator-seq (.-iterator (.keys ^dart-coll/MapMixin map))))
+
+;; TODO: remodel with defrecord as it should work with defrecord
+(defn vals [map]
+  (chunked-iterator-seq (.-iterator (.values ^dart-coll/MapMixin map))))
+
 (deftype #/(PersistentHashSet E)
   [meta ^PersistentHashMap hm ^:mutable ^int __hash]
   ^:mixin #/(dart-coll/SetMixin E)
@@ -6083,7 +6091,7 @@
   (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
     (if (< i (.-length kvs))
       (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
-      (-persistent! tm))))
+      ^PersistentHashMap (-persistent! tm))))
 
 (defn hash-map
   "keyval => key val
@@ -6526,8 +6534,16 @@
   [& xforms]
   (Eduction. (apply comp (butlast xforms)) (last xforms) -1))
 
-; TODO
-(declare gensym keys)
+(def -next-id-atom (atom 1))
+(defn -next-id []
+  (swap! -next-id-atom inc))
+
+(defn gensym
+  "Returns a new symbol with a unique name. If a prefix string is
+  supplied, the name is prefix# where # is some unique number. If
+  prefix is not supplied, the prefix is 'G__'."
+  ([] (gensym "G__"))
+  ([prefix-string] (symbol nil (str prefix-string (-next-id)))))
 
 (defn ^:async main []
   (prn (Map/of {:a 1}))

@@ -234,6 +234,11 @@
              (cljd.core/list 2)
              (cljd.core/list 3)))))
 
+  (is (string?
+        (re-matches #"g__\d+__auto__"
+          (name (second (binding [r/*resolver* cljd-resolver]
+                          (await (r/read-string "`g#"))))))))
+
   #_(let [q (r/read-string "quote")]
 
       (is (= q (first (r/read-string "`foo"))))
