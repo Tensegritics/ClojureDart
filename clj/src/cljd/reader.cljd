@@ -314,6 +314,34 @@
   (binding [*gensym-env* {}]
     (syntax-quote (await (read rdr -1)))))
 
+(defn ^:async read-namespace-map [^ReaderInput rdr]
+  (let [string (await (.read rdr))
+        auto (== ":" (aget string 0))
+        key (if (== -1 (.indexOf (if auto (.substring string 1) string) #"^[\s,{]"))
+              (await (read (doto rdr (.unread (str ":" string))) -1))
+              (if auto
+                (do
+                  (.unread rdr (.substring string 1))
+                  (currentNS *resolver*))
+                (throw (FormatException. "Namespaced map must specify a namespace")))) ]
+    (when-not (nil? (namespace key))
+      (throw (FormatException. (str "Namespaced map must specify a valid namespace: " (namespace key) "/" (name key)))))
+    (let [m (await (read rdr -1))]
+      (when-not (map? m)
+        (throw (FormatException. "Namespaced map must specify a map")))
+      (into {} (for [[k v] m
+                     :let [k' (cond
+                                (keyword? k)
+                                (cond-> k
+                                  (== "_" (namespace k)) (->> name (keyword nil))
+                                  (nil? (namespace k)) (->> name (keyword (name key))))
+                                (symbol? k)
+                                (cond-> k
+                                  (== "_" (namespace k)) (->> name (symbol nil))
+                                  (nil? (namespace k)) (->> name (symbol (name key))))
+                                :else k)]]
+                 [k' v])))))
+
 (def dispatch-macros
   {"_"  ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
    "^"  ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
@@ -322,7 +350,8 @@
    "!"  ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
    "\"" ^:async (fn [^ReaderInput rdr] (await (read-regexp rdr)))
    "'"  ^:async (fn [^ReaderInput rdr] (list 'var (await (read rdr -1))))
-   "<"  ^:async (fn [^ReaderInput rdr] (throw (FormatException. "Unreadable form")))})
+   "<"  ^:async (fn [^ReaderInput rdr] (throw (FormatException. "Unreadable form")))
+   ":"  ^:async (fn [^ReaderInput rdr] (await (read-namespace-map rdr)))})
 
 (def macros
   {"("  ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))

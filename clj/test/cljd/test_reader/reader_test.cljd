@@ -177,7 +177,10 @@
 (deftest read-fully-qualified-keyword
   (is (= (binding [r/*resolver* cljd-resolver]
            (await (r/read-string "::business/test")))
-        :acme.core.business/test)))
+        :acme.core.business/test))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "::test")))
+        :cljd.user/test)))
 
 (deftest read-syntax-quote
   (is (= (binding [r/*resolver* cljd-resolver]
@@ -408,13 +411,13 @@
                "#?(:clj #cljs.test_clojure.reader.TestRecord [42 85])"]]
       (is (= s (pr-str (r/read-string {:read-cond :preserve} s)))))))
 
-#_(deftest read-namespaced-map
-  (binding [*ns* (create-ns 'cljs.tools.reader-test)]
-    (is (= {:foo/bar 1 :baz 2} (r/read-string "#:foo{:bar 1 :_/baz 2}")))
-    (is (= '{foo/bar 1 :baz 2} (r/read-string "#:foo{bar 1 :_/baz 2}")))
-    (is (= {::foo 1} (r/read-string "#::{:foo 1}")))
-    (is (= {::foo 1 :bar 2} (r/read-string "#::{:foo 1 :_/bar 2}")))
-    (is (= {:a/foo 1 :bar 2} (r/read-string "#:a{:foo 1 :_/bar 2}")))))
+(deftest read-namespaced-map
+  (binding [r/*resolver* cljd-resolver]
+    (is (= {:foo/bar 1 :baz 2} (await (r/read-string "#:foo{:bar 1 :_/baz 2}"))))
+    (is (= '{foo/bar 1 :baz 2} (await (r/read-string "#:foo{bar 1 :_/baz 2}"))))
+    (is (= {:cljd.user/foo 1} (await (r/read-string "#::{:foo 1}"))))
+    (is (= {:cljd.user/foo 1 :bar 2} (await (r/read-string "#::{:foo 1 :_/bar 2}"))))
+    (is (= {:a/foo 1 :bar 2} (await (r/read-string "#:a{:foo 1 :_/bar 2}"))))))
 
 #_(deftest read-map-types
   (let [a (reader/read-string "{:a 1 :b 2 :c 3}")
