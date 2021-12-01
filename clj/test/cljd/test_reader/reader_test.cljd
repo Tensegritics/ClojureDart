@@ -258,16 +258,11 @@
         '(cljd.core/seq
            (cljd.core/concat
              (cljd.core/list (quote .prop))
-             (cljd.core/list (quote cljd.user/obj)))))
-  #_(let [q (r/read-string "quote")]
+             (cljd.core/list (quote cljd.user/obj))))))
 
-      (is (= q (first (r/read-string "`foo"))))
-      (is (= 'foo (second (r/read-string "`foo"))))
-
-      (is (= '+ (second (r/read-string "`+"))))
-      (is (= q (first (r/read-string "`foo/bar"))))
-      (is (= 'foo/bar (second (r/read-string "`foo/bar"))))
-      (is (= 1 (r/read-string "`1")))))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "[`(.prop obj) 3 4 [:a :b]]")))
+        '())))
 
 (deftest read-deref
   (is (= '(cljd.core/deref foo) (await (r/read-string "@foo")))))

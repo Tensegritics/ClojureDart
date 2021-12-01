@@ -312,11 +312,7 @@
 
 (defn ^:async read-syntax-quote [^ReaderInput rdr]
   (binding [*gensym-env* {}]
-    (loop [result nil]
-      (let [val (await (read rdr -1))]
-        (if (== val rdr)
-          result
-          (recur (syntax-quote val)))))))
+    (syntax-quote (await (read rdr -1)))))
 
 (def dispatch-macros
   {"_"  ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
