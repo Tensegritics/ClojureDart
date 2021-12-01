@@ -200,10 +200,10 @@
                           (cljd.core/list (quote true))
                           (cljd.core/list (quote false))))))
   (is (= (binding [r/*resolver* cljd-resolver]
-           (await (r/read-string "`(let [a 42] a)")))
+           (await (r/read-string "`(let* [a 42] a)")))
         '(cljd.core/seq
            (cljd.core/concat
-             (cljd.core/list (quote let))
+             (cljd.core/list (quote let*))
              (cljd.core/list
                (cljd.core/apply
                  cljd.core/vector
@@ -213,10 +213,10 @@
                      (cljd.core/list 42)))))
              (cljd.core/list (quote cljd.user/a))))))
   (is (= (binding [r/*resolver* cljd-resolver]
-           (await (r/read-string "`(let [a 42] ~a)")))
+           (await (r/read-string "`(let* [a 42] ~a)")))
         '(cljd.core/seq
            (cljd.core/concat
-             (cljd.core/list (quote let))
+             (cljd.core/list (quote let*))
              (cljd.core/list
                (cljd.core/apply
                  cljd.core/vector
@@ -239,6 +239,26 @@
           (name (second (binding [r/*resolver* cljd-resolver]
                           (await (r/read-string "`g#"))))))))
 
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(let* [a# 42] a#)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote let*))
+             (cljd.core/list
+               (cljd.core/apply
+                 cljd.core/vector
+                 (cljd.core/seq
+                   (cljd.core/concat
+                     (cljd.core/list (quote a__3__auto__))
+                     (cljd.core/list 42)))))
+             (cljd.core/list (quote a__3__auto__))))))
+
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(.prop obj)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote .prop))
+             (cljd.core/list (quote cljd.user/obj)))))
   #_(let [q (r/read-string "quote")]
 
       (is (= q (first (r/read-string "`foo"))))
