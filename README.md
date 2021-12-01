@@ -10,7 +10,9 @@ Tensegritics an itty-bitty Clojure consultancy by [Baptiste Dupuch](https://gith
 
 ## How can I help?
 
-You can sponsor either of us here on GitHub.
+Directly by sponsoring either of us here on GitHub.
+
+Indirectly by hiring us.
 
 ## When do you expect it to be usable?
 
