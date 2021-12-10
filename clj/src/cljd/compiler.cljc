@@ -2957,24 +2957,25 @@
     (assoc nses ns (assoc the-ns :lib to :imports imports :aliases aliases))))
 
 (defn compile-input [in]
-  (load-input in)
-  (let [{:keys [current-ns] :as all-nses} @nses
-        the-ns (all-nses current-ns)
-        libname (:lib the-ns)
-        is-test-ns (-> 'main the-ns :meta :dart/test)
-        libname' (if is-test-ns
-                   (str *test-path* (str/replace (subs libname (count *lib-path*)) #"\.dart$" "_test.dart"))
-                   libname)]
-    (when is-test-ns
-      (swap! nses rename-fresh-lib libname libname'))
-    (with-open [out (-> (java.io.File. ^String libname')
-                      (doto (-> .getParentFile .mkdirs))
-                      java.io.FileOutputStream.
-                      (java.io.OutputStreamWriter. "UTF-8")
-                      java.io.BufferedWriter.)]
-      (binding [*out* out]
-        (dump-ns (@nses current-ns))))
-    libname'))
+  (binding [*host-eval* false]
+    (load-input in)
+    (let [{:keys [current-ns] :as all-nses} @nses
+          the-ns (all-nses current-ns)
+          libname (:lib the-ns)
+          is-test-ns (-> 'main the-ns :meta :dart/test)
+          libname' (if is-test-ns
+                     (str *test-path* (str/replace (subs libname (count *lib-path*)) #"\.dart$" "_test.dart"))
+                     libname)]
+      (when is-test-ns
+        (swap! nses rename-fresh-lib libname libname'))
+      (with-open [out (-> (java.io.File. ^String libname')
+                        (doto (-> .getParentFile .mkdirs))
+                        java.io.FileOutputStream.
+                        (java.io.OutputStreamWriter. "UTF-8")
+                        java.io.BufferedWriter.)]
+        (binding [*out* out]
+          (dump-ns (@nses current-ns))))
+      libname')))
 
 (defn ns-to-paths [ns-name]
   (let [base (replace-all (name ns-name) #"[.-]" {"." "/" "-" "_"})]

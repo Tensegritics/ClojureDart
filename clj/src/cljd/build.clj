@@ -25,14 +25,14 @@
     (println "== Compiling core.cljd -> core.dart ===")
     (compile-core)
     (loop []
-        (doseq [n namespaces]
-          (try (compiler/compile-namespace n)
-               (catch Exception e
-                 (st/print-stack-trace e))))
-        (when watch
-          (println "Press ENTER to recompile files :")
-          (when (pos? (.read (System/in)))
-            (recur))))))
+      (doseq [n namespaces]
+        (try (compiler/compile-namespace n)
+             (catch Exception e
+               (st/print-stack-trace e))))
+      (when watch
+        (println "Press ENTER to recompile files :")
+        (when (pos? (.read (System/in)))
+          (recur))))))
 
 
 ;; TODO : handle errors of processes
