@@ -338,46 +338,46 @@
 #_(deftest reader-conditionals
   (let [opts {:read-cond :allow :features #{:clj}}]
     (are [out s opts] (= out (r/read-string opts s))
-         ;; basic read-cond
-         '[foo-form] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:foo}}
-         '[bar-form] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:bar}}
-         '[foo-form] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:foo :bar}}
-         '[] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:baz}}
-         'nil "#?(:default nil)" opts
+      ;; basic read-cond
+      '[foo-form] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:foo}}
+      '[bar-form] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:bar}}
+      '[foo-form] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:foo :bar}}
+      '[] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:baz}}
+      'nil "#?(:default nil)" opts
 
-         ;; environmental features
-         "clojure" "#?(:clj \"clojure\" :cljs \"clojurescript\" :default \"default\")"  opts
+      ;; environmental features
+      "clojure" "#?(:clj \"clojure\" :cljs \"clojurescript\" :default \"default\")"  opts
 
-         ;; default features
-         "default" "#?(:cljr \"clr\" :cljs \"cljs\" :default \"default\")" opts
+      ;; default features
+      "default" "#?(:cljr \"clr\" :cljs \"cljs\" :default \"default\")" opts
 
-         ;; splicing
-         [] "[#?@(:clj [])]" opts
-         [:a] "[#?@(:clj [:a])]" opts
-         [:a :b] "[#?@(:clj [:a :b])]" opts
-         [:a :b :c] "[#?@(:clj [:a :b :c])]" opts
+      ;; splicing
+      [] "[#?@(:clj [])]" opts
+      [:a] "[#?@(:clj [:a])]" opts
+      [:a :b] "[#?@(:clj [:a :b])]" opts
+      [:a :b :c] "[#?@(:clj [:a :b :c])]" opts
 
-         ;; nested splicing
-         [:a :b :c :d :e] "[#?@(:clj [:a #?@(:clj [:b #?@(:clj [:c]) :d]):e])]" opts
-         '(+ 1 (+ 2 3)) "(+ #?@(:clj [1 (+ #?@(:clj [2 3]))]))" opts
-         '(+ (+ 2 3) 1) "(+ #?@(:clj [(+ #?@(:clj [2 3])) 1]))" opts
-         [:a [:b [:c] :d] :e] "[#?@(:clj [:a [#?@(:clj [:b #?@(:clj [[:c]]) :d])] :e])]" opts
+      ;; nested splicing
+      [:a :b :c :d :e] "[#?@(:clj [:a #?@(:clj [:b #?@(:clj [:c]) :d]):e])]" opts
+      '(+ 1 (+ 2 3)) "(+ #?@(:clj [1 (+ #?@(:clj [2 3]))]))" opts
+      '(+ (+ 2 3) 1) "(+ #?@(:clj [(+ #?@(:clj [2 3])) 1]))" opts
+      [:a [:b [:c] :d] :e] "[#?@(:clj [:a [#?@(:clj [:b #?@(:clj [[:c]]) :d])] :e])]" opts
 
-         ;; bypass unknown tagged literals
-         [1 2 3] "#?(:cljs #js [1 2 3] :clj [1 2 3])" opts
-         :clojure "#?(:foo #some.nonexistent.Record {:x 1} :clj :clojure)" opts)
+      ;; bypass unknown tagged literals
+      [1 2 3] "#?(:cljs #js [1 2 3] :clj [1 2 3])" opts
+      :clojure "#?(:foo #some.nonexistent.Record {:x 1} :clj :clojure)" opts)
 
     (are [re s opts] (is (thrown-with-msg? js/Error re (r/read-string opts s)))
-         #"Feature should be a keyword" "#?((+ 1 2) :a)" opts
-         #"even number of forms" "#?(:cljs :a :clj)" opts
-         #"cond-splice not in list" "#?@(:clj :a)" opts
-         #"cond-splice not in list" "#?@(:foo :a :else :b)" opts
-         #"must be a list" "#?[:foo :a :else :b]" opts
-         #"Conditional read not allowed" "#?[:clj :a :default nil]" {:read-cond :BOGUS}
-         #"Conditional read not allowed" "#?[:clj :a :default nil]" {}))
+      #"Feature should be a keyword" "#?((+ 1 2) :a)" opts
+      #"even number of forms" "#?(:cljs :a :clj)" opts
+      #"cond-splice not in list" "#?@(:clj :a)" opts
+      #"cond-splice not in list" "#?@(:foo :a :else :b)" opts
+      #"must be a list" "#?[:foo :a :else :b]" opts
+      #"Conditional read not allowed" "#?[:clj :a :default nil]" {:read-cond :BOGUS}
+      #"Conditional read not allowed" "#?[:clj :a :default nil]" {}))
   (binding [*data-readers* {'js (fn [v] (JSValue. v) )}]
     (is (= (JSValue. [1 2 3])
-           (r/read-string {:features #{:cljs} :read-cond :allow} "#?(:cljs #js [1 2 3] :foo #foo [1])")))))
+          (r/read-string {:features #{:cljs} :read-cond :allow} "#?(:cljs #js [1 2 3] :foo #foo [1])")))))
 
 #_(deftest preserve-read-cond
   (is (= 1 (binding [*data-readers* {'foo (constantly 1)}]
@@ -439,6 +439,35 @@
         {true true nil nil}))
   (is (= (await (r/read-string "{true true nil [true true]}"))
         {true true nil [true true]})))
+
+;; TODO: add options
+(deftest testing-reader-cond-exceptions
+  (is (thrown-with-msg? FormatException #"EOF while reading"
+        (await (r/read-string "#?()"))))
+  (is (thrown-with-msg? FormatException #"EOF while reading"
+        (await (r/read-string "#?(:cljs 1)"))))
+  (is (thrown-with-msg? FormatException #"read-cond body must be a list"
+        (await (r/read-string "#?[]"))))
+  (is (thrown-with-msg? FormatException #"Feature should be a keyword: 2"
+        (await (r/read-string "#?(:cljs 1 2 3 :cljd 1)"))))
+  (is (thrown-with-msg? FormatException #"read-cond requires an even number of forms"
+        (await (r/read-string "#?(:cljd)"))))
+  (is (thrown-with-msg? FormatException #"Reader conditional splicing not allowed at the top level"
+        (await (r/read-string "#?@(:cljd [1])"))))
+  (is (thrown-with-msg? FormatException #"Spliced form list in read-cond-splicing must implement dart:core/List"
+        (await (r/read-string "#?@(:cljd 1)"))))
+  (is (thrown-with-msg? FormatException #"Spliced form list in read-cond-splicing must implement dart:core/List"
+        (await (r/read-string "(let [a #?@(:cljd {1 1})] a)")))))
+
+(deftest testing-reader-cond-expr
+  (is (= (await (r/read-string "#?(:cljd 1)"))
+        1))
+  (is (= (await (r/read-string "#?(:cljd 1 2 3 :clj [1 2])"))
+        1))
+  (is (= (await (r/read-string "#?(:clj [1 2] :cljd 1 2 3)"))
+        [1 2]))
+  (is (= (await (r/read-string "#?(:cljs [1 2] :cljd 1 2 3)"))
+        1)))
 
 #_(deftest testing-metas
   (is (= (await (r/read-string "(1 2 3)"))

@@ -342,6 +342,50 @@
                                 :else k)]]
                  [k' v])))))
 
+(def ^:dynamic *top-level-form* nil)
+(def ^:dynamic *features* #{:cljd :clj})
+
+(defn ^:async read-conditional
+  [^ReaderInput rdr]
+  ;; TODO : manage EOF
+  ;; TODO: should check if reader conditional are allowed
+  (let [string (await (.read rdr))
+        splicing (if (== "@" (aget string 0))
+                   (do (.unread rdr (.substring string 1)) true)
+                   (do (.unread rdr string) false))
+        [_ expr :as body] (await (read rdr -1))
+        ;; TODO : in clj java.util.List but in Dart, PV are List and PL are also List...
+        is-list? (list? body)]
+    (when-not is-list?
+      (throw (FormatException. "read-cond body must be a list")))
+    (when-not (or (dart/is? expr List) (not splicing))
+      (throw (FormatException. "Spliced form list in read-cond-splicing must implement dart:core/List")))
+    (when-not (or (not splicing) (not *top-level-form*))
+      (throw (FormatException. "Reader conditional splicing not allowed at the top level.")))
+    (let [discard1 (Object.)
+          discard (Object.)
+          hold (Object.)
+          check-feature (fn [feature]
+                          (when-not (keyword? feature)
+                            (throw (FormatException. (str "Feature should be a keyword: " feature))))
+                          (when (#{:none :else} feature)
+                            (throw (FormatException. (str "Feature name " feature " is reserved."))))
+                          (if (contains? *features* feature)
+                            hold
+                            discard1))
+          result
+          (reduce (fn [state form]
+                    (cond
+                      (identical? hold state) (reduced form)
+                      (identical? discard1 state) discard
+                      (identical? discard state) (check-feature form)))
+            discard body)]
+      (when (identical? result hold)
+        (throw (FormatException. "read-cond requires an even number of forms.")))
+      (when (or (identical? result discard1) (identical? result discard))
+        (throw (FormatException. "EOF while reading")))
+      result)))
+
 (def dispatch-macros
   {"_"  ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
    "^"  ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
@@ -351,7 +395,8 @@
    "\"" ^:async (fn [^ReaderInput rdr] (await (read-regexp rdr)))
    "'"  ^:async (fn [^ReaderInput rdr] (list 'var (await (read rdr -1))))
    "<"  ^:async (fn [^ReaderInput rdr] (throw (FormatException. "Unreadable form")))
-   ":"  ^:async (fn [^ReaderInput rdr] (await (read-namespace-map rdr)))})
+   ":"  ^:async (fn [^ReaderInput rdr] (await (read-namespace-map rdr)))
+   "?"  ^:async (fn [^ReaderInput rdr] (await (read-conditional rdr)))})
 
 (def macros
   {"("  ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
@@ -451,25 +496,26 @@
 
 (defn ^#/(Future dynamic) ^:async read
   [^ReaderInput rdr ^int delim]
-  (loop []
-    (if-some [string (await (.read rdr))]
-      (let [index (or (some-> (.matchAsPrefix SPACE-REGEXP string) .end) 0)]
-        (if (== index (.-length string))
-          (recur)
-          (let [ch (.codeUnitAt string index)]
-            (if (== delim ch)
-              (doto rdr (.unread (.substring string (inc index))))
-              (if-some [macro-reader (macros (aget string index))]
-                (do (.unread rdr (.substring string (inc index)))
-                    (let [val (await (macro-reader rdr))]
-                      (if (== val rdr)
-                        (recur)
-                        val)))
-                (do (.unread rdr (.substring string index))
-                    (-> (await (read-token rdr "")) interpret-token)))))))
-      (if (< delim 0)
-        rdr
-        (throw (FormatException. (str "Unexpected EOF, expected " (String/fromCharCode delim))))))))
+  (binding [*top-level-form* (nil? *top-level-form*)]
+    (loop []
+      (if-some [string (await (.read rdr))]
+        (let [index (or (some-> (.matchAsPrefix SPACE-REGEXP string) .end) 0)]
+          (if (== index (.-length string))
+            (recur)
+            (let [ch (.codeUnitAt string index)]
+              (if (== delim ch)
+                (doto rdr (.unread (.substring string (inc index))))
+                (if-some [macro-reader (macros (aget string index))]
+                  (do (.unread rdr (.substring string (inc index)))
+                      (let [val (await (macro-reader rdr))]
+                        (if (== val rdr)
+                          (recur)
+                          val)))
+                  (do (.unread rdr (.substring string index))
+                      (-> (await (read-token rdr "")) interpret-token)))))))
+        (if (< delim 0)
+          rdr
+          (throw (FormatException. (str "Unexpected EOF, expected " (String/fromCharCode delim)))))))))
 
 (defn ^#/(Future dynamic) ^:async read-string [^String s]
   (let [controller (new #/(async/StreamController String))
