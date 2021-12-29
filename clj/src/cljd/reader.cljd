@@ -384,7 +384,10 @@
         (throw (FormatException. "read-cond requires an even number of forms.")))
       (when (or (identical? result discard1) (identical? result discard))
         (throw (FormatException. "EOF while reading")))
-      result)))
+      (if splicing
+        (let [post (await (.read rdr))]
+          (doto rdr (.unread (str (apply pr-str result) post))))
+        result))))
 
 (def dispatch-macros
   {"_"  ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)

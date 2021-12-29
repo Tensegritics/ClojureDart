@@ -327,90 +327,6 @@
           [{:line 2, :column 1, :end-line 2, :end-column 14} '(def test2 9)]
           [{:line 3, :column 0, :end-line 3, :end-column 1}]])))
 
-#_(defrecord JSValue [v])
-
-#_(extend-protocol IPrintWithWriter
-  JSValue
-  (-pr-writer [coll writer opts]
-    (-write writer "#js")
-    (print-map coll pr-writer writer opts)))
-
-#_(deftest reader-conditionals
-  (let [opts {:read-cond :allow :features #{:clj}}]
-    (are [out s opts] (= out (r/read-string opts s))
-      ;; basic read-cond
-      '[foo-form] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:foo}}
-      '[bar-form] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:bar}}
-      '[foo-form] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:foo :bar}}
-      '[] "[#?(:foo foo-form :bar bar-form)]" {:read-cond :allow :features #{:baz}}
-      'nil "#?(:default nil)" opts
-
-      ;; environmental features
-      "clojure" "#?(:clj \"clojure\" :cljs \"clojurescript\" :default \"default\")"  opts
-
-      ;; default features
-      "default" "#?(:cljr \"clr\" :cljs \"cljs\" :default \"default\")" opts
-
-      ;; splicing
-      [] "[#?@(:clj [])]" opts
-      [:a] "[#?@(:clj [:a])]" opts
-      [:a :b] "[#?@(:clj [:a :b])]" opts
-      [:a :b :c] "[#?@(:clj [:a :b :c])]" opts
-
-      ;; nested splicing
-      [:a :b :c :d :e] "[#?@(:clj [:a #?@(:clj [:b #?@(:clj [:c]) :d]):e])]" opts
-      '(+ 1 (+ 2 3)) "(+ #?@(:clj [1 (+ #?@(:clj [2 3]))]))" opts
-      '(+ (+ 2 3) 1) "(+ #?@(:clj [(+ #?@(:clj [2 3])) 1]))" opts
-      [:a [:b [:c] :d] :e] "[#?@(:clj [:a [#?@(:clj [:b #?@(:clj [[:c]]) :d])] :e])]" opts
-
-      ;; bypass unknown tagged literals
-      [1 2 3] "#?(:cljs #js [1 2 3] :clj [1 2 3])" opts
-      :clojure "#?(:foo #some.nonexistent.Record {:x 1} :clj :clojure)" opts)
-
-    (are [re s opts] (is (thrown-with-msg? js/Error re (r/read-string opts s)))
-      #"Feature should be a keyword" "#?((+ 1 2) :a)" opts
-      #"even number of forms" "#?(:cljs :a :clj)" opts
-      #"cond-splice not in list" "#?@(:clj :a)" opts
-      #"cond-splice not in list" "#?@(:foo :a :else :b)" opts
-      #"must be a list" "#?[:foo :a :else :b]" opts
-      #"Conditional read not allowed" "#?[:clj :a :default nil]" {:read-cond :BOGUS}
-      #"Conditional read not allowed" "#?[:clj :a :default nil]" {}))
-  (binding [*data-readers* {'js (fn [v] (JSValue. v) )}]
-    (is (= (JSValue. [1 2 3])
-          (r/read-string {:features #{:cljs} :read-cond :allow} "#?(:cljs #js [1 2 3] :foo #foo [1])")))))
-
-#_(deftest preserve-read-cond
-  (is (= 1 (binding [*data-readers* {'foo (constantly 1)}]
-             (r/read-string {:read-cond :preserve} "#foo []"))))
-
-  (let [x (r/read-string {:read-cond :preserve} "#?(:clj foo :cljs bar)")]
-    (is (reader-conditional? x))
-    (is (= x (reader-conditional '(:clj foo :cljs bar) false)))
-    (is (not (:splicing? x)))
-    (is (= :foo (get x :no-such-key :foo)))
-    (is (= (:form x) '(:clj foo :cljs bar))))
-  (let [x (first (r/read-string {:read-cond :preserve} "(#?@(:clj [foo]))" ))]
-    (is (reader-conditional? x))
-    (is (= x (reader-conditional '(:clj [foo]) true)))
-    (is (:splicing? x))
-    (is (= :foo (get x :no-such-key :foo)))
-    (is (= (:form x) '(:clj [foo]))))
-  (is (thrown-with-msg? js/Error #"No reader function for tag"
-                        (r/read-string {:read-cond :preserve} "#js {:x 1 :y 2}" )))
-  (let [x (r/read-string {:read-cond :preserve} "#?(:cljs #js {:x 1 :y 2})")
-        [platform tl] (:form x)]
-    (is (reader-conditional? x))
-    (is (tagged-literal? tl))
-    (is (= tl (tagged-literal 'js {:x 1 :y 2})))
-    (is (= 'js (:tag tl)))
-    (is (= {:x 1 :y 2} (:form tl)))
-    (is (= :foo (get tl :no-such-key :foo))))
-  (testing "print form roundtrips"
-    (doseq [s ["#?(:clj foo :cljs bar)"
-               "#?(:cljs #js {:y 2, :x 1})"
-               "#?(:clj #cljs.test_clojure.reader.TestRecord [42 85])"]]
-      (is (= s (pr-str (r/read-string {:read-cond :preserve} s)))))))
-
 (deftest read-namespaced-map
   (binding [r/*resolver* cljd-resolver]
     (is (= {:foo/bar 1 :baz 2} (await (r/read-string "#:foo{:bar 1 :_/baz 2}"))))
@@ -468,6 +384,16 @@
         [1 2]))
   (is (= (await (r/read-string "#?(:cljs [1 2] :cljd 1 2 3)"))
         1)))
+
+(deftest testing-reader-cond-splicing
+  (is (= (await (r/read-string "(let [a #?@(:cljd (1))] a)"))
+        '(let [a 1] a)))
+  (is (= (await (r/read-string "(let [a #?@(:cljd [1])] a)"))
+        '(let [a 1] a)))
+  (is (= (await (r/read-string "(let [a #?@(:cljd [1 2 3])] a)"))
+        '(let [a 1 2 3] a)))
+  (is (= (await (r/read-string "(let [a #?@(:cljd [[1] 2])] a)"))
+        '(let [a [1] 2] a))))
 
 #_(deftest testing-metas
   (is (= (await (r/read-string "(1 2 3)"))
