@@ -395,6 +395,17 @@
   (is (= (await (r/read-string "(let [a #?@(:cljd [[1] 2])] a)"))
         '(let [a [1] 2] a))))
 
+(deftest testing-data-reader-exceptions
+  (is (thrown-with-msg? FormatException #"Reader tag must be a symbol"
+        (await (r/read-string "#122 3"))))
+  (is (thrown-with-msg? FormatException #"No reader function for tag doesnotexist"
+        (await (r/read-string "#doesnotexist 3")))))
+
+(deftest testing-data-reader
+  (is (= (await (binding [cljd.core/*data-readers* {'foo (fn [form] (inc form))}]
+                  (r/read-string "#foo 3")))
+        4)))
+
 #_(deftest testing-metas
   (is (= (await (r/read-string "(1 2 3)"))
         (list 1 2 3)))

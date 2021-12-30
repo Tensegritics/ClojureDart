@@ -349,6 +349,7 @@
   [^ReaderInput rdr]
   ;; TODO : manage EOF
   ;; TODO: should check if reader conditional are allowed
+  ;; TODO: handle preserve read-cond
   (let [string (await (.read rdr))
         splicing (if (== "@" (aget string 0))
                    (do (.unread rdr (.substring string 1)) true)
@@ -389,6 +390,26 @@
           (doto rdr (.unread (str (apply pr-str result) post))))
         result))))
 
+(defn read-tagged [^ReaderInput rdr ^cljd.core/Symbol tag form]
+  (if-some [dr-fn (or (some-> cljd.core/*data-readers* tag) (some-> cljd.core/default-data-readers tag))]
+    (dr-fn form)
+    (if-some [default-fn (some-> cljd.core/*default-data-reader-fn* tag)]
+      (default-fn tag form)
+      (throw (FormatException. (str "No reader function for tag " tag))))))
+
+(defn ^:async read-record [^ReaderInput rdr]
+  (throw (Exception. "read-reacord NOT IMPLEMENTED YET")))
+
+(defn ^:async ctor-reader [^ReaderInput rdr]
+  (let [tag (await (read rdr -1))]
+    (when-not (symbol? tag)
+      (throw (FormatException. "Reader tag must be a symbol")))
+    (let [form (await (read rdr -1))]
+      ;; TODO: handle preserve read-cond
+      (if (.contains (name tag) ".")
+        (read-record rdr)
+        (read-tagged rdr tag form)))))
+
 (def dispatch-macros
   {"_"  ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
    "^"  ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
@@ -421,7 +442,10 @@
                     (if-some [macroreader (dispatch-macros (aget string 0))]
                       (do (.unread rdr (.substring string 1))
                           (await (macroreader rdr)))
-                      (throw (FormatException. (str "Unepxected dispatch sequence: #" (aget string 0)))))
+                      (if-some [result (do (.unread rdr string)
+                                           (await (ctor-reader rdr)))]
+                        result
+                        (throw (FormatException. (str "Unepxected dispatch sequence: #" (aget string 0))))))
                     (throw (FormatException. "EOF while reading dispatch sequence.")))) })
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
