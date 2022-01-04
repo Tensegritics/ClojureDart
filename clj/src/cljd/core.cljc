@@ -4726,9 +4726,8 @@
   (length [this] (-count hm))
   (iterator [this] (.-iterator ^#/(Iterable E) (.-keys hm)))
   (toSet [this] (Set/of ^#/(Iterable E) (.-keys hm)))
-  ;; TODO: not sure of this one
   (^#/(PersistentHashSet R) #/(cast R) [coll]
-   (PersistentHashSet. meta hm __hash))
+   (PersistentHashSet. meta ^#/(PersistentHashMap R R) (-> hm (. #/(cast R R))) __hash))
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink]
