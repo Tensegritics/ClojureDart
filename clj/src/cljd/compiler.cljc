@@ -2800,18 +2800,22 @@
                       (write obj paren-locus))
           "-" (if args
                 (do
+                  (print (:pre paren-locus))
                   (write obj paren-locus)
                   (print meth)
-                  (write (first args) paren-locus))
+                  (write (first args) paren-locus)
+                  (print (:post paren-locus)))
                 (do
                   (print meth)
                   (write obj paren-locus)))
           ("&&" "||" "^^" "+" "*" "&" "|" "^")
           (do
+            (print (:pre paren-locus))
             (write obj paren-locus)
             (doseq [arg args]
               (print meth)
-              (write arg paren-locus)))
+              (write arg paren-locus))
+            (print (:post paren-locus)))
           ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" #_">>>")
           (do
             (write obj paren-locus)
@@ -2988,14 +2992,28 @@
 
 (defn compile-namespace [ns-name]
   ;; iterate first on file variants then on paths, not the other way!
-  (let [file-paths (ns-to-paths ns-name)]
+  (let [file-paths (ns-to-paths ns-name)
+        cljd-core (when-not (= ns-name 'cljd-core) (get @nses 'cljd.core))]
     (if-some [^java.net.URL url (some find-resource file-paths)]
       (do
         (when *hosted*
           (with-open [in (.openStream url)]
             (host-load-input (java.io.InputStreamReader. in "UTF-8"))))
-        (with-open [in (.openStream url)]
-          (compile-input (java.io.InputStreamReader. in "UTF-8"))))
+        (let [libname (with-open [in (.openStream url)]
+                        (compile-input (java.io.InputStreamReader. in "UTF-8")))]
+          ;; when new IFnMixin_* are created, we must re-dump core
+          ;; TODO: refacto: I don't like how I ended up doing this
+          (when-not (= 'cljd.core ns-name)
+            (let [cljd-core' (get @nses 'cljd.core)]
+              (when-not (= cljd-core cljd-core')
+                (with-open [out (-> (java.io.File. ^String (-> (@nses 'cljd.core) :lib))
+                                  (doto (-> .getParentFile .mkdirs))
+                                  java.io.FileOutputStream.
+                                  (java.io.OutputStreamWriter. "UTF-8")
+                                  java.io.BufferedWriter.)]
+                  (binding [*out* out]
+                    (dump-ns (@nses 'cljd.core)))))))
+          libname))
       (throw (ex-info (str "Could not locate "
                         (str/join " or " file-paths))
                {:ns ns-name})))))
