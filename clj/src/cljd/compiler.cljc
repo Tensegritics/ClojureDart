@@ -2273,10 +2273,6 @@
   {:pre ""
    :post ""})
 
-(def paren-locus
-  {:pre "("
-   :post ")"})
-
 (def arg-locus
   {:pre ""
    :post ", "})
@@ -2780,8 +2776,18 @@
         (:exit locus))
       dart/.
       (let [[_ obj meth & args] x
-            [meth & type-params] (cond-> meth (not (sequential? meth)) list)]
+            [meth & type-params] (cond-> meth (not (sequential? meth)) list)
+            meth (name meth) ; sometimes meth is a symbol
+            is-plain-method (re-matches #"^[a-zA-Z_$].*" meth)
+            ; the :statement test below is not a gratuitous optimization meant to
+            ; remove unnecessary parens.
+            ; this :statement test is to handle the case of the []= operator which
+            ; must not be put into parens and always occur in a statement locus.
+            ; the plain-method & :this-position test however is purely aesthetic to
+            ; avoid over-parenthizing chained method calls.
+            must-wrap (not (or (:statement locus) (and is-plain-method (:this-position locus))))]
         (print (:pre locus))
+        (when must-wrap (print "("))
         (case meth
           ;; operators, some are cljd tricks
           "[]" (do
@@ -2797,33 +2803,30 @@
                   (write (second args) expr-locus))
           ("~" "!") (do
                       (print meth)
-                      (write obj paren-locus))
+                      (write obj expr-locus))
           "-" (if args
                 (do
-                  (print (:pre paren-locus))
-                  (write obj paren-locus)
+                  (write obj expr-locus)
                   (print meth)
-                  (write (first args) paren-locus)
-                  (print (:post paren-locus)))
+                  (write (first args) expr-locus))
                 (do
                   (print meth)
-                  (write obj paren-locus)))
+                  (write obj expr-locus)))
           ("&&" "||" "^^" "+" "*" "&" "|" "^")
           (do
-            (print (:pre paren-locus))
-            (write obj paren-locus)
+            (write obj expr-locus)
             (doseq [arg args]
               (print meth)
-              (write arg paren-locus))
-            (print (:post paren-locus)))
+              (write arg expr-locus)))
           ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" #_">>>")
           (do
-            (write obj paren-locus)
+            (write obj expr-locus)
             (print meth)
-            (write (first args) paren-locus))
+            (write (first args) expr-locus))
           ;; else plain method
           (do
-            (write obj expr-locus)
+            (assert is-plain-method (str "not a plain method: " meth))
+            (write obj (assoc expr-locus :this-position true))
             (print (str "." meth))
             (when-some [[type-param & more-type-params] (seq type-params)]
               (print "<")
@@ -2831,6 +2834,7 @@
               (doseq [type-param more-type-params] (print ", ") (write-type type-param))
               (print ">"))
             (write-args args)))
+        (when must-wrap (print ")"))
         (print (:post locus))
         (:exit locus))
       dart/type
