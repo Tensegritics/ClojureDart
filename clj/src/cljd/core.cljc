@@ -4702,13 +4702,19 @@
 		   (reduce merge-entry (or m1 {}) (seq m2)))]
       (reduce merge2 maps))))
 
-;; TODO: remodel with defrecord as it should work with defrecord
-(defn keys [map]
-  (chunked-iterator-seq (.-iterator (.keys ^dart-coll/MapMixin map))))
+(defn keys
+  "Returns a sequence of the map's keys, in the same order as (seq map)."
+  [coll]
+  (if (dart/is? coll dart:core/Map)
+    (chunked-iterator-seq (.-iterator (.keys ^dart:core/Map coll)))
+    (seq (map key coll))))
 
-;; TODO: remodel with defrecord as it should work with defrecord
-(defn vals [map]
-  (chunked-iterator-seq (.-iterator (.values ^dart-coll/MapMixin map))))
+(defn vals
+  "Returns a sequence of the map's values, in the same order as (seq map)."
+  [coll]
+  (if (dart/is? coll dart:core/Map)
+    (chunked-iterator-seq (.-iterator (.values ^dart:core/Map coll)))
+    (seq (map val coll))))
 
 (deftype #/(PersistentHashSet E)
   [meta ^PersistentHashMap hm ^:mutable ^int __hash]

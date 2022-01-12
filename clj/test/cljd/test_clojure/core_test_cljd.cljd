@@ -93,8 +93,11 @@
           #dart [(dart:core/Symbol. "one") (dart:core/Symbol. (let [a "a" b "b"] (str a b)))]
           #/(List Symbol)))))
 
-(def m {:first-name "Baptiste" :last-name "Dupuch"})
+(def baptiste {:first-name "Baptiste" :last-name "Dupuch"})
 
 (deftest testing-keys-and-vals
-  (is (= #{:first-name :last-name} (into #{} (keys m))))
-  (is (= #{"Baptiste" "Dupuch"} (into #{} (vals m)))))
+  (is (= #{:first-name :last-name} (into #{} (keys baptiste))))
+  (is (= #{"Baptiste" "Dupuch"} (into #{} (vals baptiste))))
+  (is (= #{:first-name :last-name} (into #{} (keys (vec baptiste)))))
+  (is (= #{"Baptiste" "Dupuch"} (into #{} (vals (vec baptiste)))))
+  (is (= :a (first (keys (cons (first {:a :b}) (range 10)))))))
