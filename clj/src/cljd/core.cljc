@@ -5250,11 +5250,17 @@
       (recur (next s) (next lead))
       s)))
 
-;; TODO : take time to implement the Repeat. type like in clj/cljs
 (defn repeat
   "Returns a lazy (infinite!, or length n if supplied) sequence of xs."
   ([x] (lazy-seq (cons x (repeat x))))
   ([n x] (take n (repeat x))))
+
+(defn cycle
+  "Returns a lazy (infinite!) sequence of repetitions of the items in coll."
+  [coll]
+  (lazy-seq (if-some [s (seq coll)]
+              (concat s (cycle s))
+              ())))
 
 (defn repeatedly
   "Takes a function of no args, presumably with side effects, and

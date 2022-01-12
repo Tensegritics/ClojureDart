@@ -101,3 +101,8 @@
   (is (= #{:first-name :last-name} (into #{} (keys (vec baptiste)))))
   (is (= #{"Baptiste" "Dupuch"} (into #{} (vals (vec baptiste)))))
   (is (= :a (first (keys (cons (first {:a :b}) (range 10)))))))
+
+(deftest testing-cycle
+  (is (= () (cycle nil)))
+  (is (= () (cycle [])))
+  (is (= '(1 2 3 1 2 3 1 2 3) (take 9 (cycle [1 2 3])))))
