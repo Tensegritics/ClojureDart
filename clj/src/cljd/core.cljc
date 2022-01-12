@@ -6538,7 +6538,8 @@
 (def default-data-readers
   "Default map of data reader functions provided by Clojure. May be
   overridden by binding *data-readers*."
-  {'inst (fn [form] (throw (ex-info "Not implemented yet" {:form form})))})
+  {'inst (fn [form] (throw (ex-info "Not implemented yet" {:form form})))
+   'dart (fn [form] (throw (ex-info "Not implemented yet" {:form form})))})
 
 (def ^:dynamic  *data-readers*
   "Map from reader tag symbols to data reader Vars.
