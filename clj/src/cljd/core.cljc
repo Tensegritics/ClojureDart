@@ -6589,16 +6589,14 @@
   default), an exception will be thrown for the unknown tag."
   nil)
 
-(def -next-id-atom (atom 1))
-(defn -next-id []
-  (swap! -next-id-atom inc))
-
-(defn gensym
+(def gensym
   "Returns a new symbol with a unique name. If a prefix string is
   supplied, the name is prefix# where # is some unique number. If
   prefix is not supplied, the prefix is 'G__'."
-  ([] (gensym "G__"))
-  ([prefix-string] (symbol nil (str prefix-string (-next-id)))))
+  (let [id (atom 0)]
+    (fn
+      ([] (gensym "G__"))
+      ([prefix-string] (symbol (str prefix-string (swap! id inc)))))))
 
 (defn ^:async main []
   (prn (Map/of {:a 1}))

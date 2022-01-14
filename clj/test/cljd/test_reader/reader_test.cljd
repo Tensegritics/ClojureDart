@@ -257,9 +257,9 @@
                  cljd.core/vector
                  (cljd.core/seq
                    (cljd.core/concat
-                     (cljd.core/list (quote a__3__auto__))
+                     (cljd.core/list (quote a__2__auto__))
                      (cljd.core/list 42)))))
-             (cljd.core/list (quote a__3__auto__))))))
+             (cljd.core/list (quote a__2__auto__))))))
 
   (is (= (binding [r/*resolver* cljd-resolver]
            (await (r/read-string "`(.prop obj)")))

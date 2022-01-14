@@ -263,7 +263,8 @@
                (throw (FormatException. "Gensym literal not in syntax-quote"))
                (or
                  (*gensym-env* form)
-                 (let [gs (symbol nil (str (.substring nameform 0 (dec (.-length nameform))) "__" (-next-id) "__auto__"))]
+                 (let [gs (symbol nil
+                            (str (gensym (str (.substring nameform 0 (dec (.-length nameform))) "__")) "__auto__"))]
                    (set! *gensym-env* (assoc *gensym-env* form gs))
                    gs)))
              (and (nil? nsform) (.endsWith nameform "."))

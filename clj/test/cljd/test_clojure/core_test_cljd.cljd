@@ -106,3 +106,8 @@
   (is (= () (cycle nil)))
   (is (= () (cycle [])))
   (is (= '(1 2 3 1 2 3 1 2 3) (take 9 (cycle [1 2 3])))))
+
+(deftest testing-gensym
+  (is (= ":love" (namespace (gensym :love/cljd))))
+  (is (= "love" (namespace (gensym 'love/cljd))))
+  (is (= "love" (namespace (gensym "love/cljd")))))
