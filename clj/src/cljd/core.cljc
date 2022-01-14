@@ -1899,7 +1899,7 @@
 
 (deftype Atom [^:mutable state
                ^:mutable meta
-               ^:mutable ^Function? validator
+               ^:mutable validator
                ^:mutable ^PersistentHashMap watches]
   IAtom
   IEquiv
@@ -1942,20 +1942,20 @@
     (do (reset! a newval) true)
     false))
 
-(defn- validate-atom-state [^Function validator new-state]
+(defn- validate-atom-state [validator new-state]
   ;; TODO : maybe add some try/catch (see ARef.java)
   (when-not (validator new-state)
     (throw (Exception. "Validator rejected reference state"))))
 
 (defn- set-and-validate-atom-state! [^Atom a new-state]
   (when-some [validator (.-validator a)]
-    (validate-atom-state ^Function validator new-state))
+    (validate-atom-state validator new-state))
   (let [old-state (.-state a)]
     (set! (.-state a) new-state)
     (-notify-watches a old-state new-state)
     new-state))
 
-(defn ^Function? get-validator
+(defn get-validator
   "Gets the validator-fn for an atom."
   [^Atom atom]
   (.-validator atom))
@@ -1967,7 +1967,7 @@
   validator-fn should return false or throw an Error. If the current state
   is not acceptable to the new validator, an Error will be thrown and the
   validator will not be changed."
-  [^Atom atom ^Function? f]
+  [^Atom atom f]
   (when f
     (validate-atom-state f (-deref atom)))
   (set! (.-validator atom) f))
@@ -2010,7 +2010,7 @@
       ;; Assertion Error
       (deref a)
       ;=> 1"
-  [^Atom reference key ^Function fn]
+  [^Atom reference key fn]
   (-add-watch reference key fn)
   reference)
 
@@ -2056,10 +2056,10 @@
      [old-state (apply swap! a f x y more)])))
 
 ;; TODO add printing
-(deftype Delay [^:mutable val ^:mutable ^Function? f]
+(deftype Delay [^:mutable val ^:mutable f]
   IDeref
   (-deref [this]
-    (when-some [^Function f' f]
+    (when-some [f' f]
       (set! val (f'))
       (set! f nil))
     val)
@@ -6293,7 +6293,7 @@
              :unicode (.-isUnicode re)
              :dotAll (.-isDotAll re))]
     (when-some [m (.matchAsPrefix re s)]
-      (re-groups ^Match m))))
+      (re-groups m))))
 
 (defn re-seq
   "Returns a lazy sequence of successive matches of pattern in string,

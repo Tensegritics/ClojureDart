@@ -947,6 +947,17 @@
   (let [[positional-args [_ & named-args]] (split-with (complement '#{.&}) args)]
     [positional-args named-args]))
 
+(defn emit-arg
+  "[bindings dart-arg]"
+  [must-lift arg hint expected-type env]
+  (let [[bindings dart-arg] (lift-arg must-lift (emit arg env) hint env)
+        {:dart/keys [type nat-type]} (infer-type dart-arg)
+        here-type (or (some-> x meta :tag (emit-type env)) expected-type type)
+        dart-arg (if (and here-type (not= here-type nat-type))
+                   (list 'dart/as dart-arg here-type) ; TODO magicast
+                   dart-arg)]
+    [bindings dart-arg]))
+
 (defn emit-args
   "[bindings dart-args]"
   ([args env]
@@ -956,16 +967,11 @@
          [bindings dart-args]
          (as-> [(when must-lift (list 'sentinel)) ()] acc
            (reduce (fn [[bindings dart-fn-args] [k x]]
-                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) k env)]
+                     (let [[bindings' x'] (emit-arg (seq bindings) x k nil env)]
                        [(concat bindings' bindings) (list* k x' dart-fn-args)]))
              acc (reverse (partition 2 nameds)))
            (reduce (fn [[bindings dart-fn-args] x]
-                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "arg" env)
-                           {:dart/keys [type nat-type]} (infer-type x')
-                           here-type (or (some-> x meta :tag (emit-type env)) type)
-                           x' (if (and here-type (not= here-type nat-type))
-                                (list 'dart/as x' here-type)
-                                x')]
+                     (let [[bindings' x'] (emit-arg (seq bindings) x "arg" nil env)]
                        [(concat bindings' bindings) (cons x' dart-fn-args)]))
              acc (reverse positionals)))
          bindings (cond-> bindings must-lift butlast)]
@@ -1458,8 +1464,7 @@
   "Like dart-local but with no natural type as dart fns params must be dynamic."
   ([env] (dart-fn-param "" env))
   ([hint env]
-   #_(vary-meta (dart-local hint env) dissoc :dart/nat-type)
-   (dart-local hint env)))
+   (vary-meta (dart-local hint env) dissoc :dart/nat-type)))
 
 (defn- emit-dart-fn [async fn-name [params & body] env]
   (let [ret-type (some-> (or (:tag (meta fn-name)) (:tag (meta params))) (emit-type env))

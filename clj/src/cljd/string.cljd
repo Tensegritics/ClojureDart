@@ -72,8 +72,8 @@ Design notes for clojure.string:
       (loop [vs [] i 0]
         (if-some [m (.matchAsPrefix re replacement i)]
           (recur (conj vs (if-some [r (.group m 1)]
-                            (re-unquote-replacement ^String r)
-                            (int/parse ^String (.group m 2)))) ; TODO, compiler should cast
+                            (re-unquote-replacement r)
+                            (int/parse ^String (.group m 2)))) ; TODO, compiler should auto cast nullable
             (.-end m))
           (if (and (= 1 (count vs)) (dart/is? (peek vs) String))
             (peek vs)
