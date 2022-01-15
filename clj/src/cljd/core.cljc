@@ -1169,6 +1169,10 @@
   IAssociative
   (-assoc [coll k v] {k v}))
 
+(defn ^bool associative?
+  "Returns true if coll implements Associative"
+  [x] (satisfies? IAssociative x))
+
 (defn assoc
   {:inline (fn [map key val] `(-assoc ~map ~key ~val))
    :inline-arities #{3}}
