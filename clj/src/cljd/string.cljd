@@ -240,7 +240,7 @@ Design notes for clojure.string:
     (reduce  #(.write sb (if-let [replacement (cmap %2)] (str replacement) %2)) nil s)
     (.toString sb)))
 
-(defn ^int? index-of
+(defn ^dart:core/int? index-of
   "Return index of value (string or char) in s, optionally searching
   forward from from-index. Return nil if value not found."
   ([^String s value]
@@ -253,7 +253,7 @@ Design notes for clojure.string:
        (when-not (neg? result)
          result)))))
 
-(defn ^int? last-index-of
+(defn ^dart:core/int? last-index-of
   "Return last index of value (string or char) in s, optionally
   searching backward from from-index. Return nil if value not found."
   ([^String s value]

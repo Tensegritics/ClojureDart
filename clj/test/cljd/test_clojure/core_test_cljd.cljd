@@ -44,11 +44,11 @@
     (let [a (if (odd? 3) 3 4)]
       (is (dart/is? a int)))
     (let [a (if (odd? 3) 3 nil)]
-      (is (dart/is? a int?)))
+      (is (dart/is? a dart:core/int?)))
     (let [a (if (odd? 3) 3 4.3)]
       (is (dart/is? a dynamic)))
     (let [a (when-let [a (if (odd? 3) 3 4)] a)]
-      (is (dart/is? a int?)))
+      (is (dart/is? a dart:core/int?)))
     (let [a (if (odd? 2) (throw (Exception. "exception")) "aa")]
       (is (dart/is? a String)))
     (let [a (if (odd? 2) nil nil)]
@@ -111,6 +111,25 @@
   (is (= ":love" (namespace (gensym :love/cljd))))
   (is (= "love" (namespace (gensym 'love/cljd))))
   (is (= "love" (namespace (gensym "love/cljd")))))
+
+(deftest testing-int-array
+  (is (= (seq #dart [0 0 0]) (seq (int-array 3))))
+  (is (dart/is? (int-array 3) #/(List int)))
+  (is (= (seq #dart [0 1 2]) (seq (int-array (range 3)))))
+  (is (dart/is? (int-array (range 3)) #/(List int)))
+
+  (is (= (seq #dart [0 1 2 0 0]) (seq (int-array 5 (range 3)))))
+  (is (dart/is? (int-array 5 (range 3)) #/(List int)))
+  (is (= (seq #dart [4 4 4 4 4]) (seq (int-array 5 4))))
+  (is (dart/is? (int-array 5 4) #/(List int))))
+
+(deftest testing-amap
+  (let [an-array (int-array 3 3)]
+    (is (= (seq [4 4 4])
+          (seq (amap an-array
+                 idx
+                 ret
+                 (inc (aget an-array idx))))))))
 
 ;; defrecord tests
 

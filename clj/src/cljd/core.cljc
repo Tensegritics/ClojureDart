@@ -800,6 +800,11 @@
   [x]
   (dart/is? x num))
 
+(defn ^bool int?
+  "Returns true if x is an int?"
+  [x]
+  (dart/is? x int))
+
 (extend-type String
   IPrint
   (-print [s sink]
@@ -2463,6 +2468,39 @@
   [^List arr]
   (.from List arr .& :growable false))
 
+(defmacro amap
+  "Maps an expression across an array a, using an index named idx, and
+  return value named ret, initialized to a clone of a, then setting
+  each element of ret to the evaluation of expr, returning the new
+  array ret."
+  [a idx ret expr]
+  `(let [a# ~a
+         ~ret (aclone a#)]
+     (loop  [~idx 0]
+       (if (< ~idx  (alength a#))
+         (do
+           (aset ~ret ~idx ~expr)
+           (recur (inc ~idx)))
+         ~ret))))
+
+(defn int-array
+  "Creates an array of ints. Does not coerce array, provided for compatibility
+  with Clojure."
+  ([size-or-seq]
+   (if (int? size-or-seq)
+     (.filled #/(List int) size-or-seq 0)
+     (.from #/(List int) size-or-seq .& :growable false)))
+  ([size init-val-or-seq]
+   (if (seq? init-val-or-seq)
+     (let [a (.filled #/(List int) size 0)]
+       (loop [i 0 s (seq init-val-or-seq)]
+         (if (and s (< i size))
+           (do
+             (aset a i (first s))
+             (recur (inc i) (next s)))
+           a)))
+     (.filled #/(List int) size init-val-or-seq))))
+
 ;; bit ops
 (defn ^int bit-not
   "Bitwise complement"
@@ -2690,7 +2728,7 @@
         (.clear bak)
         (set! young bak)))
     (. young "[]=" o h))
-  (^int? lookup [this o]
+  (^dart:core/int? lookup [this o]
    (or (. young "[]" o)
      (when-some [^int h (. old "[]" o)]
        (.insert this o h)
