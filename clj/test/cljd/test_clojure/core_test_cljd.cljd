@@ -167,3 +167,8 @@
   (is (= 5 (bounded-count 5 (map identity [1 2 3 4 5 6]))))
   (is (= 5 (bounded-count 5 (range))))
   (is (= 2 (bounded-count 1.5 (range)))))
+
+(deftest testing-distinct?
+  (is (= true (distinct? 1)))
+  (is (= false (distinct? 1 1)))
+  (is (= true (apply distinct? (range 20)))))

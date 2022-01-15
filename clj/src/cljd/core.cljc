@@ -6019,6 +6019,20 @@
                    xs seen)))]
      (step coll #{}))))
 
+(defn ^bool distinct?
+  "Returns true if no two of the arguments are ="
+  ([x] true)
+  ([x y] (not (= x y)))
+  ([x y & more]
+   (if (not= x y)
+     (loop [s #{x y} [x & etc :as xs] more]
+       (if xs
+         (if (contains? s x)
+           false
+           (recur (conj s x) etc))
+         true))
+     false)))
+
 (defn halt-when
   "Returns a transducer that ends transduction when pred returns true
   for an input. When retf is supplied it must be a fn of 2 arguments -
