@@ -5885,6 +5885,15 @@
             (cons f (filter pred r))
             (filter pred r))))))))
 
+(defn filterv
+  "Returns a vector of the items in coll for which
+  (pred item) returns logical true. pred must be free of side-effects."
+  [pred coll]
+  (-> (reduce (fn [v o] (if (pred o) (conj! v o) v))
+        (transient [])
+        coll)
+    persistent!))
+
 (defn run!
   "Runs the supplied procedure (via reduce), for purposes of side
   effects, on successive items in the collection. Returns nil"
