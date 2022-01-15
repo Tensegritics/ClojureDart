@@ -2564,6 +2564,20 @@
   [^List xs]
   (. xs #/(cast double)))
 
+(defn ^double double
+  "Coerce to double"
+  {:inline (fn [x] `(.num:toDouble ~x))
+   :inline-arities #{1}}
+  [^num x]
+  (.toDouble x))
+
+(defn ^bool double?
+  "Return true if x is a Double"
+  {:inline (fn [x] `(dart/is? ~x dart:core/double))
+   :inline-arities #{1}}
+  [x]
+  (dart/is? x double))
+
 ;; bit ops
 (defn ^int bit-not
   "Bitwise complement"
