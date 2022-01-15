@@ -141,8 +141,6 @@
   (is (dart/is? (ints #dart[1 2 3]) #/(List int)))
   (is (dart/is? (booleans #dart[true false]) #/(List bool))))
 
-;; defrecord tests
-
 (defrecord EmptyRecord [])
 
 (deftest testing-empty-record
@@ -159,3 +157,13 @@
 (deftest testing-recorda
   (is (= "onetwo" (.mymethod (->RecordA "one"))))
   (is (= {:a :b} (meta (with-meta (->RecordA "one") {:a :b})))))
+
+(deftest testing-bounded-count
+  (is (= 4 (bounded-count 5 [1 2 3 4])))
+  (is (= 5 (bounded-count 5 [1 2 3 4 5])))
+  (is (= 6 (bounded-count 5 [1 2 3 4 5 6])))
+  (is (= 4 (bounded-count 5 (map identity [1 2 3 4]))))
+  (is (= 5 (bounded-count 5 (map identity [1 2 3 4 5]))))
+  (is (= 5 (bounded-count 5 (map identity [1 2 3 4 5 6]))))
+  (is (= 5 (bounded-count 5 (range))))
+  (is (= 2 (bounded-count 1.5 (range)))))

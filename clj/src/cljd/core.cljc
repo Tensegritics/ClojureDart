@@ -1117,6 +1117,17 @@
   [coll]
   (-count coll))
 
+(defn ^int bounded-count
+  "If coll is counted? returns its count, else will count at most the first n
+  elements of coll using its seq"
+  [n coll]
+  (if (counted? coll)
+    (count coll)
+    (loop [^int i 0 s (seq coll)]
+      (if (and s (< i n))
+        (recur (inc i) (next s))
+        i))))
+
 (defprotocol IChunk
   "Protocol for accessing the items of a chunk."
   (-drop-first [coll]
