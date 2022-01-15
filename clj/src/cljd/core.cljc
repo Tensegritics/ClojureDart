@@ -2498,23 +2498,60 @@
          (recur (inc ~idx) ~expr)
          ~ret))))
 
-(defn int-array
+(defmacro ^:private def-list-for-type [fn-name doc-str class-name default-value]
+  `(defn ~fn-name ~doc-str
+     ([~'size-or-seq]
+      (if (int? ~'size-or-seq)
+        (.filled ^{:type-params (~class-name)} List ~'size-or-seq ~default-value)
+        (.from ^{:type-params (~class-name)} List ~'size-or-seq ~'.& :growable false)))
+     ([~'size ~'init-val-or-seq]
+      (if (seq? ~'init-val-or-seq)
+        (let [a# (.filled ^{:type-params (~class-name)} List ~'size ~default-value)]
+          (loop [i# 0 s# (seq ~'init-val-or-seq)]
+            (if (and s# (< i# ~'size))
+              (do
+                (aset a# i# (first s#))
+                (recur (inc i#) (next s#)))
+              a#)))
+        (.filled ^{:type-params (~class-name)} List ~'size ~'init-val-or-seq)))))
+
+(def-list-for-type int-array
   "Creates an array of ints. Does not coerce array, provided for compatibility
   with Clojure."
-  ([size-or-seq]
-   (if (int? size-or-seq)
-     (.filled #/(List int) size-or-seq 0)
-     (.from #/(List int) size-or-seq .& :growable false)))
-  ([size init-val-or-seq]
-   (if (seq? init-val-or-seq)
-     (let [a (.filled #/(List int) size 0)]
-       (loop [i 0 s (seq init-val-or-seq)]
-         (if (and s (< i size))
-           (do
-             (aset a i (first s))
-             (recur (inc i) (next s)))
-           a)))
-     (.filled #/(List int) size init-val-or-seq))))
+  int
+  0)
+
+(def-list-for-type boolean-array
+  "Creates an array of booleans"
+  bool
+  false)
+
+(def-list-for-type double-array
+  "Creates an array of doubles"
+  double
+  0.0)
+
+;; TODO: only arity 1
+;; TODO: hesitate between dynamic and Object?
+(def-list-for-type object-array
+  "Creates an array of objects"
+  Object
+  dynamic)
+
+(defn ^#/(List int) ints
+  "Casts to List<int>"
+  [^List xs]
+  (. xs #/(cast int)))
+
+(defn ^#/(List bool) booleans
+  "Casts to List<bool>"
+  [^List xs]
+  (. xs #/(cast bool)))
+
+(defn ^#/(List double) doubles
+  "Casts to List<double>"
+  [^List xs]
+  (. xs #/(cast double)))
 
 ;; bit ops
 (defn ^int bit-not

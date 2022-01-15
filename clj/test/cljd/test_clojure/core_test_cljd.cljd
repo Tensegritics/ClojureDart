@@ -137,6 +137,10 @@
           (areduce an-array i ret 0
             (+ ret (aget an-array i)))))))
 
+(deftest testing-casting
+  (is (dart/is? (ints #dart[1 2 3]) #/(List int)))
+  (is (dart/is? (booleans #dart[true false]) #/(List bool))))
+
 ;; defrecord tests
 
 (defrecord EmptyRecord [])
