@@ -131,6 +131,12 @@
                  ret
                  (inc (aget an-array idx))))))))
 
+(deftest testing-areduce
+  (let [an-array (int-array 3 3)]
+    (is (= 9
+          (areduce an-array i ret 0
+            (+ ret (aget an-array i)))))))
+
 ;; defrecord tests
 
 (defrecord EmptyRecord [])
