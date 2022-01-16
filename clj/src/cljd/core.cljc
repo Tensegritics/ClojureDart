@@ -1702,11 +1702,16 @@
 (defn qualified-keyword?
   "Return true if x is a keyword with a namespace"
   [x]
-  (and (keyword? x) (namespace x) true))
+  (boolean (and (keyword? x) (namespace x) true)))
 
 (defn ^bool ident?
   "Return true if x is a symbol or keyword"
   [x] (or (keyword? x) (symbol? x)))
+
+(defn ^bool qualified-ident?
+  "Return true if x is a symbol or keyword with a namespace"
+  [x]
+  (boolean (and (ident? x) (namespace x) true)))
 
 (deftype Symbol [^String? ns ^String name meta ^:mutable ^int _hash]
   :type-only true
@@ -1755,6 +1760,11 @@
   "Return true if x is a Symbol"
   [x]
   (dart/is? x Symbol))
+
+(defn qualified-symbol?
+  "Return true if x is a symbol with a namespace"
+  [x]
+  (boolean (and (symbol? x) (namespace x) true)))
 
 (defn symbol
   "Returns a Symbol with the given namespace and name. Arity-1 works
