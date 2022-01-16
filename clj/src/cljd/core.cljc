@@ -5159,6 +5159,12 @@
     (pred (first coll)) (recur pred (next coll))
     true false))
 
+(defn ^bool not-every?
+  "Returns false if (pred x) is logical true for every x in
+  coll, else true."
+  [pred coll]
+  (not (every? pred coll)))
+
 (defn every-pred
    "Takes a set of predicates and returns a function f that returns true if all of its
    composing predicates return a logical true value against all of its arguments, else it returns
@@ -5226,6 +5232,13 @@
    :inline-arities #{1}}
   [coll]
   (not (seq coll)))
+
+(defn not-empty
+  "If coll is empty, returns nil, else coll"
+  {:inline (fn [coll] `(when (seq ~coll) ~coll))
+   :inline-arities #{1}}
+  [coll]
+  (when (seq coll) coll))
 
 (defn constantly
   "Returns a function that takes any number of arguments and returns x."
