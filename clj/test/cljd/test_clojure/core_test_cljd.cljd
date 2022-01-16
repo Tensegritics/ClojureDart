@@ -187,3 +187,7 @@
 
 (deftest testing-mapv
   (is (= [0 2 4 6 8] (mapv + (range 5) (range 5)))))
+
+(deftest testing-reset-meta!
+  (is (= {:c :d} (let [a (atom {} :meta {:a :b})]
+                   (reset-meta! a {:c :d})))))

@@ -929,7 +929,7 @@
   [coll]
   (satisfies? ISequential coll))
 
-(defn realized?
+(defn ^bool realized?
   "Returns true if a value has been produced for a promise, delay, future or lazy sequence."
   {:inline-arities #{1}
    :inline (fn [x] `(-realized? ~x))}
@@ -2077,6 +2077,10 @@
   [^Atom a newval]
   (let [old-state (.-state a)]
     [old-state (set-and-validate-atom-state! a newval)]))
+
+(defn reset-meta!
+  [^Atom iref metadata-map]
+  (set! (.-meta iref) metadata-map))
 
 (defn swap-vals!
   "Atomically swaps the value of atom to be:
