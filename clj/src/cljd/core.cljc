@@ -922,7 +922,7 @@
 (defprotocol ISequential
   "Marker interface indicating a persistent collection of sequential items")
 
-(defn sequential?
+(defn ^bool sequential?
   "Returns true if coll implements Sequential"
   {:inline-arities #{1}
    :inline (fn [coll] `(satisfies? ISequential ~coll))}
@@ -942,7 +942,7 @@
   (-realized? [x]
     "Returns true if a value for x has been produced, false otherwise."))
 
-(defn realized?
+(defn ^bool realized?
   "Returns true if a value has been produced for a promise, delay, future or lazy sequence."
   {:inline-arities #{1}
    :inline (fn [x] `(-realized? ~x))}
@@ -1708,6 +1708,11 @@
   "Return true if x is a symbol or keyword"
   [x] (or (keyword? x) (symbol? x)))
 
+(defn ^bool simple-ident?
+  "Return true if x is a symbol or keyword without a namespace"
+  [x]
+  (and (ident? x) (nil? (namespace x))))
+
 (defn ^bool qualified-ident?
   "Return true if x is a symbol or keyword with a namespace"
   [x]
@@ -1760,6 +1765,11 @@
   "Return true if x is a Symbol"
   [x]
   (dart/is? x Symbol))
+
+(defn ^bool simple-symbol?
+  "Return true if x is a symbol without a namespace"
+  [x]
+  (and (symbol? x) (nil? (namespace x))))
 
 (defn qualified-symbol?
   "Return true if x is a symbol with a namespace"
