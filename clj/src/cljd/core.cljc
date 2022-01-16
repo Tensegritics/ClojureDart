@@ -1330,6 +1330,11 @@
           (zero? i) (first xs)
           :else (recur (next xs) (.- i 1)))))))
 
+(defn ^bool indexed?
+  "Return true if coll implements Indexed, indicating efficient lookup by index"
+  [x]
+  (satisfies? IIndexed x))
+
 (defn nth
   #_{:inline-arities #{2 3}
    :inline (fn
