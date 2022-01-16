@@ -5190,6 +5190,18 @@
               (assoc! counts x (inc (get counts x 0))))
       (transient {}) coll)))
 
+(defn group-by
+  "Returns a map of the elements of coll keyed by the result of
+  f on each element. The value at each key will be a vector of the
+  corresponding elements, in the order they appeared in coll."
+  [f coll]
+  (persistent!
+   (reduce
+    (fn [ret x]
+      (let [k (f x)]
+        (assoc! ret k (conj (get ret k []) x))))
+    (transient {}) coll)))
+
 (defn ^bool empty?
   "Returns true if coll has no items - same as (not (seq coll)).
   Please use the idiom (seq x) rather than (not (empty? x))"
