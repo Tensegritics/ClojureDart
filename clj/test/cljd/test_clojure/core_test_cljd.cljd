@@ -184,3 +184,6 @@
 
 (deftest testing-group-by
   (is (= {false [0 2 4 6 8], true [1 3 5 7 9]} (group-by odd? (range 10)))))
+
+(deftest testing-mapv
+  (is (= [0 2 4 6 8] (mapv + (range 5) (range 5)))))
