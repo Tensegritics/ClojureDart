@@ -2379,18 +2379,24 @@
    :inline (fn [n] `(< 0 ~n))}
   [^num n] (< 0 n))
 
+(defn ^bool pos-int?
+  "Return true if x is a positive fixed precision integer"
+  [x]
+  (and (int? x)
+    (pos? x)))
+
 (defn ^bool neg?
   {:inline-arities #{1}
    :inline (fn [n] `(> 0 ~n))}
   [^num n] (> 0 n))
 
-(defn nat-int?
+(defn ^bool nat-int?
   "Return true if x is a non-negative fixed precision integer"
   [x]
   (and (int? x)
     (not (neg? x))))
 
-(defn neg-int?
+(defn ^bool neg-int?
   "Return true if x is a negative fixed precision integer"
   [x]
   (and (int? x)
