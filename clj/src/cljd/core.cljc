@@ -6458,6 +6458,13 @@
   "Returns a random integer between 0 (inclusive) and n (exclusive)."
   [n] (.nextInt RNG n))
 
+(defn rand-nth
+  "Return a random element of the (sequential) collection. Will have
+  the same performance characteristics as nth for the given
+  collection."
+  [coll]
+  (nth coll (rand-int (count coll))))
+
 (defn ^double rand
   "Returns a random floating point number between 0 (inclusive) and
   n (default 1) (exclusive)."
