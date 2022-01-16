@@ -5181,6 +5181,15 @@
         ([x y z & args] (boolean (and (epn x y z)
                                    (every? #(every? % args) ps))))))))
 
+(defn frequencies
+  "Returns a map from distinct items in coll to the number of times
+  they appear."
+  [coll]
+  (persistent!
+    (reduce (fn [counts x]
+              (assoc! counts x (inc (get counts x 0))))
+      (transient {}) coll)))
+
 (defn ^bool empty?
   "Returns true if coll has no items - same as (not (seq coll)).
   Please use the idiom (seq x) rather than (not (empty? x))"

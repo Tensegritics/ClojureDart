@@ -178,3 +178,6 @@
 
 (deftest testing-filterv
   (is (= [1 3 5 7 9] (filterv odd? (range 10)))))
+
+(deftest testing-frequencies
+  (is (= {1 3 "a" 1} (frequencies [1 "a" 1 1]))))
