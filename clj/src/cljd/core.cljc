@@ -6693,6 +6693,20 @@
         (next vs))
       (persistent! map))))
 
+(defn select-keys
+  "Returns a map containing only those entries in map whose key is in keys"
+  [map keyseq]
+  (loop [ret {} keys (seq keyseq)]
+    (if keys
+      (let [key   (first keys)
+            entry (get map key sentinel)]
+        (recur
+          (if (not (identical?  entry sentinel))
+            (assoc ret key entry)
+            ret)
+          (next keys)))
+      (-with-meta ret (meta map)))))
+
 (defn ^int compare [x y]
   (cond
     (identical? x y) 0

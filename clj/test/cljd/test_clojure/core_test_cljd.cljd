@@ -191,3 +191,6 @@
 (deftest testing-reset-meta!
   (is (= {:c :d} (let [a (atom {} :meta {:a :b})]
                    (reset-meta! a {:c :d})))))
+
+(deftest testing-select-keys
+  (is (= {1 1 5 5} (select-keys (into {} (map #(vector % %)) (range 10)) [1 5]))))
