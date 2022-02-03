@@ -14,11 +14,6 @@ final Set<String> libsToDo = {};
 
 final Set<String> libsDone = {};
 
-String addLibIdentifierIfNotContains(Set<String> to, String libPath) {
-  if (!to.contains(libPath)) to.add(libPath);
-  return libPath;
-}
-
 final Map<String, String> packages = {};
 
 String libPathToPackageName(String path) {
@@ -144,7 +139,14 @@ class TopLevelVisitor extends ThrowingElementVisitor {
     print("; typedef ${e.displayName}");
   }
   void visitFunctionElement(FunctionElement e) {
-    print("; function ${e.displayName} ${e.type.typeFormals}");
+    print("\"${e.displayName}\"");
+    Map<String,dynamic> classData =
+    {':kind': ':function',
+      ':lib': '"${libPathToPackageName(e.library.identifier)}"',
+      ':parameters': e.parameters.map(emitParameter),
+      ':return-type': emitType(e.returnType),
+      ':type-parameters': e.typeParameters.map(emitTypeParameter)};
+    print(M(classData));
   }
   void visitExtensionElement(ExtensionElement e) {
     print("; extension ${e.displayName}");
@@ -154,11 +156,15 @@ class TopLevelVisitor extends ThrowingElementVisitor {
 Future<void> analyzePaths (session, List<String> paths) async {
   for (final p in paths) {
     final libraryElementResult = await session.getLibraryByUri(p);
-    if (libsDone.contains(p)) continue;
-    libsDone.add(p);
+    if (!libsDone.add(p)) continue;
     if (libraryElementResult is LibraryElementResult) {
       final libraryElement = (libraryElementResult as LibraryElementResult).element;
-      print("\"${addLibIdentifierIfNotContains(libsDone, libPathToPackageName(libraryElement.identifier))}\" {"); // open 1
+      final packageName = libPathToPackageName(libraryElement.identifier);
+      if (packageName != p) {
+        libsToDo.add(packageName);
+        continue;
+      }
+      print("\"$p\" {"); // open 1
       for (final top in libraryElement.topLevelElements) {
         if (top.isPublic) top.accept(TopLevelVisitor());
       }
@@ -168,7 +174,7 @@ Future<void> analyzePaths (session, List<String> paths) async {
         for (final ex in libraryElement.exports) {
           if (ex.exportedLibrary != null) {
             var n = ex.exportedLibrary?.identifier as String;
-            addLibIdentifierIfNotContains(libsToDo, n);
+            libsToDo.add(n);
             for (final comb in ex.combinators) {
               if (comb is ShowElementCombinator) {
                 print(M({":lib": "\"${libPathToPackageName(n)}\"", ':shown': comb.shownNames.map((name) => "\"${name}\"").toList()}));

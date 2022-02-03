@@ -26,7 +26,7 @@
    (when-not (nil? subscription)
      (if-some [buf buffer]
        (do (set! buffer nil)
-           (async.Future/value buf))
+           (.value #/(async/Future String?) buf))
        (do (set! completer (async/Completer.))
            (.resume subscription)
            (.-future completer)))))

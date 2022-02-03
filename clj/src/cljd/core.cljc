@@ -1259,17 +1259,19 @@
   IIndexed
   (-nth [l n] (. l "[]" n))
   (-nth [l n not-found]
-    (if (and (<= 0 n) (< n (.-length l)))
-      (. l "[]" n)
-      not-found)))
+    (let [^num n n]
+      (if (and (<= 0 n) (< n (.-length l)))
+        (. l "[]" n)
+        not-found))))
 
 (extend-type String
   IIndexed
   (-nth [l n] (. l "[]" n))
   (-nth [l n not-found]
-    (if (and (<= 0 n) (< n (.-length l)))
-      (. l "[]" n)
-      not-found)))
+    (let [^num n n]
+      (if (and (<= 0 n) (< n (.-length l)))
+        (. l "[]" n)
+        not-found))))
 
 (extend-type MapEntry
   IIndexed
@@ -1352,7 +1354,7 @@
   ILookup
   (-lookup [o k]
     (when (dart/is? k num)
-      (let [k (.toInt k)]
+      (let [k (.toInt ^num k)]
         (when (and (<= 0 k) (< k (.-length o)))
           (. o "[]" k)))))
   (-lookup [o k not-found]
@@ -1362,14 +1364,14 @@
   (-contains-key? [o k]
     (when-not (dart/is? k num)
       (throw (ArgumentError. (str "contains? not supported on type" (.-runtimeType k)))))
-    (let [k (.toInt k)]
+    (let [k (.toInt ^num k)]
       (and (<= 0 k) (< k (.-length o))))))
 
 (extend-type String
   ILookup
   (-lookup [o k]
     (when (dart/is? k num)
-      (let [k (.toInt k)]
+      (let [k (.toInt ^num k)]
         (when (and (<= 0 k) (< k (.-length o)))
           (. o "[]" k)))))
   (-lookup [o k not-found]
@@ -1379,7 +1381,7 @@
   (-contains-key? [o k]
     (when-not (dart/is? k num)
       (throw (ArgumentError. (str "contains? not supported on type" (.-runtimeType k)))))
-    (let [k (.toInt k)]
+    (let [k (.toInt ^num k)]
       (and (<= 0 k) (< k (.-length o))))))
 
 (defn get
@@ -1653,7 +1655,8 @@
          (keyword? s) s
          (symbol? s) (keyword (namespace s) (name s))
          (= "/" s) (keyword nil s)
-         (string? s) (let [idx (.indexOf s "/")]
+         (string? s) (let [^String s s
+                           idx (.indexOf s "/")]
                        (cond
                          (< idx 0) (keyword nil s)
                          (zero? idx) (keyword "" (.substring s 1))
@@ -1733,7 +1736,8 @@
   ([name]
    (cond
      (symbol? name) name
-     (string? name) (let [idx (.indexOf name "/")]
+     (string? name) (let [name ^String name
+                          idx (.indexOf name "/")]
                       (if (< idx 0)
                         (symbol nil name)
                         (symbol (.substring name 0 idx)
@@ -2171,6 +2175,14 @@
   ([test then else]
    `(if ~test ~else ~then)))
 
+(defn ^:macro-support ^:private hint-as [expr tag]
+  (cond-> expr
+    (or (seq? expr) (symbol? expr))
+    (vary-meta assoc :tag tag)))
+
+(defn ^:macro-support ^:private hint-args [tag f]
+  (fn [& args] (apply f (map #(hint-as % tag) args))))
+
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:macro-support ^:private nary-inline
   ([op] (nary-inline nil nil op))
@@ -2233,27 +2245,27 @@
      false)))
 
 (defn ^num *
-  {:inline (nary-inline 1 identity "*")
+  {:inline (hint-args `num (nary-inline 1 identity "*"))
    :inline-arities any?}
   ([] 1)
-  ([x] x)
-  ([x y] (.* x y))
-  ([x y & more]
+  ([^num x] x)
+  ([^num x ^num y] (.* x y))
+  ([^num x ^num y & more]
    (reduce * (* x y) more)))
 
 (defn ^num /
-  {:inline (nary-inline (fn [x] (list '. 1 "/" x)) "/")
+  {:inline (hint-args `num (nary-inline (fn [x] (list '. 1 "/" x)) "/"))
    :inline-arities >0?}
-  ([x] (. 1 "/" x))
-  ([x y] (. x "/" y))
-  ([x y & more]
+  ([^num x] (. 1 "/" x))
+  ([^num x ^num y] (. x "/" y))
+  ([^num x ^num y & more]
    (reduce / (/ x y) more)))
 
 ;; TODO type hint
 (defn rem
   {:inline (fn [num div] `(.remainder ~num ~div))
    :inline-arities #{2}}
-  [num div]
+  [^num num ^num div]
   (.remainder num div))
 
 (defn ^num quot
@@ -2267,25 +2279,25 @@
    :inline-arities any?}
   ([] 0)
   ;; TODO: cast to num ??
-  ([x] x)
-  ([x y] (.+ x y))
-  ([x y & more]
+  ([^num x] x)
+  ([^num x ^num y] (.+ x y))
+  ([^num x ^num y & more]
    (reduce + (+ x y) more)))
 
 (defn ^num -
   {:inline (nary-inline (fn [x] (list '. x "-")) "-")
    :inline-arities >0?}
-  ([x] (.- 0 x))
-  ([x y] (.- x y))
-  ([x y & more]
+  ([^num x] (.- 0 x))
+  ([^num x ^num y] (.- x y))
+  ([^num x ^num y & more]
    (reduce - (- x y) more)))
 
 (defn ^bool <=
   {:inline (nary-cmp-inline "<=")
    :inline-arities >0?}
   ([x] true)
-  ([x y] (.<= x y))
-  ([x y & more]
+  ([^num x ^num y] (.<= x y))
+  ([^num x ^num y & more]
    (if (<= x y)
      (if (next more)
        (recur y (first more) (next more))
@@ -2296,8 +2308,8 @@
   {:inline (nary-cmp-inline "<")
    :inline-arities >0?}
   ([x] true)
-  ([x y] (.< x y))
-  ([x y & more]
+  ([^num x ^num y] (.< x y))
+  ([^num x ^num y & more]
    (if (< x y)
      (if (next more)
        (recur y (first more) (next more))
@@ -2308,8 +2320,8 @@
   {:inline (nary-cmp-inline ">=")
    :inline-arities >0?}
   ([x] true)
-  ([x y] (.>= x y))
-  ([x y & more]
+  ([^num x ^num y] (.>= x y))
+  ([^num x ^num y & more]
    (if (>= x y)
      (if (next more)
        (recur y (first more) (next more))
@@ -2320,8 +2332,8 @@
   {:inline (nary-cmp-inline ">")
    :inline-arities >0?}
   ([x] true)
-  ([x y] (.> x y))
-  ([x y & more]
+  ([^num x ^num y] (.> x y))
+  ([^num x ^num y & more]
    (if (> x y)
      (if (next more)
        (recur y (first more) (next more))
@@ -2349,14 +2361,14 @@
 (defn ^bool even? [^int num] (.-isEven num))
 
 (defn ^num inc
-  {:inline (fn [x] `(.+ ~x 1))
+  {:inline (fn [x] `(.+ ~(hint-as x `num) 1))
    :inline-arities #{1}}
-  [x] (.+ x 1))
+  [^num x] (.+ x 1))
 
 (defn ^num dec
   {:inline (fn [x] `(.- ~x 1))
    :inline-arities #{1}}
-  [x]
+  [^num x]
   (.- x 1))
 
 (defn quick-bench* [run]
@@ -2412,7 +2424,7 @@
    (apply aset (aget array idx) idx2 idxv)))
 
 (defn ^List aresize [^List a ^int from ^int to pad]
-  (let [a' (.filled List to pad)]
+  (let [a' (List/filled to pad)]
     (dotimes [i from]
       (aset a' i (aget a i)))
     a'))
@@ -2437,15 +2449,20 @@
 ;; bit ops
 (defn ^int bit-not
   "Bitwise complement"
-  {:inline (fn [x] `(. ~x "~"))
+  {:inline (fn [x] `(. ~(cond-> x (or (seq? x) (symbol? x)) (vary-meta assoc :tag 'dart:core/int)) "~"))
    :inline-arities #{1}}
-  [x] (. x "~"))
+  [x] (. ^int x "~"))
 
 (defn ^int bit-and
   "Bitwise and"
-  {:inline (nary-inline "&")
+  {:inline (let [inline (nary-inline "&")]
+             (fn [arg & args]
+               (apply inline (cond-> arg
+                               (or (seq? arg) (symbol? arg))
+                               (vary-meta assoc :tag 'dart:core/int))
+                 args)))
    :inline-arities >1?}
-  ([x y] (. x "&" y))
+  ([x y] (. ^int x "&" y))
   ([x y & more]
    (reduce bit-and (bit-and x y) more)))
 
@@ -2453,7 +2470,7 @@
   "Bitwise or"
   {:inline (nary-inline "|")
    :inline-arities >1?}
-  ([x y] (. x "|" y))
+  ([x y] (. ^int x "|" y))
   ([x y & more]
    (reduce bit-or (bit-or x y) more)))
 
@@ -2461,7 +2478,7 @@
   "Bitwise exclusive or"
   {:inline (nary-inline "^")
    :inline-arities >1?}
-  ([x y] (. x "^" y))
+  ([x y] (. ^int x "^" y))
   ([x y & more]
    (reduce bit-xor (bit-xor x y) more)))
 
@@ -2477,16 +2494,16 @@
 
 (defn ^int bit-shift-left
   "Bitwise shift left"
-  {:inline (fn [x n] `(. ~x "<<" (bit-and ~n 63)))
+  {:inline (fn [x n] `(. ~(hint-as x `int) "<<" (bit-and ~n 63)))
    :inline-arities #{2}}
   ; dart does not support negative n values. bit-and acts as a modulo.
-  [x n] (. x "<<" (bit-and n 63)))
+  [^int x n] (. x "<<" (bit-and n 63)))
 
 (defn ^int bit-shift-right
-  {:inline (fn [x n] `(. ~x ">>" (bit-and ~n 63)))
+  {:inline (fn [x n] `(. ~(hint-as x `int) ">>" (bit-and ~n 63)))
    :inline-arities #{2}}
   ; dart does not support negative n values. bit-and acts as a modulo.
-  [x n] (. x ">>" (bit-and n 63)))
+  [^int x n] (. x ">>" (bit-and n 63)))
 
 (defn ^int bit-clear
   "Clear bit at index n"
@@ -2527,9 +2544,9 @@
 
 (defn ^int mod
   "Modulus of num and div. Truncates toward negative infinity."
-  {:inline (fn [num div] `(. ~num "%" ~div))
+  {:inline (fn [num div] `(. ~(hint-as num `int) "%" ~(hint-as div `int)))
    :inline-arities #{2}}
-  [num div]
+  [^int num ^int div]
   (. num "%" div))
 
 (defn ^int u32
@@ -2538,9 +2555,9 @@
   [x] (.& 0xFFFFFFFF x))
 
 (defn ^int u32-add
-  {:inline (fn [x y] `(u32 (.+ ~x ~y)))
+  {:inline (fn [x y] `(u32 (.+ ~(hint-as x `int) ~(hint-as y `int))))
    :inline-arities #{2}}
-  [x y]
+  [^int x ^int y]
   (u32 (.+ x y)))
 
 ; can't work for dartjs (see Math/imul)
@@ -2551,7 +2568,7 @@
   (u32 (.* x y)))
 
 (defn ^int u32-bit-shift-right
-  {:inline (fn [x n] `(.>> ~x (.& 31 ~n)))
+  {:inline (fn [x n] `(.>> ~(cond-> x (or (seq? x) (symbol? x)) (vary-meta assoc :tag 'dart:core/int)) (.& 31 ~n)))
    :inline-arities #{2}}
   [x n]
   (.>> x (.& 31 n)))
@@ -2634,7 +2651,7 @@
 (defn- ^int hash-string* [^String s]
   (let [len (.-length s)]
     (if (pos? len)
-      (loop [i 0 hash 0]
+      (loop [^int i 0 ^int hash 0]
         (if (< i len)
           (recur (inc i) (+ (u32-mul 31 hash) (.codeUnitAt s i)))
           (m3-hash-u32 hash)))
@@ -2704,7 +2721,7 @@
      (hash-ordered-coll [k v]).
    See http://clojure.org/data_structures#hash for full algorithms."
   [coll]
-  (loop [n 0 hash-code 0 coll (seq coll)]
+  (loop [^int n 0 ^int hash-code 0 coll (seq coll)]
     (if-not (nil? coll)
       ;; TODO not sure about u32-add
       (recur (inc n) (u32-add hash-code ^int (hash (first coll))) (next coll))
@@ -2901,7 +2918,7 @@
   [& xs]
   ;; TODO : like to-array, find a more efficient way to not rebuild an intermediate array
   (let [arr (reduce (fn [acc item] (.add acc item) acc) #dart[] xs)]
-    (loop [i (.-length arr) r ^PersistentList ()]
+    (loop [^int i (.-length arr) r ^PersistentList ()]
       (if (< 0 i)
         (recur (dec i) (-conj ^PersistentList r (. arr "[]" (dec i))))
         r))))
@@ -2946,7 +2963,7 @@
      (lazy-seq
        (let [buf (chunk-buffer chunk-size)]
          (chunk-append buf (.-current iter))
-         (loop [rem (dec chunk-size)]
+         (loop [^int rem (dec chunk-size)]
            (when (and (pos? rem) (.moveNext iter))
              (chunk-append buf (.-current iter))
              (recur (dec rem))))
@@ -2957,7 +2974,7 @@
   (-seq [coll] (iterator-seq (.-iterator coll))))
 
 (deftype #/(StringSeq E)
-  [string i meta ^:mutable ^int __hash]
+  [^String string ^int i meta ^:mutable ^int __hash]
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
@@ -3009,7 +3026,7 @@
           x (. string "[]" i)
           i' (inc i)]
       (if (< i' l)
-        (loop [acc x idx i']
+        (loop [acc x ^int idx i']
           (if (< idx l)
             (let [val (f acc (. string "[]" idx) )]
               (if (reduced? val)
@@ -3019,7 +3036,7 @@
         x)))
   (-reduce [coll f start]
     (let [l (.-length string)]
-      (loop [acc start idx i]
+      (loop [acc start ^int idx i]
         (if (< idx l)
           (let [val (f acc (. string "[]" idx) )]
             (if (reduced? val)
@@ -3040,7 +3057,7 @@
   (-reduce [s f]
     (let [n (.-length s)]
       (if (pos? n)
-        (loop [acc (. s "[]" 0) i 1]
+        (loop [acc (. s "[]" 0) ^int i 1]
           (if (< i n)
             (let [acc (f acc (. s "[]" i))]
               (if (reduced? acc)
@@ -3050,7 +3067,7 @@
         (f))))
   (-reduce [s f start]
     (let [n (.-length s)]
-      (loop [acc start i 0]
+      (loop [acc start ^int i 0]
         (if (< i n)
           (let [acc (f acc (. s "[]" i))]
             (if (reduced? acc)
@@ -3279,7 +3296,7 @@
        init
        (let [tail-off (bit-and-not (dec (.-cnt pv)) 31)]
          (loop [acc init
-                i from
+                ^int i from
                 arr (if (<= tail-off from) tail (unchecked-array-for root shift from))]
            (let [acc (f acc (aget arr (bit-and i 31)))
                  i' (inc i)]
@@ -3299,7 +3316,7 @@
           shift (.-shift pv)
           tail (.-tail pv)]
       (loop [acc init
-             i from
+             ^int i from
              arr (if (zero? tail-off) tail (unchecked-array-for root shift i))]
         (if (< i to)
           (let [val (f acc i (aget arr (bit-and i 31)))
@@ -3339,7 +3356,7 @@
     (cond
       (< cntx cnty) -1
       (< cnty cntx) 1
-      :else (loop [idx 0]
+      :else (loop [^int idx 0]
               (if (< idx cntx)
                 (let [c (.compareTo (-nth x idx) (-nth y idx))]
                   (if (zero? c)
@@ -3555,7 +3572,8 @@
       (PersistentMapEntry. n v' -1)))
   IVector
   (-assoc-n [coll n val]
-    (let [i (+ start n)]
+    (let [^int n n
+          i (+ start n)]
       (when (or (< end i) (< n 0))
         (throw (ArgumentError. (str "Index " n " out of bounds  [0," (- end start) "]"))))
       (SubVec. meta (assoc v i val) start (math/max end ^int (inc i)) -1)))
@@ -3873,11 +3891,11 @@
       (<= (bit-and-not (dec cnt) 31) n) (aset tail (bit-and n 31) val)
       :else
       (loop [arr (.-arr (set! root (tv-ensure-editable edit root)))
-             level shift]
+             ^int level shift]
         (let [subidx (bit-and (u32-bit-shift-right n shift) 31)]
           (if (pos? level)
             (let [child (tv-ensure-editable edit (aget arr subidx))]
-              (recur (.-arr (aset arr subidx child)) (- shift 5)))
+              (recur (.-arr (aset arr subidx child)) (- level 5)))
             (aset arr (bit-and n 31) val)))))
     tcoll)
   (-pop! [tcoll]
@@ -4175,7 +4193,7 @@
                     new-arr (.filled #/(List dynamic) size v)]
                 (dotimes [i idx] (aset new-arr i (aget arr i)))
                 (aset new-arr idx k)
-                (loop [j (inc idx) i (inc j)]
+                (loop [^int j (inc idx) ^int i (inc j)]
                   (when (< i size)
                     (aset new-arr i (aget arr j))
                     (recur (inc j) (inc i))))
@@ -4189,7 +4207,7 @@
           (let [size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
                 new-arr (.filled #/ (List dynamic) size nil)]
             (dotimes [i idx] (aset new-arr i (aget arr i)))
-            (loop [i idx j (+ 2 idx)]
+            (loop [^int i idx ^int j (+ 2 idx)]
               (when (< i size)
                 (aset new-arr i (aget arr j))
                 (recur (inc i) (inc j))))
@@ -4222,7 +4240,7 @@
                 new-arr (.filled #/(List dynamic) size v)]
             (dotimes [i idx] (aset new-arr i (aget arr i)))
             (aset new-arr idx k)
-            (loop [i (+ 2 idx) j idx]
+            (loop [^int i (+ 2 idx) ^int j idx]
               (when (< i size)
                 (aset new-arr i (aget arr j))
                 (recur (inc i) (inc j))))
@@ -4252,7 +4270,7 @@
                     new-node (-> (BitmapNode. 1 bit' bit' #dart ^:fixed [k' v']) (.inode_assoc shift' h k v))
                     new-arr (.filled #/(List dynamic) size new-node)]
                 (dotimes [i idx] (aset new-arr i (aget arr i)))
-                (loop [i (inc idx) j (inc i)]
+                (loop [^int i (inc idx) ^int j (inc i)]
                   (when (< i size)
                     (aset new-arr i (aget arr j))
                     (recur (inc i) (inc j))))
@@ -4290,7 +4308,7 @@
                 from-arr arr]
             (when (< (.-length arr) net-size')
               (set! arr (aresize arr net-size (inc (bit-or 7 (dec net-size'))) nil)))
-            (loop [i (dec net-size') j (dec net-size)]
+            (loop [^int i (dec net-size') ^int j (dec net-size)]
               (when (< idx' i)
                 (aset arr i (aget from-arr j))
                 (recur (dec i) (dec j))))
@@ -4330,7 +4348,7 @@
                 (when (< gross-size (.-length arr))
                   (set! arr (aresize arr idx gross-size nil)))
                 (aset arr idx new-node)
-                (loop [i (inc idx) j (inc i)]
+                (loop [^int i (inc idx) ^int j (inc i)]
                   (when (< i net-size)
                     (aset arr i (aget from-arr j))
                     (recur (inc i) (inc j))))
@@ -4385,7 +4403,7 @@
                       from-arr arr]
                   (when (< (.-length arr) net-size)
                     (set! arr (aresize arr idx gross-size nil)))
-                  (loop [j (inc idx) i (inc j)]
+                  (loop [^int j (inc idx) ^int i (inc j)]
                     (when (< i net-size)
                       (aset arr i (aget from-arr j))
                       (recur (inc j) (inc i))))
@@ -4403,7 +4421,7 @@
                 from-arr arr]
             (when (< gross-size (.-length arr))
               (set! arr (aresize arr idx gross-size nil)))
-            (loop [i idx j (+ 2 idx)]
+            (loop [^int i idx ^int j (+ 2 idx)]
               (when (< i net-size)
                 (aset arr i (aget from-arr j))
                 (recur (inc i) (inc j))))
@@ -4958,7 +4976,7 @@
         n (second bindings)]
     ;; TODO : re-think about `long`
     `(let [^int n# ~n]
-       (loop [~i 0]
+       (loop [~(vary-meta i assoc :tag 'dart:core/int) 0]
          (when (< ~i n#)
            ~@body
            (recur (inc ~i)))))))
@@ -5064,7 +5082,7 @@
 (defn nthnext
   "Returns the nth next of coll, (seq coll) when n is 0."
   [coll n]
-  (loop [n n xs (seq coll)]
+  (loop [^int n n xs (seq coll)]
     (if (and xs (pos? n))
       (recur (dec n) (next xs))
       xs)))
@@ -5290,7 +5308,7 @@
            comp (cond (or (zero? step) (== start end)) not=
                       (pos? step) <
                       (neg? step) >)]
-       (loop [i start]
+       (loop [^int i start]
          (if (and (< (count b) 32)
                (comp i end))
            (do
@@ -6012,7 +6030,7 @@
                   size# (count c#)
                   ~buf (chunk-buffer size#)
                   exit#
-                  (loop [i# 0]
+                  (loop [^int i# 0]
                     (when (< i# size#)
                       (or
                         (let [~binding (-nth c# i#)]
@@ -6152,7 +6170,7 @@
   [source]
   (let [source! (reduce conj! (transient []) source)
         length (count source!)]
-    (loop [tv source! i length]
+    (loop [tv source! ^int i length]
       (let [i-1 (dec i)]
         (if (pos? i-1)
           (let [j (rand-int i)
@@ -6277,7 +6295,7 @@
     (let [gc  (.-groupCount m)]
       (if (zero? gc)
         (.group m 0)
-        (loop [ret (transient []) c 0]
+        (loop [ret (transient []) ^int c 0]
           (if (<= c gc)
             (recur (conj! ret (.group m c)) (inc c))
             (persistent! ret))))))
