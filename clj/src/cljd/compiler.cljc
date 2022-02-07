@@ -639,44 +639,53 @@
                  (into [] (map :type) opts))]
       [(into [] (map :type) fixed) opts])))
 
-(defn dart-member-lookup [class member]
-  (let [{:keys [libs current-ns] :as all-nses} @nses]
-    (when-some [class-info
-                (or (canon-dart-element class)
-                  (some-> (libs (:lib class))
-                    :ns
-                    (vector (symbol (:type class)))
-                    (some->> (get-in all-nses))
-                    :dart/type))]
-      (when-some [[type-env' member-info]
-                  (or
-                    (when-some [member-info (class-info member)]
-                      [identity member-info])
-                    (some #(dart-member-lookup % member) (:mixins class-info))
-                    (some #(dart-member-lookup % member) (:interfaces class-info))
-                    (some-> (:super class-info) (dart-member-lookup member)))]
-        (let [type-args (:type-parameters class)
-              type-params (:type-parameters class-info)
-              nargs (count type-args)
-              nparams (count type-params)
-              type-env (cond
-                         (= nargs nparams)
-                         (zipmap (map :type type-params) (:type-parameters class))
-                         (zero? nargs)
-                         (zipmap (map :type type-params)
-                           (repeat (resolve-type 'dart:core/dynamic #{})))
-                         :else
-                         (throw (Exception. (str "Expecting " nparams " type arguments to " class ", got " nargs "."))))]
-          (case (:kind member-info)
-            :field (some-> member-info :type :lib ensure-import-lib)
-            (:method :constructor)
-            (run! ensure-import-lib (keep :lib (cons (:return-type member-info)
-                                                 (map :type (:parameters member-info))))))
-          [#(let [v (type-env' %)]
-              (or (when (:is-param v)
-                    (cond-> (type-env (:type v))
-                      (:nullable v) (assoc :nullable true))) v))
-           member-info])))))
+(defn- type-env-for [class-or-member type-args type-params]
+  (let [nargs (count type-args)
+        nparams (count type-params)]
+    (cond
+      (= nargs nparams)
+      (zipmap (map :type type-params) type-args)
+      (zero? nargs)
+      (zipmap (map :type type-params)
+        (repeat (resolve-type 'dart:core/dynamic #{})))
+      :else
+      (throw (Exception. (str "Expecting " nparams " type arguments to " class-or-member ", got " nargs "."))))))
+
+(defn dart-member-lookup
+  "member is a symbol or a string"
+  ([class member env]
+   (dart-member-lookup class member (meta member) env))
+  ([class member member-meta {:keys [type-vars] :as env}]
+   (let [{:keys [libs current-ns] :as all-nses} @nses
+         member-type-arguments (map #(resolve-type % type-vars) (:type-params member-meta))
+         member (name member)]
+     (when-some [class-info
+                 (or (canon-dart-element class)
+                   (some-> (libs (:lib class))
+                     :ns
+                     (vector (symbol (:type class)))
+                     (some->> (get-in all-nses))
+                     :dart/type))]
+       (when-some [[type-env' member-info]
+                   (or
+                     (when-some [member-info (class-info member)]
+                       [identity member-info])
+                     (some #(dart-member-lookup % member env) (:mixins class-info))
+                     (some #(dart-member-lookup % member env) (:interfaces class-info))
+                     (some-> (:super class-info) (dart-member-lookup member env)))]
+         (let [type-env (merge
+                          (type-env-for class (:type-parameters class) (:type-parameters class-info))
+                          (type-env-for member member-type-arguments (:type-parameters member-info)))]
+           (case (:kind member-info)
+             :field (some-> member-info :type :lib ensure-import-lib)
+             (:method :constructor)
+             (run! ensure-import-lib (keep :lib (cons (:return-type member-info)
+                                                  (map :type (:parameters member-info))))))
+           [#(let [v (type-env' %)]
+               (or (when (:is-param v)
+                     (cond-> (type-env (:type v))
+                       (:nullable v) (assoc :nullable true))) v))
+            member-info]))))))
 
 (declare actual-parameters)
 
@@ -699,7 +708,8 @@
     (:function :method)
     (-> member-info
       (update :return-type actual-type type-env)
-      (update :parameters actual-parameters type-env))
+      (update :parameters actual-parameters type-env)
+      (update :type-parameters (fn [ps] (map #(actual-type % type-env) ps))))
     :field
     (update member-info :type actual-type type-env)
     :constructor
@@ -754,7 +764,11 @@
 
 (defn resolve-dart-method
   [type mname args type-env]
-  (if-some [member-info (some-> (dart-member-lookup type (name mname)) actual-member)] ; TODO are there special cases for operators? eg unary-
+  (if-some [member-info
+            (some->
+              (dart-member-lookup type mname
+                {:type-vars (into (or type-env #{}) (:type-params (meta mname)))})
+              actual-member)] ; TODO are there special cases for operators? eg unary-
     (case (:kind member-info)
       :field
       [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args]
@@ -1251,7 +1265,7 @@
                                      (list 'dart/. lsym "[]=" (inc i) item))])
                  more-items))
              lsym))
-         `(.empty ~list-tag)))
+         (emit (list '. list-tag 'empty) env)))
      (let [[bindings items]
            (reduce (fn [[bindings fn-call] x]
                      (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
@@ -1284,7 +1298,7 @@
 
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class env)
-        member-info (some-> (dart-member-lookup dart-type "") actual-member)
+        member-info (some-> (dart-member-lookup dart-type (:type dart-type) env) actual-member)
         method-sig (some-> member-info dart-method-sig)
         split-args+types (if method-sig (split-args args method-sig) (split-args args))
         [bindings dart-args] (emit-args split-args+types env)]
@@ -1303,18 +1317,25 @@
           _ (when (and prop args) (throw (ex-info (str "Can't pass arguments to a property access" (pr-str form)) {:form form})))
           member-name (if (and (= "-" member-name) (empty? args)) "unary-" member-name)
           [dart-obj-bindings dart-obj]  (lift-arg nil (emit obj env) "obj" env)
-          {:dart/keys [type]} (infer-type dart-obj)
+          static (:dart/class (meta dart-obj))
+          type (or static (:dart/type (infer-type dart-obj)))
           type! (dissoc type :nullable)
           dart-obj (if (:type-params (meta obj)) ; static only
                      (symbol (type-str (emit-type obj env))) ; not great,  unreadable symbol, revisit later
                      (magicast dart-obj type! type env))
           member-name+ (case member-name "!=" "==" member-name)
-          member-info (some-> (or (dart-member-lookup type! member-name+)
-                                (dart-member-lookup dc-Object member-name+)) actual-member)
+          member-info (some->
+                        (or (dart-member-lookup type! member-name+ (meta member) env)
+                          (if static
+                            (dart-member-lookup type! (str (:type static) "." member-name) env)
+                            (dart-member-lookup dc-Object member-name+ env)))
+                        actual-member)
           _ (when (and
                     (not member-info)
                     (not (re-matches #"\$_.*|extensions|satisfies" member-name))
-                    ) (binding [*out* *err*] (println "OULALLALALALALA" member-name *source-info*)))
+                    )
+              (binding [*out* *err*]
+                (println "Dynamic " member-name *source-info*)))
           special-num-op-sig (case (:qname type!) ; see sections 17.30 and 17.31 of Dart lang spec
                                dc.int (case member-name
                                         ("-" "+" "%" "*")
@@ -2180,8 +2201,7 @@
                 (with-meta (:qname v) {:dart/type (or (some-> (meta x) :tag emit-type) function-type)
                                        :dart/fn-type :native
                                        :dart/signature (select-keys v [:parameters :return-type])}))
-              (with-meta (:qname v) {:dart/type (or (some-> (meta x) :tag emit-type) v)
-                                     :dart/fn-type :native})) ; leftover for ctors
+              (with-meta (:qname v) {:dart/class v}))
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
 
 (defn emit-var [[_ s] env]
@@ -2717,7 +2737,7 @@
                                (assoc :dart/truth nil))))
                          dc.Never dart-right-infer
                          dc.dynamic dart-left-infer
-                         (if (= (dissoc (:dart/type dart-left-infer) :nullable) (dissoc (:dart/type dart-right-infer) :nullable))
+                         (if (= (:qname (:dart/type dart-left-infer)) (:qname (:dart/type dart-right-infer)))
                            (when (:dart/type dart-left-infer)
                              (update dart-left-infer
                                :dart/type (fnil assoc dc-Object) :nullable
@@ -3278,7 +3298,7 @@
   ;; 7138 dynamic
 
   (binding [dart-libs-info li]
-    (dart-member-lookup (emit-type 'int {}) "fromEnvironment"))
+    (dart-member-lookup (:dart/class (meta (emit-type 'int {}))) "fromEnvironment" {}))
 
   (def li (load-libs-info))
   (binding [dart-libs-info li]
@@ -3329,10 +3349,21 @@
                   dart-libs-info li]
           (compile-namespace 'cljd.test-reader.reader-test)))))
 
+  (binding [dart-libs-info li]
+    (->
+      (dart-member-lookup (:dart/class (meta (emit 'dart:core/List {})))
+        '^{:type-params [E]} cast '{:type-vars #{E}})
+      actual-member)
+  )
 
   (write
     (binding [dart-libs-info li]
-      (emit-test '(loop [mean 1.0] (let [t 1 r (- t mean)] r)) {}))
+        (emit-test
+          `(deftype ~(with-meta 'XXX {:type-params '[E]}) []
+             (~'meth [_#]
+              (let [^dart:core/List x# []
+                    r# (. x# ~(with-meta 'cast {:type-params '[E]}))]
+                r#))) '{:type-vars [E]}))
     return-locus)
 
   (write
@@ -3410,8 +3441,11 @@
 
     (write
       (binding [dart-libs-info li]
-        (emit-test '(fn [^String s] (recur (.substring s 1))) '{}))
+        (emit-test '(. List filled 4 nil) '{}))
       return-locus)
+
+    (binding [dart-libs-info li]
+      (:type (emit-type 'List {})))
 
     (write
       (binding [dart-libs-info li]

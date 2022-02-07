@@ -1619,7 +1619,8 @@
       (and (dart/is? other Keyword)
         ;; TODO : use `ns` instead of `(.-ns this)`; I used this form
         ;; because their is a bug in optional type emit
-        (.== (.-ns this) (.-ns other)) (.== name (.-name other)))))
+        (let [other ^Keyword other]
+          (and (.== ns other) (.== name other))))))
   IFn
   (-invoke [kw coll]
     (get coll kw))
@@ -1632,18 +1633,17 @@
   (-namespace [_] ns)
   #/(Comparable Keyword)
   (compareTo [x ^Keyword y]
-    (let [nsx (.-ns x)
-          nsy (.-ns y)]
+    (let [nsy (.-ns y)]
       (cond
         (= x y) 0
-        (and (nil? nsx) nsy) -1
-        nsx (if (nil? nsy)
-              1
-              (let [nsc (.compareTo ^Comparable nsx nsy)]
-                (if (zero? nsc)
-                  (.compareTo ^Comparable (.-name x) (.-name y))
-                  nsc)))
-        :else (.compareTo ^Comparable (.-name x) (.-name y)))))
+        (and (nil? ns) nsy) -1
+        ns (if (nil? nsy)
+             1
+             (let [nsc (.compareTo ns nsy)]
+               (if (zero? nsc)
+                 (.compareTo name (.-name y))
+                 nsc)))
+        :else (.compareTo name (.-name y)))))
   Object
   (hashCode [_] _hash)
   (== [this other] (-equiv this other)))
@@ -1706,24 +1706,23 @@
   IEquiv
   (-equiv [this other]
     (and (dart/is? other Symbol)
-      (.== (.-ns this) (.-ns other))
-      (.== name (.-name other))))
+      (let [other ^Symbol other]
+        (and (.== ns (.-ns other)) (.== name (.-name other))))))
   IHash
   (-hash [s] (ensure-hash _hash (hash-symbol s)))
   #/(Comparable Symbol)
   (compareTo [x ^Symbol y]
-    (let [nsx (.-ns x)
-          nsy (.-ns y)]
+    (let [nsy (.-ns y)]
       (cond
         (= x y) 0
-        (and (nil? nsx) nsy) -1
-        nsx (if (nil? nsy)
-              1
-              (let [nsc (.compareTo ^Comparable nsx nsy)]
-                (if (zero? nsc)
-                  (.compareTo ^Comparable (.-name x) (.-name y))
-                  nsc)))
-        :else (.compareTo ^Comparable (.-name x) (.-name y))))))
+        (and (nil? ns) nsy) -1
+        ns (if (nil? nsy)
+             1
+             (let [nsc (.compareTo ns nsy)]
+               (if (zero? nsc)
+                 (.compareTo name (.-name y))
+                 nsc)))
+        :else (.compareTo name (.-name y))))))
 
 (defn ^bool symbol?
   "Return true if x is a Symbol"
@@ -1744,7 +1743,7 @@
                           (.substring name (inc idx)))))
      ;; TODO : var? case
      #_#_(var? name) (.-sym name)
-     (keyword? name) (symbol (.-ns name) (.-name name))
+     (keyword? name) (let [k ^Keyword name] (symbol (.-ns k) (.-name k)))
      :else (throw (Exception. (str "no conversion to symbol on " (.-runtimeType name))))))
   ([ns name]
    (Symbol. ns name nil -1)))
@@ -2305,7 +2304,7 @@
      false)))
 
 (defn ^bool <
-  {:inline (nary-cmp-inline "<")
+  {:inline (hint-args `num (nary-cmp-inline "<"))
    :inline-arities >0?}
   ([x] true)
   ([^num x ^num y] (.< x y))
@@ -2562,31 +2561,31 @@
 
 ; can't work for dartjs (see Math/imul)
 (defn ^int u32-mul
-  {:inline (fn [x y] `(u32 (.* ~x ~y)))
+  {:inline (fn [x y] `(u32 (.* ~(hint-as x `int) ~(hint-as y `int))))
    :inline-arities #{2}}
-  [x y]
+  [^int x ^int y]
   (u32 (.* x y)))
 
 (defn ^int u32-bit-shift-right
-  {:inline (fn [x n] `(.>> ~(cond-> x (or (seq? x) (symbol? x)) (vary-meta assoc :tag 'dart:core/int)) (.& 31 ~n)))
+  {:inline (fn [x n] `(.>> ~(hint-as x `int) (.& 31 ~n)))
    :inline-arities #{2}}
-  [x n]
+  [^int x ^int n]
   (.>> x (.& 31 n)))
 
 (defn ^int u32-bit-shift-left
-  {:inline (fn [x n] `(u32 (.<< ~x (.& 31 ~n))))
+  {:inline (fn [x n] `(u32 (.<< ~(hint-as x `int) (.& 31 ~n))))
    :inline-arities #{2}}
-  [x n]
+  [^int x ^int n]
   (u32 (.<< x (.& 31 n))))
 
 (defn ^int u32-rol
   {:inline (fn [x n] `(let [x# ~x
-                            n# ~n]
+                            ^int n# ~n]
                         (.|
                          (u32-bit-shift-left x# n#)
                          (u32-bit-shift-right x# (.- n#)))))
    :inline-arities #{2}}
-  [x n]
+  [x ^int n]
   (.|
    (u32-bit-shift-left x n)
    (u32-bit-shift-right x (.- n))))
@@ -2657,7 +2656,7 @@
           (m3-hash-u32 hash)))
       0)))
 
-(defn- ^int hash-symbol [sym]
+(defn- ^int hash-symbol [^Symbol sym]
   (hash-combine
     (m3-hash-unencoded-chars (.-name sym))
     (hash-string* (or (.-ns sym) ""))))
@@ -2917,7 +2916,7 @@
   "Creates a new list containing the items."
   [& xs]
   ;; TODO : like to-array, find a more efficient way to not rebuild an intermediate array
-  (let [arr (reduce (fn [acc item] (.add acc item) acc) #dart[] xs)]
+  (let [^List arr (reduce (fn [^List acc item] (.add acc item) acc) #dart[] xs)]
     (loop [^int i (.-length arr) r ^PersistentList ()]
       (if (< 0 i)
         (recur (dec i) (-conj ^PersistentList r (. arr "[]" (dec i))))
@@ -3003,19 +3002,21 @@
   (-count [_] (- (.-length string) i))
   IIndexed
   (-nth [coll n]
-    (if (< n 0)
-      (throw (ArgumentError. "Index out of bounds"))
-      (let [i (+ n i)]
-        (if (< i (.-length string))
-          (. string "[]" i)
-          (throw (ArgumentError. "Index out of bounds"))))))
+    (let [^int n n]
+      (if (< n 0)
+        (throw (ArgumentError. "Index out of bounds"))
+        (let [i (+ n i)]
+          (if (< i (.-length string))
+            (. string "[]" i)
+            (throw (ArgumentError. "Index out of bounds")))))))
   (-nth [coll n not-found]
-    (if (< n 0)
-      not-found
-      (let [i (+ n i)]
-        (if (< i (.-length string))
-          (. string "[]" i)
-          not-found))))
+    (let [^int n n]
+      (if (< n 0)
+        not-found
+        (let [i (+ n i)]
+          (if (< i (.-length string))
+            (. string "[]" i)
+            not-found)))))
   ICollection
   (-conj [coll o] (cons o coll))
   IEmptyableCollection
@@ -3153,74 +3154,6 @@
   [& body]
   `(new cljd.core/LazySeq nil (fn [] ~@body) nil -1))
 
-;;; Rseq
-
-(deftype #/(RSeqIterator E)
-  [^PersistentVector v
-   ^:mutable ^int i
-   ^:mutable ^List curr]
-  #/(Iterator E)
-  (current [iter] (aget curr (bit-and i 31)))
-  (moveNext [iter]
-    (and (< 0 i)
-      (do
-        (when (zero? (bit-and i 31))
-          (set! curr (unchecked-array-for (.-root v) (.-shift v) i)))
-        (set! i (dec i))
-        true))))
-
-(deftype #/(RSeq E)
-  [meta v ^int i ^:mutable ^int __hash]
-  ^:mixin EquivSequentialHashMixin
-  ^:mixin #/(dart-coll/ListMixin E)
-  (iterator [coll]
-    (if (dart/is? v PersistentMapEntry)
-      (.-iterator ^:dart ^:fixed [(val v) (key v)])
-      (RSeqIterator. v (inc i) (.-tail v))))
-  ^:mixin #/(SeqListMixin E)
-  (^#/(RSeq R) #/(cast R) [coll]
-   (RSeq. meta v i __hash))
-  ^:mixin ToStringMixin
-  IMeta
-  (-meta [coll] meta)
-  IWithMeta
-  (-with-meta [coll new-meta]
-    (if (identical? new-meta meta)
-      coll
-      (RSeq. new-meta v i __hash)))
-  ISeqable
-  (-seq [coll] coll)
-  ISequential
-  ISeq
-  (-first [coll]
-    (-nth v i))
-  (-rest [coll]
-    (if (pos? i)
-      (RSeq. nil v (dec i) __hash)
-      ()))
-  (-next [coll]
-    (when (pos? i)
-      (RSeq. nil v (dec i) __hash)))
-  ICounted
-  (-count [coll] (inc i))
-  ICollection
-  (-conj [coll o]
-    (cons o coll))
-  IEmptyableCollection
-  (-empty [coll] ()))
-
-(defn rseq
-  "Returns, in constant time, a seq of the items in rev (which
-  can be a vector or sorted-map), in reverse order. If rev is empty returns nil"
-  [rev]
-  ;; TODO : change message
-  (when-not (vector? rev)
-    (throw (Exception. (str "class " (.-runtimeType rev) " is not reversible."))))
-  (let [cnt (count rev)]
-    (if (zero? cnt)
-      nil
-      (RSeq. nil rev (dec cnt) -1))))
-
 ;;; PersistentVector
 
 (deftype VectorNode [edit ^List arr])
@@ -3232,19 +3165,7 @@
       ret
       (recur (- ll 5) (VectorNode. nil #dart ^:fixed ^VectorNode [ret])))))
 
-(defn- ^VectorNode push-tail [^PersistentVector pv ^int level ^VectorNode parent ^VectorNode tailnode]
-  (let [subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
-        arr-parent (.-arr parent)
-        level (- level 5)
-        new-node (cond
-                   (zero? level) tailnode ; fast path
-                   (< subidx (.-length arr-parent)) ;some? is for transients
-                   (if-some [child (. arr-parent "[]" subidx)]
-                     (push-tail pv level child tailnode)
-                     (new-path level tailnode))
-                   :else
-                   (new-path level tailnode))]
-    (VectorNode. nil (aresize arr-parent subidx (inc subidx) new-node))))
+(defn- ^VectorNode push-tail [pv level parent tailnode]) ; predecl
 
 (defn- ^List unchecked-array-for
   "Returns the array where i is located."
@@ -3255,15 +3176,7 @@
       (recur (aget (.-arr node) (bit-and (u32-bit-shift-right i level) 31)) (- level 5))
       (.-arr node))))
 
-(defn- pop-tail [^PersistentVector pv ^int level ^VectorNode node]
-  (let [n (- (.-cnt pv) 2)
-        subidx (bit-and (u32-bit-shift-right n level) 31)]
-    (cond
-      (< 5 level)
-      (if-some [new-child (pop-tail pv (- level 5) (aget (.-arr node) subidx))]
-        (VectorNode. nil (aresize (.-arr node) subidx (inc subidx) new-child))
-        (when (< 0 subidx) (VectorNode. nil (ashrink (.-arr node) subidx))))
-      (< 0 subidx) (VectorNode. nil (ashrink (.-arr node) subidx)))))
+(defn- pop-tail [pv level node]) ; predecl
 
 (defn- ^VectorNode do-assoc [^int level ^VectorNode node ^int n val]
   (let [cloned-node (aclone (.-arr node))]
@@ -3275,78 +3188,18 @@
         (aset cloned-node subidx new-child)
         (VectorNode. nil cloned-node)))))
 
-(defn- pv-reduce
-  ([^PersistentVector pv f ^int from]
-   (let [cnt (.-cnt pv)
-         tail (.-tail pv)
-         root (.-root pv)
-         shift (.-shift pv)]
-     (if (<= cnt from)
-       (f)
-       (let [tail-off (bit-and-not (dec cnt) 31)
-             arr (if (<= tail-off from) tail (unchecked-array-for root shift from))]
-         (pv-reduce pv f (inc from) (aget arr (bit-and from 31)))))))
-  ([^PersistentVector pv f ^int from init]
-   (pv-reduce pv f from (.-cnt pv) init))
-  ([^PersistentVector pv f ^int from ^int to init]
-   (let [tail (.-tail pv)
-         root (.-root pv)
-         shift (.-shift pv)]
-     (if (<= to from)
-       init
-       (let [tail-off (bit-and-not (dec (.-cnt pv)) 31)]
-         (loop [acc init
-                ^int i from
-                arr (if (<= tail-off from) tail (unchecked-array-for root shift from))]
-           (let [acc (f acc (aget arr (bit-and i 31)))
-                 i' (inc i)]
-             (cond
-               (reduced? acc) (deref acc)
-               (< i' to)
-               (recur acc i' (cond
-                               (< 0 (bit-and i' 31)) arr
-                               (== tail-off i') tail
-                               :else (unchecked-array-for root shift i')))
-               :else acc))))))))
+(defn- pv-reduce ; predecl
+  ([pv f ^int from])
+  ([pv f ^int from init])
+  ([pv f ^int from ^int to init]))
 
-(defn- pv-kv-reduce [^PersistentVector pv f ^int from ^int to init]
-  (if (< from to)
-    (let [tail-off (bit-and-not (dec (.-cnt pv)) 31)
-          root (.-root pv)
-          shift (.-shift pv)
-          tail (.-tail pv)]
-      (loop [acc init
-             ^int i from
-             arr (if (zero? tail-off) tail (unchecked-array-for root shift i))]
-        (if (< i to)
-          (let [val (f acc i (aget arr (bit-and i 31)))
-                i' (inc i)]
-            (if (reduced? val)
-              (deref val)
-              (recur val i' (cond
-                              (< 0 (bit-and i' 31)) arr
-                              (== tail-off i') tail
-                              (< i' to) (unchecked-array-for root shift i')
-                              :else nil))))
-          acc)))
-    init))
+(defn- pv-kv-reduce [pv f ^int from ^int to init])
 
 (deftype #/(PVIterator E)
   [^PersistentVector v
    ^:mutable ^int i
    ^int to
-   ^:mutable ^List curr]
-  #/(Iterator E)
-  (current [iter] (aget curr (bit-and (dec i) 31)))
-  (moveNext [iter]
-    (and (< i to)
-      (do
-        (when (zero? (bit-and i 31))
-          (set! curr (if (<= (bit-and-not (dec (.-cnt v)) 31) i)
-                       (.-tail v)
-                       (unchecked-array-for (.-root v) (.-shift v) i))))
-        (set! i (inc i))
-        true))))
+   ^:mutable ^List curr]) ; predecl
 
 (defn- ^int compare-indexed
   "Used as foundation for indexed DS as comparator function."
@@ -3358,7 +3211,7 @@
       (< cnty cntx) 1
       :else (loop [^int idx 0]
               (if (< idx cntx)
-                (let [c (.compareTo (-nth x idx) (-nth y idx))]
+                (let [c (.compareTo ^Comparable (-nth x idx) (-nth y idx))]
                   (if (zero? c)
                     (recur (inc idx))
                     c))
@@ -3398,7 +3251,7 @@
             (== 5 shift)
             (let [new-root-length (dec (u32-bit-shift-right cnt-1 5))
                   arr (.-arr root)]
-              (PersistentVector. meta cnt-1 5 (VectorNode. nil (ashrink arr new-root-length)) (.-arr (aget arr new-root-length)) -1))
+              (PersistentVector. meta cnt-1 5 (VectorNode. nil (ashrink arr new-root-length)) (.-arr ^VectorNode (aget arr new-root-length)) -1))
             ;; root-underflow
             (== (- cnt-1 32) (u32-bit-shift-left 1 shift))
             (PersistentVector. meta cnt-1 (- shift 5) (aget (.-arr root) 0) (unchecked-array-for root shift (dec cnt-1)) -1)
@@ -3432,7 +3285,7 @@
     (let [arr (if (<= (bit-and-not (dec cnt) 31) n) tail (unchecked-array-for root shift n))]
       (aget arr (bit-and n 31))))
   (-nth [coll n not-found]
-    (if (or (<= cnt n) (< n 0))
+    (if (or (<= cnt n) (< ^int n 0))
       not-found
       (let [arr (if (<= (bit-and-not (dec cnt) 31) n) tail (unchecked-array-for root shift n))]
         (aget arr (bit-and n 31)))))
@@ -3445,7 +3298,7 @@
       not-found))
   (-contains-key? [coll k]
     (if (dart/is? k int)
-      (and (<= 0 k) (< k cnt))
+      (and (<= 0 k) (< ^int k cnt))
       false))
   IAssociative
   (-assoc [coll k v]
@@ -3503,12 +3356,187 @@
 
 (def -EMPTY-VECTOR (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
 
+(defn- ^VectorNode push-tail [^PersistentVector pv ^int level ^VectorNode parent ^VectorNode tailnode]
+  (let [subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
+        arr-parent (.-arr parent)
+        level (- level 5)
+        new-node (cond
+                   (zero? level) tailnode ; fast path
+                   (< subidx (.-length arr-parent)) ;some? is for transients
+                   (if-some [child (. arr-parent "[]" subidx)]
+                     (push-tail pv level child tailnode)
+                     (new-path level tailnode))
+                   :else
+                   (new-path level tailnode))]
+    (VectorNode. nil (aresize arr-parent subidx (inc subidx) new-node))))
+
+(defn- pop-tail [^PersistentVector pv ^int level ^VectorNode node]
+  (let [n (- (.-cnt pv) 2)
+        subidx (bit-and (u32-bit-shift-right n level) 31)]
+    (cond
+      (< 5 level)
+      (if-some [new-child (pop-tail pv (- level 5) (aget (.-arr node) subidx))]
+        (VectorNode. nil (aresize (.-arr node) subidx (inc subidx) new-child))
+        (when (< 0 subidx) (VectorNode. nil (ashrink (.-arr node) subidx))))
+      (< 0 subidx) (VectorNode. nil (ashrink (.-arr node) subidx)))))
+
+(defn- pv-reduce
+  ([^PersistentVector pv f ^int from]
+   (let [cnt (.-cnt pv)
+         tail (.-tail pv)
+         root (.-root pv)
+         shift (.-shift pv)]
+     (if (<= cnt from)
+       (f)
+       (let [tail-off (bit-and-not (dec cnt) 31)
+             arr (if (<= tail-off from) tail (unchecked-array-for root shift from))]
+         (pv-reduce pv f (inc from) (aget arr (bit-and from 31)))))))
+  ([^PersistentVector pv f ^int from init]
+   (pv-reduce pv f from (.-cnt pv) init))
+  ([^PersistentVector pv f ^int from ^int to init]
+   (let [tail (.-tail pv)
+         root (.-root pv)
+         shift (.-shift pv)]
+     (if (<= to from)
+       init
+       (let [tail-off (bit-and-not (dec (.-cnt pv)) 31)]
+         (loop [acc init
+                ^int i from
+                arr (if (<= tail-off from) tail (unchecked-array-for root shift from))]
+           (let [acc (f acc (aget ^List arr (bit-and i 31)))
+                 i' (inc i)]
+             (cond
+               (reduced? acc) (deref acc)
+               (< i' to)
+               (recur acc i' (cond
+                               (< 0 (bit-and i' 31)) arr
+                               (== tail-off i') tail
+                               :else (unchecked-array-for root shift i')))
+               :else acc))))))))
+
+(defn- pv-kv-reduce [^PersistentVector pv f ^int from ^int to init]
+  (if (< from to)
+    (let [tail-off (bit-and-not (dec (.-cnt pv)) 31)
+          root (.-root pv)
+          shift (.-shift pv)
+          tail (.-tail pv)]
+      (loop [acc init
+             ^int i from
+             arr (if (zero? tail-off) tail (unchecked-array-for root shift i))]
+        (if (< i to)
+          (let [val (f acc i (aget ^List arr (bit-and i 31)))
+                i' (inc i)]
+            (if (reduced? val)
+              (deref val)
+              (recur val i' (cond
+                              (< 0 (bit-and i' 31)) arr
+                              (== tail-off i') tail
+                              (< i' to) (unchecked-array-for root shift i')
+                              :else nil))))
+          acc)))
+    init))
+
+(deftype #/(PVIterator E)
+  [^PersistentVector v
+   ^:mutable ^int i
+   ^int to
+   ^:mutable ^List curr]
+  #/(Iterator E)
+  (current [iter] (aget curr (bit-and (dec i) 31)))
+  (moveNext [iter]
+    (and (< i to)
+      (do
+        (when (zero? (bit-and i 31))
+          (set! curr (if (<= (bit-and-not (dec (.-cnt v)) 31) i)
+                       (.-tail v)
+                       (unchecked-array-for (.-root v) (.-shift v) i))))
+        (set! i (inc i))
+        true))))
+
+;;; Rseq
+
+(deftype #/(RSeqIterator E)
+  [^PersistentVector v
+   ^:mutable ^int i
+   ^:mutable ^List curr]
+  #/(Iterator E)
+  (current [iter] (aget curr (bit-and i 31)))
+  (moveNext [iter]
+    (and (< 0 i)
+      (do
+        (when (zero? (bit-and i 31))
+          (set! curr (unchecked-array-for (.-root v) (.-shift v) i)))
+        (set! i (dec i))
+        true))))
+
+(deftype #/(RSeq E)
+  [meta v ^int i ^:mutable ^int __hash]
+  ^:mixin EquivSequentialHashMixin
+  ^:mixin #/(dart-coll/ListMixin E)
+  (iterator [coll]
+    (if (dart/is? v PersistentMapEntry)
+      (.-iterator #dart ^:fixed ^E [(val v) (key v)])
+      (RSeqIterator. v (inc i) (.-tail ^PersistentVector v))))
+  ^:mixin #/(SeqListMixin E)
+  (^#/(RSeq R) #/(cast R) [coll]
+   (RSeq. meta v i __hash))
+  ^:mixin ToStringMixin
+  IMeta
+  (-meta [coll] meta)
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (RSeq. new-meta v i __hash)))
+  ISeqable
+  (-seq [coll] coll)
+  ISequential
+  ISeq
+  (-first [coll]
+    (-nth v i))
+  (-rest [coll]
+    (if (pos? i)
+      (RSeq. nil v (dec i) __hash)
+      ()))
+  (-next [coll]
+    (when (pos? i)
+      (RSeq. nil v (dec i) __hash)))
+  ICounted
+  (-count [coll] (inc i))
+  ICollection
+  (-conj [coll o]
+    (cons o coll))
+  IEmptyableCollection
+  (-empty [coll] ()))
+
+(defn rseq
+  "Returns, in constant time, a seq of the items in rev (which
+  can be a vector or sorted-map), in reverse order. If rev is empty returns nil"
+  [rev]
+  ;; TODO : change message
+  (when-not (vector? rev)
+    (throw (Exception. (str "class " (.-runtimeType rev) " is not reversible."))))
+  (let [cnt (count rev)]
+    (if (zero? cnt)
+      nil
+      (RSeq. nil rev (dec cnt) -1))))
+
 (deftype #/(SubVec E)
   [meta v ^int start ^int end ^:mutable ^int __hash]
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   (iterator [coll]
-    (PVIterator. v start end (.-tail v)))
+    (if (dart/is? v PersistentMapEntry)
+      (->
+        (if (.== end start) ; untyped lists because E is only a promise in Cljd
+          #dart ^:fixed []
+          (cond
+            (pos? start) #dart ^:fixed [(val v)]
+            (.== 1 end) #dart ^:fixed [(key v)]
+            :else #dart ^:fixed [(key v) (val v)]))
+        (. #/(cast E))
+        .-iterator)
+      (PVIterator. v start end  (.-tail ^PersistentVector v))))
   ^:mixin #/(SeqListMixin E)
   (^#/(SubVec R) #/(cast R) [coll]
    (SubVec. meta v start end __hash))
@@ -3547,7 +3575,7 @@
       (-nth v i)))
   (-nth [coll n not-found]
     (let [i (+ start n)]
-      (if (or (<= end i) (< n 0))
+      (if (or (<= end i) (< ^int n 0))
         not-found
         (-nth v i not-found))))
   ILookup
@@ -3637,11 +3665,11 @@
   (-nth [coll i]
     (aget arr (+ off ^int i)))
   (-nth [coll i not-found]
-    (if (< i 0)
-      not-found
-      (if (< i (- end off))
-        (aget arr (+ off ^int i))
-        not-found)))
+    (let [i ^int i]
+      (cond
+        (< i 0) not-found
+        (< i (- end off)) (aget arr (+ off i))
+        :else not-found)))
   IChunk
   (-drop-first [coll]
     (if (== off end)
@@ -3796,10 +3824,16 @@
     (let [arr (.-arr node)]
       (VectorNode. edit (aresize arr (.-length arr) 32 nil)))))
 
+(deftype TransientVector [^:mutable ^int cnt
+                          ^:mutable ^int shift
+                          ^:mutable ^some edit
+                          ^:mutable ^VectorNode root
+                          ^:mutable ^List tail])
+
 (defn- tv-editable-array-for
   "Returns the editable array where i is located."
   [^TransientVector tv ^int i]
-  (loop [node (set! (.-root tv) (tv-ensure-editable (.-edit tv) (.-root tv)))
+  (loop [^VectorNode node (set! (.-root tv) (tv-ensure-editable (.-edit tv) (.-root tv)))
          ^int level (.-shift tv)]
     (if (< 0 level)
       (let [arr (.-arr node)
@@ -3890,7 +3924,7 @@
       (== n cnt) (-conj! tcoll val)
       (<= (bit-and-not (dec cnt) 31) n) (aset tail (bit-and n 31) val)
       :else
-      (loop [arr (.-arr (set! root (tv-ensure-editable edit root)))
+      (loop [^List arr (.-arr (set! root (tv-ensure-editable edit root)))
              ^int level shift]
         (let [subidx (bit-and (u32-bit-shift-right n shift) 31)]
           (if (pos? level)
@@ -4838,7 +4872,7 @@
 (defn ^List to-array
   [coll]
   (if (dart/is? coll List)
-    (.toList coll .& :growable false)
+    (.toList ^List coll :growable false)
     (let [length (count coll)
           ^#/(List dynamic) ary (.filled List length nil)]
       (loop [s (seq coll)
