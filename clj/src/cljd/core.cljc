@@ -1673,7 +1673,7 @@
   [x]
   (and (keyword? x) (nil? (namespace x))))
 
-(defn ^bool qualified-keyword?
+(defn qualified-keyword?
   "Return true if x is a keyword with a namespace"
   [x]
   (and (keyword? x) (namespace x) true))
@@ -2430,7 +2430,7 @@
     a'))
 
 (defn ^List ashrink [^List a ^int to]
-  (let [a' (.filled List to ^dynamic (do nil))]
+  (let [a' (.filled #/(List dynamic) to nil)]
     (dotimes [i to]
       (aset a' i (aget a i)))
     a'))
@@ -4666,7 +4666,7 @@
     (let [new-root (.inode_without root 0 (hash k) k)]
       (if (identical? new-root root)
         coll
-        (PersistentHashMap. meta new-root -1))))
+        (PersistentHashMap. meta ^BitmapNode new-root -1)))) ; FIX for failed inference
   IKVReduce
   (-kv-reduce [coll f init]
     (if (zero? (.-cnt ^BitmapNode (.-root coll)))
@@ -5308,7 +5308,7 @@
            comp (cond (or (zero? step) (== start end)) not=
                       (pos? step) <
                       (neg? step) >)]
-       (loop [^int i start]
+       (loop [i start]
          (if (and (< (count b) 32)
                (comp i end))
            (do
@@ -6391,7 +6391,7 @@
   ([comp coll]
    (if (seq coll)
      (let [a (to-array coll)]
-       (.sort ^List a #_comp (if (dart/is? comp #/(dynamic dynamic -> int)) comp (fn ^int [x y] (comp x y))))
+       (.sort ^List a comp #_(if (dart/is? comp #/(dynamic dynamic -> int)) comp (fn ^int [x y] (comp x y))))
        (with-meta (seq a) (meta coll)))
      ())))
 
