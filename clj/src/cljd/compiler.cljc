@@ -980,7 +980,7 @@
   [x]
   (some {'dart/recur true} (tree-seq seq?
                              (fn [[x :as s]]
-                               (when (or (= 'dart/loop x) (= 'dart/fn x)) s)) x)))
+                               (when-not (or (= 'dart/loop x) (= 'dart/fn x)) s)) x)))
 
 (defn has-await?
   "Takes a dartsexp and returns true when it contains an open await."
@@ -1924,11 +1924,12 @@
           (seq? spec)
           (let [[mname arglist & body] spec
                 mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
-                [mname arglist']
+                [mname' arglist']
                 (case (:type @last-seen-type)
                   :protocol (some-> @last-seen-type (resolve-protocol-method mname arglist type-env))
                   (or (some-> @last-seen-type (resolve-dart-method mname arglist type-env))
-                    [mname arglist]))]
+                    [mname arglist]))
+                mname (vary-meta mname' merge (meta mname))]
             `(~mname ~(parse-dart-params arglist')
               (let [~@(mapcat (fn [a a']
                                 (when-some [t (:tag (meta a))]
@@ -1987,34 +1988,36 @@
           :lib (-> current-ns all-nses :lib)
           :type (name mclass-name)
           :type-parameters (into [] (map #(emit-type % env)) clj-type-params)
-          #_#_:super (:extends parsed-class-specs)
+          :super (:extends parsed-class-specs)
           :kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
-          #_#_:ixnterfaces (:implements parsed-class-specs)
-          #_#_:mixins (:with parsed-class-specs)}
+          :interfaces (:implements parsed-class-specs)
+          :mixins (:with parsed-class-specs)}
        (into
          (map #(vector (name %) {:kind :field
                                  :getter true
                                  :type (or (:dart/type (meta %)) dc-dynamic)}))
          dart-fields)
-       #_(into
+       (into
          (map (fn [[mname {:keys [fixed-params opt-kind opt-params]} body]]
-                [(name mname) {:kind :method ; no need to gen :operator
-                               :return-type (:dart/type (dart-meta mname env) dc-dynamic)
-                               :type-parameters nil ; TODO
-                               :parameters (concat
-                                             (map
-                                               (fn [p]
-                                                 {:name p
-                                                  :kind :positional
-                                                  :type (:dart/type (dart-meta p env) dc-dynamic)})
-                                               (next fixed-params)) ; get rid of this
-                                             (map
-                                               (fn [p]
-                                                 {:name p
-                                                  :kind opt-kind
-                                                  :optional true
-                                                  :type (:dart/type (dart-meta p env) dc-dynamic)})
-                                                opt-params))}]))
+                (let [{:keys [type-params]} (meta mname)
+                      env (update env :type-vars (fnil into #{}) type-params)]
+                  [(name mname) {:kind :method ; no need to gen :operator
+                                 :return-type (:dart/type (dart-meta mname env) dc-dynamic)
+                                 :type-parameters (map #(emit-type % env) type-params)
+                                 :parameters (concat
+                                               (map
+                                                 (fn [p]
+                                                   {:name p
+                                                    :kind :positional
+                                                    :type (:dart/type (dart-meta p env) dc-dynamic)})
+                                                 (next fixed-params)) ; get rid of this
+                                               (map
+                                                 (fn [p]
+                                                   {:name p
+                                                    :kind opt-kind
+                                                    :optional true
+                                                    :type (:dart/type (dart-meta p env) dc-dynamic)})
+                                                 opt-params))}])))
          (:methods parsed-class-specs))))))
 
 (defn emit-reify* [[_ opts & specs] env]
@@ -2808,12 +2811,12 @@
        (double? x) {:dart/type dc-double :dart/truth :truthy}
        (integer? x) {:dart/type dc-int :dart/truth :truthy}
        (seq? x)
-       (case (first x)
+       (case (let [x (first x)] (when (symbol? x) x))
          dart/loop (infer-type (last x))
          dart/try
          (let [[_ dart-expr dart-catches-expr] x]
            (reduce (fn [acc item]
-                     (if (= (:dart/type acc) dc-dynamic)
+                     (if (= (:qname (:dart/type acc)) 'dc.dynamic)
                        (reduced acc)
                        (infer-branch acc item))) (infer-type dart-expr) (map #(infer-type (last %)) dart-catches-expr)))
          dart/if
