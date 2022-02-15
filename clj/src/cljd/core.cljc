@@ -2365,7 +2365,7 @@
   [^num x] (.+ x 1))
 
 (defn ^num dec
-  {:inline (fn [x] `(.- ~x 1))
+  {:inline (fn [x] `(.- ~(hint-as x `num) 1))
    :inline-arities #{1}}
   [^num x]
   (.- x 1))
@@ -3123,7 +3123,7 @@
     (when-not (nil? s)
       (loop [ls s]
         (if (dart/is? ls LazySeq)
-          (recur (.sval ls))
+          (recur (.sval ^LazySeq ls))
           (do (set! s ls)
               (seq s))))))
   ISeq
@@ -3354,7 +3354,7 @@
 (defn ^bool vector? [x]
   (satisfies? IVector x))
 
-(def -EMPTY-VECTOR (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
+(def ^PersistentVector -EMPTY-VECTOR (PersistentVector. nil 0 5 (VectorNode. nil (.empty List)) (.empty List) -1))
 
 (defn- ^VectorNode push-tail [^PersistentVector pv ^int level ^VectorNode parent ^VectorNode tailnode]
   (let [subidx (bit-and (u32-bit-shift-right (dec (.-cnt pv)) level) 31)
@@ -4078,7 +4078,8 @@
   (-subvec [coll start end]
     (if (zero? start) [_k] [_v])))
 
-; cgrand's
+(deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr])
+
 (deftype #/(BitmapIterator E)
   [^:mutable ^BitmapNode node
    ^:mutable ^int idx
@@ -4202,7 +4203,7 @@
                 (== i n) not-found
                 (= (aget arr i) k) (aget arr (inc i))
                 :else (recur (+ 2 i)))))))))
-  (inode_without [node shift h k]
+  (inode_without [node ^int shift h k]
     (if (< shift 32)
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
             bit (u32-bit-shift-left 1 n)
@@ -4259,7 +4260,7 @@
                 (aset new-arr (inc i) (aget arr (inc n))))
               (BitmapNode. (dec cnt) 0 0 new-arr))
             :else (recur (+ 2 i)))))))
-  (inode_assoc [node shift h k v]
+  (inode_assoc [node ^int shift h k v]
     (if (< shift 32)
       ; regular node
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
@@ -4325,7 +4326,7 @@
                 node
                 (BitmapNode. cnt 0 0 (doto (aclone arr) (aset i+1 v)))))
             :else (recur (+ 2 i)))))))
-  (inode_assoc_transient [node shift h k v]
+  (inode_assoc_transient [node ^int shift h k v]
     (if (< shift 32)
       ; regular node
       (let  [n (bit-and (u32-bit-shift-right h shift) 31)
@@ -4407,7 +4408,7 @@
                 (set! arr (doto (aclone arr) (aset i+1 v)))))
             :else (recur (+ 2 i))))
         node)))
-  (inode_without_transient [node shift h k]
+  (inode_without_transient [node ^int shift h k]
     (if (< shift 32)
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
             bit (u32-bit-shift-left 1 n)
@@ -4769,7 +4770,8 @@
     (seq (map val coll))))
 
 (deftype #/(PersistentHashSet E)
-  [meta ^PersistentHashMap hm ^:mutable ^int __hash]
+  [meta ^#/(PersistentHashMap E E) hm ^:mutable ^int __hash]
+  :type-only true
   ^:mixin #/(dart-coll/SetMixin E)
   (contains [this e]
     (-contains-key? hm e))
@@ -4806,14 +4808,11 @@
   (-equiv [coll other]
     (and
       (set? other)
-      (== (-count hm) (-count (.-hm other)))
-      (let [y (.-hm other)]
-        (reduce
-          (fn [acc k]
-            (if (= (get y k sentinel) k)
-              acc
-              (reduced false)))
-          true (.-keys hm)))))
+      (== (-count hm) (-count other))
+      (reduce
+        (fn [_ k]
+          (or (-contains-key? hm k) (reduced false)))
+        true other)))
   IHash
   (-hash [coll] (ensure-hash __hash (hash-unordered-coll coll)))
   ISeqable
@@ -5284,7 +5283,7 @@
          ([] (rf))
          ([result] (rf result))
          ([result input]
-          (let [i (vswap! iv inc)]
+          (let [^int i (vswap! iv inc)]
             (if (zero? (rem i n))
               (rf result input)
               result)))))))
@@ -6507,8 +6506,8 @@
 (defn ^Iterator iterator
   ([coll]
    (if (dart/is? coll Iterable)
-     (.-iterator coll)
-     (.-iterator (or (seq coll) ()))))
+     (.-iterator ^Iterable coll)
+     (.-iterator ^Iterable (or (seq coll) ())))) ; TODO fix when seq is not Iterable
   ([xform coll]
    (let [it (iterator coll)]
      (xform-iterator xform
