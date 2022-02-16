@@ -2262,19 +2262,19 @@
 
 ;; TODO type hint
 (defn rem
-  {:inline (fn [num div] `(.remainder ~num ~div))
+  {:inline (fn [num div] `(.remainder ~(hint-as num `num) ~(hint-as div `num)))
    :inline-arities #{2}}
   [^num num ^num div]
   (.remainder num div))
 
 (defn ^num quot
-  {:inline (fn [num div] `(. ~num "~/" ~div))
+  {:inline (fn [num div] `(. ~(hint-as num `num) "~/" ~(hint-as div `num)))
    :inline-arities #{2}}
   [^num num ^num div]
   (. num "~/" div))
 
 (defn ^num +
-  {:inline (nary-inline 0 identity "+")
+  {:inline (hint-args `num (nary-inline 0 identity "+"))
    :inline-arities any?}
   ([] 0)
   ;; TODO: cast to num ??
@@ -2284,7 +2284,7 @@
    (reduce + (+ x y) more)))
 
 (defn ^num -
-  {:inline (nary-inline (fn [x] (list '. x "-")) "-")
+  {:inline (hint-args `num (nary-inline (fn [x] (list '. x "-")) "-"))
    :inline-arities >0?}
   ([^num x] (.- 0 x))
   ([^num x ^num y] (.- x y))
@@ -2292,7 +2292,7 @@
    (reduce - (- x y) more)))
 
 (defn ^bool <=
-  {:inline (nary-cmp-inline "<=")
+  {:inline (hint-args `num (nary-cmp-inline "<="))
    :inline-arities >0?}
   ([x] true)
   ([^num x ^num y] (.<= x y))
@@ -2316,7 +2316,7 @@
      false)))
 
 (defn ^bool >=
-  {:inline (nary-cmp-inline ">=")
+  {:inline (hint-args `num (nary-cmp-inline ">="))
    :inline-arities >0?}
   ([x] true)
   ([^num x ^num y] (.>= x y))
@@ -2328,7 +2328,7 @@
      false)))
 
 (defn ^bool >
-  {:inline (nary-cmp-inline ">")
+  {:inline (hint-args `num (nary-cmp-inline ">"))
    :inline-arities >0?}
   ([x] true)
   ([^num x ^num y] (.> x y))
@@ -2341,23 +2341,31 @@
 
 (defn ^bool pos?
   {:inline-arities #{1}
-   :inline (fn [n] `(< 0 ~n))}
-  [n] (< 0 n))
+   :inline (fn [n] `(< 0 ~(hint-as n `num)))}
+  [^num n] (< 0 n))
 
 (defn ^bool neg?
   {:inline-arities #{1}
-   :inline (fn [n] `(> 0 ~n))}
-  [n] (> 0 n))
+   :inline (fn [n] `(> 0 ~(hint-as n `num)))}
+  [^num n] (> 0 n))
 
 (defn ^bool zero?
-  {:inline (fn [num] `(.== 0 ~num))
+  {:inline (fn [num] `(.== 0 ~(hint-as num `num)))
    :inline-arities #{1}}
-  [num]
+  [^num num]
   (== 0 num))
 
-(defn ^bool odd? [^int num] (.-isOdd num))
+(defn ^bool odd?
+  {:inline (fn [num] `(.-isOdd ~(hint-as num `int)))
+   :inline-arities #{1}}
+  [^int num]
+  (.-isOdd num))
 
-(defn ^bool even? [^int num] (.-isEven num))
+(defn ^bool even?
+  {:inline (fn [num] `(.-isEven ~(hint-as num `int)))
+   :inline-arities #{1}}
+  [^int num]
+  (.-isEven num))
 
 (defn ^num inc
   {:inline (fn [x] `(.+ ~(hint-as x `num) 1))
@@ -2405,7 +2413,7 @@
 (defn aget
   "Returns the value at the index/indices. Works on Java arrays of all
   types."
-  {:inline (fn [array idx] `(. ~array "[]" ~idx))
+  {:inline (fn [array idx] `(. ~(hint-as array `List) "[]" ~(hint-as idx `int)))
    :inline-arities #{2}}
   ([^List array ^int idx]
    (. array "[]" idx))
@@ -6360,7 +6368,7 @@
   (-nth [m n]
     (.group m n))
   (-nth [m n not-found]
-    (if (<= 0 n (.-groupCount m))
+    (if (<= 0 ^int n (.-groupCount m))
       (.group m n)
       not-found)))
 
@@ -6443,14 +6451,14 @@
 
   If there are multiple such xs, the last one is returned."
   ([k x] x)
-  ([k x y] (if (< (k x) (k y)) x y))
+  ([k x y] (if (< ^num (k x) ^num (k y)) x y))
   ([k x y & more]
-   (let [kx (k x) ky (k y)
+   (let [^num kx (k x) ^num ky (k y)
          [v kv] (if (< kx ky) [x kx] [y ky])]
-     (loop [v v kv kv more more]
+     (loop [v v ^num kv kv more more]
        (if more
          (let [w (first more)
-               kw (k w)]
+               ^num kw (k w)]
            (if (<= kw kv)
              (recur w kw (next more))
              (recur v kv (next more))))
@@ -6461,14 +6469,14 @@
 
   If there are multiple such xs, the last one is returned."
   ([k x] x)
-  ([k x y] (if (> (k x) (k y)) x y))
+  ([k x y] (if (> ^num (k x) ^num (k y)) x y))
   ([k x y & more]
-   (let [kx (k x) ky (k y)
+   (let [^num kx (k x) ^num ky (k y)
          [v kv] (if (> kx ky) [x kx] [y ky])]
-     (loop [v v kv kv more more]
+     (loop [v v ^num kv kv more more]
        (if more
          (let [w (first more)
-               kw (k w)]
+               ^num kw (k w)]
            (if (>= kw kv)
              (recur w kw (next more))
              (recur v kv (next more))))
