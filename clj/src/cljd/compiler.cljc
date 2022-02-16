@@ -1352,7 +1352,7 @@
               (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:type type!)))))
           _ (when (and
                     (not member-info)
-                    (not (re-matches #"\$_.*|extensions|satisfies" member-name))
+                    #_(not (re-matches #"\$_.*|extensions|satisfies" member-name))
                     )
               (binding [*out* *err*]
                 (println "Dynamic" member-name "on type" (:qname type!) *source-info*)))

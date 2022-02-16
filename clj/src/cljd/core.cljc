@@ -2453,7 +2453,7 @@
 ;; bit ops
 (defn ^int bit-not
   "Bitwise complement"
-  {:inline (fn [x] `(. ~(cond-> x (or (seq? x) (symbol? x)) (vary-meta assoc :tag 'dart:core/int)) "~"))
+  {:inline (fn [x] `(. ~(hint-as x `int) "~"))
    :inline-arities #{1}}
   [x] (. ^int x "~"))
 
@@ -2461,10 +2461,7 @@
   "Bitwise and"
   {:inline (let [inline (nary-inline "&")]
              (fn [arg & args]
-               (apply inline (cond-> arg
-                               (or (seq? arg) (symbol? arg))
-                               (vary-meta assoc :tag 'dart:core/int))
-                 args)))
+               (apply inline (hint-as arg `int) args)))
    :inline-arities >1?}
   ([x y] (. ^int x "&" y))
   ([x y & more]
@@ -2472,7 +2469,9 @@
 
 (defn ^int bit-or
   "Bitwise or"
-  {:inline (nary-inline "|")
+  {:inline (let [inline (nary-inline "|")]
+             (fn [arg & args]
+               (apply inline (hint-as arg `int) args)))
    :inline-arities >1?}
   ([x y] (. ^int x "|" y))
   ([x y & more]
@@ -2480,7 +2479,9 @@
 
 (defn ^int bit-xor
   "Bitwise exclusive or"
-  {:inline (nary-inline "^")
+  {:inline (let [inline (nary-inline "^")]
+             (fn [arg & args]
+               (apply inline (hint-as arg `int) args)))
    :inline-arities >1?}
   ([x y] (. ^int x "^" y))
   ([x y & more]
