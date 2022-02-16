@@ -2179,9 +2179,6 @@
     (or (seq? expr) (symbol? expr))
     (vary-meta assoc :tag tag)))
 
-(defn ^:macro-support ^:private hint-args [tag f]
-  (fn [& args] (apply f (map #(hint-as % tag) args))))
-
 ;; op must be a string as ./ is not legal in clj/java so we must use the (. obj op ...) form
 (defn ^:macro-support ^:private nary-inline
   ([op] (nary-inline nil nil op))
@@ -2244,7 +2241,7 @@
      false)))
 
 (defn ^num *
-  {:inline (hint-args `num (nary-inline 1 identity "*"))
+  {:inline (nary-inline 1 identity "num:*")
    :inline-arities any?}
   ([] 1)
   ([^num x] x)
@@ -2253,7 +2250,7 @@
    (reduce * (* x y) more)))
 
 (defn ^num /
-  {:inline (hint-args `num (nary-inline (fn [x] (list '. 1 "/" x)) "/"))
+  {:inline (nary-inline (fn [x] (list '. 1 "/" x)) "num:/")
    :inline-arities >0?}
   ([^num x] (. 1 "/" x))
   ([^num x ^num y] (. x "/" y))
@@ -2262,19 +2259,19 @@
 
 ;; TODO type hint
 (defn rem
-  {:inline (fn [num div] `(.remainder ~(hint-as num `num) ~(hint-as div `num)))
+  {:inline (fn [num div] `(.num:remainder ~num ~div))
    :inline-arities #{2}}
   [^num num ^num div]
   (.remainder num div))
 
 (defn ^num quot
-  {:inline (fn [num div] `(. ~(hint-as num `num) "~/" ~(hint-as div `num)))
+  {:inline (fn [num div] `(. num "num:~/" div))
    :inline-arities #{2}}
   [^num num ^num div]
   (. num "~/" div))
 
 (defn ^num +
-  {:inline (hint-args `num (nary-inline 0 identity "+"))
+  {:inline (nary-inline 0 identity "num:+")
    :inline-arities any?}
   ([] 0)
   ;; TODO: cast to num ??
@@ -2284,7 +2281,7 @@
    (reduce + (+ x y) more)))
 
 (defn ^num -
-  {:inline (hint-args `num (nary-inline (fn [x] (list '. x "-")) "-"))
+  {:inline (nary-inline (fn [x] (list '. x "num:-")) "num:-")
    :inline-arities >0?}
   ([^num x] (.- 0 x))
   ([^num x ^num y] (.- x y))
@@ -2292,7 +2289,7 @@
    (reduce - (- x y) more)))
 
 (defn ^bool <=
-  {:inline (hint-args `num (nary-cmp-inline "<="))
+  {:inline (nary-cmp-inline "num:<=")
    :inline-arities >0?}
   ([x] true)
   ([^num x ^num y] (.<= x y))
@@ -2304,7 +2301,7 @@
      false)))
 
 (defn ^bool <
-  {:inline (hint-args `num (nary-cmp-inline "<"))
+  {:inline (nary-cmp-inline "num:<")
    :inline-arities >0?}
   ([x] true)
   ([^num x ^num y] (.< x y))
@@ -2316,7 +2313,7 @@
      false)))
 
 (defn ^bool >=
-  {:inline (hint-args `num (nary-cmp-inline ">="))
+  {:inline (nary-cmp-inline "num:>=")
    :inline-arities >0?}
   ([x] true)
   ([^num x ^num y] (.>= x y))
@@ -2328,7 +2325,7 @@
      false)))
 
 (defn ^bool >
-  {:inline (hint-args `num (nary-cmp-inline ">"))
+  {:inline (nary-cmp-inline "num:>")
    :inline-arities >0?}
   ([x] true)
   ([^num x ^num y] (.> x y))
@@ -2341,16 +2338,16 @@
 
 (defn ^bool pos?
   {:inline-arities #{1}
-   :inline (fn [n] `(< 0 ~(hint-as n `num)))}
+   :inline (fn [n] `(< 0 ~n))}
   [^num n] (< 0 n))
 
 (defn ^bool neg?
   {:inline-arities #{1}
-   :inline (fn [n] `(> 0 ~(hint-as n `num)))}
+   :inline (fn [n] `(> 0 ~n))}
   [^num n] (> 0 n))
 
 (defn ^bool zero?
-  {:inline (fn [num] `(.== 0 ~(hint-as num `num)))
+  {:inline (fn [num] `(.== 0 ~num))
    :inline-arities #{1}}
   [^num num]
   (== 0 num))
@@ -2368,12 +2365,12 @@
   (.-isEven num))
 
 (defn ^num inc
-  {:inline (fn [x] `(.+ ~(hint-as x `num) 1))
+  {:inline (fn [x] `(.+ 1 ~x))
    :inline-arities #{1}}
-  [^num x] (.+ x 1))
+  [^num x] (.+ 1 x))
 
 (defn ^num dec
-  {:inline (fn [x] `(.- ~(hint-as x `num) 1))
+  {:inline (fn [x] `(.num:- ~x 1))
    :inline-arities #{1}}
   [^num x]
   (.- x 1))
