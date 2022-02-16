@@ -1006,12 +1006,12 @@
     dart/let
     (let [[_ bindings expr] x]
       (if-some [[bindings' expr] (liftable expr env)]
-         [(concat bindings bindings') expr]
-         (if (lift-safe? expr)
-           [bindings expr]
-           ;; this case should not happen
-           (let [[tmp :as binding] (dart-binding "" expr env)]
-             [(conj (vec bindings) binding) tmp]))))
+        [(concat bindings bindings') expr]
+        (if (lift-safe? expr)
+          [bindings expr]
+          ;; this case should not happen
+          (let [[tmp :as binding] (dart-binding "" expr env)]
+            [(conj (vec bindings) binding) tmp]))))
     (dart/if dart/try dart/case dart/loop) ; no ternary for now
     (let [[tmp :as binding] (dart-binding (first x) x env)]
       [[binding]
@@ -1328,15 +1328,18 @@
     (recur (list* '. obj member) env)
     (let [[_ prop member-name] (re-matches #"(-)?(.+)" (name member))
           _ (when (and prop args) (throw (ex-info (str "Can't pass arguments to a property access" (pr-str form)) {:form form})))
-          member-name (if (and (= "-" member-name) (empty? args)) "unary-" member-name)
           [dart-obj-bindings dart-obj]  (lift-arg nil (emit obj env) "obj" env)
           static (:dart/class (meta dart-obj))
           type (or static (:dart/type (infer-type dart-obj)))
           type! (dissoc type :nullable)
+          num-only-member-name (when (.startsWith member-name "num:") (subs member-name 4))
+          type! (cond-> type! num-only-member-name num-type)
+          member-name (or num-only-member-name member-name)
+          member-name (if (and (= "-" member-name) (empty? args)) "unary-" member-name)
+          member-name+ (case member-name "!=" "==" member-name)
           dart-obj (if (:type-params (meta obj)) ; static only
                      (symbol (type-str (emit-type obj env))) ; not great,  unreadable symbol, revisit later
                      (magicast dart-obj type! type env))
-          member-name+ (case member-name "!=" "==" member-name)
           member-info (some->
                         (or
                           (fake-member-lookup type! member-name+ (count args))
@@ -1995,21 +1998,31 @@
   ([mclass-name clj-type-params dart-fields env]
    (new-dart-type mclass-name clj-type-params dart-fields nil env))
   ([mclass-name clj-type-params dart-fields parsed-class-specs env]
-   (let [{:keys [current-ns] :as all-nses} @nses]
-     (-> {:qname (symbol (str (dart-alias-for-ns current-ns)
-                           "." mclass-name))
-          :lib (-> current-ns all-nses :lib)
-          :type (name mclass-name)
-          :type-parameters (into [] (map #(emit-type % env)) clj-type-params)
-          :super (:extends parsed-class-specs)
-          :kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
-          :interfaces (:implements parsed-class-specs)
-          :mixins (:with parsed-class-specs)}
+   (let [{:keys [current-ns] :as all-nses} @nses
+         ctor-params (into []
+                       (map (fn [field]
+                              {:name field
+                               :kind :positional
+                               :type (or (:dart/type (meta field)) dc-dynamic)}))
+                       dart-fields)
+         bare-type {:qname (symbol (str (dart-alias-for-ns current-ns)
+                                     "." mclass-name))
+                    :lib (-> current-ns all-nses :lib)
+                    :type (name mclass-name)
+                    :type-parameters (into [] (map #(emit-type % env)) clj-type-params)}]
+     (-> bare-type
        (into
-         (map #(vector (name %) {:kind :field
-                                 :getter true
-                                 :type (or (:dart/type (meta %)) dc-dynamic)}))
-         dart-fields)
+         (map #(vector (name (:name %)) {:kind :field
+                                         :getter true
+                                         :type (:type %)}))
+         ctor-params)
+       (assoc (name mclass-name) {:kind :constructor
+                                  :return-type bare-type
+                                  :parameters ctor-params}
+         :super (:extends parsed-class-specs)
+         :kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
+         :interfaces (:implements parsed-class-specs)
+         :mixins (:with parsed-class-specs))
        (into
          (map (fn [[mname {:keys [fixed-params opt-kind opt-params]} body]]
                 (let [{:keys [type-params getter setter]} (meta mname)
@@ -2077,18 +2090,20 @@
               cljd.core/IWithMeta
               (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs))]
             (assoc env-for-ctor-call meta-field meta-field)))
-        dart-type (new-dart-type mclass-name nil closed-overs env)
+        all-fields
+        (cond->> closed-overs meta-field (cons meta-field))
+        dart-type (new-dart-type mclass-name (:type-vars env) all-fields env)
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (-> class
                 (assoc
                   :name (emit-type mclass-name env)
                   :ctor class-name
-                  :fields (cond-> closed-overs meta-field (conj meta-field))
+                  :fields all-fields
                   :methods (concat meta-methods methods)
                   :implements (concat meta-implements (:implements class))
                   :ctor-params
                   (concat
-                    (map #(list '. %) (cond->> closed-overs meta-field (cons meta-field)))
+                    (map #(list '. %) all-fields)
                     positional-ctor-params
                     named-ctor-params))
                 (assoc-in [:super-ctor :args]
@@ -2411,7 +2426,7 @@
   (let [dart-x (emit x env)
         dart-type (emit-type type env)]
     (if (is-assignable? dart-type (:dart/type (infer-type dart-x)))
-      true ; TODO fix aggressive opt
+      true ; TODO should fix aggressive optim? if the expression is side-effecting, it's removal is not a no-op
       (with-lifted [x dart-x] env
         (with-meta (list 'dart/is x dart-type)
           {:dart/type     dc-bool
@@ -2510,10 +2525,21 @@
                 mclass-name (with-meta
                               (or (:dart/name (meta class-name)) (munge class-name {}))
                               {:type-params type-params})
-                dart-type (new-dart-type mclass-name type-params
-                            #_(map #(with-meta % (dart-meta % {})) fields) nil
-                            {:type-vars (set type-params)})]; TODO shouldn't it be dne by munge?
-            (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class}))
+                env {:type-vars (set type-params)}
+                def-me!
+                (fn def-me! [resolve-fields]
+                  (let [dart-type (new-dart-type mclass-name type-params
+                                    (when resolve-fields
+                                      (map #(with-meta % (dart-meta % env)) fields))
+                                    env)]; TODO shouldn't it be dne by munge?
+                    (swap! nses do-def class-name
+                      (cond->
+                          {:dart/name mclass-name
+                           :dart/type dart-type
+                           :type :class}
+                        (not resolve-fields)
+                        (assoc :refresh! #(def-me! true))))))]
+            (def-me! false))
           nil)))))
 
 (defn emit-test [expr env]
@@ -3342,6 +3368,9 @@
         (when *hosted*
           (with-open [in (.openStream url)]
             (host-load-input (java.io.InputStreamReader. in "UTF-8"))))
+        (doseq [{:keys [refresh!]} (vals (get @nses ns-name))
+                :when refresh!]
+          (refresh!))
         (let [libname (with-open [in (.openStream url)]
                         (compile-input (java.io.InputStreamReader. in "UTF-8")))]
           ;; when new IFnMixin_* are created, we must re-dump core
