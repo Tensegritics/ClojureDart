@@ -797,9 +797,6 @@
              (into actual-opts)))]))
     #_(TODO WARN)))
 
-(defn- assoc-ns [sym ns]
-  (with-meta (symbol ns (name sym)) (meta sym)))
-
 (defn- expand-defprotocol [proto & methods]
   ;; TODO do something with docstrings
   (let [proto (vary-meta proto assoc :tag 'cljd.core/IProtocol)
@@ -825,9 +822,9 @@
          :impl impl
          :sigs method-mapping}
         the-ns (name (:current-ns @nses))
-        full-iface (assoc-ns iface the-ns)
-        full-iext (assoc-ns iext the-ns)
-        full-proto (assoc-ns proto the-ns)]
+        full-iface (symbol the-ns (name iface))
+        full-iext (symbol the-ns (name iext))
+        full-proto (symbol the-ns (name proto))]
     (list* 'do
       (list* 'definterface iface
         (for [[method arity-mapping] method-mapping
@@ -998,13 +995,13 @@
   (or (not (coll? expr))
     (and (vector? expr) (-> expr meta :dart/type :qname (= 'dc.List)))
     (and (seq? expr)
-      (case (first expr) (dart/fn dart/new) true false))))
+      (or (= 'dart/fn (first expr)) (= 'dart/new (first expr))))))
 
 (defn liftable
   "Takes a dartsexp and returns a [bindings expr] where expr is atomic (or a dart fn)
    or nil if there are no bindings to lift."
   [x env]
-  (case (when (seq? x) (first x))
+  (case (when (and (seq? x) (symbol? (first x))) (first x))
     dart/let
     (let [[_ bindings expr] x]
       (if-some [[bindings' expr] (liftable expr env)]
@@ -1339,9 +1336,6 @@
           member-name (or num-only-member-name member-name)
           member-name (if (and (= "-" member-name) (empty? args)) "unary-" member-name)
           member-name+ (case member-name "!=" "==" member-name)
-          dart-obj (if (:type-params (meta obj)) ; static only
-                     (symbol (type-str (emit-type obj env))) ; not great,  unreadable symbol, revisit later
-                     (magicast dart-obj type! type env))
           member-info (some->
                         (or
                           (fake-member-lookup type! member-name+ (count args))
@@ -1350,17 +1344,25 @@
                             (dart-member-lookup type! (str (:type static) "." member-name) env)
                             (dart-member-lookup dc-Object member-name+ env)))
                         actual-member)
+          dart-obj (cond
+                     (:type-params (meta obj)) ; static only
+                     (symbol (type-str (emit-type obj env))) ; not great,  unreadable symbol, revisit later
+                     member-info
+                     (magicast dart-obj type! type env)
+                     :else
+                     (loop [dart-obj dart-obj]
+                       (cond
+                         (and (seq? dart-obj) (= 'dart/as (first dart-obj)))
+                         (recur (second dart-obj))
+                         (= 'dc.dynamic (:qname (or (:dart/type (infer-type dart-obj)) dc-dynamic)))
+                         dart-obj
+                         :else
+                         (list 'dart/as dart-obj dc-dynamic))))
           _ (when (and static (not (or (:static member-info) (= :constructor (:kind member-info)))))
               (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:type type!)))))
-          _ (when (and
-                    (not member-info)
-                    #_(not (re-matches #"\$_.*|extensions|satisfies" member-name))
-                    )
+          _ (when (not member-info)
               (binding [*out* *err*]
-                (println "Dynamic" member-name (count args) "on type" (:qname type!) *source-info*)
-                #_(throw (ex-info "💩" {:member-name member-name
-                                      :member member
-                                      :type type!}))))
+                (println "Dynamic warning: can't resolve member" member-name "on target type" (:type type! "dynamic") "of library" (:lib type! "dart:core")) *source-info*))
           special-num-op-sig (case (:qname type!) ; see sections 17.30 and 17.31 of Dart lang spec
                                dc.int (case member-name
                                         ("-" "+" "%" "*")
@@ -2025,7 +2027,7 @@
                                   :return-type bare-type
                                   :parameters ctor-params}
          :super (:extends parsed-class-specs)
-         #_#_:kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
+         :kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
          :interfaces (:implements parsed-class-specs)
          :mixins (:with parsed-class-specs))
        (into
@@ -2636,10 +2638,11 @@
 (defn final-locus
   ([varname] (final-locus (-> varname meta :dart/type) varname))
   ([vartype varname]
-   {:pre (str "final " (some-> vartype type-str (str " ")) varname "=")
-    :post ";\n"
-    :decl (str "late final " (some-> vartype type-str (str " ")) varname ";\n")
-    :fork (assignment-locus varname)}))
+   (let [vartype (or vartype dc-dynamic)]
+     {:pre (str "final " (some-> vartype type-str (str " ")) varname "=")
+      :post ";\n"
+      :decl (str "late final " (some-> vartype type-str (str " ")) varname ";\n")
+      :fork (assignment-locus varname)})))
 
 (declare write)
 
@@ -2866,6 +2869,8 @@
        (string? x) {:dart/type dc-String :dart/truth :truthy}
        (double? x) {:dart/type dc-double :dart/truth :truthy}
        (integer? x) {:dart/type dc-int :dart/truth :truthy}
+       (and (symbol? x) (-> x meta :dart/type :qname (= 'dc.Function)))
+       {:dart/ret-type (-> x meta :dart/signature :return-type)}
        (seq? x)
        (case (let [x (first x)] (when (symbol? x) x))
          dart/loop (infer-type (last x))
@@ -3098,7 +3103,7 @@
               vars-usages (->>
                             (map (fn [[v e]]
                                    (into #{} (comp (filter symbol?) (keep (disj vars v)))
-                                     (tree-seq coll? seq e)))
+                                     (tree-seq sequential? seq e)))
                               loop-rebindings)
                            reverse
                            (reductions into)
@@ -3302,16 +3307,16 @@
   #?(:clj
      (with-cljd-reader
        (let [in (clojure.lang.LineNumberingPushbackReader. in)]
-           (loop []
-             (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
-               (when-not (identical? form in)
-                 (try
-                   (binding [*locals-gen* {}] (emit form {}))
-                   (catch Exception e
-                     (throw (if (::emit-stack (ex-data e))
-                              e
-                              (ex-info "Compilation error." {:form form} e)))))
-                 (recur))))))))
+         (loop []
+           (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
+             (when-not (identical? form in)
+               (try
+                 (binding [*locals-gen* {}] (emit form {}))
+                 (catch Exception e
+                   (throw (if (::emit-stack (ex-data e))
+                            e
+                            (ex-info "Compilation error." {:form form} e)))))
+               (recur))))))))
 
 (defn host-load-input [in]
   #?(:clj
