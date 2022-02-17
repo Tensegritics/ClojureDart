@@ -802,7 +802,8 @@
 
 (defn- expand-defprotocol [proto & methods]
   ;; TODO do something with docstrings
-  (let [[doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
+  (let [proto (vary-meta proto assoc :tag 'cljd.core/IProtocol)
+        [doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
         method-mapping
         (into {} (map (fn [[m & arglists]]
                         (let [dart-m (munge m {})
@@ -825,6 +826,7 @@
          :sigs method-mapping}
         the-ns (name (:current-ns @nses))
         full-iface (assoc-ns iface the-ns)
+        full-iext (assoc-ns iext the-ns)
         full-proto (assoc-ns proto the-ns)]
     (list* 'do
       (list* 'definterface iface
@@ -848,13 +850,13 @@
                     `(~all-args
                       `(let [~~@(interleave locals all-args)]
                          (if (dart/is? ~'~this ~'~full-iface)
-                           (. ~'~(vary-meta this assoc :tag full-iface) ~'~name ~~@args)
-                           (. (.extensions ~'~full-proto ~'~this) ~'~name ~'~this ~~@args))))))}
+                           (. ~'~(with-meta this {:tag full-iface}) ~'~name ~~@args)
+                           (. ^{:tag ~'~full-iext} (.extensions ~'~full-proto ~'~this) ~'~name ~'~this ~~@args))))))}
              ~@(for [{:keys [dart/name] [this & args :as all-args] :args} (vals arity-mapping)]
                  `(~all-args
-                   (if (dart/is? ~this ~iface)
-                     (. ~(vary-meta this assoc :tag iface) ~name ~@args)
-                     (. (.extensions ~proto ~this) ~name ~@all-args))))))
+                   (if (dart/is? ~this ~full-iface)
+                     (. ~(with-meta this {:tag full-iface}) ~name ~@args)
+                     (. ^{:tag ~full-iext} (.extensions ~proto ~this) ~name ~@all-args))))))
         (list proto)))))
 
 (defn- ensure-bodies [body-or-bodies]
@@ -1355,7 +1357,10 @@
                     #_(not (re-matches #"\$_.*|extensions|satisfies" member-name))
                     )
               (binding [*out* *err*]
-                (println "Dynamic" member-name "on type" (:qname type!) *source-info*)))
+                (println "Dynamic" member-name (count args) "on type" (:qname type!) *source-info*)
+                #_(throw (ex-info "💩" {:member-name member-name
+                                      :member member
+                                      :type type!}))))
           special-num-op-sig (case (:qname type!) ; see sections 17.30 and 17.31 of Dart lang spec
                                dc.int (case member-name
                                         ("-" "+" "%" "*")
@@ -2020,7 +2025,7 @@
                                   :return-type bare-type
                                   :parameters ctor-params}
          :super (:extends parsed-class-specs)
-         :kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
+         #_#_:kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
          :interfaces (:implements parsed-class-specs)
          :mixins (:with parsed-class-specs))
        (into
@@ -2527,17 +2532,19 @@
                               {:type-params type-params})
                 env {:type-vars (set type-params)}
                 def-me!
-                (fn def-me! [resolve-fields]
-                  (let [dart-type (new-dart-type mclass-name type-params
-                                    (when resolve-fields
-                                      (map #(with-meta % (dart-meta % env)) fields))
-                                    env)]; TODO shouldn't it be dne by munge?
+                (fn def-me! [resolve-fully]
+                  (let [dart-type (if resolve-fully
+                                    (new-dart-type mclass-name type-params
+                                      (map #(with-meta % (dart-meta % env)) fields)
+                                      (parse-class-specs opts specs env)
+                                      env)
+                                    (new-dart-type mclass-name type-params nil env))];
                     (swap! nses do-def class-name
                       (cond->
                           {:dart/name mclass-name
                            :dart/type dart-type
                            :type :class}
-                        (not resolve-fields)
+                        (not resolve-fully)
                         (assoc :refresh! #(def-me! true))))))]
             (def-me! false))
           nil)))))
@@ -3367,10 +3374,10 @@
       (do
         (when *hosted*
           (with-open [in (.openStream url)]
-            (host-load-input (java.io.InputStreamReader. in "UTF-8"))))
-        (doseq [{:keys [refresh!]} (vals (get @nses ns-name))
-                :when refresh!]
-          (refresh!))
+            (host-load-input (java.io.InputStreamReader. in "UTF-8")))
+          (doseq [{:keys [refresh!]} (vals (get @nses ns-name))
+                  :when refresh!]
+            (refresh!)))
         (let [libname (with-open [in (.openStream url)]
                         (compile-input (java.io.InputStreamReader. in "UTF-8")))]
           ;; when new IFnMixin_* are created, we must re-dump core
