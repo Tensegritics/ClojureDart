@@ -153,7 +153,7 @@
 (defn source-info []
   (let [{:keys [line column]} *source-info*]
     (when line
-      (str " at line: " line ", column: " column))))
+      (str " at line: " line ", column: " column ", file: " *file*))))
 
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
@@ -1362,7 +1362,7 @@
               (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:type type!)))))
           _ (when (not member-info)
               (binding [*out* *err*]
-                (println "Dynamic warning: can't resolve member" member-name "on target type" (:type type! "dynamic") "of library" (:lib type! "dart:core")) *source-info*))
+                (println "Dynamic warning: can't resolve member" member-name "on target type" (:type type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
           special-num-op-sig (case (:qname type!) ; see sections 17.30 and 17.31 of Dart lang spec
                                dc.int (case member-name
                                         ("-" "+" "%" "*")
@@ -2498,9 +2498,9 @@
                          defprotocol* emit-defprotocol*
                          extend-type-protocol* emit-extend-type-protocol*
                          emit-fn-call)]
-              (binding [*source-info* (let [{:keys [line column file]} (meta x)]
+              (binding [*source-info* (let [{:keys [line column]} (meta x)]
                                         (if line
-                                          {:line line :column column :file file}
+                                          {:line line :column column}
                                           *source-info*))]
                 (emit x env)))
             (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
@@ -3375,8 +3375,8 @@
   ;; iterate first on file variants then on paths, not the other way!
   (let [file-paths (ns-to-paths ns-name)
         cljd-core (when-not (= ns-name 'cljd-core) (get @nses 'cljd.core))]
-    (if-some [^java.net.URL url (some find-resource file-paths)]
-      (do
+    (if-some [[file-path ^java.net.URL url] (some (fn [p] (some->> (find-resource p) (vector p))) file-paths)]
+      (binding [*file* file-path]
         (when *hosted*
           (with-open [in (.openStream url)]
             (host-load-input (java.io.InputStreamReader. in "UTF-8")))
