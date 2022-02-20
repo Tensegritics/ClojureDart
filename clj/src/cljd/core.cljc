@@ -1620,7 +1620,7 @@
         ;; TODO : use `ns` instead of `(.-ns this)`; I used this form
         ;; because their is a bug in optional type emit
         (let [other ^Keyword other]
-          (and (.== ns other) (.== name other))))))
+          (and (.== ns (.-ns other)) (.== name (.-name other)))))))
   IFn
   (-invoke [kw coll]
     (get coll kw))
@@ -4651,7 +4651,7 @@
         (List/filled 7 root)
         (fn [_ v] v)))))
   (^#/(PersistentHashMap RK RV) #/(cast RK RV) [coll]
-   (PersistentHashMap. meta root __hash))
+   (new #/(PersistentHashMap RK RV) meta root __hash))
   ^:mixin ToStringMixin
   IPrint
   ;; TODO : handle prefix-map & co
@@ -4793,7 +4793,7 @@
   (iterator [this] (.-iterator ^#/(Iterable E) (.-keys hm)))
   (toSet [this] (Set/of ^#/(Iterable E) (.-keys hm)))
   (^#/(PersistentHashSet R) #/(cast R) [coll]
-   (PersistentHashSet. meta ^#/(PersistentHashMap R R) (-> hm (. #/(cast R R))) __hash))
+   (new #/(PersistentHashSet R) meta (-> hm (. #/(cast R R))) __hash))
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink]
@@ -6655,7 +6655,7 @@
       ([] (gensym "G__"))
       ([prefix-string] (symbol (str prefix-string (swap! id inc)))))))
 
-(defn ^:async main []
+#_(defn ^:async main []
   (prn (Map/of {:a 1}))
   (prn (get (Map/of {:a 1}) :a))
   (prn (:a (Map/of {:a 1})))
@@ -6716,4 +6716,4 @@
   #_(condp some [1 2 3 4]
     #{0 6 7} :>> inc
     #{5 9}   :>> dec)
-  )
+    )
