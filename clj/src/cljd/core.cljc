@@ -2832,7 +2832,7 @@
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(Cons R) #/(cast R) [coll]
-   (Cons. meta _first rest __hash))
+   (new #/(Cons R) meta _first rest __hash))
   IList
   IWithMeta
   (-with-meta [coll new-meta]
@@ -2877,7 +2877,7 @@
   ^:mixin EquivSequentialHashMixin
   (^int ^:getter length [coll] count) ; TODO dart resolution through our own types
   (^#/(PersistentList R) #/(cast R) [coll]
-   (PersistentList. meta _first rest count __hash))
+   (new #/(PersistentList R) meta _first rest count __hash))
   ;; invariant: _first is nil when count is zero
   IList
   IWithMeta
@@ -2942,7 +2942,7 @@
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(SeqListMixin E)
   (^#/(IteratorSeq R) #/(cast R) [coll]
-   (IteratorSeq. meta value iter _rest __hash))
+   (new #/(IteratorSeq R) meta value iter _rest __hash))
   ISeqable
   (-seq [this] this)
   ISeq
@@ -2984,7 +2984,7 @@
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(StringSeq R) #/(cast R) [coll]
-   (StringSeq. string i meta __hash))
+   (new #/(StringSeq R) string i meta __hash))
   ISeqable
   (-seq [coll] (when (< i (.-length string)) coll))
   IMeta
@@ -3105,7 +3105,7 @@
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(LazySeq R) #/(cast R) [coll]
-   (LazySeq. meta fn s __hash))
+   (new #/(LazySeq R) meta fn s __hash))
   (sval [coll]
     (if (nil? fn)
       s
@@ -3230,7 +3230,7 @@
   (iterator [v] (PVIterator. v 0 cnt tail)) ; tail assignment is only to pass a non-null list
   ^:mixin #/(SeqListMixin E)
   (^#/(PersistentVector R) #/(cast R) [coll]
-   (PersistentVector. meta cnt shift root tail __hash))
+   (new #/(PersistentVector R) meta cnt shift root tail __hash))
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink] (print-sequential "[" "]" o sink))
@@ -3485,7 +3485,7 @@
       (RSeqIterator. v (inc i) (.-tail ^PersistentVector v))))
   ^:mixin #/(SeqListMixin E)
   (^#/(RSeq R) #/(cast R) [coll]
-   (RSeq. meta v i __hash))
+   (new #/(RSeq R) meta v i __hash))
   ^:mixin ToStringMixin
   IMeta
   (-meta [coll] meta)
@@ -3545,7 +3545,7 @@
       (PVIterator. v start end  (.-tail ^PersistentVector v))))
   ^:mixin #/(SeqListMixin E)
   (^#/(SubVec R) #/(cast R) [coll]
-   (SubVec. meta v start end __hash))
+   (new #/(SubVec R) meta v start end __hash))
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink] (print-sequential "[" "]" o sink))
@@ -3712,7 +3712,7 @@
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(ChunkedCons R) #/(cast R) [coll]
-   (ChunkedCons. chunk more meta __hash))
+   (new #/(ChunkedCons R) chunk more meta __hash))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -3778,7 +3778,7 @@
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(PVChunkedSeq R) #/(cast R) [coll]
-   (PVChunkedSeq. vec arr i off meta __hash))
+   (new #/(PVChunkedSeq R) vec arr i off meta __hash))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -6575,7 +6575,7 @@
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/IterableMixin E)
   (iterator [_] (iterator xform coll))
-  (#/(cast R) [_] (Eduction. xform coll __hash))
+  (^#/(Eduction R) #/(cast R) [_] (new #/(Eduction R) xform coll __hash))
   ISeqable
   (-seq [_] (seq (sequence xform coll)))
   IReduce
