@@ -3388,38 +3388,51 @@
     (do
       (time
         (binding [*hosted* true
-                          dart-libs-info li]
+                  dart-libs-info li]
           (compile-namespace 'cljd.core)))
       ;; XOXO
       (time
-        (compile-namespace 'cljd.string))
+        (binding [dart-libs-info li]
+          (compile-namespace 'cljd.string)))
+
+      #_(time
+        (binding [*hosted* false
+                  dart-libs-info li]
+          (compile-namespace 'cljd.multi)))
 
       (time
-        (compile-namespace 'cljd.walk))
+        (binding [dart-libs-info li]
+          (compile-namespace 'cljd.walk)))
 
       (time
-        (binding [*hosted* true]
+        (binding [dart-libs-info li
+                  *hosted* true]
           (compile-namespace 'cljd.template)))
 
       (time
-        (binding [*hosted* true]
+        (binding [dart-libs-info li
+                  *hosted* true]
           (compile-namespace 'cljd.test)))
 
       (time
-        (binding [*hosted* true]
+        (binding [dart-libs-info li
+                  *hosted* true]
           (compile-namespace 'cljd.test-clojure.for)))
 
       (time
-        (binding [*hosted* false]
+        (binding [*hosted* false
+                  dart-libs-info li]
           (compile-namespace 'cljd.test-clojure.core-test)))
 
 
       (time
-        (binding [*hosted* false]
+        (binding [*hosted* false
+                  dart-libs-info li]
           (compile-namespace 'cljd.test-clojure.core-test-cljd)))
 
       (time
-        (binding [*hosted* true]
+        (binding [dart-libs-info li
+                  *hosted* true]
           (compile-namespace 'cljd.test-clojure.string)))
 
       (time
