@@ -1018,6 +1018,7 @@
      applying f to that result and the 3rd item, etc."))
 
 (deftype Reduced [val]
+  :type-only true
   IDeref
   (-deref [o] val))
 
@@ -1606,6 +1607,7 @@
   (-hash-realized? [coll] (.!= -1 __hash)))
 
 (deftype Keyword [^String? ns ^String name ^int _hash]
+  :type-only true
   ^:mixin ToStringMixin
   IPrint
   (-print [o ^StringSink sink]
@@ -1682,6 +1684,7 @@
   [x] (or (keyword? x) (symbol? x)))
 
 (deftype Symbol [^String? ns ^String name meta ^:mutable ^int _hash]
+  :type-only true
   ^:mixin ToStringMixin
   IPrint
   (-print [o ^StringSink sink]
@@ -1903,6 +1906,7 @@
                ^:mutable meta
                ^:mutable validator
                ^:mutable ^PersistentHashMap watches]
+  :type-only true
   IAtom
   IEquiv
   (-equiv [o other] (identical? o other))
@@ -2066,6 +2070,7 @@
 
 ;; TODO add printing
 (deftype Delay [^:mutable val ^:mutable f]
+  :type-only true
   IDeref
   (-deref [this]
     (when-some [f' f]
@@ -2128,6 +2133,7 @@
   `(-vreset! ~vol (~f (-deref ~vol) ~@args)))
 
 (deftype Volatile [^:mutable state]
+  :type-only true
   IVolatile
   (-vreset! [_ new-state]
     (set! state new-state))
@@ -2153,6 +2159,7 @@
   (-ex-data ex))
 
 (deftype ExceptionInfo [msg data ex]
+  :type-only true
   Object
   (^:getter message [_] msg)
   (^:getter cause [_] ex)
@@ -2834,6 +2841,7 @@
 
 (deftype #/(Cons E)
   [meta _first rest ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
@@ -2878,6 +2886,7 @@
 
 (deftype #/(PersistentList E)
   [meta _first rest ^int count ^:mutable ^int __hash]
+  :type-only true
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   ^:mixin EquivSequentialHashMixin
@@ -2944,6 +2953,7 @@
 
 (deftype #/(IteratorSeq E)
   [meta value ^Iterator iter ^:mutable ^some _rest ^:mutable ^int __hash]
+  :type-only true
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(SeqListMixin E)
@@ -2986,6 +2996,7 @@
 
 (deftype #/(StringSeq E)
   [^String string ^int i meta ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
@@ -3107,6 +3118,7 @@
 
 (deftype #/(LazySeq E)
   [meta ^:mutable ^some fn ^:mutable s ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
@@ -3168,7 +3180,7 @@
 
 ;;; PersistentVector
 
-(deftype VectorNode [edit ^List arr])
+(deftype VectorNode [edit ^List arr] :type-only true)
 
 (defn- ^VectorNode new-path [^int level ^VectorNode node]
   (loop [^int ll level
@@ -3211,7 +3223,8 @@
   [^PersistentVector v
    ^:mutable ^int i
    ^int to
-   ^:mutable ^List curr]) ; predecl
+   ^:mutable ^List curr]
+  :type-only true) ; predecl
 
 (defn- ^int compare-indexed
   "Used as foundation for indexed DS as comparator function."
@@ -3231,6 +3244,7 @@
 
 (deftype #/(PersistentVector E)
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   (iterator [v] (PVIterator. v 0 cnt tail)) ; tail assignment is only to pass a non-null list
@@ -3453,6 +3467,7 @@
    ^:mutable ^int i
    ^int to
    ^:mutable ^List curr]
+  :type-only true
   #/(Iterator E)
   (current [iter] (aget curr (bit-and (dec i) 31)))
   (moveNext [iter]
@@ -3471,6 +3486,7 @@
   [^PersistentVector v
    ^:mutable ^int i
    ^:mutable ^List curr]
+  :type-only true
   #/(Iterator E)
   (current [iter] (aget curr (bit-and i 31)))
   (moveNext [iter]
@@ -3483,6 +3499,7 @@
 
 (deftype #/(RSeq E)
   [meta v ^int i ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   (iterator [coll]
@@ -3535,6 +3552,7 @@
 
 (deftype #/(SubVec E)
   [meta v ^int start ^int end ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   (iterator [coll]
@@ -3671,6 +3689,7 @@
   [x] (satisfies? IChunkedSeq x))
 
 (deftype ArrayChunk [^List arr ^int off ^int end]
+  :type-only true
   ICounted
   (-count [_] (- end off))
   IIndexed
@@ -3697,6 +3716,7 @@
         acc))))
 
 (deftype ChunkBuffer [^:mutable ^List? arr ^:mutable ^int end]
+  :type-only true
   Object
   (add [_ o]
     (aset ^List arr end o)
@@ -3714,6 +3734,7 @@
 
 (deftype #/(ChunkedCons E)
   [chunk more meta ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
@@ -3780,6 +3801,7 @@
 
 (deftype #/(PVChunkedSeq E)
   [^PersistentVector vec ^List arr ^int i ^int off meta ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
@@ -3840,7 +3862,8 @@
                           ^:mutable ^int shift
                           ^:mutable ^some edit
                           ^:mutable ^VectorNode root
-                          ^:mutable ^List tail])
+                          ^:mutable ^List tail]
+  :type-only true)
 
 (defn- tv-editable-array-for
   "Returns the editable array where i is located."
@@ -3890,6 +3913,7 @@
                           ^:mutable ^some edit
                           ^:mutable ^VectorNode root
                           ^:mutable ^List tail]
+  :type-only true
   ITransientCollection
   (-conj! [tcoll o]
     (when-not edit
@@ -4010,6 +4034,7 @@
 
 (deftype #/(PersistentMapEntry K V)
   [_k _v ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin ToStringMixin
   IPrint
@@ -4090,7 +4115,7 @@
   (-subvec [coll start end]
     (if (zero? start) [_k] [_v])))
 
-(deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr])
+(deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr] :type-only true)
 
 (deftype #/(BitmapIterator E)
   [^:mutable ^BitmapNode node
@@ -4101,6 +4126,7 @@
    ^#/(List int) masks
    ^#/(List BitmapNode) nodes
    ^:dart mk-value]
+  :type-only true
   #/(Iterator E)
   (current [iter]
     (let [arr (.-arr node)]
@@ -4139,50 +4165,8 @@
       :else
       false)))
 
-; Baptiste's
-#_(deftype BitmapIterator [^:mutable ^int current-mask
-                         ^:mutable ^BitmapNode current-bn
-                         ^:mutable ^{:tag "List<int>"} mask-list
-                         ^:mutable ^{:tag "List<BitmapNode>"} bn-list
-                         ^:mutable ^int list-idx]
-  Iterator
-  (^:getter ^MapEntry current [iter]
-   (let [bitmap-hi (.-bitmap_hi current-bn)
-         bitmap-lo (.-bitmap_lo current-bn)
-         kv-mask (bit-and current-mask bitmap-hi bitmap-lo)
-         bit (bit-and kv-mask (- kv-mask))
-         mask' (dec bit)
-         idx (u32x2-bit-count (bit-and mask' bitmap-hi) (bit-and mask' bitmap-lo))
-         arr (.-arr current-bn)]
-     (set! current-mask (bit-xor current-mask bit))
-     (MapEntry. (aget arr idx) (aget arr (inc idx)) -1)))
-  (^bool moveNext [iter]
-   (loop []
-     (let [bitmap-hi (.-bitmap_hi current-bn)
-           bitmap-lo (.-bitmap_lo current-bn)
-           kv-mask (bit-and current-mask bitmap-hi bitmap-lo)]
-       (cond
-         (< 0 kv-mask) true
-         (and (zero? current-mask) (zero? list-idx)) false
-         (zero? current-mask)
-         (do (set! list-idx (dec list-idx))
-             (set! current-mask (aget mask-list list-idx))
-             (set! current-bn (aget bn-list list-idx))
-             (recur))
-         :else
-         (let [bn-mask (bit-and current-mask (bit-xor bitmap-hi bitmap-lo))
-               bit (bit-and bn-mask (- bn-mask))
-               mask (dec bit)
-               idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
-               ^BitmapNode next-bn (aget (.-arr current-bn) idx)]
-           (aset mask-list list-idx (bit-xor current-mask bit))
-           (aset bn-list list-idx current-bn)
-           (set! list-idx (inc list-idx))
-           (set! current-mask (bit-or (.-bitmap_hi next-bn) (.-bitmap_lo next-bn)))
-           (set! current-bn next-bn)
-           (recur)))))))
-
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
+  :type-only true
   Object
   (inode_lookup [node k not-found]
     (let [h (hash k)]
@@ -4528,6 +4512,7 @@
   )
 
 (deftype TransientHashMap [^:mutable ^bool editable ^:mutable ^BitmapNode root]
+  :type-only true
   ITransientCollection
   (-conj! [tcoll o]
     (when-not editable
@@ -4626,6 +4611,7 @@
 
 (deftype #/(PersistentHashMap K V)
   [meta ^BitmapNode root ^:mutable ^int __hash]
+  :type-only true
   ^:mixin #/(dart-coll/MapMixin K V)
   (entries [coll]
     (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
@@ -4851,6 +4837,7 @@
 
 (deftype TransientHashSet [^:mutable ^TransientHashMap transient-map]
   ;; all editability checks are performed by the transient map
+  :type-only true
   ITransientCollection
   (-conj! [tcoll o]
     (set! transient-map (assoc! transient-map o o))
@@ -6492,6 +6479,7 @@
 
 (deftype #/(XformIterator E)
   [^List buf ^:mutable ^int i move-next ^:mutable ^bool in-progress]
+  :type-only true
   #/(Iterator E)
   (current [_]
     (aget buf i))
@@ -6577,7 +6565,9 @@
   ([xform coll & colls]
    (or (chunked-iterator-seq (apply iterator xform coll colls)) ())))
 
-(deftype #/(Eduction E) [xform coll ^:mutable ^int __hash]
+(deftype #/(Eduction E)
+  [xform coll ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/IterableMixin E)
   (iterator [_] (iterator xform coll))
