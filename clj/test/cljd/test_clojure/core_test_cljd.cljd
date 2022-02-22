@@ -111,3 +111,22 @@
   (is (= ":love" (namespace (gensym :love/cljd))))
   (is (= "love" (namespace (gensym 'love/cljd))))
   (is (= "love" (namespace (gensym "love/cljd")))))
+
+;; defrecord tests
+
+(defrecord EmptyRecord [])
+
+(deftest testing-empty-record
+  (is (= (hash (->EmptyRecord)) (hash (->EmptyRecord))))
+  (is (dart/is? (-> (->EmptyRecord) (. #/(cast int int))) #/(EmptyRecord int int)))
+  (is (= (for [[k v] (assoc (->EmptyRecord) :a :b :c :d :e :f)]
+           k)
+        '(:a :c :e))))
+
+(defrecord RecordA [a]
+  Object
+  (mymethod [this] (str a "two")))
+
+(deftest testing-recorda
+  (is (= "onetwo" (.mymethod (->RecordA "one"))))
+  (is (= {:a :b} (meta (with-meta (->RecordA "one") {:a :b})))))

@@ -919,6 +919,8 @@
     (remove-ns sym)
     (binding [*ns* *ns*]
       (eval (list* 'ns sym directives))
+      ;; NOTE: big trick here...
+      (require '[clojure.core :as cljd.core])
       *ns*)))
 
 (defn- hint-as [x tag]
@@ -2163,6 +2165,11 @@
                 [f (vary-meta (munge f env) merge m)]))
         dart-fields (map env fields)
         parsed-class-specs (parse-class-specs opts specs env)
+        _ (when-not *hosted*
+            ;; necessary when a method returns a new instance of its parent class
+            (swap! nses do-def class-name {:dart/name mclass-name
+                                           :dart/type (new-dart-type mclass-name type-params dart-fields env)
+                                           :type :class}))
         dart-type (new-dart-type mclass-name type-params dart-fields parsed-class-specs env)
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (emit-class-specs class-name parsed-class-specs env)

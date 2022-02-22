@@ -1581,8 +1581,7 @@
   "Test map equivalence. Returns true if x equals y, otherwise returns false."
   [x y]
   (boolean
-    ;; TODO : add record? when there are records
-    (when (and (map? y) #_(not (record? y)))
+    (when (and (map? y) (not (record? y)))
       ; assume all maps are counted
       (when (== (count x) (count y))
         (let [never-equiv (Object.)]
@@ -2057,6 +2056,13 @@
   ([^Atom a f x y & more]
    (let [old-state (.-state a)]
      [old-state (apply swap! a f x y more)])))
+
+(defprotocol IRecord
+   "Marker interface indicating a record object")
+
+ (defn ^bool record?
+   [x]
+   (satisfies? IRecord x))
 
 ;; TODO add printing
 (deftype Delay [^:mutable val ^:mutable f]
@@ -6654,6 +6660,137 @@
     (fn
       ([] (gensym "G__"))
       ([prefix-string] (symbol (str prefix-string (swap! id inc)))))))
+
+(declare tagged-literal)
+
+(defmacro defrecord [name [& fields] & opts+specs]
+  (let [key (gensym "key")
+        extmap (with-meta 'extmap {:tag (with-meta 'dart:core/Map
+                                          {:type-params '(K V)})})
+        record-body
+        ['cljd.core/IRecord
+         'cljd.core/IEquiv
+         (let [this (with-meta (gensym "this") {:tag name})
+               other (gensym "other")]
+           `(~'-equiv [~this ~other]
+             (or (identical? ~this ~other)
+               (and (dart/is? ~other ~name)
+                 ~@(map (fn [field]
+                          `(= ~(list (symbol (str ".-" field)) this)
+                             ~(list (symbol (str ".-" field)) (with-meta other {:tag name})))) fields)
+                 (= ~extmap
+                   (~'.-extmap ~(with-meta other {:tag name})))))))
+         'cljd.core/IMap
+         `(~'-dissoc [coll# k#]
+           (if (contains? #{~@(map keyword fields)} k#)
+             (dissoc (with-meta (into {} coll#) ~'meta) k#)
+             (new ~name ~@(conj (vec fields) 'meta) (or (dissoc ~extmap k#) {}) -1)))
+         'cljd.core/ISeqable
+         `(~'-seq [coll#]
+           (seq (concat [~@(map #(list 'new 'cljd.core/PersistentMapEntry (keyword %) % -1) fields)]  ~extmap)))
+         'cljd.core/IAssociative
+         (let [v (gensym "val")]
+           `(~'-assoc [coll# k# ~v]
+             (case k#
+               ~@(mapcat (fn [fld]
+                           [(keyword fld) (list* `new name (replace {fld v} (conj (vec fields) 'meta extmap -1)))])
+                   fields)
+               (new ~name ~@fields ~'meta (assoc ~extmap k# ~v) -1))))
+         'cljd.core/ILookup
+         `(~'-contains-key? [o# ~key]
+           ~(if (seq fields)
+              `(case ~key
+                 ~(map keyword fields) true
+                 (contains? ~extmap ~key))
+              `(contains? ~extmap ~key)))
+         `(~'-lookup [o# ~key] (~'-lookup o# ~key nil))
+         `(~'-lookup [o# ~key not-found#]
+           (case ~key
+             ~@(mapcat (fn [f] [(keyword f) f]) fields)
+             (get ~extmap ~key not-found#)))
+         'cljd.core/ICounted
+         `(~'-count [coll#] (+ ~(count fields) (.-length ~extmap)))
+         'cljd.core/ICollection
+         `(~'-conj [coll# o#]
+           (if (and (vector? o#) (== (-count o#) 2))
+             (-assoc coll# (-nth o# 0) (-nth o# 1))
+             (reduce -conj coll# o#)))
+         'cljd.core/IWithMeta
+         (let [meta (gensym "meta")]
+           `(~'-with-meta [o# ~meta]
+             (new ~name ~@(conj (vec fields) meta extmap -1))))
+         'cljd.core/IMeta
+         `(~'-meta [o#] ~'meta)
+         'cljd.core/IKVReduce
+         `(~'-kv-reduce [coll# f# init#]
+           (reduce (fn [ret# [k# v#]] (f# ret# k# v#)) init# coll#))
+         (with-meta `dart-coll/MapMixin {:mixin true :type-params '(K V)})
+         (let [coll (gensym "coll")]
+           `(~'entries [~coll]
+             (-> ~(tagged-literal 'dart
+                    (with-meta (into [] (map #(list 'new 'cljd.core/PersistentMapEntry (keyword %) % -1) fields))
+                      {:fixed true
+                       :tag '^{:type-params (K V)} dart:core/MapEntry}))
+               (.followedBy (.-entries ~extmap)))))
+         (let [coll (gensym "coll")]
+           `(~(with-meta 'keys {:tag (with-meta 'Iterable {:type-params '(K)})}) [~coll]
+             (-> ~(tagged-literal 'dart
+                    (with-meta (into [] (map (fn [field]
+                                               (let [k (gensym "k")]
+                                                 `(let [~(with-meta k {:tag 'K}) ~(keyword field)] ~k))) fields))
+                      {:fixed true
+                       :tag 'K}))
+               (.followedBy (.-keys ~extmap)))))
+         (let [coll (gensym "coll")]
+           `(~'values [~coll]
+             (-> ~(tagged-literal 'dart
+                    (with-meta (vec fields)
+                      {:fixed true
+                       :tag 'V}))
+               (.followedBy (.-values ~extmap)))))
+         `("[]" [coll# k#]
+           (-lookup coll# k# nil))
+         `("[]=" [coll# key# val#]
+           (throw (UnsupportedError. "[]= not supported on defrecord")))
+         `(~'remove [coll# val#]
+           (throw (UnsupportedError. "remove not supported on defrecord")))
+         `(~'clear [coll#]
+           (throw (UnsupportedError. "clear not supported on defrecord")))
+         `(~(with-meta 'cast {:tag (with-meta name {:type-params '(RK RV)})
+                              :type-params '(RK RV)}) [coll#]
+           (new ~(with-meta name  {:type-params '(RK RV)})
+             ~@(conj (vec fields) 'meta
+                 (list '. extmap (with-meta 'cast {:type-params '(RK RV)})) '__hash)))
+         'cljd.core/IHash
+         `(~'-hash [coll#]
+           (ensure-hash ~'__hash
+             (bit-xor
+               ~(bit-xor
+                  (hash (get-in &env [:nses :current-ns]))
+                  (hash name))
+               (hash-unordered-coll coll#))))
+         (with-meta 'cljd.core/ToStringMixin {:mixin true})
+         'cljd.core/IPrint
+         ;; TODO print-dup
+         `(~'-print [o# sink#]
+           (print-map o# sink#))]
+        m (gensym "m")]
+    `(do (deftype ~(with-meta name {:type-params '(K V)})
+             ~(conj (vec fields) 'meta
+                extmap
+                (with-meta '__hash {:mutable true :tag `int}))
+           :type-only true
+           ~@(concat record-body opts+specs))
+         (defn ~(with-meta (symbol (str "->" name)) {:tag name})
+           ~(vec fields)
+           (new ~name ~@fields nil {} -1))
+         (defn ~(with-meta (symbol (str "map->" name)) {:tag name})
+           [~m]
+           (new ~name
+             ~@(map (fn [k] (list (keyword k) m)) fields)
+             nil
+             (reduce dissoc (into {} ~m) ~(into [] (map keyword) fields))
+             -1)))))
 
 #_(defn ^:async main []
   (prn (Map/of {:a 1}))
