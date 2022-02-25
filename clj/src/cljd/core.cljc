@@ -4616,10 +4616,11 @@
   (entries [coll]
     (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
      (iterator [_]
-      (BitmapIterator. root 0 0 0 1
-        (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (List/filled 7 root)
-        #(PersistentMapEntry. %1 %2 -1)))))
+       (BitmapIterator. root 0 0 0 1
+         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+         (.filled #/(List BitmapNode) 7 root)
+         #(PersistentMapEntry. %1 %2 -1))
+       )))
   ("[]" [coll k]
    (-lookup coll k nil))
   ("[]=" [coll key val]
@@ -4632,15 +4633,15 @@
    (reify ^:mixin #/(dart-coll/IterableMixin K)
      (iterator [_]
       (BitmapIterator. root 0 0 0 1
-        (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (List/filled 7 root)
+        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (.filled #/(List BitmapNode) 7 root)
         (fn [k _] k)))))
   (values [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin V)
      (iterator [_]
       (BitmapIterator. root 0 0 0 1
-        (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (List/filled 7 root)
+        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (.filled #/(List BitmapNode) 7 root)
         (fn [_ v] v)))))
   (^#/(PersistentHashMap RK RV) #/(cast RK RV) [coll]
    (new #/(PersistentHashMap RK RV) meta root __hash))
@@ -4726,7 +4727,7 @@
           gross-size (inc (bit-or 7 (dec net-size)))]
       (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil))))))
 
-(def -EMPTY-MAP
+(def ^PersistentHashMap -EMPTY-MAP
   (PersistentHashMap. nil (BitmapNode. 0 0 0 (.empty List)) -1))
 
 (defn merge
@@ -4864,7 +4865,7 @@
   (-invoke [tcoll k not-found]
     (-lookup tcoll k not-found)))
 
-(def -EMPTY-SET
+(def ^PersistentHashSet -EMPTY-SET
   (PersistentHashSet. nil {} -1))
 
 (defn ^List to-array
@@ -6124,10 +6125,10 @@
               body))]
     (some-> seq-exprs seq emit)))
 
-(defn vec [coll]
+(defn ^PersistentVector vec [coll]
   (into [] coll))
 
-(defn vector
+(defn ^PersistentVector vector
   "Creates a new vector containing the args."
   ([] [])
   ([a] [a])
@@ -6139,22 +6140,22 @@
   ([a b c d e f & args]
    (into [a b c d e f] args)))
 
-(defn set [coll]
+(defn ^PersistentHashSet set [coll]
   (into #{} coll))
 
-(defn hash-set
+(defn ^PersistentHashSet hash-set
   "Returns a new hash set with supplied keys.  Any equal keys are
   handled as if by repeated uses of conj."
   ([] #{})
   ([& keys] (into #{} keys)))
 
-(defn -map-lit [^List kvs]
+(defn ^PersistentHashMap -map-lit [^List kvs]
   (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
     (if (< i (.-length kvs))
       (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
       ^PersistentHashMap (-persistent! tm))))
 
-(defn hash-map
+(defn ^PersistentHashMap hash-map
   "keyval => key val
   Returns a new hash map with supplied mappings."
   [& keyvals]
@@ -6166,14 +6167,14 @@
       (recur (nnext in) (assoc! out (first in) (second in)))
       (persistent! out))))
 
-(defn -list-lit [^List xs]
+(defn ^PersistentList -list-lit [^List xs]
   (loop [^PersistentList l () ^int i (.-length xs)]
     (let [i (dec i)]
       (if (neg? i)
         l
         (recur (-conj l (aget xs i)) i)))))
 
-(defn -vec-owning [^List xs]
+(defn ^PersistentVector -vec-owning [^List xs]
   (assert (<= (count xs) 32))
   (PersistentVector. nil (count xs) 5 (.-root -EMPTY-VECTOR) xs -1))
 

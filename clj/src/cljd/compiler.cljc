@@ -104,6 +104,18 @@
           clojure.java.io/reader
           clojure.lang.LineNumberingPushbackReader.
           clojure.edn/read)
+        export-list
+        (fn export-list [original-lib {exports :exports :as v}]
+          (-> (into {} (for [[k] (dissoc v :exports)]
+                         [k {:lib original-lib :canon-lib original-lib}]))
+            (into
+              (mapcat (fn [{:keys [lib shown hidden]}]
+                        (cond
+                          shown  (into {} (map (fn [k] [k {:lib original-lib :canon-lib lib}])) shown)
+                          hidden (into {} (map (fn [[k v]] [k (assoc v :lib original-lib :canon-lib lib)]))
+                                   (reduce dissoc (export-list original-lib (dart-libs-info lib)) hidden))
+                          :else (into {} (map (fn [[k v]] [k (assoc v :lib original-lib :canon-lib lib)]))
+                                  (export-list original-lib (dart-libs-info lib)))))) exports)))
         export
         (fn export [{exports :exports :as v}]
           (-> (into v (map (fn [{:keys [lib shown hidden]}]
@@ -115,7 +127,7 @@
                                :else (export (dart-libs-info lib))))) exports)
             (dissoc :exports)))
         assoc->qnames
-        (fn [entity]
+        (fn [export-list entity]
           (case (:type entity)
             #_#_"Function" (:qname dc-Function)
             #_#_"Never" (:qname dc-Never)
@@ -124,47 +136,59 @@
             (if (:is-param entity)
               (let [qname (symbol (:type entity))]
                 (assoc entity :qname qname :canon-qname qname))
-              (assoc entity
-                :qname (-> (global-lib-alias (:lib entity "dart:core") nil) (str "." (:type entity)) symbol)
-                :canon-qname (-> (global-lib-alias (:canon-lib entity "dart:core") nil) (str "." (:type entity)) symbol)))))
+              (if-some [{:keys [lib canon-lib]} (export-list (:type entity))]
+                (assoc entity
+                  :qname (-> (global-lib-alias lib nil) (str "." (:type entity)) symbol)
+                  :canon-qname (-> (global-lib-alias canon-lib nil) (str "." (:type entity)) symbol)
+                  :lib lib
+                  :canon-lib canon-lib)
+                (let [qname (-> (global-lib-alias (:lib entity "dart:core") nil) (str "." (:type entity)) symbol)]
+                  (assoc entity
+                    :qname qname
+                    :canon-qname qname
+                    :lib (:lib entity)
+                    :canon-lib (:lib entity)))))))
         qualify-entity
-        (fn qualify-entity [entity]
-          (case (:kind entity)
-            :class (->
-                     (assoc->qnames entity)
-                     (update-if :type-parameters #(into [] (map qualify-entity) %))
-                     (into (comp (filter #(string? (first %)))
-                             (map (fn [[n v]] [n (qualify-entity v)])))
-                       entity))
-            :field (update entity :type qualify-entity)
-            :function (->
-                        (assoc->qnames entity)
+        (fn qualify-entity [export-list entity]
+          (let [qualify-entity #(qualify-entity export-list %)
+                assoc->qnames #(assoc->qnames export-list %)]
+            (case (:kind entity)
+              :class (->
+                       (assoc->qnames entity)
+                       (update-if :type-parameters #(into [] (map qualify-entity) %))
+                       (into (comp (filter #(string? (first %)))
+                               (map (fn [[n v]] [n (qualify-entity v)])))
+                         entity))
+              :field (update entity :type qualify-entity)
+              :function (->
+                          (assoc->qnames entity)
+                          (update :return-type qualify-entity)
+                          (update-if :parameters #(into [] (map qualify-entity) %))
+                          (update-if :type-parameters #(into [] (map qualify-entity) %)))
+              :method (-> entity
                         (update :return-type qualify-entity)
                         (update-if :parameters #(into [] (map qualify-entity) %))
                         (update-if :type-parameters #(into [] (map qualify-entity) %)))
-            :method (-> entity
-                      (update :return-type qualify-entity)
-                      (update-if :parameters #(into [] (map qualify-entity) %))
-                      (update-if :type-parameters #(into [] (map qualify-entity) %)))
-            :constructor (-> entity
-                           (update-if :parameters #(into [] (map qualify-entity) %))
-                           (update-if :type-parameters #(into [] (map qualify-entity) %))
-                           (update :return-type qualify-entity))
-            (:named :positional) (update entity :type qualify-entity)
-            (cond-> (-> (assoc->qnames entity)
-                      (update-if :type-parameters #(into [] (map qualify-entity) %)))
-              (= "Function" (:type entity))
-              (->
-                (update-if :return-type #(some-> % qualify-entity))
-                (update-if :parameters #(into [] (map qualify-entity) %))))))]
+              :constructor (-> entity
+                             (update-if :parameters #(into [] (map qualify-entity) %))
+                             (update-if :type-parameters #(into [] (map qualify-entity) %))
+                             (update :return-type qualify-entity))
+              (:named :positional) (update entity :type qualify-entity)
+              (cond-> (-> (assoc->qnames entity)
+                        (update-if :type-parameters #(into [] (map qualify-entity) %)))
+                (= "Function" (:type entity))
+                (->
+                  (update-if :return-type #(some-> % qualify-entity))
+                  (update-if :parameters #(into [] (map qualify-entity) %)))))))]
     (-> (into {} (comp
-                   (map (fn [[lib content]] [lib (export content)]))
-                   (map (fn [[lib content]]
+                   (map (fn [[lib content]] [lib (export-list lib content) (export content)]))
+                   (map (fn [[lib export-list content]]
                           [lib (into {} (map (fn [[typename clazz]]
-                                               [typename (qualify-entity (assoc clazz
-                                                                           :type typename
-                                                                           :lib lib
-                                                                           :canon-lib (:lib clazz)))])) content)])))
+                                               [typename (qualify-entity export-list
+                                                           (assoc clazz
+                                                             :type typename
+                                                             :lib lib
+                                                             :canon-lib (:lib clazz)))])) content)])))
           dart-libs-info)
       (assoc-in ["dart:core" "Never"] dc-Never)
       (assoc-in ["dart:core" "dynamic"] dc-dynamic))))
@@ -1134,7 +1158,15 @@
                         (or (= canon-qname slot-canon-qname)
                           (some assignable? (concat interfaces mixins super))
                           (some-> super recur))))]
-              (assignable? value-type))))))))
+              (and (assignable? value-type)
+                (let [slot-tp (seq (:type-parameters slot-type))
+                      value-tp (seq (:type-parameters value-type))]
+                  (cond
+                    (<= (count value-tp) (count slot-tp))
+                    (every? #(is-assignable? (first %) (second %)) (map vector slot-tp (concat value-tp dc-dynamic)))
+                    (zero? (count slot-tp)) true
+                    :else
+                    (throw (ex-info "This magicast operation should never happens." {:data [[value-tp value-canon-qname] [slot-tp slot-canon-qname]]}))))))))))))
 
 (defn- num-type [type]
   (case (:canon-qname type)
@@ -1147,30 +1179,49 @@
   ([dart-expr expected-type env]
    (magicast dart-expr expected-type (:dart/type (infer-type dart-expr)) env))
   ([dart-expr expected-type actual-type env]
-   (cond
-     (is-assignable? expected-type actual-type) dart-expr
-     (= (:canon-qname expected-type) 'void) dart-expr
-     (= (:canon-qname expected-type) 'pseudo.num-tower)
-     (recur dart-expr (num-type actual-type) actual-type env)
-     (and (= (:canon-qname expected-type) 'dc.Function) ; TODO generics
-       (not (is-assignable? expected-type actual-type)))
-     (let [{:keys [return-type parameters]} expected-type
-           [fixed-types optionals] (dart-method-sig expected-type)
-           fixed-params (into [] (map (fn [_] (dart-local env))) fixed-types)
-           [dartf :as binding] (dart-binding 'maybe-f dart-expr env)
-           cljf (gensym 'maybe-f)
-           wrapper-env (into {cljf dartf} (zipmap fixed-params fixed-params))
-           wrapper (vary-meta (dart-local 'wrapper-f {} ) assoc :dart/type expected-type)]
-       (list 'dart/let
-         [binding
-          [wrapper
-           (list 'dart/if (list 'dart/is dartf expected-type) ; or expected-type?
-             dartf
-             (list 'dart/fn fixed-params :positional () nil ; TODO opts
-               (emit (cons (vary-meta cljf assoc :clj true :dart nil) fixed-params) wrapper-env)))]]
-         wrapper))
-     :else
-     (list 'dart/as dart-expr expected-type))))
+   (let [assignable? (is-assignable? expected-type actual-type)]
+     (cond
+       assignable? dart-expr
+       (= (:canon-qname expected-type) 'void) dart-expr
+       (= (:canon-qname expected-type) 'pseudo.num-tower)
+       (recur dart-expr (num-type actual-type) actual-type env)
+       ;; When inlined #dart[], we keep it inlines
+       ;; TODO: don't like the (vector? dart-expr) check, it smells bad
+       (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
+         (vector? dart-expr)) dart-expr
+       (and (#{'dc.List 'dc.Map 'dc.Set} (:canon-qname expected-type))
+         (when-some [tps (seq (:type-parameters expected-type))]
+           (every? #(not= (:canon-qname %) 'dc.dynamic) tps)))
+       (let [[dartf :as binding] (dart-binding 'castmethod dart-expr env)
+             wrapper (vary-meta (dart-local 'wrapper-f {} ) assoc :dart/type expected-type)]
+         (list 'dart/let
+           [binding
+            [wrapper
+             (if (is-assignable? (dissoc expected-type :type-parameters) (dissoc actual-type :type-parameters))
+               (list 'dart/. dartf (into ["cast"] (:type-parameters expected-type)))
+               (list 'dart/if (list 'dart/is dartf expected-type) ; or expected-type?
+                 dartf
+                 (list 'dart/. (list 'dart/as dartf (dissoc expected-type :type-parameters)) (into ["cast"] (:type-parameters expected-type)))))]]
+           wrapper))
+       (and (= (:canon-qname expected-type) 'dc.Function) ; TODO generics
+         (not assignable?))
+       (let [{:keys [return-type parameters]} expected-type
+             [fixed-types optionals] (dart-method-sig expected-type)
+             fixed-params (into [] (map (fn [_] (dart-local env))) fixed-types)
+             [dartf :as binding] (dart-binding 'maybe-f dart-expr env)
+             cljf (gensym 'maybe-f)
+             wrapper-env (into {cljf dartf} (zipmap fixed-params fixed-params))
+             wrapper (vary-meta (dart-local 'wrapper-f {} ) assoc :dart/type expected-type)]
+         (list 'dart/let
+           [binding
+            [wrapper
+             (list 'dart/if (list 'dart/is dartf expected-type) ; or expected-type?
+               dartf
+               (list 'dart/fn fixed-params :positional () nil ; TODO opts
+                 (emit (cons (vary-meta cljf assoc :clj true :dart nil) fixed-params) wrapper-env)))]]
+           wrapper))
+       :else
+       (list 'dart/as dart-expr expected-type)))))
 
 (defn emit-arg
   "[bindings dart-arg]"
