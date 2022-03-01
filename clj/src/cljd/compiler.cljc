@@ -310,20 +310,15 @@
 
 (declare resolve-type type-str actual-member)
 
-(defn- ensure-import-lib [lib-or-alias]
-  (when lib-or-alias
-    (let [{:keys [libs current-ns] :as all-nses} @nses
+(defn- resolve-clj-alias
+  "Resolves the namespace part of a clojure symbol referencing a dart element to the dart lib
+   of this element."
+  [clj-alias]
+  (when clj-alias
+    (let [{:keys [libs current-ns dart-aliases] :as all-nses} @nses
           {:keys [clj-aliases imports]} (all-nses current-ns)]
-      (if-some [lib (get clj-aliases lib-or-alias)]
-        ; already imported
-        (some-> lib libs :dart-alias (vector lib))
-        ; not imported, retrieve globally defined alias and import
-        (if-some [dart-alias (or (second (re-matches #"\$lib:(.*)" lib-or-alias))
-                                 (:dart-alias (libs lib-or-alias)))]
-          (when-some [lib (get (:dart-aliases all-nses) dart-alias)]
-            (when-not (get imports lib) ; sometimes the lib was imported but we didn't detect it earlier
-              (swap! nses assoc-in [current-ns :imports lib] {}))
-            [dart-alias lib]))))))
+      (or (get clj-aliases clj-alias)
+        (some-> (re-matches #"\$lib:(.*)" clj-alias) second dart-aliases)))))
 
 (defn- resolve-dart-type
   [clj-sym type-vars]
@@ -336,9 +331,10 @@
         dc-void)
       (if (and (nil? typens) (contains? type-vars (symbol typename)))
         {:canon-qname clj-sym :qname clj-sym :type typename :is-param true})
-      (if-some [[dart-alias lib] (ensure-import-lib typens)]
+      (if-some [lib (resolve-clj-alias typens)]
         (or (-> dart-libs-info (get lib) (get typename))
-          (let [qname (symbol (str dart-alias "." typename))]
+          (let [dart-alias (:dart-alias (libs lib))
+                qname (symbol (str dart-alias "." typename))]
             {:qname qname
              :canon-qname qname
              :type typename})
@@ -397,8 +393,6 @@
                      (repeat (resolve-type 'dart:core/dynamic #{})))
                    :else
                    (throw (Exception. (str "Expecting " nparams " type arguments to " clj-sym ", got " nargs "."))))]
-    (run! ensure-import-lib (keep :lib (cons (:return-type function-info)
-                                         (map :type (:parameters function-info)))))
     (actual-member
       [#(or (when (:is-param %)
               (cond-> (type-env (:type %))
@@ -715,11 +709,6 @@
          (let [type-env (merge
                           (type-env-for class (:type-parameters class) (:type-parameters class-info))
                           (type-env-for member member-type-arguments (:type-parameters member-info)))]
-           (case (:kind member-info)
-             :field (some-> member-info :type :lib ensure-import-lib)
-             (:method :constructor)
-             (run! ensure-import-lib (keep :lib (cons (:return-type member-info)
-                                                  (map :type (:parameters member-info))))))
            [#(let [v (type-env' %)]
                (or (when (:is-param v)
                      (cond-> (type-env (:type v))
@@ -771,8 +760,6 @@
                      (repeat (resolve-type 'dart:core/dynamic #{})))
                    :else
                    (throw (Exception. (str "Expecting " nparams " type arguments to " class ", got " nargs "."))))]
-    (run! ensure-import-lib (keep :lib (cons (:return-type function-info)
-                                         (map :type (:parameters function-info)))))
     (actual-member
       [#(or (when (:is-param %)
               (cond-> (type-env (:type %))
@@ -2608,10 +2595,13 @@
 (declare write-types)
 
 (defn write-type
-  [{:keys [qname type-parameters nullable] :as t}]
-  (when (string? t) (throw (ex-info "Types are not strings any more!" {:type t}))) ; TODO remove check after transitio
+  [{:keys [lib qname type-parameters nullable] :as t}]
+  (when lib ; lib may be empty for parameters or void
+    (let [{:keys [current-ns] :as all-nses} @nses]
+      (when-not (-> current-ns all-nses :imports (get lib))
+        (swap! nses assoc-in [current-ns :imports lib] {}))))
   (case qname
-    nil (throw (ex-info "nOOOOOOOooo" {:t t}))
+    nil (throw (ex-info "Invalid type representation" {:dart-type t}))
     'dc.Function
     (if-some [ret (:return-type t)]
       (let [args (:parameters t)]
@@ -2760,6 +2750,13 @@
   (cond
     (string? x) (write-string-literal x)
     (nil? x) (print "null")
+    (symbol? x) (let [x (name x)]
+                  (when-some [[_ dart-alias] (re-matches #"(.+?)\..+" x)]
+                    (let [{:keys [dart-aliases current-ns] :as all-nses} @nses
+                          lib (dart-aliases dart-alias)]
+                      (when-not (-> current-ns all-nses :imports (get lib))
+                        (swap! nses assoc-in [current-ns :imports lib] {}))))
+                  (print x))
     :else (print (str x))))
 
 (defn write-params [fixed-params opt-kind opt-params]
