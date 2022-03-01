@@ -2597,7 +2597,12 @@
 (defn write-type
   [{:keys [lib qname type-parameters nullable] :as t}]
   (when lib ; lib may be empty for parameters or void
-    (let [{:keys [current-ns] :as all-nses} @nses]
+    (let [{:keys [current-ns libs] :as all-nses} @nses]
+      (when-not (-> lib libs :dart-alias)
+        (let [dart-alias (global-lib-alias lib nil)]
+          (swap! nses #(-> %
+                         (assoc-in [:libs lib :dart-alias] dart-alias)
+                         (assoc-in [:dart-aliases dart-alias] lib)))))
       (when-not (-> current-ns all-nses :imports (get lib))
         (swap! nses assoc-in [current-ns :imports lib] {}))))
   (case qname
@@ -2752,7 +2757,7 @@
     (nil? x) (print "null")
     (symbol? x) (let [x (name x)]
                   (when-some [[_ dart-alias] (re-matches #"(.+?)\..+" x)]
-                    (let [{:keys [dart-aliases current-ns] :as all-nses} @nses
+                    (let [{:keys [dart-aliases current-ns libs] :as all-nses} @nses
                           lib (dart-aliases dart-alias)]
                       (when-not (-> current-ns all-nses :imports (get lib))
                         (swap! nses assoc-in [current-ns :imports lib] {}))))
@@ -3277,8 +3282,7 @@
           :when code]
     (println "\n// BEGIN" sym)
     (println code)
-    (println "// END" sym)
-    ))
+    (println "// END" sym)))
 
 (defn dart-type-params-reader [x]
   (else->>
