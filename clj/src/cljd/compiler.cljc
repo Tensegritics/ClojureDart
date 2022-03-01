@@ -211,7 +211,8 @@
 
 (def ns-prototype
   {:imports {"dart:core" {}}
-   :aliases {"dart:core" "dart:core"}
+   ; map from aliases found in clj code to dart libs
+   :clj-aliases {"dart:core" "dart:core"}
    :mappings
    '{Type dart:core/Type,
      BidirectionalIterator dart:core/BidirectionalIterator,
@@ -282,8 +283,9 @@
 (def nses (atom {:current-ns 'user
                  :libs {"dart:core" {:dart-alias "dc" :ns nil}
                         "dart:async" {:dart-alias "da" :ns nil}} ; dc can't clash with user aliases because they go through dart-global
-                 :aliases {"dc" "dart:core"
-                           "da" "dart:async"}
+                 ; map from dart aliases to libs
+                 :dart-aliases {"dc" "dart:core"
+                                "da" "dart:async"}
                  :ifn-mixins {}
                  'user ns-prototype}))
 
@@ -299,11 +301,11 @@
                  (fn [nses]
                    (if (-> nses :libs (get lib) :dart-alias)
                      nses
-                     (let [alias (some #(when-not (get (:aliases nses) %) %)
+                     (let [alias (some #(when-not (get (:dart-aliases nses) %) %)
                                    (cons base (map #(str base "_" (inc %)) (range))))]
                        (-> nses
                          (assoc-in [:libs lib] {:dart-alias alias :ns ns})
-                         (assoc-in [:aliases alias] lib))))))]
+                         (assoc-in [:dart-aliases alias] lib))))))]
       (-> nses :libs (get lib) :dart-alias))))
 
 (declare resolve-type type-str actual-member)
@@ -311,14 +313,14 @@
 (defn- ensure-import-lib [lib-or-alias]
   (when lib-or-alias
     (let [{:keys [libs current-ns] :as all-nses} @nses
-          {:keys [aliases imports]} (all-nses current-ns)]
-      (if-some [lib (get aliases lib-or-alias)]
+          {:keys [clj-aliases imports]} (all-nses current-ns)]
+      (if-some [lib (get clj-aliases lib-or-alias)]
         ; already imported
         (some-> lib libs :dart-alias (vector lib))
         ; not imported, retrieve globally defined alias and import
         (if-some [dart-alias (or (second (re-matches #"\$lib:(.*)" lib-or-alias))
                                  (:dart-alias (libs lib-or-alias)))]
-          (when-some [lib (get (:aliases all-nses) dart-alias)]
+          (when-some [lib (get (:dart-aliases all-nses) dart-alias)]
             (when-not (get imports lib) ; sometimes the lib was imported but we didn't detect it earlier
               (swap! nses assoc-in [current-ns :imports lib] {}))
             [dart-alias lib]))))))
@@ -326,7 +328,6 @@
 (defn- resolve-dart-type
   [clj-sym type-vars]
   (let [{:keys [libs current-ns] :as nses} @nses
-        {:keys [aliases]} (nses current-ns)
         typename (name clj-sym)
         typens (namespace clj-sym)]
     (else->>
@@ -406,7 +407,7 @@
 
 (defn- resolve-non-local-symbol [sym type-vars]
   (let [{:keys [libs] :as nses} @nses
-        {:keys [mappings aliases] :as current-ns} (nses (:current-ns nses))
+        {:keys [mappings clj-aliases] :as current-ns} (nses (:current-ns nses))
         resolve (fn [sym]
                   (else->>
                     (if-some [v (current-ns sym)] [:def v])
@@ -415,7 +416,7 @@
                     (let [sym-ns (namespace sym)
                           lib-ns (if (= "clojure.core" sym-ns)
                                    "cljd.core"
-                                   (some-> (get aliases sym-ns) libs :ns name))])
+                                   (some-> (get clj-aliases sym-ns) libs :ns name))])
                     (if (some-> lib-ns (not= sym-ns))
                       (recur (with-meta (symbol lib-ns (name sym)) (meta sym))))
                     (if-some [info (some-> sym-ns symbol nses (get (symbol (name sym))))]
@@ -2429,7 +2430,7 @@
                 (-> ns-map
                   (cond-> (nil? (get (:imports ns-map) dartlib))
                     (assoc-in [:imports dartlib] {:clj-alias clj-alias}))
-                  (assoc-in [:aliases clj-alias] dartlib)
+                  (assoc-in [:clj-aliases clj-alias] dartlib)
                   (update :mappings into
                     (for [to refer :let [from (get rename to to)]]
                       [from (with-meta (symbol clj-alias (name to))
@@ -3310,8 +3311,8 @@
          (get-in nses [current-ns :mappings sym])))
     (resolveAlias [_ sym]
       (let [{:keys [current-ns libs] :as nses} @nses
-            {:keys [aliases]} (nses current-ns)]
-        (when-some [lib (some-> sym name aliases libs)]
+            {:keys [clj-aliases]} (nses current-ns)]
+        (when-some [lib (some-> sym name clj-aliases libs)]
           (or (:ns lib)
             (symbol (str "$lib:" (:dart-alias lib)))))))
     (resolveVar [_ sym] nil)))
@@ -3346,18 +3347,18 @@
                (binding [*locals-gen* {}] (host-eval form))
                (recur))))))))
 
-(defn- rename-fresh-lib [{:keys [libs aliases] :as nses} from to]
+(defn- rename-fresh-lib [{:keys [libs dart-aliases] :as nses} from to]
   (let [{:keys [ns dart-alias] :as m} (libs from)
         nses (assoc nses
                :libs (-> libs (dissoc from) (assoc to m))
-               :aliases (assoc aliases dart-alias to))
-        {:keys [aliases imports] :as  the-ns} (nses ns)
+               :dart-aliases (assoc dart-aliases dart-alias to))
+        {:keys [clj-aliases imports] :as  the-ns} (nses ns)
         imports (-> imports (dissoc from) (assoc to (imports from)))
-        aliases (into {}
-                  (map (fn [[alias lib]]
-                         [alias (if (= lib from) to lib)]))
-                  aliases)]
-    (assoc nses ns (assoc the-ns :lib to :imports imports :aliases aliases))))
+        clj-aliases (into {}
+                      (map (fn [[alias lib]]
+                             [alias (if (= lib from) to lib)]))
+                      clj-aliases)]
+    (assoc nses ns (assoc the-ns :lib to :imports imports :clj-aliases clj-aliases))))
 
 (defn compile-input [in]
   (binding [*host-eval* false]
