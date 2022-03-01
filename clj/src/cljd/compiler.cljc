@@ -156,6 +156,9 @@
               :class (->
                        (assoc->qnames entity)
                        (update-if :type-parameters #(into [] (map qualify-entity) %))
+                       (update-if :super qualify-entity)
+                       (update-if :interfaces #(into [] (map qualify-entity) %))
+                       (update-if :mixins #(into [] (map qualify-entity) %))
                        (into (comp (filter #(string? (first %)))
                                (map (fn [[n v]] [n (qualify-entity v)])))
                          entity))
