@@ -416,19 +416,18 @@
               (str  "Seq exhausted before iterator at (" n ")")))
           true)))))
 
-;; TODO
-#_(defrecord TestIterRec [a b])
+(defrecord TestIterRec [a b])
 
 (deftest coll-iter-seq-match
   (testing "Direct iterators match sequences"
     (let [test-map (apply hash-map (range 200))
           test-set (apply hash-set (range 200))
           #_#_test-queue (into cljs.core.PersistentQueue.EMPTY (vec (range 100)))
-          #_#_test-record (into (TestIterRec. 1 2) {:c 3 :d 4})]
+          test-record (into (->TestIterRec 1 2) {:c 3 :d 4})]
       (is (= true (seq-iter-match (.-entries test-map))))
       (is (= true (seq-iter-match test-set)))
       #_(is (= true (seq-iter-match test-queue)))
-      #_(is (= true (seq-iter-match test-record))))))
+      (is (= true (seq-iter-match (.-entries test-record)))))))
 
 ;; NOTE: no sense in our context
 #_(deftest test-es6-interfaces
@@ -1240,16 +1239,15 @@
   (is (= foo-1274 42))
     (is (= cljd.test-clojure.core-test/foo-1274 42)))
 
-;; TODO
-#_#_(defrecord CLJS1780 [a b c])
+(defrecord CLJS1780 [a b c])
 
 (deftest test-cljs-1780
   (let [record (->CLJS1780 1 2 3)]
     (is (= (into #{} (sequence (map identity)
-                               record))
-           #{[:a 1] [:b 2] [:c 3]}))
+                       record))
+          #{[:a 1] [:b 2] [:c 3]}))
     (is (= (into #{} (sequence (map identity)
-                               (assoc record :d 4 :e 5)) )
+                       (assoc record :d 4 :e 5)) )
           #{[:a 1] [:b 2] [:c 3] [:d 4] [:e 5]}))))
 
 (deftest test-cljs-1775
@@ -1347,23 +1345,23 @@
     (let [sm (sorted-map 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7)]
       (is (= [1 2 3 4] (reduce-kv (fn [m k v] (if (= 5 k) (reduced m) (conj m k))) [] sm))))))
 
-#_#_(defrecord CLJS2079 [a b])
+(defrecord CLJS2079 [a b])
 
 (deftest test-cljs-2079
   (testing "Records and maps should not be equal"
-    (let [am (array-map :a 1 :b 2)
+    (let [#_#_am (array-map :a 1 :b 2)
           hm (hash-map :a 1 :b 2)
-          sm (sorted-map :a 1 :b 2)
+          #_#_sm (sorted-map :a 1 :b 2)
           r (->CLJS2079 1 2)]
-      (is (= am hm sm))
+      #_(is (= am hm sm))
 
-      (is (not= r am))
+      #_#_(is (not= r am))
       (is (not= am r))
 
       (is (not= r hm))
       (is (not= hm r))
 
-      (is (not= r sm))
+      #_#_(is (not= r sm))
       (is (not= sm r)))))
 
 (deftype MapWithNoIKVReduce [backing-map]
@@ -1649,10 +1647,9 @@
     (is (not (uri? {})))
     (is (uri? (.dataFromString Uri "http://clojurescript.org")))))
 
-#_(defrecord CLJS-2787 [])
+(defrecord CLJS-2787 [])
 
-;; TODO
-#_(deftest test-cljs-2787
+(deftest test-cljs-2787
   (let [x (map->CLJS-2787 {1 2})
         y (map->CLJS-2787 x)]
     (is (= x y))))
@@ -1752,15 +1749,15 @@
     (is (== 17 (gobject/get o "a")))
     (is (== 27 (gobject/get o "b")))))
 
-#_#_#_#_#_(defprotocol ExtMetaProtocol
+#_(defprotocol ExtMetaProtocol
   :extend-via-metadata true
   (ext-meta-protocol [x]))
 
-(defprotocol NonMetaProtocol
+#_#_#_#_(defprotocol NonMetaProtocol
   (non-meta-protocol [x]))
 
 (defrecord SomeMetaImpl [x]
-  ExtMetaProtocol
+  #_#_ExtMetaProtocol
   (ext-meta-protocol [_] x)
   NonMetaProtocol
   (non-meta-protocol [_] x))
@@ -1836,10 +1833,10 @@
 (deftest test-cljs-3271
   (is (== 0.6 (nth (range 0 1 0.1) 6))))
 
-#_(defrecord CLJS3305A [])
-#_(defrecord CLJS3305B [a b])
+(defrecord CLJS3305A [])
+(defrecord CLJS3305B [a b])
 
-#_(deftest test-cljs-3305
+(deftest test-cljs-3305
   (let [empty-basis       (->CLJS3305A)
         nonempty-basis    (->CLJS3305B 1 2)
         empty-extended    (assoc empty-basis :y 1)

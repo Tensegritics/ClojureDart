@@ -1018,6 +1018,7 @@
      applying f to that result and the 3rd item, etc."))
 
 (deftype Reduced [val]
+  :type-only true
   IDeref
   (-deref [o] val))
 
@@ -1581,8 +1582,7 @@
   "Test map equivalence. Returns true if x equals y, otherwise returns false."
   [x y]
   (boolean
-    ;; TODO : add record? when there are records
-    (when (and (map? y) #_(not (record? y)))
+    (when (and (map? y) (not (record? y)))
       ; assume all maps are counted
       (when (== (count x) (count y))
         (let [never-equiv (Object.)]
@@ -1607,6 +1607,7 @@
   (-hash-realized? [coll] (.!= -1 __hash)))
 
 (deftype Keyword [^String? ns ^String name ^int _hash]
+  :type-only true
   ^:mixin ToStringMixin
   IPrint
   (-print [o ^StringSink sink]
@@ -1620,7 +1621,7 @@
         ;; TODO : use `ns` instead of `(.-ns this)`; I used this form
         ;; because their is a bug in optional type emit
         (let [other ^Keyword other]
-          (and (.== ns other) (.== name other))))))
+          (and (.== ns (.-ns other)) (.== name (.-name other)))))))
   IFn
   (-invoke [kw coll]
     (get coll kw))
@@ -1683,6 +1684,7 @@
   [x] (or (keyword? x) (symbol? x)))
 
 (deftype Symbol [^String? ns ^String name meta ^:mutable ^int _hash]
+  :type-only true
   ^:mixin ToStringMixin
   IPrint
   (-print [o ^StringSink sink]
@@ -1904,6 +1906,7 @@
                ^:mutable meta
                ^:mutable validator
                ^:mutable ^PersistentHashMap watches]
+  :type-only true
   IAtom
   IEquiv
   (-equiv [o other] (identical? o other))
@@ -2058,8 +2061,16 @@
    (let [old-state (.-state a)]
      [old-state (apply swap! a f x y more)])))
 
+(defprotocol IRecord
+   "Marker interface indicating a record object")
+
+ (defn ^bool record?
+   [x]
+   (satisfies? IRecord x))
+
 ;; TODO add printing
 (deftype Delay [^:mutable val ^:mutable f]
+  :type-only true
   IDeref
   (-deref [this]
     (when-some [f' f]
@@ -2122,6 +2133,7 @@
   `(-vreset! ~vol (~f (-deref ~vol) ~@args)))
 
 (deftype Volatile [^:mutable state]
+  :type-only true
   IVolatile
   (-vreset! [_ new-state]
     (set! state new-state))
@@ -2147,6 +2159,7 @@
   (-ex-data ex))
 
 (deftype ExceptionInfo [msg data ex]
+  :type-only true
   Object
   (^:getter message [_] msg)
   (^:getter cause [_] ex)
@@ -2828,11 +2841,12 @@
 
 (deftype #/(Cons E)
   [meta _first rest ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(Cons R) #/(cast R) [coll]
-   (Cons. meta _first rest __hash))
+   (new #/(Cons R) meta _first rest __hash))
   IList
   IWithMeta
   (-with-meta [coll new-meta]
@@ -2872,12 +2886,13 @@
 
 (deftype #/(PersistentList E)
   [meta _first rest ^int count ^:mutable ^int __hash]
+  :type-only true
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   ^:mixin EquivSequentialHashMixin
   (^int ^:getter length [coll] count) ; TODO dart resolution through our own types
   (^#/(PersistentList R) #/(cast R) [coll]
-   (PersistentList. meta _first rest count __hash))
+   (new #/(PersistentList R) meta _first rest count __hash))
   ;; invariant: _first is nil when count is zero
   IList
   IWithMeta
@@ -2938,11 +2953,12 @@
 
 (deftype #/(IteratorSeq E)
   [meta value ^Iterator iter ^:mutable ^some _rest ^:mutable ^int __hash]
+  :type-only true
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(SeqListMixin E)
   (^#/(IteratorSeq R) #/(cast R) [coll]
-   (IteratorSeq. meta value iter _rest __hash))
+   (new #/(IteratorSeq R) meta value iter _rest __hash))
   ISeqable
   (-seq [this] this)
   ISeq
@@ -2980,11 +2996,12 @@
 
 (deftype #/(StringSeq E)
   [^String string ^int i meta ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(StringSeq R) #/(cast R) [coll]
-   (StringSeq. string i meta __hash))
+   (new #/(StringSeq R) string i meta __hash))
   ISeqable
   (-seq [coll] (when (< i (.-length string)) coll))
   IMeta
@@ -3101,11 +3118,12 @@
 
 (deftype #/(LazySeq E)
   [meta ^:mutable ^some fn ^:mutable s ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(LazySeq R) #/(cast R) [coll]
-   (LazySeq. meta fn s __hash))
+   (new #/(LazySeq R) meta fn s __hash))
   (sval [coll]
     (if (nil? fn)
       s
@@ -3162,7 +3180,7 @@
 
 ;;; PersistentVector
 
-(deftype VectorNode [edit ^List arr])
+(deftype VectorNode [edit ^List arr] :type-only true)
 
 (defn- ^VectorNode new-path [^int level ^VectorNode node]
   (loop [^int ll level
@@ -3205,7 +3223,8 @@
   [^PersistentVector v
    ^:mutable ^int i
    ^int to
-   ^:mutable ^List curr]) ; predecl
+   ^:mutable ^List curr]
+  :type-only true) ; predecl
 
 (defn- ^int compare-indexed
   "Used as foundation for indexed DS as comparator function."
@@ -3225,12 +3244,13 @@
 
 (deftype #/(PersistentVector E)
   [meta ^int cnt ^int shift ^VectorNode root ^List tail ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   (iterator [v] (PVIterator. v 0 cnt tail)) ; tail assignment is only to pass a non-null list
   ^:mixin #/(SeqListMixin E)
   (^#/(PersistentVector R) #/(cast R) [coll]
-   (PersistentVector. meta cnt shift root tail __hash))
+   (new #/(PersistentVector R) meta cnt shift root tail __hash))
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink] (print-sequential "[" "]" o sink))
@@ -3447,6 +3467,7 @@
    ^:mutable ^int i
    ^int to
    ^:mutable ^List curr]
+  :type-only true
   #/(Iterator E)
   (current [iter] (aget curr (bit-and (dec i) 31)))
   (moveNext [iter]
@@ -3465,6 +3486,7 @@
   [^PersistentVector v
    ^:mutable ^int i
    ^:mutable ^List curr]
+  :type-only true
   #/(Iterator E)
   (current [iter] (aget curr (bit-and i 31)))
   (moveNext [iter]
@@ -3477,6 +3499,7 @@
 
 (deftype #/(RSeq E)
   [meta v ^int i ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   (iterator [coll]
@@ -3485,7 +3508,7 @@
       (RSeqIterator. v (inc i) (.-tail ^PersistentVector v))))
   ^:mixin #/(SeqListMixin E)
   (^#/(RSeq R) #/(cast R) [coll]
-   (RSeq. meta v i __hash))
+   (new #/(RSeq R) meta v i __hash))
   ^:mixin ToStringMixin
   IMeta
   (-meta [coll] meta)
@@ -3529,6 +3552,7 @@
 
 (deftype #/(SubVec E)
   [meta v ^int start ^int end ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   (iterator [coll]
@@ -3545,7 +3569,7 @@
       (PVIterator. v start end  (.-tail ^PersistentVector v))))
   ^:mixin #/(SeqListMixin E)
   (^#/(SubVec R) #/(cast R) [coll]
-   (SubVec. meta v start end __hash))
+   (new #/(SubVec R) meta v start end __hash))
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink] (print-sequential "[" "]" o sink))
@@ -3665,6 +3689,7 @@
   [x] (satisfies? IChunkedSeq x))
 
 (deftype ArrayChunk [^List arr ^int off ^int end]
+  :type-only true
   ICounted
   (-count [_] (- end off))
   IIndexed
@@ -3691,6 +3716,7 @@
         acc))))
 
 (deftype ChunkBuffer [^:mutable ^List? arr ^:mutable ^int end]
+  :type-only true
   Object
   (add [_ o]
     (aset ^List arr end o)
@@ -3708,11 +3734,12 @@
 
 (deftype #/(ChunkedCons E)
   [chunk more meta ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(ChunkedCons R) #/(cast R) [coll]
-   (ChunkedCons. chunk more meta __hash))
+   (new #/(ChunkedCons R) chunk more meta __hash))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -3774,11 +3801,12 @@
 
 (deftype #/(PVChunkedSeq E)
   [^PersistentVector vec ^List arr ^int i ^int off meta ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
   (^#/(PVChunkedSeq R) #/(cast R) [coll]
-   (PVChunkedSeq. vec arr i off meta __hash))
+   (new #/(PVChunkedSeq R) vec arr i off meta __hash))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
@@ -3834,7 +3862,8 @@
                           ^:mutable ^int shift
                           ^:mutable ^some edit
                           ^:mutable ^VectorNode root
-                          ^:mutable ^List tail])
+                          ^:mutable ^List tail]
+  :type-only true)
 
 (defn- tv-editable-array-for
   "Returns the editable array where i is located."
@@ -3884,6 +3913,7 @@
                           ^:mutable ^some edit
                           ^:mutable ^VectorNode root
                           ^:mutable ^List tail]
+  :type-only true
   ITransientCollection
   (-conj! [tcoll o]
     (when-not edit
@@ -4004,6 +4034,7 @@
 
 (deftype #/(PersistentMapEntry K V)
   [_k _v ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin ToStringMixin
   IPrint
@@ -4084,7 +4115,7 @@
   (-subvec [coll start end]
     (if (zero? start) [_k] [_v])))
 
-(deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr])
+(deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr] :type-only true)
 
 (deftype #/(BitmapIterator E)
   [^:mutable ^BitmapNode node
@@ -4095,6 +4126,7 @@
    ^#/(List int) masks
    ^#/(List BitmapNode) nodes
    ^:dart mk-value]
+  :type-only true
   #/(Iterator E)
   (current [iter]
     (let [arr (.-arr node)]
@@ -4133,50 +4165,8 @@
       :else
       false)))
 
-; Baptiste's
-#_(deftype BitmapIterator [^:mutable ^int current-mask
-                         ^:mutable ^BitmapNode current-bn
-                         ^:mutable ^{:tag "List<int>"} mask-list
-                         ^:mutable ^{:tag "List<BitmapNode>"} bn-list
-                         ^:mutable ^int list-idx]
-  Iterator
-  (^:getter ^MapEntry current [iter]
-   (let [bitmap-hi (.-bitmap_hi current-bn)
-         bitmap-lo (.-bitmap_lo current-bn)
-         kv-mask (bit-and current-mask bitmap-hi bitmap-lo)
-         bit (bit-and kv-mask (- kv-mask))
-         mask' (dec bit)
-         idx (u32x2-bit-count (bit-and mask' bitmap-hi) (bit-and mask' bitmap-lo))
-         arr (.-arr current-bn)]
-     (set! current-mask (bit-xor current-mask bit))
-     (MapEntry. (aget arr idx) (aget arr (inc idx)) -1)))
-  (^bool moveNext [iter]
-   (loop []
-     (let [bitmap-hi (.-bitmap_hi current-bn)
-           bitmap-lo (.-bitmap_lo current-bn)
-           kv-mask (bit-and current-mask bitmap-hi bitmap-lo)]
-       (cond
-         (< 0 kv-mask) true
-         (and (zero? current-mask) (zero? list-idx)) false
-         (zero? current-mask)
-         (do (set! list-idx (dec list-idx))
-             (set! current-mask (aget mask-list list-idx))
-             (set! current-bn (aget bn-list list-idx))
-             (recur))
-         :else
-         (let [bn-mask (bit-and current-mask (bit-xor bitmap-hi bitmap-lo))
-               bit (bit-and bn-mask (- bn-mask))
-               mask (dec bit)
-               idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
-               ^BitmapNode next-bn (aget (.-arr current-bn) idx)]
-           (aset mask-list list-idx (bit-xor current-mask bit))
-           (aset bn-list list-idx current-bn)
-           (set! list-idx (inc list-idx))
-           (set! current-mask (bit-or (.-bitmap_hi next-bn) (.-bitmap_lo next-bn)))
-           (set! current-bn next-bn)
-           (recur)))))))
-
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
+  :type-only true
   Object
   (inode_lookup [node k not-found]
     (let [h (hash k)]
@@ -4522,6 +4512,7 @@
   )
 
 (deftype TransientHashMap [^:mutable ^bool editable ^:mutable ^BitmapNode root]
+  :type-only true
   ITransientCollection
   (-conj! [tcoll o]
     (when-not editable
@@ -4620,14 +4611,16 @@
 
 (deftype #/(PersistentHashMap K V)
   [meta ^BitmapNode root ^:mutable ^int __hash]
+  :type-only true
   ^:mixin #/(dart-coll/MapMixin K V)
   (entries [coll]
     (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
      (iterator [_]
-      (BitmapIterator. root 0 0 0 1
-        (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (List/filled 7 root)
-        #(PersistentMapEntry. %1 %2 -1)))))
+       (BitmapIterator. root 0 0 0 1
+         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+         (.filled #/(List BitmapNode) 7 root)
+         #(PersistentMapEntry. %1 %2 -1))
+       )))
   ("[]" [coll k]
    (-lookup coll k nil))
   ("[]=" [coll key val]
@@ -4640,18 +4633,18 @@
    (reify ^:mixin #/(dart-coll/IterableMixin K)
      (iterator [_]
       (BitmapIterator. root 0 0 0 1
-        (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (List/filled 7 root)
+        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (.filled #/(List BitmapNode) 7 root)
         (fn [k _] k)))))
   (values [coll]
    (reify ^:mixin #/(dart-coll/IterableMixin V)
      (iterator [_]
       (BitmapIterator. root 0 0 0 1
-        (List/filled 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-        (List/filled 7 root)
+        (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+        (.filled #/(List BitmapNode) 7 root)
         (fn [_ v] v)))))
   (^#/(PersistentHashMap RK RV) #/(cast RK RV) [coll]
-   (PersistentHashMap. meta root __hash))
+   (new #/(PersistentHashMap RK RV) meta root __hash))
   ^:mixin ToStringMixin
   IPrint
   ;; TODO : handle prefix-map & co
@@ -4734,7 +4727,7 @@
           gross-size (inc (bit-or 7 (dec net-size)))]
       (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil))))))
 
-(def -EMPTY-MAP
+(def ^PersistentHashMap -EMPTY-MAP
   (PersistentHashMap. nil (BitmapNode. 0 0 0 (.empty List)) -1))
 
 (defn merge
@@ -4793,7 +4786,7 @@
   (iterator [this] (.-iterator ^#/(Iterable E) (.-keys hm)))
   (toSet [this] (Set/of ^#/(Iterable E) (.-keys hm)))
   (^#/(PersistentHashSet R) #/(cast R) [coll]
-   (PersistentHashSet. meta ^#/(PersistentHashMap R R) (-> hm (. #/(cast R R))) __hash))
+   (new #/(PersistentHashSet R) meta (-> hm (. #/(cast R R))) __hash))
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink]
@@ -4845,6 +4838,7 @@
 
 (deftype TransientHashSet [^:mutable ^TransientHashMap transient-map]
   ;; all editability checks are performed by the transient map
+  :type-only true
   ITransientCollection
   (-conj! [tcoll o]
     (set! transient-map (assoc! transient-map o o))
@@ -4871,7 +4865,7 @@
   (-invoke [tcoll k not-found]
     (-lookup tcoll k not-found)))
 
-(def -EMPTY-SET
+(def ^PersistentHashSet -EMPTY-SET
   (PersistentHashSet. nil {} -1))
 
 (defn ^List to-array
@@ -6131,10 +6125,10 @@
               body))]
     (some-> seq-exprs seq emit)))
 
-(defn vec [coll]
+(defn ^PersistentVector vec [coll]
   (into [] coll))
 
-(defn vector
+(defn ^PersistentVector vector
   "Creates a new vector containing the args."
   ([] [])
   ([a] [a])
@@ -6146,22 +6140,22 @@
   ([a b c d e f & args]
    (into [a b c d e f] args)))
 
-(defn set [coll]
+(defn ^PersistentHashSet set [coll]
   (into #{} coll))
 
-(defn hash-set
+(defn ^PersistentHashSet hash-set
   "Returns a new hash set with supplied keys.  Any equal keys are
   handled as if by repeated uses of conj."
   ([] #{})
   ([& keys] (into #{} keys)))
 
-(defn -map-lit [^List kvs]
+(defn ^PersistentHashMap -map-lit [^List kvs]
   (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
     (if (< i (.-length kvs))
       (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
       ^PersistentHashMap (-persistent! tm))))
 
-(defn hash-map
+(defn ^PersistentHashMap hash-map
   "keyval => key val
   Returns a new hash map with supplied mappings."
   [& keyvals]
@@ -6173,14 +6167,14 @@
       (recur (nnext in) (assoc! out (first in) (second in)))
       (persistent! out))))
 
-(defn -list-lit [^List xs]
+(defn ^PersistentList -list-lit [^List xs]
   (loop [^PersistentList l () ^int i (.-length xs)]
     (let [i (dec i)]
       (if (neg? i)
         l
         (recur (-conj l (aget xs i)) i)))))
 
-(defn -vec-owning [^List xs]
+(defn ^PersistentVector -vec-owning [^List xs]
   (assert (<= (count xs) 32))
   (PersistentVector. nil (count xs) 5 (.-root -EMPTY-VECTOR) xs -1))
 
@@ -6486,6 +6480,7 @@
 
 (deftype #/(XformIterator E)
   [^List buf ^:mutable ^int i move-next ^:mutable ^bool in-progress]
+  :type-only true
   #/(Iterator E)
   (current [_]
     (aget buf i))
@@ -6571,11 +6566,13 @@
   ([xform coll & colls]
    (or (chunked-iterator-seq (apply iterator xform coll colls)) ())))
 
-(deftype #/(Eduction E) [xform coll ^:mutable ^int __hash]
+(deftype #/(Eduction E)
+  [xform coll ^:mutable ^int __hash]
+  :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/IterableMixin E)
   (iterator [_] (iterator xform coll))
-  (#/(cast R) [_] (Eduction. xform coll __hash))
+  (^#/(Eduction R) #/(cast R) [_] (new #/(Eduction R) xform coll __hash))
   ISeqable
   (-seq [_] (seq (sequence xform coll)))
   IReduce
@@ -6655,7 +6652,138 @@
       ([] (gensym "G__"))
       ([prefix-string] (symbol (str prefix-string (swap! id inc)))))))
 
-(defn ^:async main []
+(declare tagged-literal)
+
+(defmacro defrecord [name [& fields] & opts+specs]
+  (let [key (gensym "key")
+        extmap (with-meta 'extmap {:tag (with-meta 'dart:core/Map
+                                          {:type-params '(K V)})})
+        record-body
+        ['cljd.core/IRecord
+         'cljd.core/IEquiv
+         (let [this (with-meta (gensym "this") {:tag name})
+               other (gensym "other")]
+           `(~'-equiv [~this ~other]
+             (or (identical? ~this ~other)
+               (and (dart/is? ~other ~name)
+                 ~@(map (fn [field]
+                          `(= ~(list (symbol (str ".-" field)) this)
+                             ~(list (symbol (str ".-" field)) (with-meta other {:tag name})))) fields)
+                 (= ~extmap
+                   (~'.-extmap ~(with-meta other {:tag name})))))))
+         'cljd.core/IMap
+         `(~'-dissoc [coll# k#]
+           (if (contains? #{~@(map keyword fields)} k#)
+             (dissoc (with-meta (into {} coll#) ~'meta) k#)
+             (new ~name ~@(conj (vec fields) 'meta) (or (dissoc ~extmap k#) {}) -1)))
+         'cljd.core/ISeqable
+         `(~'-seq [coll#]
+           (seq (concat [~@(map #(list 'new 'cljd.core/PersistentMapEntry (keyword %) % -1) fields)]  ~extmap)))
+         'cljd.core/IAssociative
+         (let [v (gensym "val")]
+           `(~'-assoc [coll# k# ~v]
+             (case k#
+               ~@(mapcat (fn [fld]
+                           [(keyword fld) (list* `new name (replace {fld v} (conj (vec fields) 'meta extmap -1)))])
+                   fields)
+               (new ~name ~@fields ~'meta (assoc ~extmap k# ~v) -1))))
+         'cljd.core/ILookup
+         `(~'-contains-key? [o# ~key]
+           ~(if (seq fields)
+              `(case ~key
+                 ~(map keyword fields) true
+                 (contains? ~extmap ~key))
+              `(contains? ~extmap ~key)))
+         `(~'-lookup [o# ~key] (~'-lookup o# ~key nil))
+         `(~'-lookup [o# ~key not-found#]
+           (case ~key
+             ~@(mapcat (fn [f] [(keyword f) f]) fields)
+             (get ~extmap ~key not-found#)))
+         'cljd.core/ICounted
+         `(~'-count [coll#] (+ ~(count fields) (.-length ~extmap)))
+         'cljd.core/ICollection
+         `(~'-conj [coll# o#]
+           (if (and (vector? o#) (== (-count o#) 2))
+             (-assoc coll# (-nth o# 0) (-nth o# 1))
+             (reduce -conj coll# o#)))
+         'cljd.core/IWithMeta
+         (let [meta (gensym "meta")]
+           `(~'-with-meta [o# ~meta]
+             (new ~name ~@(conj (vec fields) meta extmap -1))))
+         'cljd.core/IMeta
+         `(~'-meta [o#] ~'meta)
+         'cljd.core/IKVReduce
+         `(~'-kv-reduce [coll# f# init#]
+           (reduce (fn [ret# [k# v#]] (f# ret# k# v#)) init# coll#))
+         (with-meta `dart-coll/MapMixin {:mixin true :type-params '(K V)})
+         (let [coll (gensym "coll")]
+           `(~'entries [~coll]
+             (-> ~(tagged-literal 'dart
+                    (with-meta (into [] (map #(list 'new 'cljd.core/PersistentMapEntry (keyword %) % -1) fields))
+                      {:fixed true
+                       :tag '^{:type-params (K V)} dart:core/MapEntry}))
+               (.followedBy (.-entries ~extmap)))))
+         (let [coll (gensym "coll")]
+           `(~(with-meta 'keys {:tag (with-meta 'Iterable {:type-params '(K)})}) [~coll]
+             (-> ~(tagged-literal 'dart
+                    (with-meta (into [] (map (fn [field]
+                                               (let [k (gensym "k")]
+                                                 `(let [~(with-meta k {:tag 'K}) ~(keyword field)] ~k))) fields))
+                      {:fixed true
+                       :tag 'K}))
+               (.followedBy (.-keys ~extmap)))))
+         (let [coll (gensym "coll")]
+           `(~'values [~coll]
+             (-> ~(tagged-literal 'dart
+                    (with-meta (vec fields)
+                      {:fixed true
+                       :tag 'V}))
+               (.followedBy (.-values ~extmap)))))
+         `("[]" [coll# k#]
+           (-lookup coll# k# nil))
+         `("[]=" [coll# key# val#]
+           (throw (UnsupportedError. "[]= not supported on defrecord")))
+         `(~'remove [coll# val#]
+           (throw (UnsupportedError. "remove not supported on defrecord")))
+         `(~'clear [coll#]
+           (throw (UnsupportedError. "clear not supported on defrecord")))
+         `(~(with-meta 'cast {:tag (with-meta name {:type-params '(RK RV)})
+                              :type-params '(RK RV)}) [coll#]
+           (new ~(with-meta name  {:type-params '(RK RV)})
+             ~@(conj (vec fields) 'meta
+                 (list '. extmap (with-meta 'cast {:type-params '(RK RV)})) '__hash)))
+         'cljd.core/IHash
+         `(~'-hash [coll#]
+           (ensure-hash ~'__hash
+             (bit-xor
+               ~(bit-xor
+                  (hash (get-in &env [:nses :current-ns]))
+                  (hash name))
+               (hash-unordered-coll coll#))))
+         (with-meta 'cljd.core/ToStringMixin {:mixin true})
+         'cljd.core/IPrint
+         ;; TODO print-dup
+         `(~'-print [o# sink#]
+           (print-map o# sink#))]
+        m (gensym "m")]
+    `(do (deftype ~(with-meta name {:type-params '(K V)})
+             ~(conj (vec fields) 'meta
+                extmap
+                (with-meta '__hash {:mutable true :tag `int}))
+           :type-only true
+           ~@(concat record-body opts+specs))
+         (defn ~(with-meta (symbol (str "->" name)) {:tag name})
+           ~(vec fields)
+           (new ~name ~@fields nil {} -1))
+         (defn ~(with-meta (symbol (str "map->" name)) {:tag name})
+           [~m]
+           (new ~name
+             ~@(map (fn [k] (list (keyword k) m)) fields)
+             nil
+             (reduce dissoc (into {} ~m) ~(into [] (map keyword) fields))
+             -1)))))
+
+#_(defn ^:async main []
   (prn (Map/of {:a 1}))
   (prn (get (Map/of {:a 1}) :a))
   (prn (:a (Map/of {:a 1})))
@@ -6716,4 +6844,4 @@
   #_(condp some [1 2 3 4]
     #{0 6 7} :>> inc
     #{5 9}   :>> dec)
-  )
+    )
