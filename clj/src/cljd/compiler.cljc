@@ -104,18 +104,6 @@
           clojure.java.io/reader
           clojure.lang.LineNumberingPushbackReader.
           clojure.edn/read)
-        export-list
-        (fn export-list [original-lib {exports :exports :as v}]
-          (-> (into {} (for [[k] (dissoc v :exports)]
-                         [k {:lib original-lib :canon-lib original-lib}]))
-            (into
-              (mapcat (fn [{:keys [lib shown hidden]}]
-                        (cond
-                          shown  (into {} (map (fn [k] [k {:lib original-lib :canon-lib lib}])) shown)
-                          hidden (into {} (map (fn [[k v]] [k (assoc v :lib original-lib :canon-lib lib)]))
-                                   (reduce dissoc (export-list original-lib (dart-libs-info lib)) hidden))
-                          :else (into {} (map (fn [[k v]] [k (assoc v :lib original-lib :canon-lib lib)]))
-                                  (export-list original-lib (dart-libs-info lib)))))) exports)))
         export
         (fn export [{exports :exports :as v}]
           (-> (into v (map (fn [{:keys [lib shown hidden]}]
@@ -127,7 +115,7 @@
                                :else (export (dart-libs-info lib))))) exports)
             (dissoc :exports)))
         assoc->qnames
-        (fn [export-list entity]
+        (fn [entity]
           (case (:type entity)
             #_#_"Function" (:qname dc-Function)
             #_#_"Never" (:qname dc-Never)
@@ -136,58 +124,55 @@
             (if (:is-param entity)
               (let [qname (symbol (:type entity))]
                 (assoc entity :qname qname :canon-qname qname))
-              (if-some [{:keys [lib canon-lib]} (export-list (:type entity))]
+              (let [lib (:lib entity "dart:core")
+                    canon-lib (:canon-lib entity lib)
+                    canon-qname (-> (global-lib-alias canon-lib nil) (str "." (:type entity)) symbol)
+                    qname (if (= lib canon-lib)
+                            canon-qname
+                            (-> (global-lib-alias lib nil) (str "." (:type entity)) symbol))]
                 (assoc entity
-                  :qname (-> (global-lib-alias lib nil) (str "." (:type entity)) symbol)
-                  :canon-qname (-> (global-lib-alias canon-lib nil) (str "." (:type entity)) symbol)
+                  :qname qname
+                  :canon-qname canon-qname
                   :lib lib
-                  :canon-lib canon-lib)
-                (let [qname (-> (global-lib-alias (:lib entity "dart:core") nil) (str "." (:type entity)) symbol)]
-                  (assoc entity
-                    :qname qname
-                    :canon-qname qname
-                    :lib (:lib entity)
-                    :canon-lib (:lib entity)))))))
+                  :canon-lib canon-lib)))))
         qualify-entity
-        (fn qualify-entity [export-list entity]
-          (let [qualify-entity #(qualify-entity export-list %)
-                assoc->qnames #(assoc->qnames export-list %)]
-            (case (:kind entity)
-              :class (->
-                       (assoc->qnames entity)
-                       (update-if :type-parameters #(into [] (map qualify-entity) %))
-                       (update-if :super qualify-entity)
-                       (update-if :interfaces #(into [] (map qualify-entity) %))
-                       (update-if :mixins #(into [] (map qualify-entity) %))
-                       (into (comp (filter #(string? (first %)))
-                               (map (fn [[n v]] [n (qualify-entity v)])))
-                         entity))
-              :field (update entity :type qualify-entity)
-              :function (->
-                          (assoc->qnames entity)
-                          (update :return-type qualify-entity)
-                          (update-if :parameters #(into [] (map qualify-entity) %))
-                          (update-if :type-parameters #(into [] (map qualify-entity) %)))
-              :method (-> entity
+        (fn qualify-entity [entity]
+          (case (:kind entity)
+            :class (->
+                     (assoc->qnames entity)
+                     (update-if :type-parameters #(into [] (map qualify-entity) %))
+                     (update-if :super qualify-entity)
+                     (update-if :interfaces #(into [] (map qualify-entity) %))
+                     (update-if :mixins #(into [] (map qualify-entity) %))
+                     (into (comp (filter #(string? (first %)))
+                             (map (fn [[n v]] [n (qualify-entity v)])))
+                       entity))
+            :field (update entity :type qualify-entity)
+            :function (->
+                        (assoc->qnames entity)
                         (update :return-type qualify-entity)
                         (update-if :parameters #(into [] (map qualify-entity) %))
                         (update-if :type-parameters #(into [] (map qualify-entity) %)))
-              :constructor (-> entity
-                             (update-if :parameters #(into [] (map qualify-entity) %))
-                             (update-if :type-parameters #(into [] (map qualify-entity) %))
-                             (update :return-type qualify-entity))
-              (:named :positional) (update entity :type qualify-entity)
-              (cond-> (-> (assoc->qnames entity)
-                        (update-if :type-parameters #(into [] (map qualify-entity) %)))
-                (= "Function" (:type entity))
-                (->
-                  (update-if :return-type #(some-> % qualify-entity))
-                  (update-if :parameters #(into [] (map qualify-entity) %)))))))]
+            :method (-> entity
+                      (update :return-type qualify-entity)
+                      (update-if :parameters #(into [] (map qualify-entity) %))
+                      (update-if :type-parameters #(into [] (map qualify-entity) %)))
+            :constructor (-> entity
+                           (update-if :parameters #(into [] (map qualify-entity) %))
+                           (update-if :type-parameters #(into [] (map qualify-entity) %))
+                           (update :return-type qualify-entity))
+            (:named :positional) (update entity :type qualify-entity)
+            (cond-> (-> (assoc->qnames entity)
+                      (update-if :type-parameters #(into [] (map qualify-entity) %)))
+              (= "Function" (:type entity))
+              (->
+                (update-if :return-type #(some-> % qualify-entity))
+                (update-if :parameters #(into [] (map qualify-entity) %))))))]
     (-> (into {} (comp
-                   (map (fn [[lib content]] [lib (export-list lib content) (export content)]))
-                   (map (fn [[lib export-list content]]
+                   (map (fn [[lib content]] [lib (export content)]))
+                   (map (fn [[lib content]]
                           [lib (into {} (map (fn [[typename clazz]]
-                                               [typename (qualify-entity export-list
+                                               [typename (qualify-entity
                                                            (assoc clazz
                                                              :type typename
                                                              :lib lib
