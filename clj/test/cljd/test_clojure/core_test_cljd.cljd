@@ -44,11 +44,11 @@
     (let [a (if (odd? 3) 3 4)]
       (is (dart/is? a int)))
     (let [a (if (odd? 3) 3 nil)]
-      (is (dart/is? a dart:core/int?)))
+      (is (dart/is? a int?)))
     (let [a (if (odd? 3) 3 4.3)]
       (is (dart/is? a dynamic)))
     (let [a (when-let [a (if (odd? 3) 3 4)] a)]
-      (is (dart/is? a dart:core/int?)))
+      (is (dart/is? a int?)))
     (let [a (if (odd? 2) (throw (Exception. "exception")) "aa")]
       (is (dart/is? a String)))
     (let [a (if (odd? 2) nil nil)]

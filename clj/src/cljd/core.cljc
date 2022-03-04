@@ -2728,7 +2728,7 @@
         (.clear bak)
         (set! young bak)))
     (. young "[]=" o h))
-  (^dart:core/int? lookup [this o]
+  (^int? lookup [this o]
    (or (. young "[]" o)
      (when-some [^int h (. old "[]" o)]
        (.insert this o h)

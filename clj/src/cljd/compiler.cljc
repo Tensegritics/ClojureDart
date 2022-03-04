@@ -466,6 +466,11 @@
                  info))
        :def (case (:type info)
               :class (:dart/type info)
+              :field (case (when (= 'cljd.core (:ns info)) (:name info))
+                       int dc-int
+                       int? (assoc dc-int :nullable true)
+                       double dc-double
+                       double? (assoc dc-double :nullable true))
               not-found)
        not-found))))
 
