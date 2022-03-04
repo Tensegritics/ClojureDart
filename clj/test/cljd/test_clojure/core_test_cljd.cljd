@@ -172,3 +172,6 @@
   (is (= true (distinct? 1)))
   (is (= false (distinct? 1 1)))
   (is (= true (apply distinct? (range 20)))))
+
+(deftest testing-every-pred
+   (is (= true ((every-pred #(< % 10) number?) 1 2 3 4))))
