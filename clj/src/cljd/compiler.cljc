@@ -1881,54 +1881,66 @@
     [mname mtype-params dart-fixed-params opt-kind dart-opt-params (nil? (seq body)) dart-body]))
 
 (defn extract-super-calls [dart-body this-super]
-  (let [dart-fns (atom [])
-        extract1
+  (let [extract1
         (fn [x]
-          (or
-            (let [op (when (seq? x) (first x))]
-              (case (when (symbol? op) op)
-                (dart/. dart/.-)
-                (when (= (second x) this-super)
-                  (let [args (drop (case (first x) dart/. 4 3) x)
-                        [bindings args]
-                        (reduce (fn [[bindings args] a]
-                                  (let [[bindings' a'] (lift-arg true a 'super-arg {})]
-                                    [(into bindings bindings')
-                                     (conj args a')]))
-                          [[] []] args)
-                        params (vec (into #{} (filter symbol?) args))
-                        meth (nth x 2)
-                        dart-fn-name (dart-local (with-meta (symbol (str "super-" meth)) {:dart true}) {})
-                        dart-fn (list 'dart/fn params :positional () false
-                                  (list* (first x) 'super meth args))]
-                    (swap! dart-fns conj [dart-fn-name dart-fn])
-                    (cond->> (cons dart-fn-name params)
-                      (seq bindings) (list 'dart/let bindings))))
-                dart/set!
-                (when-some [fld (when-some [[op o fld] (when (seq? (second x)) (second x))]
-                                  (when (and (= 'dart/.- op) (= o this-super))
-                                    fld))]
-                  (let [dart-fn-name (dart-local (with-meta (symbol (str "super-set-" fld)) {:dart true}) {})
-                        dart-fn (list 'dart/fn '[v] :positional () false
-                                  (list 'dart/set! (list 'dart/.- 'super fld) 'v))]
-                    (swap! dart-fns conj [dart-fn-name dart-fn])
-                    (list dart-fn-name (nth x 2))))
-                nil))
-            (when (= this-super x) (throw (Exception. "Rogue reference to super.")))
-            x))
+          (when (= this-super x) (throw (Exception. "Rogue reference to super.")))
+          (let [op (when (seq? x) (first x))]
+            (case (when (symbol? op) op)
+              (dart/. dart/.-)
+              (when (= (second x) this-super)
+                (let [args (drop (case (first x) dart/. 4 3) x)
+                      [bindings args]
+                      (reduce (fn [[bindings args] a]
+                                (let [[bindings' a'] (lift-arg true a 'super-arg {})]
+                                  [(into bindings bindings')
+                                   (conj args a')]))
+                        [[] []] args)
+                      params (vec (into #{} (filter symbol?) args))
+                      meth (nth x 2)
+                      dart-fn-name (dart-local (with-meta (symbol (str "super-" meth)) {:dart true}) {})
+                      dart-fn (list 'dart/fn params :positional () false
+                                (list* (first x) 'super meth args))]
+                  [dart-fn-name dart-fn
+                   (cond->> (cons dart-fn-name params)
+                     (seq bindings) (list 'dart/let bindings))]))
+              dart/set!
+              (when-some [fld (when-some [[op o fld] (when (seq? (second x)) (second x))]
+                                (when (and (= 'dart/.- op) (= o this-super))
+                                  fld))]
+                (let [dart-fn-name (dart-local (with-meta (symbol (str "super-set-" fld)) {:dart true}) {})
+                      dart-fn (list 'dart/fn '[v] :positional () false
+                                (list 'dart/set! (list 'dart/.- 'super fld) 'v))]
+                  [dart-fn-name dart-fn (list dart-fn-name (nth x 2))]))
+              nil)))
         extract
         (fn extract [form]
-          (let [form' (extract1 form)]
-            (cond
-              (seq? form') (with-meta (doall (map extract form')) (meta form))
-              (vector? form') (with-meta (into [] (map extract) form') (meta form))
-              :else form')))
-        #_(fn extract [form]
-            (clojure.walk/walk extract
-              (fn [form'] (cond-> form' (and (coll? form') (not (map-entry? form'))) (with-meta (meta form))))
-                    (extract1 form)))
-        dart-body (extract dart-body)]
-    [@dart-fns dart-body]))
+          (let [extraction (extract1 form)
+                form (if extraction (peek extraction) form)
+                extractions (into (if extraction {:extraction extraction} {})
+                              (keep-indexed
+                                (fn [i form]
+                                  (when-some [m (extract form)]
+                                    [i m])))
+                              (when (sequential? form) form))]
+            (when (seq extractions)
+              extractions)))
+        extraction (extract dart-body)
+        apply-extraction
+        (fn apply-extraction [form m]
+          (if m
+            (let [form (or (peek (:extraction m)) form)]
+              (if (sequential? form)
+                (let [items
+                      (into []
+                        (map-indexed
+                          (fn [i x]
+                            (apply-extraction x (m i))))
+                        form)]
+                  (with-meta (cond-> items (seq? form) sequence) (meta form)))
+                form))
+            form))]
+    [(into [] (keep (comp pop :extraction)) (tree-seq map? #(vals (dissoc % :extraction)) extraction))
+     (apply-extraction dart-body extraction)]))
 
 (defn method-extract-super-call [method this-super]
   (let [[bindings dart-body] (extract-super-calls (peek method) this-super)]
