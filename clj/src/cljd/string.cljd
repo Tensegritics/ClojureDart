@@ -183,7 +183,7 @@ Design notes for clojure.string:
   the maximum number of splits. Not lazy. Returns vector of the splits."
   ([^String s re]
    (vec (.split s re)))
-  ([^String s re limit]
+  ([^String s ^Pattern re limit]
    (if (<= limit 0)
      (split s re) ; to mimick Java
      (loop [v (transient []) i 0 matches (seq (take (dec limit) (.allMatches re s)))]

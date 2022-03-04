@@ -1566,9 +1566,9 @@
   (-hash [o]
     ; values taken from cljs
     (cond
-      (.== (.-negativeInfinity double) o) -1048576
-      (.== (.-infinity double) o) 2146435072
-      (.== (.-nan double) o) 2146959360
+      (.== double/negativeInfinity o) -1048576
+      (.== double/infinity o) 2146435072
+      (.== double/nan o) 2146959360
       true (m3-hash-int (.-hashCode o))))
   (-hash-realized? [o] true))
 
