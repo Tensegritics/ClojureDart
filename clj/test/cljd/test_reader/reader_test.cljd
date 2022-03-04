@@ -1,0 +1,454 @@
+;   Copyright (c) Baptiste Dupuch & Christophe Grand. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+;;  Tests for ClojureDart (not copied from clj/cljs code base)
+;;
+
+(ns cljd.test-reader.reader-test
+  (:require [cljd.reader :as r]
+            ["dart:async" :as async])
+  (:use [cljd.test :only [deftest is testing are]]))
+
+
+
+;; This part it taken from of cljs.tools.reader-test
+
+;;==============================================================================
+;; common_tests.clj
+;;==============================================================================
+
+(deftest read-integer
+  (is (== 42 (await (r/read-string "42"))))
+  (is (== +42 (await (r/read-string "+42"))))
+  (is (== -42 (await (r/read-string "-42"))))
+
+  (is (== 0 (await (r/read-string "0"))))
+
+  (is (== 042 (await (r/read-string "042"))))
+  (is (== +042 (await (r/read-string "+042"))))
+  (is (== -042 (await (r/read-string "-042"))))
+
+  ;;hex
+  (is (== 0x42e (await (r/read-string "0x42e"))))
+  (is (== +0x42e (await (r/read-string "+0x42e"))))
+  (is (== -0x42e (await (r/read-string "-0x42e"))))
+
+  ;;oct
+  (is (== 511 (int/parse "777" .& :radix 8) (await (r/read-string "0777"))))
+  (is (== -511 (int/parse "-777" .& :radix 8) (await (r/read-string "-0777"))))
+  (is (== 1340 (int/parse "02474" .& :radix 8) (await (r/read-string "02474"))))
+  (is (== -1340 (int/parse "-02474" .& :radix 8) (await (r/read-string "-02474"))))
+  (is (thrown-with-msg? FormatException #"Invalid number: 09."
+        (await (r/read-string "09")))))
+
+(deftest read-floating
+  (is (== 42.23 (await (r/read-string "42.23"))))
+  (is (== +42.23 (await (r/read-string "+42.23"))))
+  (is (== -42.23 (await (r/read-string "-42.23"))))
+
+  (is (== 42.2e3 (await (r/read-string "42.2e3"))))
+  (is (== +42.2e+3 (await (r/read-string "+42.2e+3"))))
+  (is (== -42.2e-3 (await (r/read-string "-42.2e-3")))))
+
+#_(deftest read-ratio
+  (is (== 4/2 (r/read-string "4/2")))
+  (is (== 4/2 (r/read-string "+4/2")))
+  (is (== -4/2 (r/read-string "-4/2"))))
+
+(deftest read-symbol
+  (is (= 'foo (await (r/read-string "foo"))))
+  (is (= 'foo/bar (await (r/read-string "foo/bar"))))
+  (is (= '*+!-_? (await (r/read-string "*+!-_?"))))
+  (is (= 'abc:def:ghi (await (r/read-string "abc:def:ghi"))))
+  (is (= 'abc.def/ghi (await (r/read-string "abc.def/ghi"))))
+  (is (= 'abc/def.ghi (await (r/read-string "abc/def.ghi"))))
+  (is (= 'abc:def/ghi:jkl.mno (await (r/read-string "abc:def/ghi:jkl.mno"))))
+  (is (dart/is?  (await (r/read-string "alphabet")) cljd.core/Symbol))
+  (is (= "foo//" (str (await (r/read-string "foo//")))))
+  ;; TODO : think about it
+  #_(is (await (js/isNaN (r/read-string "##NaN"))))
+  #_(is (= js/Number.POSITIVE_INFINITY (await (r/read-string "##Inf"))))
+  #_(is (= js/Number.NEGATIVE_INFINITY (await (r/read-string "##-Inf")))))
+
+(deftest read-specials
+  (is (= 'nil (await (r/read-string "nil"))))
+  (is (= 'false (await (r/read-string "false"))))
+  (is (= 'true (await (r/read-string "true")))))
+
+#_(deftest read-char
+  (is (= \f (r/read-string "\\f")))
+  (is (= \u0194 (r/read-string "\\u0194")))
+  (is (= \o123 (r/read-string "\\o123")))
+  (is (= \newline (r/read-string "\\newline")))
+  (is (= (char 0) (r/read-string "\\o0")))
+  (is (= (char 0) (r/read-string "\\o000")))
+  (is (= (char 0377) (r/read-string "\\o377")))
+  (is (= \A (r/read-string "\\u0041")))
+  (is (= \@ (r/read-string "\\@")))
+  (is (= (char 0xd7ff) (r/read-string "\\ud7ff")))
+  (is (= (char 0xe000) (r/read-string "\\ue000")))
+  (is (= (char 0xffff) (r/read-string "\\uffff")))
+  (is (thrown-with-msg? js/Error
+        #"Invalid character literal \\ud800"
+        (r/read-string "\\ud800"))))
+
+(deftest read-string*
+  (is (= "foo bar" (await (r/read-string "\"foo bar\""))))
+  (is (= "foo\\bar" (await (r/read-string "\"foo\\\\bar\""))))
+  (is (= "foo\000bar" (await (r/read-string "\"foo\\000bar\""))))
+  (is (= "foo\u0194bar" (await (r/read-string "\"foo\\u0194bar\""))))
+  (is (= "foo\123bar" (await (r/read-string "\"foo\\123bar\""))))
+  (is (= "\060" (await (r/read-string "\"\\060\""))))
+  (is (= "\340" (await (r/read-string "\"\\340\""))))
+  (is (= "\377" (await (r/read-string "\"\\377\"")))))
+
+(deftest read-list
+  (is (= '() (await (r/read-string "()"))))
+  (is (= '(foo bar) (await (r/read-string "(foo bar)"))))
+  (is (= '(foo (bar) baz) (await (r/read-string "(foo (bar) baz)")))))
+
+(deftest read-vector
+  (is (= '[] (await (r/read-string "[]"))))
+  (is (= '[foo bar] (await (r/read-string "[foo bar]"))))
+  (is (= '[foo [bar] baz] (await (r/read-string "[foo [bar] baz]")))))
+
+(deftest read-map
+  (is (= '{} (await (r/read-string "{}"))))
+  (is (= '{foo bar} (await (r/read-string "{foo bar}"))))
+  (is (= '{foo {bar baz}} (await (r/read-string "{foo {bar baz}}"))))
+  (is (thrown-with-msg? FormatException
+        #"Map literal must contain an even number of forms"
+        (await (r/read-string "{foo bar bar}"))))
+  ;; TODO at some point
+  #_(is (thrown-with-msg? FormatException
+          #"Map literal contains duplicate key: foo"
+          (await (r/read-string "{foo bar foo bar}")))))
+
+(deftest read-set
+  (is (= '#{} (await (r/read-string "#{}"))))
+  (is (= '#{foo bar} (await (r/read-string "#{foo bar}"))))
+  (is (= '#{foo #{bar} baz} (await (r/read-string "#{foo #{bar} baz}"))))
+  ;; TODO at some point
+  #_(is (thrown-with-msg? js/Error #"Set literal contains duplicate key: foo"
+          (r/read-string "#{foo foo}")))
+  ;; TODO at some point
+  #_(is (thrown-with-msg? js/Error #"Set literal contains duplicate keys: foo, bar"
+        (r/read-string "#{foo foo bar bar}"))))
+
+(deftest read-metadata
+  (is (= {:foo true} (meta (await (r/read-string "^:foo 'bar")))))
+  (is (= {:foo 'bar} (meta (await (r/read-string "^{:foo bar} 'baz")))))
+  (is (= {:tag "foo"} (meta (await (r/read-string "^\"foo\" 'bar")))))
+  (is (= {:tag 'String} (meta (await (r/read-string "^String 'x"))))))
+
+(deftest read-keyword
+  (is (= :foo-bar (await (r/read-string ":foo-bar"))))
+  (is (= :foo/bar (await (r/read-string ":foo/bar"))))
+  (is (= :*+!-_? (await (r/read-string ":*+!-_?"))))
+  (is (= :abc:def:ghi (await (r/read-string ":abc:def:ghi"))))
+  (is (= :abc.def/ghi (await (r/read-string ":abc.def/ghi"))))
+  (is (= :abc/def.ghi (await (r/read-string ":abc/def.ghi"))))
+  (is (= :abc:def/ghi:jkl.mno (await (r/read-string ":abc:def/ghi:jkl.mno"))))
+  (is (dart/is? (await (r/read-string ":alphabet")) cljd.core/Keyword))
+  #_(is (= :bar/bar (binding [*alias-map* '{foo bar}] (r/read-string "::foo/bar")))))
+
+(deftest read-regex
+  ;; TODO: handle modifiers
+  #_(is (= (.-pattern #"(?i)abc")
+        (.-pattern (await (r/read-string "#\"(?i)abc\"")))))
+  (is (= (.-pattern #"\[\]?(\")\\")
+        (.-pattern (await (r/read-string "#\"\\[\\]?(\\\")\\\\\""))))))
+
+(deftest read-quote
+  (is (= ''foo (await (r/read-string "'foo")))))
+
+(def cljd-resolver
+  (reify r/IResolver
+    (currentNS [_] 'cljd.user)
+    (resolveClass [_ sym] ('{List dart:core/List + cljd.core/+} sym))
+    (resolveAlias [_ sym] ('{io $lib:d_io foo bar business acme.core.business} sym))
+    (resolveVar [_ sym] nil)))
+
+(deftest read-fully-qualified-keyword
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "::business/test")))
+        :acme.core.business/test))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "::test")))
+        :cljd.user/test)))
+
+(deftest read-syntax-quote
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`x")))
+        ''cljd.user/x))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`foo/bar")))
+        ''bar/bar))
+  (is (= (second (binding [r/*resolver* cljd-resolver]
+                   (await (r/read-string "`+"))))
+        'cljd.core/+))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(.substring \"s\" 0)")))
+        '(cljd.core/seq (cljd.core/concat
+                          (cljd.core/list (quote .substring))
+                          (cljd.core/list "s")
+                          (cljd.core/list 0)))))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`a.b.c/d")))
+        ''a.b.c/d))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(if true false)")))
+        '(cljd.core/seq (cljd.core/concat
+                          (cljd.core/list (quote if))
+                          (cljd.core/list (quote true))
+                          (cljd.core/list (quote false))))))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(let* [a 42] a)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote let*))
+             (cljd.core/list
+               (cljd.core/apply
+                 cljd.core/vector
+                 (cljd.core/seq
+                   (cljd.core/concat
+                     (cljd.core/list (quote cljd.user/a))
+                     (cljd.core/list 42)))))
+             (cljd.core/list (quote cljd.user/a))))))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(let* [a 42] ~a)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote let*))
+             (cljd.core/list
+               (cljd.core/apply
+                 cljd.core/vector
+                 (cljd.core/seq
+                   (cljd.core/concat
+                     (cljd.core/list (quote cljd.user/a))
+                     (cljd.core/list 42)))))
+             (cljd.core/list a)))))
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(List. 1 2 3)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote dart:core/List.))
+             (cljd.core/list 1)
+             (cljd.core/list 2)
+             (cljd.core/list 3)))))
+
+  (is (string?
+        (re-matches #"g__\d+__auto__"
+          (name (second (binding [r/*resolver* cljd-resolver]
+                          (await (r/read-string "`g#"))))))))
+
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(let* [a# 42] a#)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote let*))
+             (cljd.core/list
+               (cljd.core/apply
+                 cljd.core/vector
+                 (cljd.core/seq
+                   (cljd.core/concat
+                     (cljd.core/list (quote a__2__auto__))
+                     (cljd.core/list 42)))))
+             (cljd.core/list (quote a__2__auto__))))))
+
+  (is (= (binding [r/*resolver* cljd-resolver]
+           (await (r/read-string "`(.prop obj)")))
+        '(cljd.core/seq
+           (cljd.core/concat
+             (cljd.core/list (quote .prop))
+             (cljd.core/list (quote cljd.user/obj)))))))
+
+(deftest read-deref
+  (is (= '(cljd.core/deref foo) (await (r/read-string "@foo")))))
+
+(deftest read-var
+  (is (= '(var foo) (await (r/read-string "#'foo")))))
+
+(deftest read-fn
+  (is (= '(fn* ([] (foo bar baz))) (await (r/read-string "#(foo bar baz)")))))
+
+#_(defn inst [s]
+  (js/Date. s))
+
+#_(deftest read-tagged
+  (binding [*data-readers* {'inst inst 'uuid uuid}]
+    (is (= #inst "2010-11-12T13:14:15.666"
+           (r/read-string "#inst \"2010-11-12T13:14:15.666\"")))
+    (is (= #inst "2010-11-12T13:14:15.666"
+           (r/read-string "#inst\"2010-11-12T13:14:15.666\"")))
+    (is (= (uuid "550e8400-e29b-41d4-a716-446655440000")
+           (r/read-string "#uuid \"550e8400-e29b-41d4-a716-446655440000\"")))
+    (is (= (uuid "550e8400-e29b-41d4-a716-446655440000")
+           (r/read-string "#uuid\"550e8400-e29b-41d4-a716-446655440000\"")))
+    (when *default-data-reader-fn*
+      (let [my-unknown (fn [tag val] {:unknown-tag tag :value val})]
+        (is (= {:unknown-tag 'foo :value 'bar}
+               (binding [*default-data-reader-fn* my-unknown]
+                 (r/read-string "#foo bar"))))))))
+
+#_(defrecord ^:export foo [])
+#_(defrecord ^:export bar [baz buz])
+
+#_(deftest read-record
+    (is (= (foo.)
+           (r/read-string "#cljs.tools.reader_test.foo[]")))
+    (is (= (foo.)
+           (r/read-string "#cljs.tools.reader_test.foo []"))) ;; not valid in clojure
+    (is (= (foo.)
+           (r/read-string "#cljs.tools.reader_test.foo{}")))
+    (is (= (assoc (foo.) :foo 'bar)
+           (r/read-string "#cljs.tools.reader_test.foo{:foo bar}")))
+
+    (is (= (map->bar {:baz 1})
+           (r/read-string "#cljs.tools.reader_test.bar{:baz 1}")))
+    (is (= (bar. 1 nil)
+           (r/read-string "#cljs.tools.reader_test.bar[1 nil]")))
+    (is (= (bar. 1 2)
+           (r/read-string "#cljs.tools.reader_test.bar[1 2]"))))
+
+#_(deftest source-logging-meta-test
+  (-> (loop [r (cljs.tools.reader.reader-types/source-logging-push-back-reader "(def test 8)\n(def test2 9)\n")
+             forms []]
+        (if-let [form (reader/read r false nil)]
+          (recur r (conj forms [(meta form) form]))
+          forms))
+      (= [[{:line 1 :column 1 :end-line 1 :end-column 13} '(def test 8)]
+          [{:line 2 :column 0 :end-line 2 :end-column 1}]
+          [{:line 2, :column 1, :end-line 2, :end-column 14} '(def test2 9)]
+          [{:line 3, :column 0, :end-line 3, :end-column 1}]])))
+
+(deftest read-namespaced-map
+  (binding [r/*resolver* cljd-resolver]
+    (is (= {:foo/bar 1 :baz 2} (await (r/read-string "#:foo{:bar 1 :_/baz 2}"))))
+    (is (= '{foo/bar 1 :baz 2} (await (r/read-string "#:foo{bar 1 :_/baz 2}"))))
+    (is (= {:cljd.user/foo 1} (await (r/read-string "#::{:foo 1}"))))
+    (is (= {:cljd.user/foo 1 :bar 2} (await (r/read-string "#::{:foo 1 :_/bar 2}"))))
+    (is (= {:a/foo 1 :bar 2} (await (r/read-string "#:a{:foo 1 :_/bar 2}"))))))
+
+#_(deftest read-map-types
+  (let [a (reader/read-string "{:a 1 :b 2 :c 3}")
+        b (reader/read-string "{:a 1 :b 2 :c 3 :d 4 :e 5 :f 6 :g 7 :h 8 :i 9}")]
+    (is (= a {:a 1 :b 2 :c 3}))
+    (is (instance? PersistentArrayMap a))
+    (is (= b {:a 1 :b 2 :c 3 :d 4 :e 5 :f 6 :g 7 :h 8 :i 9}))
+    (is (instance? PersistentHashMap b))))
+
+;; End of cljs.tools.reader-test
+(deftest testing-simple-collections
+  (is (= (await (r/read-string "(1 2 3)"))
+        (list 1 2 3)))
+  (is (= (await (r/read-string "(true true nil)"))
+        (list true true nil)))
+  (is (= (await (r/read-string "[true true nil]"))
+        [true true nil]))
+  (is (= (await (r/read-string "{true true nil nil}"))
+        {true true nil nil}))
+  (is (= (await (r/read-string "{true true nil [true true]}"))
+        {true true nil [true true]})))
+
+;; TODO: add options
+(deftest testing-reader-cond-exceptions
+  (is (thrown-with-msg? FormatException #"EOF while reading"
+        (await (r/read-string "#?()"))))
+  (is (thrown-with-msg? FormatException #"EOF while reading"
+        (await (r/read-string "#?(:cljs 1)"))))
+  (is (thrown-with-msg? FormatException #"read-cond body must be a list"
+        (await (r/read-string "#?[]"))))
+  (is (thrown-with-msg? FormatException #"Feature should be a keyword: 2"
+        (await (r/read-string "#?(:cljs 1 2 3 :cljd 1)"))))
+  (is (thrown-with-msg? FormatException #"read-cond requires an even number of forms"
+        (await (r/read-string "#?(:cljd)"))))
+  (is (thrown-with-msg? FormatException #"Reader conditional splicing not allowed at the top level"
+        (await (r/read-string "#?@(:cljd [1])"))))
+  (is (thrown-with-msg? FormatException #"Spliced form list in read-cond-splicing must implement dart:core/List"
+        (await (r/read-string "#?@(:cljd 1)"))))
+  (is (thrown-with-msg? FormatException #"Spliced form list in read-cond-splicing must implement dart:core/List"
+        (await (r/read-string "(let [a #?@(:cljd {1 1})] a)")))))
+
+(deftest testing-reader-cond-expr
+  (is (= (await (r/read-string "#?(:cljd 1)"))
+        1))
+  (is (= (await (r/read-string "#?(:cljd 1 2 3 :clj [1 2])"))
+        1))
+  (is (= (await (r/read-string "#?(:clj [1 2] :cljd 1 2 3)"))
+        [1 2]))
+  (is (= (await (r/read-string "#?(:cljs [1 2] :cljd 1 2 3)"))
+        1)))
+
+(deftest testing-reader-cond-splicing
+  (is (= (await (r/read-string "(let [a #?@(:cljd (1))] a)"))
+        '(let [a 1] a)))
+  (is (= (await (r/read-string "(let [a #?@(:cljd [1])] a)"))
+        '(let [a 1] a)))
+  (is (= (await (r/read-string "(let [a #?@(:cljd [1 2 3])] a)"))
+        '(let [a 1 2 3] a)))
+  (is (= (await (r/read-string "(let [a #?@(:cljd [[1] 2])] a)"))
+        '(let [a [1] 2] a))))
+
+(deftest testing-data-reader-exceptions
+  (is (thrown-with-msg? FormatException #"Reader tag must be a symbol"
+        (await (r/read-string "#122 3"))))
+  (is (thrown-with-msg? FormatException #"No reader function for tag doesnotexist"
+        (await (r/read-string "#doesnotexist 3")))))
+
+(deftest testing-data-reader
+  (is (= (await (binding [cljd.core/*data-readers* {'foo (fn [form] (inc form))}]
+                  (r/read-string "#foo 3")))
+        4)))
+
+#_(deftest testing-metas
+  (is (= (await (r/read-string "(1 2 3)"))
+        (list 1 2 3)))
+  (is (= (await (r/read-string "(true true nil)"))
+        (true true nil)))
+  (is (= (await (r/read-string "[true true nil]"))
+        [true true nil]))
+  (is (= (await (r/read-string "{true true nil nil}"))
+        {true true nil nil}))
+  (is (= (await (r/read-string "{true true nil [true true]}"))
+        {true true nil [true true]})))
+#_#_#_#_#_#_#_#_#_#_#_#_#_#_#_#_(is (= (await (r/read-string "#(:aa % 1 %2 %& 2 3 4)"))
+      #(:aa % 1 %2 %& 2 3 4)))
+(is (= (await (r/read-string "#(1)"))
+      #(1)))
+(is (= (await (r/read-string "#(+ #_3 [%&])"))
+      #(+ #_3 [%&])))
+(is (= (await (r/read-string "`[1 2 3]"))
+      `[1 2 3]))
+(is (= (await (r/read-string "`#{1 2 3}"))
+      `#{1 2 3}))
+(is (= (await (r/read-string "`{1 2 3 {:a :b}}"))
+      `{1 2 3 {:a :b}}))
+(is (= (await (r/read-string "`{1 2 3 (:a :b)}"))
+      `{1 2 3 (:a :b)}))
+(is (= (await (r/read-string "`{1 2 3 ~a}"))
+      `{1 2 3 ~a}))
+(is (= (await (r/read-string "`{1 2 3 ~@a}"))
+      `{1 2 3 ~@a}))
+(is (= (await (r/read-string "(12 12N -12 0x12 0X12 0x1ff)"))
+      (12 12N -12 0x12 0X12 0x1ff)))
+(is (= (await (r/read-string ":sdfds&sdf%dd"))
+      :sdfds&sdf%dd))
+(is (= (await (r/read-string "(12.3 0.2 -1.2 0.0)"))
+      (12.3 0.2 -1.2 0.0)))
+(is (= (await (r/read-string "(:aaa :aa/bb :aa:adsf:sdf :dd///)"))
+      (:aaa :aa/bb :aa:adsf:sdf :dd///)))
+(is (= (await (r/read-string "(:aaa #_(1 2 3) 1 2 3 )"))
+      (:aaa #_(1 2 3) 1 2 3 )))
+(is (= (await (r/read-string "#{:aaa #_(1 2 3) 1 2 3}"))
+      #{:aaa #_(1 2 3) 1 2 3}))
+
+
+(is (= (await (r/read-string "@true"))
+      @true))
+#_(as-> (await (r/read-string ";;coucou text \n (true true)")) r (prn r (.-runtimeType r)))

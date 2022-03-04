@@ -10,6 +10,7 @@
 ;;
 
 (ns cljd.test-clojure.core-test-cljd
+  (:require ["dart:async" :as async])
   (:use [cljd.test :only [deftest is testing are]]))
 
 (deftest testing-rseq
@@ -22,3 +23,174 @@
     (is (nil? (meta (rseq (with-meta [1] {:a :b})))))
     (is (= (meta (with-meta (rseq [1 2 3]) {:a :b})) {:a :b}))
     (is (= (rseq (vec (range 100))) (range 99 -1 -1)))))
+
+(deftest testing-dart-literal-typehints
+  (testing "#dart[] List are typehints"
+    (is (dart/is? #dart[1 2] #/(List dynamic)))
+    (is (dart/is? #dart ^int [1 2] #/(List int)))
+    (is (dart/is? #dart ^:fixed ^int [1 2] #/(List int)))
+    (let [a #dart ^int [1 2]
+          b a
+          c b
+          d c]
+      (dart/is? d #/(List int)))))
+
+(deftest testing-if-typehints
+  (testing "if typehints"
+    (let [a (if (odd? 3) true false)]
+      (is (dart/is? a bool)))
+    (let [a (when (odd? 3) true false)]
+      (is (dart/is? a bool?)))
+    (let [a (if (odd? 3) 3 4)]
+      (is (dart/is? a int)))
+    (let [a (if (odd? 3) 3 nil)]
+      (is (dart/is? a int?)))
+    (let [a (if (odd? 3) 3 4.3)]
+      (is (dart/is? a dynamic)))
+    (let [a (when-let [a (if (odd? 3) 3 4)] a)]
+      (is (dart/is? a int?)))
+    (let [a (if (odd? 2) (throw (Exception. "exception")) "aa")]
+      (is (dart/is? a String)))
+    (let [a (if (odd? 2) nil nil)]
+      (is (dart/is? a Null)))))
+
+(deftest testing-loop-typehints
+  (testing "loop typehints"
+    (let [a (loop [i 0] (if (< i 10) (recur (inc i)) "a"))]
+      (is (dart/is? a String)))
+    (let [a (loop [i 0] (if (< i 10) (recur (inc i)) 1))]
+      (is (dart/is? a int)))
+    (let [a (loop [i 0] (if (< i 10) (recur (inc i)) ^dynamic (do 1)))]
+      (is (dart/is? a dynamic)))))
+
+(deftest testing-inline-fn-typehints
+  (testing "inline fn typehints"
+    (let [a (fn [] 1)]
+      (is (dart/is? a #/( -> int)))) ;; int Function()
+    (let [b ^:async (fn [] 1)]
+      (is (dart/is? b  #/( -> (Future int)))))
+    (let [c ^:async (fn [a] (if (odd? a) 3 4))]
+      (is (dart/is? c #/(dynamic -> (Future int)))))
+    (let [d ^:async (fn nom [a] (if (odd? a) (nom (inc a)) 4))]
+      (is (dart/is? d #/(dynamic -> (Future int)))))
+    (let [e ^:async (fn ^num nom [a] (if (odd? a) (nom (inc a)) 4))]
+      (is (dart/is? e #/(dynamic -> (Future num)))))
+    (let [f (fn ^dart:core/Never nom [] (nom))]
+      (is (dart/is? f #/( -> dart:core/Never))))
+    (let [g (fn nom [] (nom))]
+      (is (dart/is? g #/( -> dynamic))))
+    (let [h (fn [] nil)]
+      (is (dart/is? h #/( -> Null))))
+    (let [i ^:async (fn [] nil)]
+      (is (dart/is? i #/( -> (Future Null)))))))
+
+(deftest testing-dart-new-dont-need-to-be-lifted
+  (testing "dart/new can be inlined"
+    (is (dart/is?
+          #dart [(dart:core/Symbol. "one") (dart:core/Symbol. "two") (dart:core/Symbol. "three")]
+          #/(List Symbol)))
+    (is (dart/is?
+          #dart [(dart:core/Symbol. "one") (dart:core/Symbol. (let [a "a" b "b"] (str a b)))]
+          #/(List Symbol)))))
+
+(def baptiste {:first-name "Baptiste" :last-name "Dupuch"})
+
+(deftest testing-keys-and-vals
+  (is (= #{:first-name :last-name} (into #{} (keys baptiste))))
+  (is (= #{"Baptiste" "Dupuch"} (into #{} (vals baptiste))))
+  (is (= #{:first-name :last-name} (into #{} (keys (vec baptiste)))))
+  (is (= #{"Baptiste" "Dupuch"} (into #{} (vals (vec baptiste)))))
+  (is (= :a (first (keys (cons (first {:a :b}) (range 10)))))))
+
+(deftest testing-cycle
+  (is (= () (cycle nil)))
+  (is (= () (cycle [])))
+  (is (= '(1 2 3 1 2 3 1 2 3) (take 9 (cycle [1 2 3])))))
+
+(deftest testing-gensym
+  (is (= ":love" (namespace (gensym :love/cljd))))
+  (is (= "love" (namespace (gensym 'love/cljd))))
+  (is (= "love" (namespace (gensym "love/cljd")))))
+
+(deftest testing-int-array
+  (is (= (seq #dart [0 0 0]) (seq (int-array 3))))
+  (is (dart/is? (int-array 3) #/(List int)))
+  (is (= (seq #dart [0 1 2]) (seq (int-array (range 3)))))
+  (is (dart/is? (int-array (range 3)) #/(List int)))
+
+  (is (= (seq #dart [0 1 2 0 0]) (seq (int-array 5 (range 3)))))
+  (is (dart/is? (int-array 5 (range 3)) #/(List int)))
+  (is (= (seq #dart [4 4 4 4 4]) (seq (int-array 5 4))))
+  (is (dart/is? (int-array 5 4) #/(List int))))
+
+(deftest testing-amap
+  (let [an-array (int-array 3 3)]
+    (is (= (seq [4 4 4])
+          (seq (amap an-array
+                 idx
+                 ret
+                 (inc (aget an-array idx))))))))
+
+(deftest testing-areduce
+  (let [an-array (int-array 3 3)]
+    (is (= 9
+          (areduce an-array i ret 0
+            (+ ret (aget an-array i)))))))
+
+(deftest testing-casting
+  (is (dart/is? (ints #dart[1 2 3]) #/(List int)))
+  (is (dart/is? (booleans #dart[true false]) #/(List bool))))
+
+(defrecord EmptyRecord [])
+
+(deftest testing-empty-record
+  (is (= (hash (->EmptyRecord)) (hash (->EmptyRecord))))
+  (is (dart/is? (-> (->EmptyRecord) (. #/(cast int int))) #/(EmptyRecord int int)))
+  (is (= (for [[k v] (assoc (->EmptyRecord) :a :b :c :d :e :f)]
+           k)
+        '(:a :c :e))))
+
+(defrecord RecordA [a]
+  Object
+  (mymethod [this] (str a "two")))
+
+(deftest testing-recorda
+  (is (= "onetwo" (.mymethod (->RecordA "one"))))
+  (is (= {:a :b} (meta (with-meta (->RecordA "one") {:a :b})))))
+
+(deftest testing-bounded-count
+  (is (= 4 (bounded-count 5 [1 2 3 4])))
+  (is (= 5 (bounded-count 5 [1 2 3 4 5])))
+  (is (= 6 (bounded-count 5 [1 2 3 4 5 6])))
+  (is (= 4 (bounded-count 5 (map identity [1 2 3 4]))))
+  (is (= 5 (bounded-count 5 (map identity [1 2 3 4 5]))))
+  (is (= 5 (bounded-count 5 (map identity [1 2 3 4 5 6]))))
+  (is (= 5 (bounded-count 5 (range))))
+  (is (= 2 (bounded-count 1.5 (range)))))
+
+(deftest testing-distinct?
+  (is (= true (distinct? 1)))
+  (is (= false (distinct? 1 1)))
+  (is (= true (apply distinct? (range 20)))))
+
+(deftest testing-every-pred
+  (is (= true ((every-pred #(< % 10) number?) 1 2 3 4))))
+
+(deftest testing-filterv
+  (is (= [1 3 5 7 9] (filterv odd? (range 10)))))
+
+(deftest testing-frequencies
+  (is (= {1 3 "a" 1} (frequencies [1 "a" 1 1]))))
+
+(deftest testing-group-by
+  (is (= {false [0 2 4 6 8], true [1 3 5 7 9]} (group-by odd? (range 10)))))
+
+(deftest testing-mapv
+  (is (= [0 2 4 6 8] (mapv + (range 5) (range 5)))))
+
+(deftest testing-reset-meta!
+  (is (= {:c :d} (let [a (atom {} :meta {:a :b})]
+                   (reset-meta! a {:c :d})))))
+
+(deftest testing-select-keys
+  (is (= {1 1 5 5} (select-keys (into {} (map #(vector % %)) (range 10)) [1 5]))))
