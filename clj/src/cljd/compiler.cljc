@@ -1002,17 +1002,26 @@
 
 (declare emit infer-type magicast)
 
+(defn tree-some? [pred branch? children root]
+  (letfn [(rf [_ x]
+            (when (if (branch? x)
+                    (reduce rf nil (children x))
+                    (pred x))
+              (reduced true)))]
+    (unreduced (rf nil root))))
+
 (defn has-recur?
   "Takes a dartsexp and returns true when it contains an open recur."
   [x]
-  (some {'dart/recur true} (tree-seq seq?
-                             (fn [[x :as s]]
-                               (when-not (or (= 'dart/loop x) (= 'dart/fn x)) s)) x)))
+  (tree-some? #(= 'dart/recur %) seq?
+    (fn [[x :as s]]
+      (when-not (or (= 'dart/loop x) (= 'dart/fn x)) s))
+    x))
 
 (defn has-await?
   "Takes a dartsexp and returns true when it contains an open await."
   [x]
-  (some {'dart/await true} (tree-seq sequential? #(when-not (= (first %) 'dart/fn) %) x)))
+  (tree-some? #(= 'dart/await %) sequential? #(when-not (= (first %) 'dart/fn) %) x))
 
 (defn- dart-binding [hint dart-expr env]
   (let [tmp (dart-local hint env)
