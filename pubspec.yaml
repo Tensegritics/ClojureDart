@@ -7,6 +7,6 @@ dependencies:
   watcher:
   vm_service:
   collection: ^1.14.13
-  analyzer: ^2.4.0
+  analyzer: ^3.3.1
 dev_dependencies:
   test: ^1.17.11
