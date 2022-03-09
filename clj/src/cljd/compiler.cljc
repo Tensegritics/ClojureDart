@@ -671,7 +671,7 @@
    where opts is either [opt-param1-type ... opt-paramN-type] or {opt-param-name type ...}."
   [member-info]
   (when-some [params (:parameters member-info)]
-    (let [[fixed opts] (split-with (comp not :optional) params)
+    (let [[fixed opts] (split-with (fn [p] (and (= :positional (:kind p)) (not (:optional p)))) params)
           opts (case (:kind (first opts))
                  :named (into {} (map (juxt (comp keyword :name) :type)) opts)
                  (into [] (map :type) opts))]
