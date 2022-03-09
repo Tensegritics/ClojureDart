@@ -31,6 +31,7 @@
                (if-some [exprs (::compiler/emit-stack (ex-data e))]
                  (do
                    (println (ex-message e))
+                   (println (ex-message (ex-cause e)))
                    (run! prn exprs))
                  (st/print-stack-trace e)))))
       (when watch
