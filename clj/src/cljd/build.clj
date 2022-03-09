@@ -28,7 +28,11 @@
       (doseq [n namespaces]
         (try (compiler/compile-namespace n)
              (catch Exception e
-               (st/print-stack-trace e))))
+               (if-some [exprs (::compiler/emit-stack (ex-data e))]
+                 (do
+                   (println (ex-message e))
+                   (run! prn exprs))
+                 (st/print-stack-trace e)))))
       (when watch
         (println "Press ENTER to recompile files :")
         (when (pos? (.read (System/in)))
