@@ -11,79 +11,79 @@
   (:require [clojure.string :as str]
             [clojure.java.io :as io]))
 
-(def dc-void {:type        "void"
+(def dc-void {:element-name        "void"
               :canon-qname 'void
               :qname       'void})
 (def dc-dynamic '{:qname           dc.dynamic,
                   :canon-qname     dc.dynamic
                   :canon-lib       "dart:core"
                   :lib             "dart:core",
-                  :type            "dynamic",
+                  :element-name            "dynamic",
                   :type-parameters []})
 (def dc-Never '{:qname       dc.Never,
                 :canon-qname dc.Never
                 :canon-lib   "dart:core"
                 :lib             "dart:core",
-                :type        "Never"})
+                :element-name        "Never"})
 (def dc-Object '{:qname           dc.Object,
                  :canon-qname     dc.Object
                  :canon-lib       "dart:core"
                  :lib             "dart:core",
-                 :type            "Object",
+                 :element-name            "Object",
                  :type-parameters []})
-(def dc-Future '{:type            "Future",
+(def dc-Future '{:element-name            "Future",
                  :qname           dc.Future
                  :canon-qname     da.Object
                  :canon-lib       "dart:async"
                  :lib             "dart:core",
-                 :type-parameters [{:type "T", :is-param true, :qname T :canon-qname T}],})
-(def dc-FutureOr '{:type            "FutureOr",
+                 :type-parameters [{:element-name "T", :is-param true, :qname T :canon-qname T}],})
+(def dc-FutureOr '{:element-name            "FutureOr",
                    :canon-lib       "dart:async"
                    :lib             "dart:async",
-                   :type-parameters [{:type "T", :is-param true, :qname T :canon-qname T}],
+                   :type-parameters [{:element-name "T", :is-param true, :qname T :canon-qname T}],
                    :qname           da.FutureOr
                    :canon-qname     da.FutureOr})
 (def dc-Null '{:qname           dc.Null,
                :canon-qname     dc.Null
                :canon-lib       "dart:core"
                :lib             "dart:core",
-               :type            "Null",
+               :element-name            "Null",
                :type-parameters []})
 (def dc-String '{:qname           dc.String,
                  :canon-qname     dc.String
                  :canon-lib       "dart:core"
                  :lib             "dart:core",
-                 :type            "String",
+                 :element-name            "String",
                  :type-parameters []})
 (def dc-Function '{:qname           dc.Function,
                    :canon-qname     dc.Function
                    :canon-lib       "dart:core"
                    :lib             "dart:core",
-                   :type            "Function",
+                   :element-name            "Function",
                    :type-parameters []})
 (def dc-bool '{:qname           dc.bool,
                :canon-qname     dc.bool
                :canon-lib       "dart:core"
                :lib             "dart:core",
-               :type            "bool",
+               :element-name            "bool",
                :type-parameters []})
 (def dc-int '{:qname           dc.int,
               :canon-qname     dc.int
               :canon-lib       "dart:core"
               :lib             "dart:core",
-              :type            "int",
+              :element-name            "int",
               :type-parameters []})
 (def dc-double '{:qname           dc.double,
                  :canon-qname     dc.double
                  :canon-lib       "dart:core"
                  :lib             "dart:core",
-                 :type            "double",
+                 :element-name            "double",
                  :type-parameters []})
 (def dc-num '{:qname           dc.num,
               :canon-qname     dc.num
               :canon-lib       "dart:core"
               :lib             "dart:core",
-              :type            "num",
+              :element-name            "num",
               :type-parameters []})
 
 (def pseudo-num-tower '{:qname       pseudo.num-tower
@@ -104,7 +104,7 @@
           clojure.java.io/reader
           clojure.lang.LineNumberingPushbackReader.
           clojure.edn/read)
-        export
+        inline-exports
         (fn export [{exports :exports :as v}]
           (-> (into v (map (fn [{:keys [lib shown hidden]}]
                              (cond
@@ -115,21 +115,18 @@
                                :else (export (dart-libs-info lib))))) exports)
             (dissoc :exports)))
         assoc->qnames
-        (fn [entity]
-          (case (:type entity)
-            #_#_"Function" (:qname dc-Function)
-            #_#_"Never" (:qname dc-Never)
+        (fn [{name :element-name :as entity}]
+          (case name
             "void" (assoc entity :qname (:qname dc-void) :canon-qname (:qname dc-void))
-            #_#_"dynamic" (:qname dc-dynamic)
             (if (:is-param entity)
-              (let [qname (symbol (:type entity))]
+              (let [qname (symbol name)]
                 (assoc entity :qname qname :canon-qname qname))
               (let [lib (:lib entity "dart:core")
-                    canon-lib (:canon-lib entity lib)
-                    canon-qname (-> (global-lib-alias canon-lib nil) (str "." (:type entity)) symbol)
+                    canon-lib (or (:canon-lib entity) lib)
+                    canon-qname (-> (global-lib-alias canon-lib nil) (str "." name) symbol)
                     qname (if (= lib canon-lib)
                             canon-qname
-                            (-> (global-lib-alias lib nil) (str "." (:type entity)) symbol))]
+                            (-> (global-lib-alias lib nil) (str "." name) symbol))]
                 (assoc entity
                   :qname qname
                   :canon-qname canon-qname
@@ -147,7 +144,8 @@
                      (into (comp (filter #(string? (first %)))
                              (map (fn [[n v]] [n (qualify-entity v)])))
                        entity))
-            :field (update entity :type qualify-entity)
+            :field (cond-> (update entity :type qualify-entity)
+                     (:toplevel entity) assoc->qnames)
             :function (->
                         (assoc->qnames entity)
                         (update :return-type qualify-entity)
@@ -162,21 +160,23 @@
                            (update-if :type-parameters #(into [] (map qualify-entity) %))
                            (update :return-type qualify-entity))
             (:named :positional) (update entity :type qualify-entity)
-            (cond-> (-> (assoc->qnames entity)
-                      (update-if :type-parameters #(into [] (map qualify-entity) %)))
-              (= "Function" (:type entity))
-              (->
-                (update-if :return-type #(some-> % qualify-entity))
-                (update-if :parameters #(into [] (map qualify-entity) %))))))]
-    (-> (into {} (comp
-                   (map (fn [[lib content]] [lib (export content)]))
-                   (map (fn [[lib content]]
-                          [lib (into {} (map (fn [[typename clazz]]
-                                               [typename (qualify-entity
-                                                           (assoc clazz
-                                                             :type typename
-                                                             :lib lib
-                                                             :canon-lib (:lib clazz)))])) content)])))
+            ; type
+            (recur (-> entity
+                     (dissoc :type)
+                     (assoc
+                       :kind (case (:type entity) "Function" :function :class)
+                       :element-name (:type entity))))))]
+    (-> (into {}
+          (map (fn [[lib content]]
+                 [lib (into {}
+                        (map (fn [[name entity]]
+                               [name (qualify-entity
+                                       (assoc entity
+                                         :element-name name
+                                         :lib lib
+                                         :toplevel true
+                                         :canon-lib (:lib entity)))]))
+                        (inline-exports content))]))
           dart-libs-info)
       (assoc-in ["dart:core" "Never"] dc-Never)
       (assoc-in ["dart:core" "dynamic"] dc-dynamic))))
@@ -330,21 +330,21 @@
       (if ('#{void dart:core/void} clj-sym)
         dc-void)
       (if (and (nil? typens) (contains? type-vars (symbol typename)))
-        {:canon-qname clj-sym :qname clj-sym :type typename :is-param true})
+        {:canon-qname clj-sym :qname clj-sym :element-name typename :is-param true})
       (if-some [lib (resolve-clj-alias typens)]
         (or (-> dart-libs-info (get lib) (get typename))
           (let [dart-alias (:dart-alias (libs lib))
                 qname (symbol (str dart-alias "." typename))]
             {:qname qname
              :canon-qname qname
-             :type typename})
+             :element-name typename})
           ;; TODO : handle dart:core/identical function in analyzer before uncommenting this
           #_(when *host-eval*
               ;; NOTE: in case of a host-eval, we have to resolve some
               ;; specific types like cljd.core/IFn$iface for macros to
               ;; compile
               {:qname (symbol (str dart-alias "." typename))
-               :type typename})))
+               :element-name typename})))
       nil)))
 
 (defn non-nullable [tag]
@@ -366,12 +366,12 @@
                 type-vars (into type-vars type-parameters)
                 specialize1 (fn [t]
                               (if (:is-param t)
-                                (type-env (:canon-qname t) t)
+                                (type-env (:element-name t) t)
                                 t))] ; FIXME should recurse, eg to specialize List<E>
             (assoc dart-type
               :type-parameters
               (into []
-                (keep (fn [p] (let [t (type-env (:canon-qname p))] (when (:is-param t) t))))
+                (keep (fn [p] (let [t (type-env (:element-name p))] (when (:is-param t) t))))
                 type-parameters)
               :parameters (into [] (map #(update-in % :type specialize1))
                             (:parameters dart-type))))
@@ -395,7 +395,7 @@
                    (throw (Exception. (str "Expecting " nparams " type arguments to " clj-sym ", got " nargs "."))))]
     (actual-member
       [#(or (when (:is-param %)
-              (cond-> (type-env (:type %))
+              (cond-> (type-env (:element-name %))
                 (:nullable %) (assoc :nullable true))) %)
        function-info])))
 
@@ -446,7 +446,7 @@
     (-> nses :libs (get lib) :dart-alias)))
 
 (defn resolve-type
-  "Resolves a type to map with keys :qname :lib :type and :type-parameters."
+  "Resolves a type to map with keys :qname :lib :element-name and :type-parameters."
   ([sym type-vars]
    (or (resolve-type sym type-vars nil) (throw (ex-info (str "Can't resolve type: " sym) {:sym sym}))))
   ([sym type-vars not-found]
@@ -474,15 +474,17 @@
               not-found)
        not-found))))
 
-(defn unresolve-type [{:keys [is-param lib type type-parameters nullable]}]
+(defn unresolve-type [{:keys [is-param lib qname element-name type-parameters nullable] :as x}]
   (if is-param
-    (symbol (cond-> type nullable (str "?")))
+    (symbol (cond-> qname nullable (str "?")))
     (let [{:keys [current-ns] :as nses} @nses]
+      (when (nil? element-name)
+        (throw (ex-info (pr-str x) {:x x})))
       (with-meta
         (symbol
           (when-not (= lib (:lib (nses current-ns)))
             (get-in nses [current-ns :imports lib :clj-alias]))
-          (cond-> type nullable (str "?")))
+          (cond-> element-name nullable (str "?")))
         {:type-params (mapv unresolve-type type-parameters)}))))
 
 (defn emit-type
@@ -682,9 +684,9 @@
         nparams (count type-params)]
     (cond
       (= nargs nparams)
-      (zipmap (map :type type-params) type-args)
+      (zipmap (map :element-name type-params) type-args)
       (zero? nargs)
-      (zipmap (map :type type-params)
+      (zipmap (map :element-name type-params)
         (repeat (resolve-type 'dart:core/dynamic #{})))
       :else
       (throw (Exception. (str "Expecting " nparams " type arguments to " class-or-member ", got " nargs "."))))))
@@ -698,10 +700,10 @@
          member-type-arguments (map #(resolve-type % type-vars) (:type-params member-meta))
          member (name member)]
      (when-some [class-info
-                 (or (-> dart-libs-info (get (:lib class)) (get (:type class)))
+                 (or (-> dart-libs-info (get (:lib class)) (get (:element-name class)))
                    (some-> (libs (:lib class))
                      :ns
-                     (vector (symbol (:type class)))
+                     (vector (symbol (:element-name class)))
                      (some->> (get-in all-nses))
                      :dart/type))]
        (when-some [[type-env' member-info]
@@ -716,7 +718,7 @@
                           (type-env-for member member-type-arguments (:type-parameters member-info)))]
            [#(let [v (type-env' %)]
                (or (when (:is-param v)
-                     (cond-> (type-env (:type v))
+                     (cond-> (type-env (:element-name v))
                        (:nullable v) (assoc :nullable true))) v))
             member-info]))))))
 
@@ -759,15 +761,15 @@
         nparams (count type-params)
         type-env (cond
                    (= nargs nparams)
-                   (zipmap (map :type type-params) (:type-parameters class))
+                   (zipmap (map :element-name type-params) (:type-parameters class))
                    (zero? nargs)
-                   (zipmap (map :type type-params)
+                   (zipmap (map :element-name type-params)
                      (repeat (resolve-type 'dart:core/dynamic #{})))
                    :else
                    (throw (Exception. (str "Expecting " nparams " type arguments to " class ", got " nargs "."))))]
     (actual-member
       [#(or (when (:is-param %)
-              (cond-> (type-env (:type %))
+              (cond-> (type-env (:element-name %))
                 (:nullable %) (assoc :nullable true))) %)
        function-info])))
 
@@ -802,15 +804,18 @@
               actual-member)] ; TODO are there special cases for operators? eg unary-
     (case (:kind member-info)
       :field
-      [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args]
+      (do
+        (when-not (:type member-info)
+          (throw (ex-info (pr-str member-info) {:member-info member-info})))
+        [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args])
       :method
       (let [[fixeds opts] (unresolve-params (:parameters member-info))
             {:as actual :keys [opt-kind] [this & fixed-opts] :fixed-params}
             (parse-dart-params args)
             _ (when-not (= (count fixeds) (count fixed-opts))
-                (throw (Exception. (str "Fixed arity mismatch on " mname " for " (:type type) " of library " (:lib type)))))
+                (throw (Exception. (str "Fixed arity mismatch on " mname " for " (:element-name type) " of library " (:lib type)))))
             _ (when-not (case opt-kind :named (set? opts) (vector? opts))
-                (throw (Exception. (str "Optional mismatch on " mname " for " (:type type) "of library " (:lib type)))))
+                (throw (Exception. (str "Optional mismatch on " mname " for " (:element-name type) "of library " (:lib type)))))
             actual-fixeds
             (into [this] (map transfer-tag fixed-opts fixeds))
             actual-opts
@@ -821,6 +826,8 @@
                 (:opt-params actual))
               :positional
               (mapv transfer-tag (:opt-params actual) opts))]
+        (when (= (:return-type member-info) {:nullable true})
+          (throw (ex-info (pr-str mname member-info) {:member-info member-info})))
         [(vary-meta mname assoc :tag (unresolve-type (:return-type member-info)))
          (cond-> actual-fixeds
            (seq actual-opts)
@@ -1143,7 +1150,7 @@
                       (let [{:keys [canon-qname interfaces mixins super]}
                             (or (-> dart-libs-info
                                   (get (:lib value-type))
-                                  (get (:type value-type)))
+                                  (get (:element-name value-type)))
                               value-type)]
                         (or (= canon-qname slot-canon-qname)
                           (some assignable? (concat interfaces mixins super))
@@ -1339,7 +1346,7 @@
 
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class env)
-        member-info (some-> (dart-member-lookup dart-type (:type dart-type) env) actual-member)
+        member-info (some-> (dart-member-lookup dart-type (:element-name dart-type) env) actual-member)
         method-sig (some-> member-info dart-method-sig)
         split-args+types (if method-sig (split-args args method-sig) (split-args args))
         [bindings dart-args] (emit-args split-args+types env)]
@@ -1381,7 +1388,7 @@
                           (fake-member-lookup type! member-name+ (count args))
                           (dart-member-lookup type! member-name+ (meta member) env)
                           (if static
-                            (dart-member-lookup type! (str (:type static) "." member-name) env)
+                            (dart-member-lookup type! (str (:element-name static) "." member-name) env)
                             (dart-member-lookup dc-Object member-name+ env)))
                         actual-member)
           dart-obj (cond
@@ -1400,10 +1407,10 @@
                          :else
                          (list 'dart/as dart-obj dc-dynamic))))
           _ (when (and static (not (or (:static member-info) (= :constructor (:kind member-info)))))
-              (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:type type!)))))
+              (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:element-name type!)))))
           _ (when (not member-info)
               (binding [*out* *err*]
-                (println "Dynamic warning: can't resolve member" member-name "on target type" (:type type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
+                (println "Dynamic warning: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
           special-num-op-sig (case (:canon-qname type!) ; see sections 17.30 and 17.31 of Dart lang spec
                                dc.int (case member-name
                                         ("-" "+" "%" "*")
@@ -2071,7 +2078,7 @@
                     :canon-qname qname
                     :lib lib
                     :canon-lib lib
-                    :type (name mclass-name)
+                    :element-name (name mclass-name)
                     :type-parameters (into [] (map #(emit-type % env)) clj-type-params)}]
      (-> bare-type
        (into
@@ -2490,7 +2497,7 @@
 
 (defn emit-dart-is [[_ x type] env]
   #_(when (or (not (symbol? type)) (env type))
-      (throw (ex-info (str "The second argument to dart/is? must be a literal type. Got: " (pr-str type)) {:type type})))
+      (throw (ex-info (str "The second argument to dart/is? must be a literal type. Got: " (pr-str type)) {:element-name type})))
   (let [dart-x (emit x env)
         dart-type (emit-type type env)]
     (if (is-assignable? dart-type (:dart/type (infer-type dart-x)))
@@ -3491,7 +3498,6 @@
                   dart-libs-info li]
           (compile-namespace 'cljd.test-clojure.core-test)))
 
-
       (time
         (binding [*hosted* false
                   dart-libs-info li]
@@ -3522,7 +3528,7 @@
 
   (write
     (binding [dart-libs-info li]
-        (emit-test '(.toInt 4.0) {}))
+        (emit-test 'dart-io/stdout {}))
     return-locus)
 
   (write
@@ -3612,7 +3618,17 @@
         (emit '(.substring ^String x 2) '{x X}))
       return-locus)
 
+    (binding [dart-libs-info li
+              *locals-gen* {}]
+      (infer-type (emit '(let [n (VectorNode. nil (List/empty))] (.-arr n)) {})))
 
+    (binding [dart-libs-info li
+              *locals-gen* {}]
+      (keys (infer-type (emit '(let [n (VectorNode. nil (List/empty))] n) {}))))
+
+    (binding [dart-libs-info li
+              *locals-gen* {}]
+      (infer-type (emit '(let [n (VectorNode. nil (List/empty))] (.-arr n)) {})))
 
     (binding [dart-libs-info li]
       (magicast 'xoxo dc-String (assoc dc-String :nullable true) {}))
