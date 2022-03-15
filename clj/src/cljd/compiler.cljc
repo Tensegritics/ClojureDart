@@ -669,7 +669,7 @@
     (vector (into [] (map #(cond-> % (symbol? %) (vary-meta dissoc :tag))) args))))
 
 (defn dart-method-sig
-  "Returns either nil or [[fixed params types] opts]
+  "Returns either nil or [[fixed params types] opts type-parameters]
    where opts is either [opt-param1-type ... opt-paramN-type] or {opt-param-name type ...}."
   [member-info]
   (when-some [params (:parameters member-info)]
@@ -677,7 +677,7 @@
           opts (case (:kind (first opts))
                  :named (into {} (map (juxt (comp keyword :name) :type)) opts)
                  (into [] (map :type) opts))]
-      [(into [] (map :type) fixed) opts])))
+      [(into [] (map :type) fixed) opts (:type-parameters member-info)])))
 
 (defn- type-env-for [class-or-member type-args type-params]
   (let [nargs (count type-args)
@@ -691,21 +691,37 @@
       :else
       (throw (Exception. (str "Expecting " nparams " type arguments to " class-or-member ", got " nargs "."))))))
 
+(defn full-class-info
+  "Takes a partial dart type (as map or discrete lib + element-name as strings).
+   Returns a fully populated type map."
+  ([dart-type] (full-class-info (:lib dart-type) (:element-name dart-type)))
+  ([lib element-name]
+   (let [{:keys [libs current-ns] :as all-nses} @nses]
+     (or (-> dart-libs-info (get lib) (get element-name))
+       (some-> (libs lib)
+         :ns
+         (vector (symbol element-name))
+         (some->> (get-in all-nses))
+         :dart/type)))))
+
+(defn supertypes [t]
+  (loop [supers {} todos [t]]
+    (if-some [t (peek todos)]
+      (if (supers (:canon-qname t))
+        (recur supers (pop todos))
+        (let [{:keys [super mixins interfaces]} (full-class-info t)]
+          (recur (assoc supers (:canon-qname t) t)
+            (-> todos pop (into mixins) (into interfaces) (cond-> super (conj super))))))
+      supers)))
+
 (defn dart-member-lookup
   "member is a symbol or a string"
   ([class member env]
    (dart-member-lookup class member (meta member) env))
   ([class member member-meta {:keys [type-vars] :as env}]
-   (let [{:keys [libs current-ns] :as all-nses} @nses
-         member-type-arguments (map #(resolve-type % type-vars) (:type-params member-meta))
+   (let [member-type-arguments (map #(resolve-type % type-vars) (:type-params member-meta))
          member (name member)]
-     (when-some [class-info
-                 (or (-> dart-libs-info (get (:lib class)) (get (:element-name class)))
-                   (some-> (libs (:lib class))
-                     :ns
-                     (vector (symbol (:element-name class)))
-                     (some->> (get-in all-nses))
-                     :dart/type))]
+     (when-some [class-info (full-class-info class)]
        (when-some [[type-env' member-info]
                    (or
                      (when-some [member-info (class-info member)]
@@ -1102,7 +1118,7 @@
    (let [[positional-args [_ & named-args]] (split-with (complement '#{.&}) args)]
      (-> [] (into (map #(vector nil %) positional-args))
        (into (partition-all 2) named-args))))
-  ([args [fixed-types opts-types]]
+  ([args [fixed-types opts-types type-parameters]]
    (if (map? opts-types)
      (let [args (remove '#{.&} args) ; temporary
            positional-args (mapv #(vector nil %1 %2) args fixed-types)
@@ -1222,10 +1238,8 @@
 
 (defn emit-arg
   "[bindings dart-arg]"
-  ([must-lift arg hint env]
-   (emit-arg must-lift arg nil hint env))
-  ([must-lift arg expected-type hint env]
-   (lift-arg must-lift (magicast (emit arg env) expected-type env) hint env)))
+  [must-lift dart-arg expected-type hint env]
+  (lift-arg must-lift (magicast dart-arg expected-type env) hint env))
 
 (defn emit-args
   "[bindings dart-args]"
@@ -1233,11 +1247,12 @@
    (emit-args false split-args env))
   ([must-lift split-args env]
    (let [[bindings dart-args]
-         (reduce (fn [[bindings dart-fn-args] [k x t]]
-                   (let [[bindings' x'] (emit-arg (seq bindings) x t (or k "arg") env)]
+         (reduce (fn [[bindings dart-fn-args] [k dart-x t]]
+                   (let [[bindings' dart-x'] (emit-arg (seq bindings) dart-x t (or k "arg") env)]
                      [(concat bindings' bindings)
-                      (cond->> (cons x' dart-fn-args) k (cons k))]))
-           [(when must-lift (list 'sentinel)) ()] (rseq (vec split-args)))
+                      (cond->> (cons dart-x' dart-fn-args) k (cons k))]))
+           [(when must-lift (list 'sentinel)) ()]
+           (map (fn [[k x t]] [k (emit x env) t]) (rseq (vec split-args))))
          bindings (cond-> bindings must-lift butlast)]
      [bindings dart-args])))
 
@@ -1347,6 +1362,9 @@
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class env)
         member-info (some-> (dart-member-lookup dart-type (:element-name dart-type) env) actual-member)
+        _ (when (not member-info)
+            (binding [*out* *err*]
+              (println "Dynamic warning: can't resolve default constructor for type" (:element-name dart-type "dynamic") "of library" (:lib dart-type "dart:core") (source-info))))
         method-sig (some-> member-info dart-method-sig)
         split-args+types (if method-sig (split-args args method-sig) (split-args args))
         [bindings dart-args] (emit-args split-args+types env)]
@@ -1902,6 +1920,8 @@
     [mname mtype-params dart-fixed-params opt-kind dart-opt-params (nil? (seq body)) dart-body]))
 
 (defn extract-super-calls [dart-body this-super]
+  ;; semantics of super are captured by dart closures, thus we use dart closures
+  ;; to allow treating super as an almost regular value.
   (let [extract1
         (fn [x]
           (when (= this-super x) (throw (Exception. "Rogue reference to super.")))
@@ -2125,41 +2145,56 @@
 (defn emit-reify* [[_ opts & specs] env]
   (let [this-this (dart-local "this" env)
         this-super (dart-local "super" env)
-        env (into env (keep (fn [[k v]] (case v this [k this-this] super [k this-super] nil))) env)
-        class (emit-class-specs 'dart:core/Object opts specs env) ; TODO
-        split-args (-> class :super-ctor :args split-args)
-        positional-ctor-args (into [] (keep (fn [[tag arg]] (when (nil? tag) arg))) split-args)
-        named-ctor-args (into [] (keep (fn [[tag arg]] (when-not (nil? tag) arg))) split-args)
-        positional-ctor-params (repeatedly (count positional-ctor-args) #(dart-local "param" env))
-        named-ctor-params (map #(dart-local % env) (map first named-ctor-args))
+        ;; when we have nested closures we must take care to not take a this relating
+        ;; to the outermost clojure for a this relating to the innermost.
+        ;; That's why we remap existing bindings to this and super.
+        ;; Thus in the emitted code all references to this and super will relate to their
+        ;; innermost closure.
+        ;; And by checking the presence of this-this and this-super in the emitetd code
+        ;; we know whether we need to close over the outermost values of this and super.
+        env (into env (keep (fn [[clj-sym dart-expr]] (case dart-expr this [clj-sym this-this] super [clj-sym this-super] nil))) env)
+        class (emit-class-specs 'dart:core/Object opts specs env)
         class-name (if-some [var-name (:var-name opts)]
-                       (munge var-name "ifn" env)
-                       (dart-global (or (:name-hint opts) "Reify")))
+                     (munge var-name "ifn" env)
+                     (dart-global (or (:name-hint opts) "Reify")))
         mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
+        ; extract references to parent's super in dart closures
         [super-fn-bindings methods]
         (reduce (fn [[bindings meths] meth]
                   (let [[bindings' meth'] (method-extract-super-call meth this-super)]
                     [(into bindings bindings') (conj meths meth')]))
           [[] []] (:methods class))
+        ; closed-overs are a seq of dart locals
+        ; (they are found by walking the emitted dart sexp)
+        ; super-fns extracted above are part of the closed overs
         closed-overs (concat
                        (transduce (map #(method-closed-overs % env)) into #{}
                          methods)
                        (map first super-fn-bindings))
-        env-for-ctor-call
-        (-> env
-          (into (map (fn [v] [v v])) closed-overs)
-          (into (map (fn [[f]] [f f])) super-fn-bindings)
-          (assoc this-this 'this))
-        no-meta (or (:no-meta opts) (seq positional-ctor-args) (seq named-ctor-args))
+        super-ctor-split-args (-> class :super-ctor :args split-args)
+        super-ctor-split-params
+        (into [] (map (fn [[name _]] [name (dart-local (or name "param") env)])) super-ctor-split-args)
+        ;; when there are arguments to the super ctor, these arguments are lost
+        ;; upon invocation and thus it's not possible to rebuild the object
+        ;; thus it's impossible to implement with-meta which would require storing
+        ;; suoer-ctor args.
+        ;; Thus when you have super-ctor args you can't have meta support by default.
+        ;; Note: one can also opt out of default meta by using the option :no-meta true
+        no-meta (or (:no-meta opts) (seq super-ctor-split-args))
         meta-field (when-not no-meta (dart-local 'meta env))
         {meta-methods :methods meta-implements :implements}
         (when meta-field
-          (emit-class-specs 'dart:core/Object {} ; TODO
-            `[cljd.core/IMeta
-              (~'-meta [_#] ~meta-field)
-              cljd.core/IWithMeta
-              (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs))]
-            (assoc env-for-ctor-call meta-field meta-field)))
+          (let [env-for-ctor-call ; hack where dart syms become clj syms
+                (-> env
+                  (into (map (fn [v] [v v])) closed-overs)
+                  #_(assoc this-this 'this)
+                  (assoc meta-field meta-field))]
+            (emit-class-specs 'dart:core/Object {} ; TODO
+              `[cljd.core/IMeta
+                (~'-meta [_#] ~meta-field)
+                cljd.core/IWithMeta
+                (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs))]
+              env-for-ctor-call)))
         all-fields
         (cond->> closed-overs meta-field (cons meta-field))
         dart-type (new-dart-type mclass-name (:type-vars env) all-fields env)
@@ -2174,21 +2209,18 @@
                   :ctor-params
                   (concat
                     (map #(list '. %) all-fields)
-                    positional-ctor-params
-                    named-ctor-params))
+                    (map second super-ctor-split-params)))
                 (assoc-in [:super-ctor :args]
-                  (concat positional-ctor-params
-                    (interleave (map first named-ctor-args)
-                      named-ctor-params))))
-        reify-ctor-call (list*
-                         'new class-name
-                         (concat (cond->> closed-overs meta-field (cons nil))
-                           positional-ctor-args
-                           (map second named-ctor-args)))]
+                  (into [] (comp cat (remove nil?)) super-ctor-split-params)))]
     (swap! nses alter-def class-name assoc :dart/code (with-out-str (write-class class)))
-    (cond->> (emit reify-ctor-call env-for-ctor-call)
-      (seq super-fn-bindings)
-      (list 'dart/let super-fn-bindings))))
+    (let [ctor-split-args (map #(assoc % 0 nil) super-ctor-split-args)
+          [bindings dart-args] (emit-args ctor-split-args env)
+          bindings (concat super-fn-bindings bindings)]
+      (cond->>
+          (list* 'dart/new (emit-type class-name env)
+            (concat (when meta-field [nil]) closed-overs dart-args))
+        (seq bindings)
+        (list 'dart/let bindings)))))
 
 (defn- ensure-dart-expr
   "If dart-expr is suitable as an expression (ie liftable returns nil),
@@ -2358,7 +2390,7 @@
               (let [function-type dc-Function] ; TODO add parameters to type
                 (with-meta (:qname v) {:dart/type (or (some-> (meta x) :tag emit-type) function-type)
                                        :dart/fn-type :native
-                                       :dart/signature (select-keys v [:parameters :return-type])}))
+                                       :dart/signature (select-keys v [:parameters :return-type :type-parameters])}))
               (with-meta (:qname v) {:dart/class v}))
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
 
@@ -3528,7 +3560,7 @@
 
   (write
     (binding [dart-libs-info li]
-        (emit-test 'dart-io/stdout {}))
+      (emit-test '(math/max 1 2) {}))
     return-locus)
 
   (write
