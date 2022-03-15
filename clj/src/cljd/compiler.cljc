@@ -148,7 +148,7 @@
                      (:toplevel entity) assoc->qnames)
             :function (->
                         (assoc->qnames entity)
-                        (update :return-type qualify-entity)
+                        (update-if :return-type qualify-entity)
                         (update-if :parameters #(into [] (map qualify-entity) %))
                         (update-if :type-parameters #(into [] (map qualify-entity) %)))
             :method (-> entity
