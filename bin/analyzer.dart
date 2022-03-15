@@ -133,7 +133,13 @@ class TopLevelVisitor extends ThrowingElementVisitor {
     print("; getter/setter ${e.displayName}");
   }
   void visitTopLevelVariableElement(TopLevelVariableElement e) {
-    print("; var ${e.displayName}");
+    print("\"${e.displayName}\"");
+    print(M({':kind': ':field',
+             ':const': e.isConst,
+             ':getter': e.getter!=null,
+             ':setter': e.setter!=null,
+             ':type': emitType(e.type)
+    }));
   }
   void visitTypeAliasElement(TypeAliasElement e) {
     print("; typedef ${e.displayName}");
