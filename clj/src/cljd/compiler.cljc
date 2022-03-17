@@ -1104,37 +1104,37 @@
         [nil x])))
 
 (defn- split-args
-  "1-arg arity is sort of legacy (.&)
-   2-arg arity leverages analyzer info.
-   Returns a collection of triples [name dart-code expected-type]
+  "Returns a collection of triples [name dart-code expected-type]
    where name is nil for positional parameters, dart-code MAY NOT BE A DART EXPR
    and thus must be lifted (see lift-args), expected-type may be nil when unknown."
-  ([args env]
-   (let [[positional-args [_ & named-args]] (split-with (complement '#{.&}) args)]
-     (-> [] (into (map #(vector nil (emit % env)) positional-args))
-       (into (comp (partition-all 2) (map (fn [[name x]] [name (emit x env)]))) named-args))))
-  ([args [fixed-types opts-types type-parameters] env]
-   (if (map? opts-types)
-     (let [args (remove '#{.&} args) ; temporary
-           positional-args (mapv #(vector nil (emit %1 env) %2) args fixed-types)
-           rem-args (drop (count positional-args) args)
-           all-args (into positional-args
-                        (map (fn [[k expr]]
-                               (if-some [[_ type] (find opts-types k)]
-                                 [k (emit expr env) type]
-                                 (throw (Exception.
-                                          (str "Not an expected argument name: " (pr-str k)
-                                            ", valid names: " (str/join ", " (keys opts-types))))))))
-                        (partition 2 rem-args))]
-       (when-not (= (count positional-args) (count fixed-types))
-         (throw (Exception. (str "Not enough positional arguments: expected " (count fixed-types) " got " (count positional-args)))))
-       (when-not (even? (count rem-args))
-         (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))
-       all-args)
-     (let [all-args (mapv #(vector nil (emit %1 env) %2) args (concat fixed-types opts-types))]
-       (when-not (<= 0 (- (count args) (count fixed-types)) (count opts-types))
-         (throw (Exception. (str "Wrong argument count: expecting between " (count fixed-types) " and " (+ (count fixed-types) (count opts-types)) " but got " (count args)))))
-       all-args))))
+  [args [fixed-types opts-types type-parameters :as method-sig] env]
+  (cond
+    (nil? method-sig)
+    (let [[positional-args [_ & named-args]] (split-with (complement '#{.&}) args)]
+      (-> [] (into (map #(vector nil (emit % env)) positional-args))
+        (into (comp (partition-all 2) (map (fn [[name x]] [name (emit x env)]))) named-args)))
+    (map? opts-types)
+    (let [args (remove '#{.&} args) ; temporary
+          positional-args (mapv #(vector nil (emit %1 env) %2) args fixed-types)
+          rem-args (drop (count positional-args) args)
+          all-args (into positional-args
+                     (map (fn [[k expr]]
+                            (if-some [[_ type] (find opts-types k)]
+                              [k (emit expr env) type]
+                              (throw (Exception.
+                                       (str "Not an expected argument name: " (pr-str k)
+                                         ", valid names: " (str/join ", " (keys opts-types))))))))
+                     (partition 2 rem-args))]
+      (when-not (= (count positional-args) (count fixed-types))
+        (throw (Exception. (str "Not enough positional arguments: expected " (count fixed-types) " got " (count positional-args)))))
+      (when-not (even? (count rem-args))
+        (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))
+      all-args)
+    :else
+    (let [all-args (mapv #(vector nil (emit %1 env) %2) args (concat fixed-types opts-types))]
+      (when-not (<= 0 (- (count args) (count fixed-types)) (count opts-types))
+        (throw (Exception. (str "Wrong argument count: expecting between " (count fixed-types) " and " (+ (count fixed-types) (count opts-types)) " but got " (count args)))))
+      all-args)))
 
 (defn is-assignable?
   "Returns true when a value of type value-type can be used as a value of type slot-type."
@@ -1262,9 +1262,7 @@
                                     (dc.Object dc.dynamic) nil
                                     :ifn)))))
         [bindings dart-args] (lift-args (nil? fn-type)
-                               (if-some [sig (some-> dart-f meta :dart/signature dart-method-sig)]
-                                 (split-args args sig env)
-                                 (split-args args env)) env)
+                               (split-args args (some-> dart-f meta :dart/signature dart-method-sig) env) env)
         [bindings' dart-f] (lift-arg (or (nil? fn-type) (seq bindings)) dart-f "f" env)
         bindings (concat bindings' bindings)
         native-call (when-not (= :ifn fn-type)
@@ -1357,7 +1355,7 @@
             (binding [*out* *err*]
               (println "Dynamic warning: can't resolve default constructor for type" (:element-name dart-type "dynamic") "of library" (:lib dart-type "dart:core") (source-info))))
         method-sig (some-> member-info dart-method-sig)
-        split-args+types (if method-sig (split-args args method-sig env) (split-args args env))
+        split-args+types (split-args args method-sig env)
         [bindings dart-args] (lift-args split-args+types env)]
     (cond->> (with-meta (list* 'dart/new dart-type dart-args)
                {:dart/type dart-type
@@ -1431,7 +1429,7 @@
                                  nil)
           method-sig (or special-num-op-sig special-equality-sig
                        (some-> member-info dart-method-sig))
-          split-args+types (if method-sig (split-args args method-sig env) (split-args args env))
+          split-args+types (split-args args method-sig env)
           [dart-args-bindings dart-args] (lift-args split-args+types env)
           prop (case (:kind member-info)
                  :field true
@@ -1470,7 +1468,7 @@
       (and (seq? target) (= '. (first target)))
       (let [[_ obj member] target]
         (if-some [[_ fld] (re-matches #"-(.+)" (name member))]
-          (let [[bindings [dart-obj dart-val]] (lift-args true (split-args [obj expr] env) env)]
+          (let [[bindings [dart-obj dart-val]] (lift-args true (split-args [obj expr] nil env) env)]
             (list 'dart/let
               (conj (vec bindings)
                 [nil (list 'dart/set! (list 'dart/.- dart-obj fld) dart-val)])
@@ -2162,7 +2160,7 @@
                        (transduce (map #(method-closed-overs % env)) into #{}
                          methods)
                        (map first super-fn-bindings))
-        super-ctor-split-args (-> class :super-ctor :args (split-args env))
+        super-ctor-split-args (-> class :super-ctor :args (split-args nil env)) ; TODO lookup super ctor
         super-ctor-split-params
         (into [] (map (fn [[name _]] [name (dart-local (or name "param") env)])) super-ctor-split-args)
         ;; when there are arguments to the super ctor, these arguments are lost
@@ -2256,7 +2254,7 @@
         dart-type (new-dart-type mclass-name type-params dart-fields parsed-class-specs env)
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (emit-class-specs class-name parsed-class-specs env)
-        super-ctor-split-args (-> class :super-ctor :args (split-args env))
+        super-ctor-split-args (-> class :super-ctor :args (split-args nil env))
         class (-> class
                 (assoc :name dart-type
                   :ctor mclass-name
