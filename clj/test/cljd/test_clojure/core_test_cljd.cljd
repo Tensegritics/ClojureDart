@@ -194,3 +194,12 @@
 
 (deftest testing-select-keys
   (is (= {1 1 5 5} (select-keys (into {} (map #(vector % %)) (range 10)) [1 5]))))
+
+(deftype Base [x]
+  Object
+  (toString [_] (str "Base of " x)))
+
+(deftest testing-reify-with-extends
+  (is (== "Base of weird-reify"
+        (str (reify
+               :extends (Base. "weird-reify"))))))
