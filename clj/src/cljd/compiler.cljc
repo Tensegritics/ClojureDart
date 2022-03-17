@@ -139,6 +139,7 @@
                      (assoc->qnames entity)
                      (update-if :type-parameters #(into [] (map qualify-entity) %))
                      (update-if :super qualify-entity)
+                     (update-if :bound qualify-entity)
                      (update-if :interfaces #(into [] (map qualify-entity) %))
                      (update-if :mixins #(into [] (map qualify-entity) %))
                      (into (comp (filter #(string? (first %)))
@@ -353,6 +354,28 @@
       (with-meta (symbol (namespace tag) base) (meta tag))
       base)))
 
+(defn- type-env-from-map
+  "Takes a map from type params names (as strings) to types (as maps).
+   Returns a function from types (as maps) to types (as maps)."
+  [type-map]
+  #(if-some [t (when (:is-param %) (type-map (:element-name %)))]
+     (assoc t :nullable (:nullable %))
+     %))
+
+(defn- type-map-for
+  [class-or-member type-args type-params]
+  (let [nargs (count type-args)
+        nparams (count type-params)]
+    (cond
+      (= nargs nparams)
+      (zipmap (map :element-name type-params) type-args)
+      (zero? nargs)
+      (into {} (map (fn [p] [(:element-name p) (:bound p dc-dynamic)])) type-params)
+      :else
+      (throw (Exception. (str "Expecting " nparams " type arguments to " class-or-member ", got " nargs "."))))))
+
+(def type-env-for (comp type-env-from-map type-map-for))
+
 (defn specialize-type [dart-type nullable clj-sym type-vars]
   ; there's some serious duplication going on between here and actual-*
   (when dart-type
@@ -360,20 +383,17 @@
       (case (:canon-qname dart-type)
         dc.Function
         (if-some [type-parameters (seq (:type-parameters dart-type))]
-          (let [type-env (zipmap type-parameters
-                           (or (seq (map #(resolve-type % type-vars) (:type-params (meta clj-sym))))
-                             (repeat dc-dynamic)))
-                type-vars (into type-vars type-parameters)
-                specialize1 (fn [t]
-                              (if (:is-param t)
-                                (type-env (:element-name t) t)
-                                t))] ; FIXME should recurse, eg to specialize List<E>
+          (let [type-env (type-env-for
+                           (:canon-qname dart-type)
+                           type-parameters
+                           (map #(resolve-type % type-vars) (:type-params (meta clj-sym))))
+                type-vars (into type-vars (map :element-name) type-parameters)]
             (assoc dart-type
               :type-parameters
               (into []
                 (keep (fn [p] (let [t (type-env (:element-name p))] (when (:is-param t) t))))
                 type-parameters)
-              :parameters (into [] (map #(update-in % :type specialize1))
+              :parameters (into [] (map #(update-in % :type type-env))
                             (:parameters dart-type))))
           dart-type)
         (assoc dart-type
@@ -381,23 +401,11 @@
       (assoc :nullable nullable))))
 
 (defn specialize-function [function-info clj-sym type-vars]
-  (let [type-args (map #(resolve-type % type-vars) (:type-params (meta clj-sym)))
-        type-params (:type-parameters function-info)
-        nargs (count type-args)
-        nparams (count type-params)
-        type-env (cond
-                   (= nargs nparams)
-                   (zipmap (map :type type-params) type-args)
-                   (zero? nargs)
-                   (zipmap (map :type type-params)
-                     (repeat (resolve-type 'dart:core/dynamic #{})))
-                   :else
-                   (throw (Exception. (str "Expecting " nparams " type arguments to " clj-sym ", got " nargs "."))))]
-    (actual-member
-      [#(or (when (:is-param %)
-              (cond-> (type-env (:element-name %))
-                (:nullable %) (assoc :nullable true))) %)
-       function-info])))
+  (actual-member
+    [(type-env-for clj-sym
+       (map #(resolve-type % type-vars) (:type-params (meta clj-sym)))
+       (:type-parameters function-info))
+     function-info]))
 
 (defn- resolve-non-local-symbol [sym type-vars]
   (let [{:keys [libs] :as nses} @nses
@@ -679,18 +687,6 @@
                  (into [] (map :type) opts))]
       [(into [] (map :type) fixed) opts (:type-parameters member-info)])))
 
-(defn- type-env-for [class-or-member type-args type-params]
-  (let [nargs (count type-args)
-        nparams (count type-params)]
-    (cond
-      (= nargs nparams)
-      (zipmap (map :element-name type-params) type-args)
-      (zero? nargs)
-      (zipmap (map :element-name type-params)
-        (repeat (resolve-type 'dart:core/dynamic #{})))
-      :else
-      (throw (Exception. (str "Expecting " nparams " type arguments to " class-or-member ", got " nargs "."))))))
-
 (defn full-class-info
   "Takes a partial dart type (as map or discrete lib + element-name as strings).
    Returns a fully populated type map."
@@ -722,21 +718,18 @@
    (let [member-type-arguments (map #(resolve-type % type-vars) (:type-params member-meta))
          member (name member)]
      (when-some [class-info (full-class-info class)]
-       (when-some [[type-env' member-info]
+       (when-some [[type-env member-info]
                    (or
                      (when-some [member-info (class-info member)]
                        [identity member-info])
                      (some #(dart-member-lookup % member env) (:mixins class-info))
                      (some #(dart-member-lookup % member env) (:interfaces class-info))
                      (some-> (:super class-info) (dart-member-lookup member env)))]
-         (let [type-env (merge
-                          (type-env-for class (:type-parameters class) (:type-parameters class-info))
-                          (type-env-for member member-type-arguments (:type-parameters member-info)))]
-           [#(let [v (type-env' %)]
-               (or (when (:is-param v)
-                     (cond-> (type-env (:element-name v))
-                       (:nullable v) (assoc :nullable true))) v))
-            member-info]))))))
+         [(comp ; ordering matters
+            (type-env-for member member-type-arguments (:type-parameters member-info))
+            (type-env-for class (:type-parameters class) (:type-parameters class-info))
+            type-env)
+          member-info])))))
 
 (declare actual-parameters)
 
@@ -768,7 +761,6 @@
     (-> member-info
       (update :return-type actual-type type-env)
       (update :parameters actual-parameters type-env))))
-
 
 (defn dart-fn-lookup [function function-info]
   (let [type-args (:type-parameters function) ; TODO
@@ -1113,20 +1105,23 @@
 
 (defn- split-args
   "1-arg arity is sort of legacy (.&)
-   2-arg arity leverages analyzer info"
-  ([args]
+   2-arg arity leverages analyzer info.
+   Returns a collection of triples [name dart-code expected-type]
+   where name is nil for positional parameters, dart-code MAY NOT BE A DART EXPR
+   and thus must be lifted (see lift-args), expected-type may be nil when unknown."
+  ([args env]
    (let [[positional-args [_ & named-args]] (split-with (complement '#{.&}) args)]
-     (-> [] (into (map #(vector nil %) positional-args))
-       (into (partition-all 2) named-args))))
-  ([args [fixed-types opts-types type-parameters]]
+     (-> [] (into (map #(vector nil (emit % env)) positional-args))
+       (into (comp (partition-all 2) (map (fn [[name x]] [name (emit x env)]))) named-args))))
+  ([args [fixed-types opts-types type-parameters] env]
    (if (map? opts-types)
      (let [args (remove '#{.&} args) ; temporary
-           positional-args (mapv #(vector nil %1 %2) args fixed-types)
+           positional-args (mapv #(vector nil (emit %1 env) %2) args fixed-types)
            rem-args (drop (count positional-args) args)
            all-args (into positional-args
                         (map (fn [[k expr]]
                                (if-some [[_ type] (find opts-types k)]
-                                 [k expr type]
+                                 [k (emit expr env) type]
                                  (throw (Exception.
                                           (str "Not an expected argument name: " (pr-str k)
                                             ", valid names: " (str/join ", " (keys opts-types))))))))
@@ -1136,7 +1131,7 @@
        (when-not (even? (count rem-args))
          (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))
        all-args)
-     (let [all-args (mapv #(vector nil %1 %2) args (concat fixed-types opts-types))]
+     (let [all-args (mapv #(vector nil (emit %1 env) %2) args (concat fixed-types opts-types))]
        (when-not (<= 0 (- (count args) (count fixed-types)) (count opts-types))
          (throw (Exception. (str "Wrong argument count: expecting between " (count fixed-types) " and " (+ (count fixed-types) (count opts-types)) " but got " (count args)))))
        all-args))))
@@ -1236,23 +1231,19 @@
        :else
        (list 'dart/as dart-expr expected-type)))))
 
-(defn emit-arg
-  "[bindings dart-arg]"
-  [must-lift dart-arg expected-type hint env]
-  (lift-arg must-lift (magicast dart-arg expected-type env) hint env))
-
-(defn emit-args
+(defn lift-args
   "[bindings dart-args]"
   ([split-args env]
-   (emit-args false split-args env))
+   (lift-args false split-args env))
   ([must-lift split-args env]
    (let [[bindings dart-args]
          (reduce (fn [[bindings dart-fn-args] [k dart-x t]]
-                   (let [[bindings' dart-x'] (emit-arg (seq bindings) dart-x t (or k "arg") env)]
+                   (let [[bindings' dart-x']
+                         (lift-arg (seq bindings) (magicast dart-x t env) (or k "arg") env)]
                      [(concat bindings' bindings)
                       (cond->> (cons dart-x' dart-fn-args) k (cons k))]))
            [(when must-lift (list 'sentinel)) ()]
-           (map (fn [[k x t]] [k (emit x env) t]) (rseq (vec split-args))))
+           (rseq (vec split-args)))
          bindings (cond-> bindings must-lift butlast)]
      [bindings dart-args])))
 
@@ -1270,10 +1261,10 @@
                                     dc.Function :native
                                     (dc.Object dc.dynamic) nil
                                     :ifn)))))
-        [bindings dart-args] (emit-args (nil? fn-type)
+        [bindings dart-args] (lift-args (nil? fn-type)
                                (if-some [sig (some-> dart-f meta :dart/signature dart-method-sig)]
-                                 (split-args args sig)
-                                 (split-args args)) env)
+                                 (split-args args sig env)
+                                 (split-args args env)) env)
         [bindings' dart-f] (lift-arg (or (nil? fn-type) (seq bindings)) dart-f "f" env)
         bindings (concat bindings' bindings)
         native-call (when-not (= :ifn fn-type)
@@ -1366,8 +1357,8 @@
             (binding [*out* *err*]
               (println "Dynamic warning: can't resolve default constructor for type" (:element-name dart-type "dynamic") "of library" (:lib dart-type "dart:core") (source-info))))
         method-sig (some-> member-info dart-method-sig)
-        split-args+types (if method-sig (split-args args method-sig) (split-args args))
-        [bindings dart-args] (emit-args split-args+types env)]
+        split-args+types (if method-sig (split-args args method-sig env) (split-args args env))
+        [bindings dart-args] (lift-args split-args+types env)]
     (cond->> (with-meta (list* 'dart/new dart-type dart-args)
                {:dart/type dart-type
                 :dart/inferred true
@@ -1440,8 +1431,8 @@
                                  nil)
           method-sig (or special-num-op-sig special-equality-sig
                        (some-> member-info dart-method-sig))
-          split-args+types (if method-sig (split-args args method-sig) (split-args args))
-          [dart-args-bindings dart-args] (emit-args split-args+types env)
+          split-args+types (if method-sig (split-args args method-sig env) (split-args args env))
+          [dart-args-bindings dart-args] (lift-args split-args+types env)
           prop (case (:kind member-info)
                  :field true
                  (nil :method :constructor) prop)
@@ -1479,7 +1470,7 @@
       (and (seq? target) (= '. (first target)))
       (let [[_ obj member] target]
         (if-some [[_ fld] (re-matches #"-(.+)" (name member))]
-          (let [[bindings [dart-obj dart-val]] (emit-args true (split-args [obj expr]) env)]
+          (let [[bindings [dart-obj dart-val]] (lift-args true (split-args [obj expr] env) env)]
             (list 'dart/let
               (conj (vec bindings)
                 [nil (list 'dart/set! (list 'dart/.- dart-obj fld) dart-val)])
@@ -2171,7 +2162,7 @@
                        (transduce (map #(method-closed-overs % env)) into #{}
                          methods)
                        (map first super-fn-bindings))
-        super-ctor-split-args (-> class :super-ctor :args split-args)
+        super-ctor-split-args (-> class :super-ctor :args (split-args env))
         super-ctor-split-params
         (into [] (map (fn [[name _]] [name (dart-local (or name "param") env)])) super-ctor-split-args)
         ;; when there are arguments to the super ctor, these arguments are lost
@@ -2214,7 +2205,7 @@
                   (into [] (comp cat (remove nil?)) super-ctor-split-params)))]
     (swap! nses alter-def class-name assoc :dart/code (with-out-str (write-class class)))
     (let [ctor-split-args (map #(assoc % 0 nil) super-ctor-split-args)
-          [bindings dart-args] (emit-args ctor-split-args env)
+          [bindings dart-args] (lift-args ctor-split-args env)
           bindings (concat super-fn-bindings bindings)]
       (cond->>
           (list* 'dart/new (emit-type class-name env)
@@ -2265,7 +2256,7 @@
         dart-type (new-dart-type mclass-name type-params dart-fields parsed-class-specs env)
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (emit-class-specs class-name parsed-class-specs env)
-        split-args (-> class :super-ctor :args split-args)
+        super-ctor-split-args (-> class :super-ctor :args (split-args env))
         class (-> class
                 (assoc :name dart-type
                   :ctor mclass-name
@@ -2277,9 +2268,9 @@
                     (mapcat
                       (fn [[name arg]]
                         (if (nil? name)
-                          (-> arg (emit env) (ensure-dart-expr env) list)
-                          [name (-> arg (emit env) (ensure-dart-expr env))])))
-                    split-args)))]
+                          (-> arg (ensure-dart-expr env) list)
+                          [name (-> arg (ensure-dart-expr env))])))
+                    super-ctor-split-args)))]
     (swap! nses alter-def class-name assoc :dart/code (with-out-str (write-class class)))
     (emit class-name env)))
 
@@ -2387,10 +2378,22 @@
             (meta dart-name))))
       :dart (case (:kind v)
               :function
-              (let [function-type dc-Function] ; TODO add parameters to type
-                (with-meta (:qname v) {:dart/type (or (some-> (meta x) :tag emit-type) function-type)
+              ; this looks a LOT like specialize-function and dart-fn-lookup (has it ever been used?)
+              (let [function-type (into dc-Function (select-keys v [:parameters :return-type :type-parameters]))
+                    type-params (:type-parameters function-type)
+                    ; type-parameters as returned by resolve-symbol are only names as strings
+                    ; bounds are lost, so no check can be completed TOFIX
+                    type-args (or (some->> (:type-params (meta x)) (map #(emit-type % env)))
+                                (repeat (count type-params) dc-dynamic)) ; TODO correct bound
+                    _ (when-not (= (count type-params) (count type-args))
+                        (throw (ex-info (str "Function " v " expects " (count type-params) " but got " (count type-args) ": " (vec (:type-params (meta x))))
+                                 {:symbol x :dart-info v})))
+                    actual-function-type
+                    (actual-type function-type (zipmap type-params type-args))] ; TODO add parameters to type
+
+                (with-meta (:qname v) {:dart/type (or (some-> (meta x) :tag emit-type) actual-function-type) ; Why this or ?
                                        :dart/fn-type :native
-                                       :dart/signature (select-keys v [:parameters :return-type :type-parameters])}))
+                                       :dart/signature actual-function-type}))
               (with-meta (:qname v) {:dart/class v}))
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
 
@@ -3287,11 +3290,7 @@
             (assert is-plain-method (str "not a plain method: " meth))
             (write obj (assoc expr-locus :this-position true))
             (print (str "." meth))
-            (when-some [[type-param & more-type-params] (seq type-params)]
-              (print "<")
-              (write-type type-param)
-              (doseq [type-param more-type-params] (print ", ") (write-type type-param))
-              (print ">"))
+            (write-types type-params "<" ">")
             (write-args args)))
         (when must-wrap (print ")"))
         (print-post locus)
@@ -3315,6 +3314,7 @@
       (let [[f & args] x]
         (print-pre locus)
         (write f expr-locus)
+        (write-types (some-> f meta :dart/signature :type-parameters) "<" ">")
         (write-args args)
         (print-post locus)
         (:exit locus)))
