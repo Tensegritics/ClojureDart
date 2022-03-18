@@ -3127,21 +3127,27 @@
         (print "continue ") (print label) (print ";\n")
         true)
       dart/if
-      (let [[_ test then else] x
-            decl (declaration locus)
+      (let [decl (declaration locus)
             locus (declared locus)]
         (some-> decl print)
-        (print "if(")
-        (write test expr-locus)
-        (print "){\n")
-        (if (write then locus)
-          (do
-            (print "}\n")
-            (write else locus))
-          (do
-            (print "}else{\n")
-            (write else locus)
-            (print "}\n"))))
+        (loop [[_ test then else] x]
+          (print "if(")
+          (write test expr-locus)
+          (print "){\n")
+          (cond
+            (write then locus)
+            (do
+              (print "}\n")
+              (write else locus))
+            (and (seq? else) (= 'dart/if (first else)))
+            (do
+              (print "}else ")
+              (recur else))
+            :else
+            (do
+              (print "}else{\n")
+              (write else locus)
+              (print "}\n")))))
       dart/loop
       (let [[_ bindings expr] x
             decl (declaration locus)
