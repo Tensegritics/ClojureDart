@@ -11,85 +11,100 @@
   (:require [clojure.string :as str]
             [clojure.java.io :as io]))
 
-(def dc-void {:element-name        "void"
+(def dc-void {:kind :class
+              :element-name        "void"
               :canon-qname 'void
               :qname       'void})
-(def dc-dynamic '{:qname           dc.dynamic,
+(def dc-dynamic '{:kind :class
+                  :qname           dc.dynamic,
                   :canon-qname     dc.dynamic
                   :canon-lib       "dart:core"
                   :lib             "dart:core",
                   :element-name            "dynamic",
                   :type-parameters []})
-(def dc-Never '{:qname       dc.Never,
+(def dc-Never '{:kind :class
+                :qname       dc.Never,
                 :canon-qname dc.Never
                 :canon-lib   "dart:core"
                 :lib             "dart:core",
                 :element-name        "Never"})
-(def dc-Object '{:qname           dc.Object,
+(def dc-Object '{:kind :class
+                 :qname           dc.Object,
                  :canon-qname     dc.Object
                  :canon-lib       "dart:core"
                  :lib             "dart:core",
                  :element-name            "Object",
                  :type-parameters []})
-(def dc-Future '{:element-name            "Future",
+(def dc-Future '{:kind :class
+                 :element-name            "Future",
                  :qname           dc.Future
                  :canon-qname     da.Object
                  :canon-lib       "dart:async"
                  :lib             "dart:core",
                  :type-parameters [{:element-name "T", :is-param true, :qname T :canon-qname T}],})
-(def dc-FutureOr '{:element-name            "FutureOr",
+(def dc-FutureOr '{:kind :class
+                   :element-name            "FutureOr",
                    :canon-lib       "dart:async"
                    :lib             "dart:async",
                    :type-parameters [{:element-name "T", :is-param true, :qname T :canon-qname T}],
                    :qname           da.FutureOr
                    :canon-qname     da.FutureOr})
-(def dc-Null '{:qname           dc.Null,
+(def dc-Null '{:kind :class
+               :qname           dc.Null,
                :canon-qname     dc.Null
                :canon-lib       "dart:core"
                :lib             "dart:core",
                :element-name            "Null",
                :type-parameters []})
-(def dc-String '{:qname           dc.String,
+(def dc-String '{:kind :class
+                 :qname           dc.String,
                  :canon-qname     dc.String
                  :canon-lib       "dart:core"
                  :lib             "dart:core",
                  :element-name            "String",
                  :type-parameters []})
-(def dc-Function '{:qname           dc.Function,
+(def dc-Function '{:kind :class
+                   :qname           dc.Function,
                    :canon-qname     dc.Function
                    :canon-lib       "dart:core"
                    :lib             "dart:core",
                    :element-name            "Function",
                    :type-parameters []})
-(def dc-bool '{:qname           dc.bool,
+(def dc-bool '{:kind :class
+               :qname           dc.bool,
                :canon-qname     dc.bool
                :canon-lib       "dart:core"
                :lib             "dart:core",
                :element-name            "bool",
                :type-parameters []})
-(def dc-int '{:qname           dc.int,
+(def dc-int '{:kind :class
+              :qname           dc.int,
               :canon-qname     dc.int
               :canon-lib       "dart:core"
               :lib             "dart:core",
               :element-name            "int",
               :type-parameters []})
-(def dc-double '{:qname           dc.double,
+(def dc-double '{:kind :class
+                 :qname           dc.double,
                  :canon-qname     dc.double
                  :canon-lib       "dart:core"
                  :lib             "dart:core",
                  :element-name            "double",
                  :type-parameters []})
-(def dc-num '{:qname           dc.num,
+(def dc-num '{:kind :class
+              :qname           dc.num,
               :canon-qname     dc.num
               :canon-lib       "dart:core"
               :lib             "dart:core",
               :element-name            "num",
               :type-parameters []})
 
-(def pseudo-num-tower '{:qname       pseudo.num-tower
+(def pseudo-num-tower '{:kind :class
+                        :qname       pseudo.num-tower
                         :canon-qname pseudo.num-tower})
 
-(def pseudo-some '{:qname       dc.dynamic
+(def pseudo-some '{:kind :class
+                   :qname       dc.dynamic
                    :lib "dart:core"
                    :canon-qname pseudo.some})
 
@@ -335,22 +350,18 @@
       (if ('#{void dart:core/void} clj-sym)
         dc-void)
       (if (and (nil? typens) (contains? type-vars (symbol typename)))
-        {:canon-qname clj-sym :qname clj-sym :element-name typename :is-param true})
-      (if-some [lib (resolve-clj-alias typens)]
+        {:kind :class :canon-qname clj-sym :qname clj-sym :element-name typename :is-param true})
+      (when-some [lib (resolve-clj-alias typens)]
         (or (-> dart-libs-info (get lib) (get typename))
           (let [dart-alias (:dart-alias (libs lib))
                 qname (symbol (str dart-alias "." typename))]
-            {:qname qname
-             :canon-qname qname
-             :element-name typename})
-          ;; TODO : handle dart:core/identical function in analyzer before uncommenting this
-          #_(when *host-eval*
-              ;; NOTE: in case of a host-eval, we have to resolve some
-              ;; specific types like cljd.core/IFn$iface for macros to
-              ;; compile
-              {:qname (symbol (str dart-alias "." typename))
-               :element-name typename})))
-      nil)))
+            (case clj-sym
+              cljd.core/IFn$iface
+              '{:kind :class
+                :qname lcoc_core.IFn$iface
+                :canon-qname lcoc_core.IFn$iface
+                :element-name "IFn$iface"}
+              nil)))))))
 
 (defn non-nullable [tag]
   (when-some [[_ base] (re-matches #"(.+)[?]" (name tag))]
@@ -389,8 +400,8 @@
         (if-some [type-parameters (seq (:type-parameters dart-type))]
           (let [type-env (type-env-for
                            (:canon-qname dart-type)
-                           type-parameters
-                           (map #(resolve-type % type-vars) (:type-params (meta clj-sym))))
+                           (map #(resolve-type % type-vars) (:type-params (meta clj-sym)))
+                           type-parameters)
                 type-vars (into type-vars (map :element-name) type-parameters)]
             (assoc dart-type
               :type-parameters
@@ -434,8 +445,9 @@
                      [tag (case tag
                             :def (update info :dart/type specialize-type nullable sym type-vars)
                             :dart (case (:kind info)
-                                    :function (specialize-function info sym type-vars)
-                                    (specialize-type info nullable sym type-vars)))])]
+                                    :function (specialize-function info  sym type-vars)
+                                    :class (specialize-type info nullable sym type-vars)
+                                    :field info))])]
     (or (some-> (resolve sym) (specialize false))
       (some-> (non-nullable sym) resolve (specialize true)))))
 
@@ -2077,7 +2089,8 @@
                        dart-fields)
          qname (symbol (str (dart-alias-for-ns current-ns) "." mclass-name))
          lib (-> current-ns all-nses :lib)
-         bare-type {:qname qname
+         bare-type {:kind :class
+                    :qname qname
                     :canon-qname qname
                     :lib lib
                     :canon-lib lib
@@ -2427,7 +2440,7 @@
     (throw (ex-info "use must have either a :rename or an :only option" {:spec spec}))))
 
 (defn- refer-clojure-to-require [refer-spec]
-  (let [{:keys [exclude only rename]} (reduce (fn [m [k v]] (merge-with into m {k v})) {} (partition 2 refer-spec))
+  (let [{:keys [exclude only rename]} (reduce (fn [m [k v]] (merge-with into m {k v})) {} (partition 2 (next refer-spec)))
         exclude (into (set exclude) (keys rename))
         include (if only (set only) any?)
         refer (for [{:keys [type name] {:keys [private]} :meta} (vals (@nses 'cljd.core))
@@ -2441,7 +2454,9 @@
 (defn emit-ns [[_ ns-sym & ns-clauses :as ns-form] _]
   (when (or (not *hosted*) *host-eval*)
     (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
-          refer-clojures (or (seq (filter #(= :refer-clojure (first %)) ns-clauses)) [[:refer-clojure]])
+          refer-clojures (if (= 'cljd.core ns-sym)
+                           [[:refer-clojure :only []]]
+                           (or (seq (filter #(= :refer-clojure (first %)) ns-clauses)) [[:refer-clojure]]))
           host-ns-directives (some #(when (= :host-ns (first %)) (next %)) ns-clauses)
           require-specs
           (concat
