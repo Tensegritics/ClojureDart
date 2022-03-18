@@ -434,7 +434,7 @@
                      [tag (case tag
                             :def (update info :dart/type specialize-type nullable sym type-vars)
                             :dart (case (:kind info)
-                                    :function (specialize-function info  sym type-vars)
+                                    :function (specialize-function info sym type-vars)
                                     (specialize-type info nullable sym type-vars)))])]
     (or (some-> (resolve sym) (specialize false))
       (some-> (non-nullable sym) resolve (specialize true)))))
@@ -469,11 +469,10 @@
                (case (:canon-qname info)
                  dc.Function
                  ;; TODO enrich type-vars with locally defined type params
-                 (if-some [pt (seq (:params-types (meta sym)))]
-                   (assoc info :parameters
-                     (map (fn [t]
-                            {:kind :positional
-                             :type (resolve-type t type-vars)} pt)))
+                 (if-some [[rt & pt] (seq (map #(resolve-type % type-vars) (:params-types (meta sym))))]
+                   (assoc info
+                     :parameters (map (fn [t] {:kind :positional :type t}) pt)
+                     :return-type rt)
                    info)
                  info))
        :def (case (:type info)
