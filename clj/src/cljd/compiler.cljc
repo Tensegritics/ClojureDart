@@ -2398,7 +2398,8 @@
                 (with-meta (:qname v) {:dart/type (or (some-> (meta x) :tag emit-type) actual-function-type) ; Why this or ?
                                        :dart/fn-type :native
                                        :dart/signature actual-function-type}))
-              (with-meta (:qname v) {:dart/class v}))
+              :class (with-meta (:qname v) {:dart/class v})
+              :field (with-meta (:qname v) {:dart/type (:type v)}))
       (throw (Exception. (str "Unknown symbol: " x (source-info)))))))
 
 (defn emit-var [[_ s] env]
