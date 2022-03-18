@@ -1315,7 +1315,7 @@
            (list 'dart/let
              (cons
                [lsym (with-lifted [item (maybe-quoted-emit item env)] env
-                       (list 'dart/. (emit list-tag env) "filled" (count x) item))]
+                       (list 'dart/. (emit-type list-tag env) "filled" (count x) item))]
                (map-indexed (fn [i item]
                               [nil (with-lifted [item (maybe-quoted-emit item env)] env
                                      (list 'dart/. lsym "[]=" (inc i) item))])
@@ -1404,7 +1404,7 @@
           dart-obj (cond
                      (= "==" member-name+) dart-obj
                      (:type-params (meta obj)) ; static only
-                     (symbol (type-str (emit-type obj env))) ; not great,  unreadable symbol, revisit later
+                     (emit-type obj env)
                      member-info
                      (magicast dart-obj type! type env)
                      :else
@@ -3209,7 +3209,9 @@
       dart/.-
       (let [[_ obj fld] x]
         (print-pre locus)
-        (write obj expr-locus)
+        (if (= :class (:kind obj))
+          (write-type obj)
+          (write obj expr-locus))
         (print (str "." fld))
         (print-post locus)
         (:exit locus))
@@ -3270,7 +3272,9 @@
           ;; else plain method
           (do
             (assert is-plain-method (str "not a plain method: " meth))
-            (write obj (assoc expr-locus :this-position true))
+            (if (= :class (:kind obj))
+              (write-type obj)
+              (write obj (assoc expr-locus :this-position true)))
             (print (str "." meth))
             (write-types type-params "<" ">")
             (write-args args)))
