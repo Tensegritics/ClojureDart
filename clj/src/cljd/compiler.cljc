@@ -1180,7 +1180,7 @@
                                   (get (:element-name value-type)))
                               value-type)]
                         (or (= canon-qname slot-canon-qname)
-                          (some assignable? (concat interfaces mixins super))
+                          (some assignable? (concat interfaces mixins))
                           (some-> super recur))))]
               (and (assignable? value-type)
                 (let [slot-tp (seq (:type-parameters slot-type))
@@ -2054,13 +2054,13 @@
         ctor-meth (when (= '. ctor-op) (first ctor-args))
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
-        methods (remove symbol? specs)  ; crude
-        mixins (filter (comp :mixin meta) classes)
-        ifaces (remove (comp :mixin meta) classes)
+        methods (into [] (remove symbol?) specs)  ; crude
+        ifaces (into [] (keep (fn [x] (when-not (:mixin (meta x)) (emit-type x env)))) classes)
+        mixins (into [] (keep (fn [x] (when (:mixin (meta x)) (emit-type x env)))) classes)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))]
     {:extends (emit-type base env)
-     :implements (map #(emit-type % env) ifaces)
-     :with (map #(emit-type % env) mixins)
+     :implements ifaces
+     :with mixins
      :super-ctor
      {:method ctor-meth ; nil for new
       :args ctor-args}
