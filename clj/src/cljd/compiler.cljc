@@ -89,6 +89,10 @@
 (def pseudo-num-tower '{:qname       pseudo.num-tower
                         :canon-qname pseudo.num-tower})
 
+(def pseudo-some '{:qname       dc.dynamic
+                   :lib "dart:core"
+                   :canon-qname pseudo.some})
+
 (declare global-lib-alias)
 
 (defn update-if
@@ -498,7 +502,7 @@
 (defn emit-type
   [tag {:keys [type-vars] :as env}]
   (cond
-    (= 'some tag) dc-dynamic
+    (= 'some tag) pseudo-some
     ('#{void dart:core/void} tag) dc-void
     :else
     (or (resolve-type tag type-vars nil) (when *hosted* (resolve-type (symbol (name tag)) type-vars nil))
@@ -506,8 +510,9 @@
 
 (defn dart-type-truthiness [type]
   (case (:canon-qname type)
-    (nil dc.Object dc.dynamic) nil
+    (nil dc.Object dc.dynamic dc.Never) nil
     (dc.Null void) :falsy
+    pseudo.some :some
     dc.bool (when-not (:nullable type) :boolean)
     (if (:nullable type) :some :truthy)))
 
@@ -523,9 +528,8 @@
       (:const m) (assoc :dart/const true)
       (:dart m) (assoc :dart/fn-type :native)
       (:clj m) (assoc :dart/fn-type :ifn)
-      type (assoc :dart/type type :dart/truth (dart-type-truthiness type))
-      (= (:canon-qname dc-Function) (:canon-qname type)) (assoc :dart/fn-type :native)
-      (= tag 'some) (assoc :dart/truth :some))))
+      type (assoc :dart/type type)
+      (= (:canon-qname dc-Function) (:canon-qname type)) (assoc :dart/fn-type :native))))
 
 (def reserved-words ; and built-in identifiers for good measure
   #{"Function" "abstract" "as" "assert" "async" "await" "break" "case" "catch"
@@ -739,7 +743,8 @@
     dc.Function
     (-> analyzer-type
       (update :return-type actual-type type-env)
-      (update :parameters actual-parameters type-env))
+      (update :parameters actual-parameters type-env)
+      (update :type-parameters (fn [ps] (map #(actual-type % type-env) ps))))
     (if (:is-param analyzer-type)
       (type-env analyzer-type)
       (update analyzer-type :type-parameters (fn [ps] (map #(actual-type % type-env) ps))))))
@@ -1107,7 +1112,7 @@
   "Returns a collection of triples [name dart-code expected-type]
    where name is nil for positional parameters, dart-code MAY NOT BE A DART EXPR
    and thus must be lifted (see lift-args), expected-type may be nil when unknown."
-  [args [fixed-types opts-types type-parameters :as method-sig] env]
+  [args [fixed-types opts-types :as method-sig] env]
   (cond
     (nil? method-sig)
     (let [[positional-args [_ & named-args]] (split-with (complement '#{.&}) args)]
@@ -1256,11 +1261,10 @@
         fn-type (if (some '#{.&} args)
                   :native
                   (let [{:dart/keys [fn-type type]} (infer-type dart-f)]
-                    (or fn-type (when-some [qname (:canon-qname type)]
-                                  (case qname
-                                    dc.Function :native
-                                    (dc.Object dc.dynamic) nil
-                                    :ifn)))))
+                    (or fn-type (case (:canon-qname type)
+                                  dc.Function :native
+                                  (nil dc.Object dc.dynamic pseudo.some) nil
+                                  :ifn))))
         [bindings dart-args] (lift-args (nil? fn-type)
                                (split-args args (some-> dart-f meta :dart/signature dart-method-sig) env) env)
         [bindings' dart-f] (lift-arg (or (nil? fn-type) (seq bindings)) dart-f "f" env)
@@ -1359,8 +1363,7 @@
         [bindings dart-args] (lift-args split-args+types env)]
     (cond->> (with-meta (list* 'dart/new dart-type dart-args)
                {:dart/type dart-type
-                :dart/inferred true
-                :dart/truth (dart-type-truthiness dart-type)})
+                :dart/inferred true})
       (seq bindings) (list 'dart/let bindings))))
 
 (defn- fake-member-lookup [type! member n]
@@ -1443,9 +1446,7 @@
                         (= :method (:kind member-info)) nil ; TODO type delegate
                         :else (:type member-info)))
           expr (cond-> (list* op dart-obj name dart-args)
-                 expr-type (vary-meta assoc :dart/type expr-type
-                             :dart/truth (dart-type-truthiness expr-type)
-                             :dart/inferred true))
+                 expr-type (vary-meta assoc :dart/type expr-type :dart/inferred true))
           bindings (concat dart-obj-bindings dart-args-bindings)]
       (cond->> expr
         (seq bindings) (list 'dart/let bindings)))))
@@ -1510,7 +1511,6 @@
 (defn emit-recur [[_ & exprs] env]
   (with-meta (cons 'dart/recur (map #(emit % env) exprs))
     {:dart/type     dc-Never
-     :dart/truth    nil
      :dart/inferred true}))
 
 (defn emit-if [[_ test then else] env]
@@ -1521,7 +1521,7 @@
         (true? dart-test) (emit then env)
         (false? dart-test) (emit else env)
         :else
-        (let [{:keys [dart/truth]} (infer-type dart-test)
+        (let [truth (dart-type-truthiness (:dart/type (infer-type dart-test)))
               [bindings dart-test] (lift-arg (nil? truth) dart-test "test" env)
               dart-test (case truth
                           (:boolean :falsy :truthy) dart-test
@@ -1785,13 +1785,11 @@
                     (emit (cons 'do body) env)
                     (let [env' (update env fn-name vary-meta assoc
                                  :dart/ret-type dc-Never
-                                 :dart/type dc-Never
-                                 :dart/ret-truth nil)
-                          {:dart/keys [type truth]} (-> (emit (cons 'do body) env') infer-type)]
+                                 :dart/type dc-Never)
+                          {:dart/keys [type]} (-> (emit (cons 'do body) env') infer-type)]
                       (emit (cons 'do body) (update env fn-name vary-meta assoc
                                               :dart/ret-type type
-                                              :dart/type type
-                                              :dart/ret-truth truth))))
+                                              :dart/type type))))
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         async (or async (has-await? dart-body))
         dart-fixed-params (if recur-params
@@ -1813,10 +1811,8 @@
         (-> (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)
           (vary-meta assoc
             :dart/ret-type  ret-type
-            :dart/ret-truth (dart-type-truthiness ret-type)
             :dart/fn-type   :native
-            :dart/type      dc-Function
-            :dart/truth     :truthy))]
+            :dart/type      dc-Function))]
     (if fn-name
       (let [dart-fn-name (with-meta (env fn-name) (meta dart-fn))]
         (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name))
@@ -1833,8 +1829,7 @@
               name (assoc name (vary-meta (dart-local name env)
                                  #(assoc %
                                     :dart/fn-type   fn-type
-                                    :dart/ret-type  (:dart/type %)
-                                    :dart/ret-truth (dart-type-truthiness (:dart/type %))))))]
+                                    :dart/ret-type  (:dart/type %)))))]
     (case fn-type
       :ifn (emit-ifn async var-name name bodies env)
       (emit-dart-fn async name body env))))
@@ -2322,10 +2317,9 @@
                     nil)
         dartname (cond-> dartname
                    dart-type
-                   (vary-meta (fn [{:dart/keys [type truth] :as m}]
-                                (assoc m :dart/ret-type type :dart/ret-truth truth
-                                  :dart/type dart-type
-                                  :dart/truth (dart-type-truthiness dart-type)))))
+                   (vary-meta (fn [{:dart/keys [type] :as m}]
+                                (assoc m :dart/ret-type type
+                                  :dart/type dart-type))))
         expr (when-not *host-eval*
                (if (and (seq? expr) (= 'fn* (first expr)))
                  (with-meta (cons (vary-meta (first expr) assoc :var-name sym) (next expr)) (meta expr))
@@ -2525,7 +2519,6 @@
   ;; always emit throw as a statement (in case it gets promoted to rethrow)
   (with-meta (list 'dart/let [[nil (list 'dart/throw (emit expr env))]] nil)
     {:dart/type     dc-Never
-     :dart/truth    nil
      :dart/inferred true}))
 
 (defn emit-dart-is [[_ x type] env]
@@ -2538,8 +2531,7 @@
       (with-lifted [x dart-x] env
         (with-meta (list 'dart/is x dart-type)
           {:dart/type     dc-bool
-           :dart/inferred true
-           :dart/truth    :boolean})))))
+           :dart/inferred true})))))
 
 (defn emit-dart-assert [[_ test msg] env]
   (list 'dart/assert (ensure-dart-expr (emit test env) env)
@@ -2551,8 +2543,7 @@
       (let [ret-type (some-> (infer-type x) :dart/type :type-parameters first)]
         (when ret-type
           {:dart/type     ret-type
-           :dart/inferred true
-           :dart/truth    (dart-type-truthiness ret-type)})))))
+           :dart/inferred true})))))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -2930,13 +2921,11 @@
                        (case (get-in dart-left-infer [:dart/type :canon-qname])
                          (void dc.Null)
                          (case (get-in dart-right-infer [:dart/type :canon-qname])
-                           (void dc.Null dc.Never) {:dart/type     dc-Null
-                                                    :dart/truth    :falsy}
+                           (void dc.Null dc.Never) {:dart/type dc-Null}
                            dc.dynamic dart-right-infer
                            (when (:dart/type dart-right-infer)
                              (-> dart-right-infer
-                               (update :dart/type (fnil assoc dc-Object) :nullable true)
-                               (assoc :dart/truth nil))))
+                               (update :dart/type (fnil assoc dc-Object) :nullable true))))
                          dc.Never dart-right-infer
                          dc.dynamic dart-left-infer
                          (if (= (:canon-qname (:dart/type dart-left-infer)) (:canon-qname (:dart/type dart-right-infer)))
@@ -2950,19 +2939,17 @@
                              (void dc.Null)
                              (when (:dart/type dart-left-infer)
                                (-> dart-left-infer
-                                 (update :dart/type (fnil assoc dc-Object) :nullable true)
-                                 (assoc :dart/truth nil)))
+                                 (update :dart/type (fnil assoc dc-Object) :nullable true)))
                              dc.Never dart-left-infer
-                             {:dart/type dc-dynamic
-                              :dart/truth    nil}))))]
+                             {:dart/type dc-dynamic}))))]
     (->
      (cond
        (:dart/inferred m) m
-       (nil? x) {:dart/type dc-Null :dart/truth :falsy}
-       (boolean? x) {:dart/type dc-bool :dart/truth :boolean}
-       (string? x) {:dart/type dc-String :dart/truth :truthy}
-       (double? x) {:dart/type dc-double :dart/truth :truthy}
-       (integer? x) {:dart/type dc-int :dart/truth :truthy}
+       (nil? x) {:dart/type dc-Null}
+       (boolean? x) {:dart/type dc-bool}
+       (string? x) {:dart/type dc-String}
+       (double? x) {:dart/type dc-double}
+       (integer? x) {:dart/type dc-int}
        (and (symbol? x) (-> x meta :dart/type :canon-qname (= 'dc.Function)))
        {:dart/ret-type (-> x meta :dart/signature :return-type)}
        (seq? x)
@@ -2978,31 +2965,22 @@
          (let [[_ _ dart-then dart-else] x]
            (infer-branch (infer-type dart-then) (infer-type dart-else)))
          dart/let (infer-type (last x))
-         dart/fn {:dart/fn-type :native :dart/type dc-Function :dart/truth :truthy}
-         #_#_dart/new {:dart/type (second x)
-                   :dart/nat-type (second x)
-                   :dart/truth (dart-type-truthiness (second x))}
-         #_#_dart/.-
-         (let [[_ obj propname] x
-               {:dart/keys [fn-type ret-type ret-truth]} (doto (infer-type obj) prn)])
+         dart/fn {:dart/fn-type :native :dart/type dc-Function}
          dart/.
          (let [[_ a meth & bs :as all] x ; TODO use type-params
-               {:dart/keys [fn-type ret-type ret-truth]} (infer-type a)
+               {:dart/keys [fn-type ret-type]} (infer-type a)
                [methname type-params] (if (sequential? meth) [(name (first meth)) (second meth)] [meth nil])]
            (if (= :ifn fn-type)
-             (when ret-type {:dart/type ret-type :dart/truth ret-truth})
+             (when ret-type {:dart/type ret-type})
              (case methname
                ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "^^" "||")
-               {:dart/type dc-bool :dart/truth :boolean}
+               {:dart/type dc-bool}
                nil)))
-         #_#_dart/is {:dart/type dc-bool :dart/nat-type dc-bool :dart/truth :boolean}
          dart/as (let [[_ _ type] x]
-                   {:dart/type type
-                    :dart/truth (dart-type-truthiness type)})
-         (let [{:keys [dart/ret-type dart/ret-truth]} (infer-type (first x))]
+                   {:dart/type type})
+         (let [{:keys [dart/ret-type]} (infer-type (first x))]
            (when ret-type
-             {:dart/type ret-type
-              :dart/truth (or ret-truth (dart-type-truthiness ret-type))})))
+             {:dart/type ret-type})))
        :else nil)
      (merge-dart-meta m)
      (assoc :dart/inferred true))))
