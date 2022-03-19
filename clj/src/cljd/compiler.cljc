@@ -1217,6 +1217,8 @@
   ([dart-expr expected-type actual-type env]
    (cond
      (is-assignable? expected-type actual-type) dart-expr
+     (and (= (:canon-qname expected-type) 'dc.double)
+       (= (:canon-qname actual-type) 'dc.int)) dart-expr
      ;; When inlined #dart[], we keep it inlines
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
      (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
