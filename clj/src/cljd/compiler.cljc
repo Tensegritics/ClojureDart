@@ -1198,54 +1198,60 @@
     dc.double dc-double
     dc-num))
 
+(defn simple-cast
+  ([dart-expr expected-type]
+   (simple-cast dart-expr expected-type (:dart/type (infer-type dart-expr))))
+  ([dart-expr expected-type actual-type]
+   (cond
+     (is-assignable? expected-type actual-type) dart-expr
+     (= (:canon-qname expected-type) 'void) dart-expr
+     (= (:canon-qname expected-type) 'pseudo.num-tower)
+     (recur dart-expr (num-type actual-type) actual-type)
+     :else
+     (list 'dart/as dart-expr expected-type))))
+
 (defn magicast
   "Note (magicast x nil env) is x."
   ([dart-expr expected-type env]
    (magicast dart-expr expected-type (:dart/type (infer-type dart-expr)) env))
   ([dart-expr expected-type actual-type env]
-   (let [assignable? (is-assignable? expected-type actual-type)]
-     (cond
-       assignable? dart-expr
-       (= (:canon-qname expected-type) 'void) dart-expr
-       (= (:canon-qname expected-type) 'pseudo.num-tower)
-       (recur dart-expr (num-type actual-type) actual-type env)
-       ;; When inlined #dart[], we keep it inlines
-       ;; TODO: don't like the (vector? dart-expr) check, it smells bad
-       (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
-         (vector? dart-expr)) dart-expr
-       (and (#{'dc.List 'dc.Map 'dc.Set} (:canon-qname expected-type))
-         (when-some [tps (seq (:type-parameters expected-type))]
-           (every? #(not= (:canon-qname %) 'dc.dynamic) tps)))
-       (let [[dartf :as binding] (dart-binding 'castmethod dart-expr env)
-             wrapper (vary-meta (dart-local 'wrapper-f {} ) assoc :dart/type expected-type)]
-         (list 'dart/let
-           [binding
-            [wrapper
-             (if (is-assignable? (dissoc expected-type :type-parameters) (dissoc actual-type :type-parameters))
-               (list 'dart/. dartf (into ["cast"] (:type-parameters expected-type)))
-               (list 'dart/if (list 'dart/is dartf expected-type) ; or expected-type?
-                 dartf
-                 (list 'dart/. (list 'dart/as dartf (dissoc expected-type :type-parameters)) (into ["cast"] (:type-parameters expected-type)))))]]
-           wrapper))
-       (and (= (:canon-qname expected-type) 'dc.Function) ; TODO generics
-         (not assignable?))
-       (let [{:keys [return-type parameters]} expected-type
-             [fixed-types optionals] (dart-method-sig expected-type)
-             fixed-params (into [] (map (fn [_] (dart-local env))) fixed-types)
-             [dartf :as binding] (dart-binding 'maybe-f dart-expr env)
-             cljf (gensym 'maybe-f)
-             wrapper-env (into {cljf dartf} (zipmap fixed-params fixed-params))
-             wrapper (vary-meta (dart-local 'wrapper-f {} ) assoc :dart/type expected-type)]
-         (list 'dart/let
-           [binding
-            [wrapper
+   (cond
+     (is-assignable? expected-type actual-type) dart-expr
+     ;; When inlined #dart[], we keep it inlines
+     ;; TODO: don't like the (vector? dart-expr) check, it smells bad
+     (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
+       (vector? dart-expr)) dart-expr
+     (and (#{'dc.List 'dc.Map 'dc.Set} (:canon-qname expected-type))
+       (when-some [tps (seq (:type-parameters expected-type))]
+         (every? #(not= (:canon-qname %) 'dc.dynamic) tps)))
+     (let [[dartf :as binding] (dart-binding 'castmethod dart-expr env)
+           wrapper (vary-meta (dart-local 'wrapper-f {} ) assoc :dart/type expected-type)]
+       (list 'dart/let
+         [binding
+          [wrapper
+           (if (is-assignable? (dissoc expected-type :type-parameters) (dissoc actual-type :type-parameters))
+             (list 'dart/. dartf (into ["cast"] (:type-parameters expected-type)))
              (list 'dart/if (list 'dart/is dartf expected-type) ; or expected-type?
                dartf
-               (list 'dart/fn fixed-params :positional () nil ; TODO opts
-                 (emit (cons (vary-meta cljf assoc :clj true :dart nil) fixed-params) wrapper-env)))]]
-           wrapper))
-       :else
-       (list 'dart/as dart-expr expected-type)))))
+               (list 'dart/. (list 'dart/as dartf (dissoc expected-type :type-parameters)) (into ["cast"] (:type-parameters expected-type)))))]]
+         wrapper))
+     (= (:canon-qname expected-type) 'dc.Function) ; TODO : generics
+     (let [{:keys [return-type parameters]} expected-type
+           [fixed-types optionals] (dart-method-sig expected-type)
+           fixed-params (into [] (map (fn [_] (dart-local env))) fixed-types)
+           [dartf :as binding] (dart-binding 'maybe-f dart-expr env)
+           cljf (gensym 'maybe-f)
+           wrapper-env (into {cljf dartf} (zipmap fixed-params fixed-params))
+           wrapper (vary-meta (dart-local 'wrapper-f {} ) assoc :dart/type expected-type)]
+       (list 'dart/let
+         [binding
+          [wrapper
+           (list 'dart/if (list 'dart/is dartf expected-type) ; or expected-type?
+             dartf
+             (list 'dart/fn fixed-params :positional () nil ; TODO opts
+               (emit (cons (vary-meta cljf assoc :clj true :dart nil) fixed-params) wrapper-env)))]]
+         wrapper))
+     :else (simple-cast dart-expr expected-type actual-type))))
 
 (defn lift-args
   "[bindings dart-args]"
@@ -1758,7 +1764,7 @@
         (for [[mname [this & params] & body] methods]
           (list (cond-> mname async (with-meta {:async true}))
             (into [this] (map #(vary-meta % dissoc :tag) params))
-            `(let [~@(mapcat (fn [p] (when (:tag (meta p)) [p (vary-meta p dissoc :tag)])) params)]
+            `(let [~@(mapcat (fn [p] (when (:tag (meta p)) [(vary-meta p dissoc :tag) p])) params)]
                ~@body)))
         dart-sexpr (emit `(~'reify
                            :var-name ~var-name
@@ -1781,14 +1787,14 @@
           (fn [[env dart-fixed-params] p]
             (let [local (dart-local p env)
                   param (vary-meta local dissoc :dart/type)]
-              [(assoc env p (magicast param (:dart/type (meta local)) nil env))
+              [(assoc env p (simple-cast param (:dart/type (meta local)) nil))
                (conj dart-fixed-params param)]))
           [env []] fixed-params)
         [env dart-opt-params]
         (reduce
           (fn [[env dart-opt-params] [p d]]
             (let [param (with-meta p nil)] ; symbol name used as is, must be valid identifier
-              [(assoc env p (magicast param (:dart/type (dart-meta p)) nil env))
+              [(assoc env p (simple-cast param (:dart/type (dart-meta p)) nil))
                (conj dart-opt-params
                  [param (emit d env)])]))
           [env []] opt-params)
@@ -2616,7 +2622,7 @@
           {:dart/keys [const type]} (dart-meta x env)]
       (-> dart-x
         (cond-> const (vary-meta assoc :dart/const true))
-        (magicast type env)))
+        (simple-cast type)))
     (catch Exception e
       (throw
         (if-some [stack (::emit-stack (ex-data e))]
