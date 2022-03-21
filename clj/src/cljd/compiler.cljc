@@ -2176,16 +2176,24 @@
                        (transduce (map #(method-closed-overs % env)) into #{}
                          methods)
                        (map first super-fn-bindings))
-        super-ctor-split-args (-> class :super-ctor :args (split-args nil env)) ; TODO lookup super ctor
+        super-ctor-split-args+types
+        (when-some [dart-super-type (:extends class)]
+          (let [meth (-> class :super-ctor :method)
+                super-ctor-meth (cond-> (:element-name dart-super-type) meth (str "." meth))
+                super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)]
+            (when (not super-ctor-info)
+              (binding [*out* *err*]
+                (println "Dynamic warning: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
+            (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))))
         super-ctor-split-params
-        (into [] (map (fn [[name _]] [name (dart-local (or name "param") env)])) super-ctor-split-args)
+        (into [] (map (fn [[name _]] [name (dart-local (or name "param") env)])) super-ctor-split-args+types)
         ;; when there are arguments to the super ctor, these arguments are lost
         ;; upon invocation and thus it's not possible to rebuild the object
         ;; thus it's impossible to implement with-meta which would require storing
         ;; suoer-ctor args.
         ;; Thus when you have super-ctor args you can't have meta support by default.
         ;; Note: one can also opt out of default meta by using the option :no-meta true
-        no-meta (or (:no-meta opts) (seq super-ctor-split-args))
+        no-meta (or (:no-meta opts) (seq super-ctor-split-args+types))
         meta-field (when-not no-meta (dart-local 'meta env))
         {meta-methods :methods meta-implements :implements}
         (when meta-field
@@ -2218,7 +2226,7 @@
                 (assoc-in [:super-ctor :args]
                   (into [] (comp cat (remove nil?)) super-ctor-split-params)))]
     (swap! nses alter-def class-name assoc :dart/code (with-out-str (write-class class)))
-    (let [ctor-split-args (map #(assoc % 0 nil) super-ctor-split-args)
+    (let [ctor-split-args (map #(assoc % 0 nil) super-ctor-split-args+types)
           [bindings dart-args] (lift-args ctor-split-args env)
           bindings (concat super-fn-bindings bindings)]
       (cond->>
@@ -2270,7 +2278,15 @@
         dart-type (new-dart-type mclass-name type-params dart-fields parsed-class-specs env)
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (emit-class-specs class-name parsed-class-specs env)
-        super-ctor-split-args (-> class :super-ctor :args (split-args nil env))
+        super-ctor-split-args+types
+        (when-some [dart-super-type (:extends class)]
+          (let [meth (-> class :super-ctor :method)
+                super-ctor-meth (cond-> (:element-name dart-super-type) meth (str "." meth))
+                super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)]
+            (when (not super-ctor-info)
+              (binding [*out* *err*]
+                (println "Dynamic warning: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
+            (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))))
         class (-> class
                 (assoc :name dart-type
                   :ctor mclass-name
@@ -2284,7 +2300,7 @@
                         (if (nil? name)
                           (-> arg (ensure-dart-expr env) list)
                           [name (-> arg (ensure-dart-expr env))])))
-                    super-ctor-split-args)))]
+                    super-ctor-split-args+types)))]
     (swap! nses alter-def class-name assoc :dart/code (with-out-str (write-class class)))
     (emit class-name env)))
 
