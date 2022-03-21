@@ -160,6 +160,7 @@
                      (update-if :super qualify-entity)
                      (update-if :bound qualify-entity)
                      (update-if :interfaces #(into [] (map qualify-entity) %))
+                     (update-if :on #(into [] (map qualify-entity) %))
                      (update-if :mixins #(into [] (map qualify-entity) %))
                      (into (comp (filter #(string? (first %)))
                              (map (fn [[n v]] [n (qualify-entity v)])))

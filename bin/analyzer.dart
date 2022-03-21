@@ -99,7 +99,8 @@ class TopLevelVisitor extends ThrowingElementVisitor {
       ':type-parameters': e.typeParameters.map(emitTypeParameter),
       ':super': fnil(emitType,e.supertype,null),
       ':mixins': e.mixins.map(emitType),
-      ':interfaces': e.interfaces.map(emitType)};
+      ':interfaces': e.interfaces.map(emitType),
+      ':on': e.superclassConstraints.map(emitType)};
     for(final m in e.methods.where(isPublic)) {
       final name = m.displayName;
       classData["\"${name == '-' && m.parameters.isEmpty ? 'unary-' : name}\""]=
