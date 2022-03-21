@@ -739,9 +739,9 @@
                    (or
                      (when-some [member-info (class-info member)]
                        [identity member-info])
-                     (some #(dart-member-lookup % member env) (:mixins class-info))
-                     (some #(dart-member-lookup % member env) (:interfaces class-info))
-                     (some-> (:super class-info) (dart-member-lookup member env)))]
+                     (some #(dart-member-lookup % member env)
+                       (cond->> (mapcat class-info [:interfaces :mixins :on])
+                         (:super class-info) (cons (:super class-info)))))]
          [(comp ; ordering matters
             (type-env-for member member-type-arguments (:type-parameters member-info))
             (type-env-for class (:type-parameters class) (:type-parameters class-info))
