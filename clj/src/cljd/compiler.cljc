@@ -506,7 +506,8 @@
       (with-meta
         (symbol
           (when-not (= lib (:lib (nses current-ns)))
-            (get-in nses [current-ns :imports lib :clj-alias]))
+            (or (get-in nses [current-ns :imports lib :clj-alias])
+              (some-> lib (global-lib-alias nil) (->> (str "$lib:")))))
           (cond-> element-name nullable (str "?")))
         {:type-params (mapv unresolve-type type-parameters)}))))
 
@@ -2056,7 +2057,10 @@
 
 (defn- parse-class-specs [opts specs env]
   (let [{:keys [extends] :or {extends 'Object}} opts
-        specs (resolve-methods-specs specs (:type-vars env #{}))
+        specs (resolve-methods-specs (cons (if (seq? extends)
+                                             ;;if extends needs a constructor
+                                             (second (macroexpand-1 {} extends))
+                                             extends) specs) (:type-vars env #{}))
         [ctor-op base & ctor-args :as ctor]
         (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
