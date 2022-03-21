@@ -217,8 +217,9 @@
 (def ^:dynamic *source-info* {})
 (defn source-info []
   (let [{:keys [line column]} *source-info*]
-    (when line
-      (str " at line: " line ", column: " column ", file: " *file*))))
+    (if line
+      (str " at line: " line ", column: " column ", file: " *file*)
+      " (no source location)")))
 
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
