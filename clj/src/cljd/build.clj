@@ -52,7 +52,8 @@
             (< (.lastModified lib-info-edn) (.lastModified dart-tools-json)))
       ;; TODO : big hack... change this some day
       (if-some [compiler-root-file (some #(when (or (re-matches #"(.*)ClojureDartPreview\/resources$" (.getAbsolutePath %))
-                                                  (re-matches #"(.*)tensegritics\/clojuredart\/(.*)\/resources" (.getAbsolutePath %)))
+                                                  (re-matches #"(.*)tensegritics\/clojuredart\/(.*)\/resources" (.getAbsolutePath %))
+                                                  (re-matches #"(.*)tensegritics[\\\/]?clojuredart[\\\/]?(.*)[\\\/]?resources" (.getAbsolutePath %)))
                                             (-> % .getParentFile)) (cp/classpath))]
         (let [pb (doto (ProcessBuilder. ["flutter" "pub" "get"])
                    (.directory compiler-root-file))
