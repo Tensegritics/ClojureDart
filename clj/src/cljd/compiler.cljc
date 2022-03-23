@@ -2059,12 +2059,9 @@
 
 (defn- parse-class-specs [opts specs env]
   (let [{:keys [extends] :or {extends 'Object}} opts
-        specs (resolve-methods-specs (cons (if (seq? extends)
-                                             ;;if extends needs a constructor
-                                             (second (macroexpand-1 {} extends))
-                                             extends) specs) (:type-vars env #{}))
         [ctor-op base & ctor-args :as ctor]
         (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
+        specs (resolve-methods-specs (cond->> specs base (cons base)) (:type-vars env #{}))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
         classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
