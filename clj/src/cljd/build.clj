@@ -8,6 +8,7 @@
 
 (ns cljd.build
   (:require [cljd.compiler :as compiler]
+            [clojure.tools.cli.api :as deps]
             [clojure.tools.cli :as ctc]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
@@ -17,28 +18,71 @@
 (defn compile-core []
   (compiler/compile-namespace 'cljd.core))
 
+(defn watch-dirs [dirs reload]
+  (let [watcher (.newWatchService (java.nio.file.FileSystems/getDefault))
+        reg1
+        (fn [^java.io.File dir]
+          (when (.isDirectory dir)
+            [(.register (.toPath dir) watcher (into-array [java.nio.file.StandardWatchEventKinds/ENTRY_CREATE
+                                                           java.nio.file.StandardWatchEventKinds/ENTRY_DELETE
+                                                           java.nio.file.StandardWatchEventKinds/ENTRY_MODIFY
+                                                           java.nio.file.StandardWatchEventKinds/OVERFLOW])
+               (into-array [com.sun.nio.file.SensitivityWatchEventModifier/HIGH]))
+             (.toPath dir)]))
+        reg*
+        (fn [dir]
+          (eduction (keep reg1) (tree-seq some? #(.listFiles ^java.io.File %) dir)))]
+    (loop [ks->dirs (into {} (mapcat reg*) dirs) must-reload false]
+      (if-some [k (.poll watcher (if must-reload 10 1000) java.util.concurrent.TimeUnit/MILLISECONDS)]
+        (let [events (.pollEvents k)] ; make sure we remove them, no matter what happens next
+          (if-some [^java.nio.file.Path dir (ks->dirs k)]
+            (let [[ks->dirs must-reload]
+                  (reduce (fn [[ks->dirs must-reload] ^java.nio.file.WatchEvent e]
+                            (let [f (some->> e .context (.resolve dir) .toFile)]
+                              [(into ks->dirs (some->> f reg*))
+                               (or must-reload (nil? f) (not (.isDirectory f))
+                                 (re-matches #"[^.].*\.clj[dc]" (.getName f)))]))
+                    [ks->dirs must-reload] events)]
+              (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) must-reload))
+            (do
+              (.cancel k)
+              (recur ks->dirs must-reload))))
+        (do
+          (when must-reload
+            (reload))
+          (recur ks->dirs false))))))
+
 (defn compile-cli
   [& {:keys [watch namespaces] :or {watch false}}]
   (binding [compiler/*lib-path* (str (System/getProperty "user.dir") "/lib/")
             compiler/*hosted* true
             compiler/dart-libs-info (compiler/load-libs-info)]
-    (println "== Compiling core.cljd -> core.dart ===")
+    (println "=== Compiling ClojureDart ===")
     (compile-core)
-    (loop []
-      (doseq [n namespaces]
-        (try (compiler/compile-namespace n)
-             (catch Exception e
-               (if-some [exprs (::compiler/emit-stack (ex-data e))]
-                 (do
-                   (println (ex-message e))
-                   (run! prn (rseq exprs))
-                   (println (ex-message (ex-cause e))))
-                 (st/print-stack-trace e)))))
-      (when watch
-        (println "Press ENTER to recompile files :")
-        (when (pos? (.read (System/in)))
-          (recur))))))
-
+    (let [compile-nses
+          #(do
+             (println "=== Compiling Project Namespaces ===")
+             (doseq [n namespaces]
+               (try (compiler/compile-namespace n)
+                    (println "DONE!\n")
+                    (catch Exception e
+                      (if-some [exprs (::compiler/emit-stack (ex-data e))]
+                        (do
+                          (println (ex-message e))
+                          (run! prn (rseq exprs))
+                          (println (ex-message (ex-cause e))))
+                        (st/print-stack-trace e))))))]
+      (compile-nses)
+      (case watch
+        (false nil) nil
+        true (let [dirs (map #(java.io.File. %) (:paths (:basis (deps/basis nil))))]
+               (watch-dirs dirs compile-nses))
+        :loop
+        (loop []
+          (compile-nses)
+          (println "Press ENTER to recompile files :")
+          (when (pos? (.read (System/in)))
+            (recur)))))))
 
 ;; TODO : handle errors of processes
 (defn warm-up-libs-info! []
@@ -83,7 +127,8 @@
     :id :verbosity
     :default 0
     :update-fn inc]
-   ["-h" "--help"]])
+   ["-h" "--help"]
+   [nil "--loop" "" :id :loop]])
 
 (defn usage [options-summary]
   (->> ["This program compiles Clojuredart files to dart files."
@@ -95,8 +140,8 @@
         options-summary
         ""
         "Actions:"
-        "  compile Compile files"
-        "  watch   Compile files and re-compile when user press enter."
+        "  compile Compile namespaces"
+        "  watch   Compile namespaces and re-compile when a cljc or cljd file is modified."
         ""
         "Please refer to the manual page for more information."]
        (str/join \newline)))
@@ -137,4 +182,4 @@
           (warm-up-libs-info!)
           (case action
             "watch" (compile-cli :namespaces namespaces :watch true)
-            "compile" (compile-cli :namespaces namespaces :watch false))))))
+            "compile" (compile-cli :namespaces namespaces :watch (when (:loop options) :loop)))))))
