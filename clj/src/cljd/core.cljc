@@ -378,6 +378,7 @@
 (defmacro definterface [iface & meths]
   `(deftype ~(vary-meta iface assoc :abstract true) []
      :type-only true
+     ~iface
      ~@(map (fn [[meth args]] `(~meth [~'_ ~@args])) meths)))
 
 (definterface IProtocol
@@ -2209,7 +2210,6 @@
 
 (deftype ExceptionInfo [msg data ex]
   :type-only true
-  Object
   (^:getter message [_] msg)
   (^:getter cause [_] ex)
   IExceptionInfo
@@ -3051,10 +3051,10 @@
   :type-only true
   ^:mixin #/(dart-coll/ListMixin E)
   ^:mixin #/(SeqListMixin E)
-  ^:mixin EquivSequentialHashMixin
-  (^int ^:getter length [coll] count) ; TODO dart resolution through our own types
+  (^int ^:getter length [coll] count)
   (^#/(PersistentList R) #/(cast R) [coll]
    (new #/(PersistentList R) meta _first rest count __hash))
+  ^:mixin EquivSequentialHashMixin
   ;; invariant: _first is nil when count is zero
   IList
   IWithMeta
@@ -3286,6 +3286,7 @@
   ^:mixin #/(SeqListMixin E)
   (^#/(LazySeq R) #/(cast R) [coll]
    (new #/(LazySeq R) meta fn s __hash))
+  LazySeq
   (sval [coll]
     (if (nil? fn)
       s
@@ -3879,7 +3880,6 @@
 
 (deftype ChunkBuffer [^:mutable ^List? arr ^:mutable ^int end]
   :type-only true
-  Object
   (add [_ o]
     (aset ^List arr end o)
     (set! end (inc end))
@@ -4329,7 +4329,7 @@
 
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
   :type-only true
-  Object
+  BitmapNode
   (inode_lookup [node k not-found]
     (let [h (hash k)]
       (loop [^BitmapNode node node

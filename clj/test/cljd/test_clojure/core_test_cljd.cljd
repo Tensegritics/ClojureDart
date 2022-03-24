@@ -151,7 +151,6 @@
         '(:a :c :e))))
 
 (defrecord RecordA [a]
-  Object
   (mymethod [this] (str a "two")))
 
 (deftest testing-recorda
