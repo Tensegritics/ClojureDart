@@ -2025,19 +2025,25 @@
   (let [the-ns (:current-ns nses)]
     (apply update-in nses [the-ns sym] f args)))
 
-(defn- resolve-methods-specs [specs type-env]
+(defn- resolve-methods-specs [class-name specs type-env]
   (let [last-seen-type (atom nil)]
     (map
       (fn [spec]
         (cond
+          (= class-name spec) (do (reset! last-seen-type {:type :self}) spec)
           (seq? spec)
           (let [[mname arglist & body] spec
                 mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
                 [mname' arglist']
-                (case (:type @last-seen-type)
-                  :protocol (some-> @last-seen-type (resolve-protocol-method mname arglist type-env))
-                  (or (some-> @last-seen-type (resolve-dart-method mname arglist type-env))
-                    [mname arglist]))
+                (let [t @last-seen-type]
+                  (case (:type t)
+                    nil (throw (Exception. (str "Encountered method " mname  " in type " class-name " without having encountered a class or protocol name before" (source-info))))
+                    :self [mname arglist]
+                    :protocol (resolve-protocol-method t mname arglist type-env)
+                    :class
+                    (or
+                      (resolve-dart-method (:dart/type t) mname arglist type-env)
+                      (throw (Exception. (str "In class " class-name ", can't resolve method " mname (vec arglist) " on class " (:element-name (:dart/type t)) " from lib " (:lib (:dart/type t)) (source-info)))))))
                 mname (vary-meta mname' merge (meta mname))]
             `(~mname ~(parse-dart-params arglist')
               (let [~@(mapcat (fn [a a']
@@ -2045,31 +2051,47 @@
                                   (when-not (= t (:tag (meta a')))
                                     [a a']))) arglist arglist')]
                 ~@body)))
-          (:mixin (meta spec)) (do (reset! last-seen-type (resolve-type spec type-env)) spec)
+          (:mixin (meta spec)) (do (reset! last-seen-type
+                                     {:type :class
+                                      :dart/type (resolve-type spec type-env)}) spec)
           :else
           (let [[tag x] (resolve-non-local-symbol spec type-env)]
-            (reset! last-seen-type x)
             (case tag
-              :def (case (:type x)
-                     :class spec
-                     :protocol (symbol (name (:ns x)) (name (:iface x))))
-              :dart spec
-              (throw (Exception. (str "Can't resolve " spec)))))))
+              :def (do
+                     (reset! last-seen-type x)
+                     (case (:type x)
+                       :class spec
+                       :protocol (symbol (name (:ns x)) (name (:iface x)))))
+              :dart (do
+                      (reset! last-seen-type {:type :class :dart/type x})
+                      spec)
+              (throw (Exception. (str "Can't resolve " spec (source-info))))))))
       specs)))
 
-(defn- parse-class-specs [opts specs env]
-  (let [{:keys [extends] :or {extends 'Object}} opts
+(defn- parse-class-specs [class-name opts specs env]
+  (let [{:keys [extends]} opts
         [ctor-op base & ctor-args :as ctor]
-        (macroexpand env (cond->> extends (symbol? extends) (list 'new)))
-        specs (resolve-methods-specs (cond->> specs base (cons base)) (:type-vars env #{}))
+        (macroexpand env
+          (cond
+            (symbol? extends) (list 'new extends)
+            (seq? extends) extends
+            (nil? extends) '(new dart:core/Object)
+            :else (throw (Exception. (str "Unexpected super constructor")))))
+        specs (resolve-methods-specs class-name (cons (if extends base class-name) specs)
+                (:type-vars env #{}))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
-        classes (filter #(and (symbol? %) (not= base %)) specs) ; crude
-        methods (into [] (remove symbol?) specs)  ; crude
-        ifaces (into [] (keep (fn [x] (when-not (:mixin (meta x)) (emit-type x env)))) classes)
-        mixins (into [] (keep (fn [x] (when (:mixin (meta x)) (emit-type x env)))) classes)
+        methods (into [] (filter seq?) specs)  ; crude
+        base-type (emit-type base env)
+        classes (sequence
+                  (comp (filter symbol?) (remove #{class-name})
+                    (map (fn [x] [(-> x meta :mixin) (emit-type x env)]))
+                    (remove #(= (:canon-qname (second %)) (:canon-qname base-type))))
+                  specs) ; crude
+        ifaces (into [] (comp (remove first) (map second)) classes)
+        mixins (into [] (comp (filter first) (map second)) classes)
         need-nsm (and (seq ifaces) (not-any? (fn [[m]] (case m noSuchMethod true nil)) methods))]
-    {:extends (emit-type base env)
+    {:extends base-type
      :implements ifaces
      :with mixins
      :super-ctor
@@ -2078,11 +2100,8 @@
      :methods methods
      :nsm need-nsm}))
 
-(defn- emit-class-specs
-  ([class-name parsed-class-specs env]
-   (update parsed-class-specs :methods (fn [methods] (map #(emit-method class-name % env) methods))))
-  ([class-name opts specs env]
-   (emit-class-specs class-name (parse-class-specs opts specs env) env)))
+(defn- emit-class-specs [class-name parsed-class-specs env]
+  (update parsed-class-specs :methods (fn [methods] (map #(emit-method class-name % env) methods))))
 
 (defn method-closed-overs [[mname type-params dart-fixed-params opt-kind dart-opt-params _ dart-body] env]
   (transduce (filter symbol?) disj (closed-overs dart-body env) (list* 'this 'super (concat dart-fixed-params (map second dart-opt-params)))))
@@ -2160,7 +2179,7 @@
         ;; And by checking the presence of this-this and this-super in the emitetd code
         ;; we know whether we need to close over the outermost values of this and super.
         env (into env (keep (fn [[clj-sym dart-expr]] (case dart-expr this [clj-sym this-this] super [clj-sym this-super] nil))) env)
-        class (emit-class-specs 'dart:core/Object opts specs env)
+        class (emit-class-specs 'dart:core/Object (parse-class-specs nil opts specs env) env)
         class-name (if-some [var-name (:var-name opts)]
                      (munge var-name "ifn" env)
                      (dart-global (or (:name-hint opts) "Reify")))
@@ -2204,11 +2223,13 @@
                   (into (map (fn [v] [v v])) closed-overs)
                   #_(assoc this-this 'this)
                   (assoc meta-field meta-field))]
-            (emit-class-specs 'dart:core/Object {} ; TODO
-              `[cljd.core/IMeta
-                (~'-meta [_#] ~meta-field)
-                cljd.core/IWithMeta
-                (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs))]
+            (emit-class-specs 'dart:core/Object
+              (parse-class-specs nil {} ; TODO
+                `[cljd.core/IMeta
+                  (~'-meta [_#] ~meta-field)
+                  cljd.core/IWithMeta
+                  (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs))]
+                env-for-ctor-call)
               env-for-ctor-call)))
         all-fields
         (cond->> closed-overs meta-field (cons meta-field))
@@ -2271,7 +2292,7 @@
                               abstract (assoc :dart/late true))]]
                 [f (vary-meta (munge f env) merge m)]))
         dart-fields (map env fields)
-        parsed-class-specs (parse-class-specs opts specs env)
+        parsed-class-specs (parse-class-specs class-name opts specs env)
         _ (when-not *hosted*
             ;; necessary when a method returns a new instance of its parent class
             (swap! nses do-def class-name {:dart/name mclass-name
@@ -2653,37 +2674,43 @@
 (defn host-eval
   [x]
   (binding [*host-eval* true]
-    (let [x (macroexpand {} x)]
-      (when (seq? x)
-        (case (first x)
-          ns (emit-ns x {})
-          def (emit-def x {})
-          do (run! host-eval (next x))
-          defprotocol* (emit-defprotocol* x {})
-          deftype*
-          (let [[_ class-name fields opts & specs] x
-                [class-name & type-params] (cons class-name (:type-params (meta class-name)))
-                mclass-name (with-meta
-                              (or (:dart/name (meta class-name)) (munge class-name {}))
-                              {:type-params type-params})
-                env {:type-vars (set type-params)}
-                def-me!
-                (fn def-me! [resolve-fully]
-                  (let [dart-type (if resolve-fully
-                                    (new-dart-type mclass-name type-params
-                                      (map #(with-meta % (dart-meta % env)) fields)
-                                      (parse-class-specs opts specs env)
-                                      env)
-                                    (new-dart-type mclass-name type-params nil env))];
-                    (swap! nses do-def class-name
-                      (cond->
-                          {:dart/name mclass-name
-                           :dart/type dart-type
-                           :type :class}
-                        (not resolve-fully)
-                        (assoc :refresh! #(def-me! true))))))]
-            (def-me! false))
-          nil)))))
+    (try
+      (let [x (macroexpand {} x)]
+        (when (seq? x)
+          (case (first x)
+            ns (emit-ns x {})
+            def (emit-def x {})
+            do (run! host-eval (next x))
+            defprotocol* (emit-defprotocol* x {})
+            deftype*
+            (let [[_ class-name fields opts & specs] x
+                  [class-name & type-params] (cons class-name (:type-params (meta class-name)))
+                  mclass-name (with-meta
+                                (or (:dart/name (meta class-name)) (munge class-name {}))
+                                {:type-params type-params})
+                  env {:type-vars (set type-params)}
+                  def-me!
+                  (fn def-me! [resolve-fully]
+                    (let [dart-type (if resolve-fully
+                                      (new-dart-type mclass-name type-params
+                                        (map #(with-meta % (dart-meta % env)) fields)
+                                        (parse-class-specs class-name opts specs env)
+                                        env)
+                                      (new-dart-type mclass-name type-params nil env))];
+                      (swap! nses do-def class-name
+                        (cond->
+                            {:dart/name mclass-name
+                             :dart/type dart-type
+                             :type :class}
+                          (not resolve-fully)
+                          (assoc :refresh! #(def-me! true))))))]
+              (def-me! false))
+            nil)))
+      (catch Exception e
+        (throw
+          (if-some [stack (::emit-stack (ex-data e))]
+            (ex-info (ex-message e) (assoc (ex-data e) ::emit-stack (conj stack x)) (ex-cause e))
+            (ex-info (str "Error while host-compiling " (pr-str x)) {::emit-stack [x]} e)))))))
 
 (defn emit-test [expr env]
   (binding [*locals-gen* {}]
@@ -3493,7 +3520,7 @@
         (when *hosted*
           (with-open [in (.openStream url)]
             (host-load-input (java.io.InputStreamReader. in "UTF-8")))
-          (doseq [{:keys [refresh!]} (vals (get @nses ns-name))
+          (doseq [{:keys [refresh! name]} (sort-by (fn [{:keys [name]}] (case name (IProtocol SeqListMixin) 0 1)) (vals (get @nses ns-name)))
                   :when refresh!]
             (refresh!)))
         (let [libname (with-open [in (.openStream url)]
