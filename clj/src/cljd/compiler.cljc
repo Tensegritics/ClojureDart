@@ -42,7 +42,7 @@
                  :canon-lib       "dart:async"
                  :lib             "dart:core",
                  :type-parameters [{:element-name "T", :is-param true, :qname T :canon-qname T}],})
-(def dc-FutureOr '{:kind :class
+(def da-FutureOr '{:kind :class
                    :element-name            "FutureOr",
                    :canon-lib       "dart:async"
                    :lib             "dart:async",
@@ -125,14 +125,13 @@
           clojure.edn/read)
         inline-exports
         (fn export [{exports :exports :as v}]
-          (-> (into v (map (fn [{:keys [lib shown hidden]}]
-                             (cond
-                               shown
-                               (select-keys (export (dart-libs-info lib)) shown)
-                               hidden
-                               (reduce dissoc (export (dart-libs-info lib)) hidden)
-                               :else (export (dart-libs-info lib))))) exports)
-            (dissoc :exports)))
+          (into v (map (fn [{:keys [lib shown hidden]}]
+                         (cond
+                           shown
+                           (select-keys (export (dart-libs-info lib)) shown)
+                           hidden
+                           (reduce dissoc (export (dart-libs-info lib)) hidden)
+                           :else (export (dart-libs-info lib))))) exports))
         assoc->qnames
         (fn [{name :element-name :as entity}]
           (case name
@@ -191,16 +190,21 @@
           (map (fn [[lib content]]
                  [lib (into {}
                         (map (fn [[name entity]]
-                               [name (qualify-entity
-                                       (assoc entity
-                                         :element-name name
-                                         :lib lib
-                                         :toplevel true
-                                         :canon-lib (:lib entity)))]))
+                               [name
+                                (cond-> entity
+                                  (string? name)
+                                  (->
+                                    (assoc
+                                      :element-name name
+                                      :lib lib
+                                      :toplevel true
+                                      :canon-lib (:lib entity))
+                                    qualify-entity))]))
                         (inline-exports content))]))
           dart-libs-info)
       (assoc-in ["dart:core" "Never"] dc-Never)
-      (assoc-in ["dart:core" "dynamic"] dc-dynamic))))
+      (assoc-in ["dart:core" "dynamic"] dc-dynamic)
+      (assoc-in ["dart:_internal" :private] true))))
 
 (def ^:dynamic dart-libs-info)
 
@@ -717,16 +721,6 @@
          (vector (symbol element-name))
          (some->> (get-in all-nses))
          :dart/type)))))
-
-(defn supertypes [t]
-  (loop [supers {} todos [t]]
-    (if-some [t (peek todos)]
-      (if (supers (:canon-qname t))
-        (recur supers (pop todos))
-        (let [{:keys [super mixins interfaces]} (full-class-info t)]
-          (recur (assoc supers (:canon-qname t) t)
-            (-> todos pop (into mixins) (into interfaces) (cond-> super (conj super))))))
-      supers)))
 
 (defn dart-member-lookup
   "member is a symbol or a string"
@@ -1803,8 +1797,15 @@
                (conj dart-opt-params
                  [param (emit d env)])]))
           [env []] opt-params)
-        dart-body (if (or (nil? fn-name) ret-type)
+        dart-body (cond
+                    (and async fn-name ret-type)
+                    (emit (cons 'do body)
+                      (update env fn-name
+                        vary-meta assoc
+                        :dart/ret-type (assoc dc-Future :type-parameters [ret-type])))
+                    (or (nil? fn-name) ret-type)
                     (emit (cons 'do body) env)
+                    :else
                     (let [env' (update env fn-name vary-meta assoc
                                  :dart/ret-type dc-Never
                                  :dart/type dc-Never)
@@ -1820,11 +1821,15 @@
         dart-body (cond->> dart-body
                     recur-params
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
+        body-type (:dart/type (infer-type dart-body))
         dart-body (if ret-type
                     (with-lifted [dart-expr dart-body] env
-                      (list 'dart/as dart-expr ret-type))
+                      (list 'dart/as dart-expr
+                        (if async
+                          (assoc da-FutureOr :type-parameters [ret-type])
+                          ret-type)))
                     dart-body)
-        ret-type (let [ret-type' (or ret-type (:dart/type (infer-type dart-body)) dc-dynamic)]
+        ret-type (let [ret-type' (or ret-type body-type dc-dynamic)]
                    (cond-> ret-type'
                      ;; We don't want to emit a fn with dc.Never type as it would lead to subtle bugs
                      (and (nil? ret-type) (= (:canon-qname ret-type') (:canon-qname dc-Never))) (and dc-dynamic)
@@ -2982,35 +2987,84 @@
         (transient inferred) explicit))
     explicit))
 
+(defn- inheritance-graph [dart-type]
+  (loop [g {} todos [dart-type]]
+    (if-some [{cqnt :canon-qname :as t} (peek todos)]
+      (if (g cqnt)
+        (recur g (pop todos))
+        (let [{:keys [super mixins interfaces]} (full-class-info t)
+              ts (cond->> (concat mixins interfaces) super (cons super))]
+          (recur (assoc g cqnt {:type t :supers (into #{} (map :canon-qname) ts)})
+            (-> todos pop (into ts)))))
+      g)))
+
+(defn- common-roots [ga gb]
+  (let [g (select-keys ga (keys gb))
+        g (transduce (keep (fn [[k v]] (when (:private (dart-libs-info (:lib (:type v)))) k))) dissoc g g)]
+    (keys (transduce (mapcat :supers) dissoc g (vals g)))))
+
+(defn- merge-types [a b]
+  ; this should take a list of types or returns an union type
+  ; because currently the inferred type for a cond may change depending on the clauses order
+  (let [cache (volatile! {})] ; for reentrance/fix point
+    (letfn [(single-common-type [a b]
+              (let [k [(:canon-qname a) (:canon-qname b)]]
+                (or (@cache k)
+                  (do
+                    (vswap! cache assoc k dc-Object)
+                    (let [ga (inheritance-graph (full-class-info a))
+                          gb (inheritance-graph (full-class-info b))
+                          [cqn & too-many] (common-roots ga gb)
+                          a (:type (ga cqn))
+                          b (:type (gb cqn))
+                          c (if too-many
+                              dc-Object
+                              (merge-type-params a b))]
+                      (vswap! cache assoc k c)
+                      c)))))
+            (merge-type-params [a b]
+              (assoc a
+                :type-parameters
+                (into []
+                  (map merge-types (:type-parameters a) (:type-parameters b)))))
+            (merge-types [a b]
+              (let [{qna :canon-qname :as a} (case (:canon-qname a)
+                                               (dc.Null void) dc-Null
+                                               nil dc-dynamic
+                                               a)
+                    {qnb :canon-qname :as b} (case (:canon-qname b)
+                                               (dc.Null void) dc-Null
+                                               nil dc-dynamic
+                                               b)]
+                (cond
+                  ; fast path, also handles dc.Null dc.Null which should not set :nullable true
+                  (= qna qnb) (assoc (merge-type-params a b) :nullable (or (:nullable a) (:nullable b))
+                                :type-parameters
+                                (into []
+                                  (map merge-types (:type-parameters a) (:type-parameters b))))
+                  (= 'dc.Never qna) b
+                  (= 'dc.Never qnb) a
+                  (= 'dc.dynamic qna) dc-dynamic
+                  (= 'dc.dynamic qnb) dc-dynamic
+                  (= 'dc.Null qna) (assoc b :nullable true)
+                  (= 'dc.Null qnb) (assoc a :nullable true)
+                  :else (assoc (single-common-type a b)
+                          :nullable (or (:nullable a) (:nullable b))))))]
+      (merge-types a b))))
+
+(comment
+  (write-type (binding [dart-libs-info li]
+                (merge-types dc-num dc-String)))
+  ; dc.Comparable<dc.Object>
+
+  (write-type (binding [dart-libs-info li]
+                (merge-types dc-int (assoc dc-String :nullable true))))
+  ; dc.Comparable<dc.Comparable<dc.Object>>?
+  ; I would have preferred dc.Comparable<dc.Object> as returned for String * num
+  )
+
 (defn infer-type [x]
-  (let [m (meta x)
-        ;; TODO : handle special case of num
-        ;; TODO : fix truthiness
-        infer-branch (fn [dart-left-infer dart-right-infer]
-                       (case (get-in dart-left-infer [:dart/type :canon-qname])
-                         (void dc.Null)
-                         (case (get-in dart-right-infer [:dart/type :canon-qname])
-                           (void dc.Null dc.Never) {:dart/type dc-Null}
-                           dc.dynamic dart-right-infer
-                           (when (:dart/type dart-right-infer)
-                             (-> dart-right-infer
-                               (update :dart/type (fnil assoc dc-Object) :nullable true))))
-                         dc.Never dart-right-infer
-                         dc.dynamic dart-left-infer
-                         (if (= (:canon-qname (:dart/type dart-left-infer)) (:canon-qname (:dart/type dart-right-infer)))
-                           (when (:dart/type dart-left-infer)
-                             (update dart-left-infer
-                               :dart/type (fnil assoc dc-Object) :nullable
-                               (or (get-in dart-left-infer [:dart/type :nullable])
-                                 (get-in dart-right-infer [:dart/type :nullable])
-                                 false)))
-                           (case (get-in dart-right-infer [:dart/type :canon-qname])
-                             (void dc.Null)
-                             (when (:dart/type dart-left-infer)
-                               (-> dart-left-infer
-                                 (update :dart/type (fnil assoc dc-Object) :nullable true)))
-                             dc.Never dart-left-infer
-                             {:dart/type dc-dynamic}))))]
+  (let [m (meta x)]
     (->
      (cond
        (:dart/inferred m) m
@@ -3026,13 +3080,13 @@
          dart/loop (infer-type (last x))
          dart/try
          (let [[_ dart-expr dart-catches-expr] x]
-           (reduce (fn [acc item]
-                     (if (= (:canon-qname (:dart/type acc)) 'dc.dynamic)
-                       (reduced acc)
-                       (infer-branch acc item))) (infer-type dart-expr) (map #(infer-type (last %)) dart-catches-expr)))
+           {:dart/type (reduce (fn [acc item]
+                                 (if (= (:canon-qname (:dart/type acc)) 'dc.dynamic)
+                                   (reduced acc)
+                                   (merge-types acc item))) (:dart/type (infer-type dart-expr)) (map #(:dart/type (infer-type (last %))) dart-catches-expr))})
          dart/if
          (let [[_ _ dart-then dart-else] x]
-           (infer-branch (infer-type dart-then) (infer-type dart-else)))
+           {:dart/type (merge-types (:dart/type (infer-type dart-then)) (:dart/type (infer-type dart-else)))})
          dart/let (infer-type (last x))
          dart/fn {:dart/fn-type :native :dart/type dc-Function}
          dart/.

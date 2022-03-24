@@ -95,6 +95,8 @@ class TopLevelVisitor extends ThrowingElementVisitor {
     Map<String,dynamic> classData =
     {':kind': ':class',
       ':lib': '"${libPathToPackageName(e.library.identifier)}"',
+      ':private': e.isPrivate,
+      ':internal': e.hasInternal,
       ':const': e.unnamedConstructor?.isConst,
       ':type-parameters': e.typeParameters.map(emitTypeParameter),
       ':super': fnil(emitType,e.supertype,null),
@@ -197,6 +199,8 @@ Future<void> analyzePaths (session, List<String> paths) async {
         }
         print("]");
       }
+      print(":private ${libraryElement.isPrivate}");
+      print(":internal ${libraryElement.hasInternal}");
       print("}"); // close 1
     }
   }
