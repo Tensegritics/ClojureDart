@@ -4946,7 +4946,7 @@
     (throw (UnsupportedError. "clear not supported on PersistentHashSet")))
   (length [this] (-count hm))
   (iterator [this] (.-iterator ^#/(Iterable E) (.-keys hm)))
-  (toSet [this] (Set/of ^#/(Iterable E) (.-keys hm)))
+  (toSet [this] (#/(Set/of E) (.-keys hm)))
   (^#/(PersistentHashSet R) #/(cast R) [coll]
    (new #/(PersistentHashSet R) meta (-> hm (. #/(cast R R))) __hash))
   ^:mixin ToStringMixin

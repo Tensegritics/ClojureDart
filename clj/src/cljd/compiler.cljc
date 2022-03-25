@@ -38,7 +38,7 @@
 (def dc-Future '{:kind :class
                  :element-name            "Future",
                  :qname           dc.Future
-                 :canon-qname     da.Object
+                 :canon-qname     da.Future
                  :canon-lib       "dart:async"
                  :lib             "dart:core",
                  :type-parameters [{:element-name "T", :is-param true, :qname T :canon-qname T}],})
@@ -982,7 +982,7 @@
   (when-some [[_ alias t] (some->> sym namespace (re-matches #"(?:(.+)\.)?(.+)"))]
     (when-some [type (resolve-type (symbol alias t) #{} nil)]
       (let [[_ alias t] (re-matches #"(.+)\.(.+)" (name (:qname type)))]
-        [(symbol (str "$lib:" alias) t) (symbol (name sym))]))))
+        [(with-meta (symbol (str "$lib:" alias) t) (meta sym)) (symbol (name sym))]))))
 
 (defn macroexpand-1 [env form]
   (->
@@ -1058,8 +1058,10 @@
 
 (defn- dart-binding [hint dart-expr env]
   (let [tmp (dart-local hint env)
-        {:as tmp-meta explicit-type-hint :dart/type} (merge (infer-type dart-expr) (meta tmp))]
-    [(with-meta tmp tmp-meta) (magicast dart-expr explicit-type-hint env)]))
+        {slot-type :dart/type :as tmp-meta} (merge (infer-type dart-expr) (meta tmp))]
+    ; it's not obvious but if the value is hinted and not the slot (through hint)
+    ; then slot-type will be the expression type and magicast will be a no-op.
+    [(with-meta tmp tmp-meta) (magicast dart-expr slot-type env)]))
 
 (defn lift-safe? [expr]
   (or (not (coll? expr))
@@ -1149,45 +1151,53 @@
         (throw (Exception. (str "Wrong argument count: expecting between " (count fixed-types) " and " (+ (count fixed-types) (count opts-types)) " but got " (count args)))))
       all-args)))
 
+(defn- simple-types
+  [{:keys [canon-qname nullable] :as type}]
+  (case canon-qname
+    dc.dynamic [dc-Object dc-Null]
+    da.FutureOr (let [[{cqn :canon-qname :as t} :as tps] (:type-parameters type)]
+                  (cond->
+                      [(assoc dc-Future :type-parameters tps)
+                       (case cqn dc.dynamic dc-Object (dissoc t :nullable))]
+                    (or nullable (:nullable t) (= cqn 'dc.dynamic))
+                    (conj dc-Null)))
+    (if nullable
+      [dc-Null (dissoc type :nullable)]
+      [type])))
+
 (defn is-assignable?
   "Returns true when a value of type value-type can be used as a value of type slot-type."
   [slot-type value-type]
-  (let [slot-canon-qname (:canon-qname slot-type 'dc.dynamic)
-        slot-nullable (or (= slot-canon-qname 'dc.dynamic) (:nullable slot-type))
-        value-canon-qname (:canon-qname value-type 'dc.dynamic)
-        value-nullable (or (= value-canon-qname 'dc.dynamic) (:nullable value-type))]
-    (or
-      (= slot-canon-qname 'dc.dynamic)
-      (and
-        (not= value-canon-qname 'dc.dynamic)
-        (or slot-nullable (not value-nullable))
-        ; canonicalization ensures that all info is populated AND that exports are resolved
-        ; TODO generics
-        (let [{slot-canon-qname :canon-qname} slot-type]
-          (if (= slot-canon-qname 'da.FutureOr)
-            ; FutureOr the union type
-            (let [[t] (:type-parameters slot-type)]
-              (or (is-assignable? (assoc t :nullable slot-nullable) value-type)
-                (is-assignable? (assoc dc-Future :type-parameters [t]
-                                  :nullable slot-nullable) value-type)))
-            (letfn [(assignable? [value-type]
-                      (let [{:keys [canon-qname interfaces mixins super]}
+  (letfn [(is-assignable? [slot-type value-type]
+            (every? (apply some-fn (map (fn [s] (fn [v] (simply-assignable? s v))) (simple-types slot-type)))
+              (simple-types value-type)))
+          (simply-assignable?
+            [{slot-canon-qname :canon-qname :as slot-type} value-type]
+            ; simple because types are not nullable and not unions
+            (letfn [(assignable-type [value-type]
+                      (let [{:keys [canon-qname interfaces mixins super type-parameters]}
                             (or (-> dart-libs-info
                                   (get (:lib value-type))
                                   (get (:element-name value-type)))
-                              value-type)]
-                        (or (= canon-qname slot-canon-qname)
-                          (some assignable? (concat interfaces mixins))
-                          (some-> super recur))))]
-              (and (assignable? value-type)
-                (let [slot-tp (seq (:type-parameters slot-type))
-                      value-tp (seq (:type-parameters value-type))]
-                  (cond
-                    (<= (count value-tp) (count slot-tp))
-                    (every? #(is-assignable? (first %) (second %)) (map vector slot-tp (concat value-tp dc-dynamic)))
-                    (zero? (count slot-tp)) true
-                    :else
-                    (throw (ex-info "This magicast operation should never happens." {:data [[value-tp value-canon-qname] [slot-tp slot-canon-qname]]}))))))))))))
+                              ; TODO do we still need this fallback?
+                              value-type)
+                            type-args (:type-parameters value-type)
+                            type-env (type-env-for value-type type-args type-parameters)]
+                        (cond
+                          (= canon-qname slot-canon-qname)
+                          ; ensure type arguments are present
+                          (actual-type (assoc value-type :type-parameters type-parameters) type-env)
+                          (= 'dc.Null canon-qname) nil
+                          :else
+                          (some #(assignable-type (actual-type % type-env))
+                            (cond->> (concat interfaces mixins) super (cons super))))))]
+              (when-some [value-type (assignable-type value-type)]
+                (let [slot-tp (:type-parameters slot-type)
+                      value-tp (:type-parameters value-type)]
+                  (every? #(is-assignable? (first %) (second %)) (map vector slot-tp (concat value-tp dc-dynamic)))))))]
+    (or (nil? slot-type)
+      (and (some? value-type)
+        (is-assignable? slot-type value-type)))))
 
 (defn- num-type [type]
   (case (:canon-qname type)
@@ -1776,6 +1786,15 @@
         [tmp :as binding] (if name [(env name) dart-sexpr] (dart-binding '^:clj f dart-sexpr env))]
     (list 'dart/let [binding] tmp)))
 
+(defn- no-future [type]
+  (case (:canon-qname type)
+    (da.FutureOr da.Future) (-> type :type-parameters first)
+    nil dc-dynamic
+    type))
+
+(defn- ensure-future [type]
+  (assoc dc-Future :type-parameters [(no-future (or type dc-dynamic))]))
+
 (defn- emit-dart-fn [async fn-name [params & body] env]
   (let [ret-type (some-> (or (:tag (meta fn-name)) (:tag (meta params))) (emit-type env))
         ; there's definitely an overlap between parse-dart-params and dart-method-sig
@@ -1793,28 +1812,43 @@
         (reduce
           (fn [[env dart-opt-params] [p d]]
             (let [param (with-meta p nil)] ; symbol name used as is, must be valid identifier
-              [(assoc env p (simple-cast param (:dart/type (dart-meta p)) nil))
+              [(assoc env p (simple-cast param (:dart/type (dart-meta p env)) nil))
                (conj dart-opt-params
                  [param (emit d env)])]))
           [env []] opt-params)
-        dart-body (cond
-                    (and async fn-name ret-type)
-                    (emit (cons 'do body)
-                      (update env fn-name
-                        vary-meta assoc
-                        :dart/ret-type (assoc dc-Future :type-parameters [ret-type])))
-                    (or (nil? fn-name) ret-type)
-                    (emit (cons 'do body) env)
-                    :else
-                    (let [env' (update env fn-name vary-meta assoc
-                                 :dart/ret-type dc-Never
-                                 :dart/type dc-Never)
-                          {:dart/keys [type]} (-> (emit (cons 'do body) env') infer-type)]
-                      (emit (cons 'do body) (update env fn-name vary-meta assoc
-                                              :dart/ret-type type
-                                              :dart/type type))))
+        function-type
+        (fn [async ret-type]
+          (let [ret-type (cond-> ret-type async ensure-future)]
+            (assoc dc-Function
+              :return-type ret-type
+              :parameters (-> []
+                            (into (map (fn [n]
+                                         {:name n
+                                          :kind :positional
+                                          :type dc-dynamic})) dart-fixed-params)
+                            (into (map (fn [[n _]] ; default value has no place in types
+                                         {:name n
+                                          :kind opt-kind
+                                          :optional true
+                                          :type dc-dynamic}))
+                              dart-opt-params)))))
+        patch-env
+        (fn [env function-type]
+          (cond-> env
+            fn-name
+            (update fn-name vary-meta assoc :dart/type function-type :dart/ret-type (:return-type function-type))))
+        ; 1st pass
+        dart-body (emit (cons 'do body) (patch-env env (function-type async (or ret-type dc-Never))))
+        async' (or async (has-await? dart-body))
+        dart-body
+        (if (or (and fn-name (nil? ret-type)) ; potentially recursive fn of unknow type
+              (and (not async) async')) ; implicit async
+          ; 2nd pass
+          (emit (cons 'do body)
+            (patch-env env (function-type async' (:dart/type (infer-type dart-body)))))
+          dart-body)
+        async async'
         recur-params (when (has-recur? dart-body) dart-fixed-params)
-        async (or async (has-await? dart-body))
         dart-fixed-params (if recur-params
                             (map #(with-meta (dart-local % env) nil) fixed-params) ; regen new fixed params
                             dart-fixed-params)
@@ -1824,7 +1858,7 @@
         body-type (:dart/type (infer-type dart-body))
         dart-body (if ret-type
                     (with-lifted [dart-expr dart-body] env
-                      (list 'dart/as dart-expr
+                      (simple-cast dart-expr
                         (if async
                           (assoc da-FutureOr :type-parameters [ret-type])
                           ret-type)))
@@ -1832,14 +1866,14 @@
         ret-type (let [ret-type' (or ret-type body-type dc-dynamic)]
                    (cond-> ret-type'
                      ;; We don't want to emit a fn with dc.Never type as it would lead to subtle bugs
-                     (and (nil? ret-type) (= (:canon-qname ret-type') (:canon-qname dc-Never))) (and dc-dynamic)
-                     async (->> vector (assoc dc-Future :type-parameters))))
+                     (and (nil? ret-type) (= (:canon-qname ret-type') (:canon-qname dc-Never))) (do dc-dynamic)
+                     async ensure-future))
         dart-fn
         (-> (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)
           (vary-meta assoc
             :dart/ret-type  ret-type
             :dart/fn-type   :native
-            :dart/type      dc-Function))]
+            :dart/type      (function-type async ret-type)))]
     (if fn-name
       (let [dart-fn-name (with-meta (env fn-name) (meta dart-fn))]
         (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name))
@@ -2608,10 +2642,9 @@
 (defn emit-dart-await [[_ x] env]
   (with-lifted [x (emit x env)] env
     (with-meta (list 'dart/await x)
-      (let [ret-type (some-> (infer-type x) :dart/type :type-parameters first)]
-        (when ret-type
-          {:dart/type     ret-type
-           :dart/inferred true})))))
+      (let [ret-type (:dart/type (infer-type x))]
+        {:dart/type (no-future ret-type)
+         :dart/inferred true}))))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -2667,9 +2700,9 @@
             (coll? x) (emit-coll x env)
             :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
           {:dart/keys [const type]} (dart-meta x env)]
-      (-> dart-x
-        (cond-> const (vary-meta assoc :dart/const true))
-        (simple-cast type)))
+      (cond-> dart-x
+        const (vary-meta assoc :dart/const true)
+        type (simple-cast type)))
     (catch Exception e
       (throw
         (if-some [stack (::emit-stack (ex-data e))]
@@ -2740,12 +2773,17 @@
     nil (throw (ex-info "Invalid type representation" {:dart-type t}))
     'dc.Function
     (if-some [ret (:return-type t)]
-      (let [args (:parameters t)]
+      (let [args (:parameters t)
+            [fixed opts] (split-with (comp not :optional) args)]
         (write-type ret)
         (print " Function")
         (write-types type-parameters "<" ">")
         (print "(")
-        (write-types (map :type args))
+        (doseq [arg fixed] (write-type (:type arg)) (print ", "))
+        (case (:kind (first opts))
+          :positional (do (print "[") (doseq [arg opts] (write-type (:type arg)) (print ", ")) (print "]"))
+          :named (do (print "{") (doseq [arg opts] (write-type (:type arg)) (print " ") (print (:name arg)) (print ", ")) (print "}"))
+          nil nil)
         (print ")"))
       (print qname)) ; TODO correct support of function and optionals
     (do
@@ -3048,6 +3086,20 @@
                   (= 'dc.dynamic qnb) dc-dynamic
                   (= 'dc.Null qna) (assoc b :nullable true)
                   (= 'dc.Null qnb) (assoc a :nullable true)
+                  (= 'da.Future qna)
+                  (assoc da-FutureOr
+                    :type-parameters [(merge-types (first (:type-parameters a))
+                                        (if (= 'da.FutureOr qnb)
+                                          (first (:type-parameters b))
+                                          b))]
+                    :nullable (or (:nullable a) (:nullable b)))
+                  (= 'da.Future qnb)
+                  (assoc da-FutureOr
+                    :type-parameters [(merge-types (first (:type-parameters b))
+                                        (if (= 'da.FutureOr qna)
+                                          (first (:type-parameters a))
+                                          a))]
+                    :nullable (or (:nullable a) (:nullable b)))
                   :else (assoc (single-common-type a b)
                           :nullable (or (:nullable a) (:nullable b))))))]
       (merge-types a b))))
