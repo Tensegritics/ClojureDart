@@ -14,6 +14,8 @@ Directly by sponsoring either of us here on GitHub.
 
 Indirectly by hiring us.
 
-## When do you expect it to be usable?
+## When will it be released?
 
-End of Q1 2022.
+Beta release before Easter 2022 (April 17) 🐇🔔🥚🍫.
+
+There will be no repl but a watching compiler to go with Flutter (well DartVM) hot-reload.
