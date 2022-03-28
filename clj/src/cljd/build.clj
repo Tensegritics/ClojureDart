@@ -101,7 +101,7 @@
                                             (-> % .getParentFile)) (cp/classpath))]
         (let [pb (doto (ProcessBuilder. ["flutter" "pub" "get"])
                    (.directory compiler-root-file))
-              pb-analyzer (doto (ProcessBuilder. ["flutter" "pub" "run" (str (.getAbsolutePath compiler-root-file) "/bin/analyzer.dart") user-dir])
+              pb-analyzer (doto (ProcessBuilder. ["/bin/bash" "-c" (str "echo \"$(flutter pub run " (str (.getAbsolutePath compiler-root-file) "/bin/analyzer.dart") " " user-dir ")\"")])
                             (.directory compiler-root-file)
                             (.redirectOutput lib-info-edn))
               _ (prn "== Download Clojuredart deps... ===")
