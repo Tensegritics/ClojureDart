@@ -34,7 +34,7 @@ Clojure’s model of values, state, identity, and time is valuable even in messa
 
  * Atoms and volatiles work as in Clojure
  * No Agents, Refs nor STM
- * TODO: binding
+ * bindings
  * Vars
    * not reified at runtime
    * def produces ordinary Dart top-levels
@@ -56,7 +56,7 @@ TODO See Quick Start
 * Characters
   * Dart does not have character literals. Characters are single-codeunit strings like in ClojureScript. However Dart strings offer proper access to codepoints through its runes property.
   * Because there is no character type in Dart, \ produces a single-codeunit string.
-* Dart lists literals `#dart [x y]`, `#dart ^:fixed [x y]`, `#dart ^int [x y]`
+* Dart lists literals `#dart [x y]`, `#dart ^:fixed [x y]`, `#dart ^int [x y]`, `#dart ^int ^:fixed [x y]`
 * Type-parametrized symbols: `#/(sym u v)` is read as `^{:type-params [u v]} sym` and is equivalent to Dart `sym<u,v>` so they are generally used for type hints and more rarely for method names whose parameters can't be inferred.
 
 ## Evaluation
@@ -66,7 +66,22 @@ TODO See Quick Start
 ## Special forms
 
 * `dart/is?`: Dart being less dynamic than Java, ClojureDart lacks the `instance?` function. Instead it offers the `dart/is?` special form which takes the type as a literal argument (it can't be the result of an expression) like in `(dart/is? x String)`.
-* TODO `dart/await`
+* `dart/await`: Dart provides async/await syntactic sugar and it's pervasively used in Dart libraries thus ClojureDart couldn't eschew providing a counterpart. Functions or methods can be marked with the `:async` metadata flag and use `await`. For single-arity functions (TODO generalize) the `:async` flag is automatically inferred if `await` is used. `await` is a macro which add bindings conveyance to the special form `dart/await`.
+
+### Example 1:
+
+``` clojure
+(fn [] (await (http/get ...)))
+;; is equivalent to
+^:async (fn [] (await (http/get ...)))
+```
+
+### Example 2:
+
+
+``` clojure
+(defn ^:async call-api [])
+```
 
 ## Macros
 
@@ -108,15 +123,17 @@ Atoms work as in Clojure.
 
 ## Host interop
 
-* Property access: property names must be prefixed by `-` for example `(.-iterator obj)`.
+* **IMPORTANT:** dynamic warnings are issued by the compiler when a member access to an object can't be resolved. In such cases the emitted code relies upon Dart's `dynamic` type but this code will not behave properly more frequently than Clojure reflective accesses. That's why you can't opt out of these warnings and try to fix them.
+* Property access: property names may be prefixed by `-` for example `(.-iterator obj)` or `(.iterator obj)`.
 * Optional parameters: Dart functions and methods can have optional parameters, either positional or named.
   * Call sites:
-    * positional optionals: nothing special; for example calling the [fillRange](https://api.dart.dev/stable/2.12.4/dart-core/List/fillRange.html) method is just `(.fillRange some-list 5 6 "filler")`
-    * named optionals: add a `.&` before the first named argument `(List/filled 3 "filler" .& :growable true)`
+    * positional optionals: nothing special; for example calling the [fillRange](https://api.dart.dev/stable/2.16.1/dart-core/List/fillRange.html) method is just `(.fillRange some-list 5 6 "filler")`
+    * named optionals: nothing special either; for example calling the [filler constructor](https://api.dart.dev/stable/2.16.1/dart-core/List/List.filled.html) with named `growable` parameter is just `(List/filled 3 "filler" :growable true)`
   * Declarations (only for methods or single-arity fns):
     * positional optionals: add `...` before the first optional parameter like this: `(fn [a b ... c d])`,
     * named optionals: add `.&` before the first optional parameter like this: `(fn [a b .& c d])`,
     * in both cases the optional parameters list is a mixed list where each symbol may be followed by a default value: `(fn [a b .& c 42 d])` here `c` will defaults to 42.
+* `^:const` TODO document
 
 ### Type hints
 * `^some` is a pseudo-type which means "`Object?` but not `bool`" it helps simplifying boolean conversion in just a null check.
@@ -126,3 +143,4 @@ Atoms work as in Clojure.
   * `#/(List String?)` is the type of a non-nullable list of strings or nils (`List<String?>`)
   * `#/(List? String?)` is the the nullable type of a list of strings or nils (`List<String?>?`)
   * `#/(List? String)` is the nullable type of a list of non-nullable strings (`List<String>?`)
+  * `#/(num String -> int)` is the function type from num * String to int (`int Function(num, String)`)

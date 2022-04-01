@@ -21,12 +21,10 @@ ClojureDart is a work-in-progress. Some features may be outright missing or
 partially implemented or even bugged. In any case get in touch with us or open
 an issue.
 
-- pr/println -> use (dart:core/print)
-- regexp
 - no REPL yet
-- multi-method
-- records
-- symbols e.g (symbol ...)
+- multi-method (WIP)
+- sorted-collection (WIP)
+
 
 Some differences have been documented, see [Differences with Clojure](doc/differences.md).
 
