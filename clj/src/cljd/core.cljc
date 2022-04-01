@@ -433,14 +433,14 @@
   {:inline (fn [x] `(.== false ~x))
    :inline-arities #{1}}
   [x]
-  (== false x))
+  (.== false x))
 
 (defn ^bool true?
   "Returns true if x is the value true, false otherwise."
   {:inline (fn [x] `(.== true ~x))
    :inline-arities #{1}}
   [x]
-  (== true x))
+  (.== true x))
 
 (defn ^bool nil?
   {:inline-arities #{1}
