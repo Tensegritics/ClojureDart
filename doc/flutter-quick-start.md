@@ -35,8 +35,8 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDartPreview.git"
-         :sha "b72bf0ff0a18495e7a745602f60e049e2ad83e4c"}}}
-EOF
+         :sha "f76808655dff401ddb0550f7965a46cb7131468e"}}}
+EOFm
 ```
 
 Otherwise using HTTPS authentication:
@@ -47,7 +47,7 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "https://github.com/tensegritics/ClojureDartPreview.git"
-         :sha "5e38c412d35458a485283b4e02cafd7773e94f9c"}}}
+         :sha "f76808655dff401ddb0550f7965a46cb7131468e"}}}
 EOF
 ```
 
@@ -66,24 +66,17 @@ cat << EOF > src/acme/main.cljd
 
 (defn main []
   (material/runApp
-    (reify :extends material/StatelessWidget
-      ;; ^widgets/Widget is the return type of the build method
-      ;; (defined in StatelessWidget). For now it's mandatory but we are not
-      ;; far from being able to guess returns type from flutter
-      (^widgets/Widget build [this context]
-       ;; .& is for interop when you need named arguments when using dart libs
-       ;; .& does not have to be first (see widgets/Text. ...)
-       (material/MaterialApp. .&
-         :title "Welcome to Flutter"
-         :theme (material/ThemeData. .& :primarySwatch (.-pink material/Colors))
-         :home (material/Scaffold. .&
-                 :appBar (material/AppBar. .&
-                           :title (widgets/Text. "Welcome to ClojureDart"))
-                 :body (widgets/Center. .&
-                         :child (widgets/Text. "This text is Centered." .&
-                                  :style (painting/TextStyle. .&
-                                           :color (.-red material/Colors)
-                                           :fontSize 32.0)))))))))
+    (material/MaterialApp.
+      :title "Welcome to Flutter"
+      :theme (material/ThemeData. :primarySwatch material.Colors/pink)
+      :home (material/Scaffold.
+              :appBar (material/AppBar.
+                        :title (widgets/Text. "Welcome to ClojureDart"))
+              :body (widgets/Center.
+                      :child (widgets/Text. "This text is Centered."
+                               :style (painting/TextStyle.
+                                        :color material.Colors/red
+                                        :fontSize 32.0)))))))
 EOF
 ```
 
@@ -137,6 +130,5 @@ And the application should open in the simulator.
 
 ## 10. Enjoy!
 
- When you edit your cljd file, always follow these steps:
- 1. press enter in the terminal tied to the ClojureDart "watcher",
- 2. press R in the terminal tied to the flutter cli to restart the app.
+ When you edit your cljd file (watcher re-compiles cljd files), always follow these steps:
+ 1. press R in the terminal tied to the flutter cli to restart the app.
