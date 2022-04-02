@@ -94,33 +94,37 @@
     (when (or (.mkdir (.getParentFile lib-info-edn))
             (.createNewFile lib-info-edn)
             (< (.lastModified lib-info-edn) (.lastModified dart-tools-json)))
-      ;; TODO : big hack... change this some day
-      (if-some [compiler-root-file (some #(when (or (re-matches #"(.*)ClojureDartPreview\/resources$" (.getAbsolutePath %))
-                                                  (re-matches #"(.*)tensegritics\/clojuredart\/(.*)\/resources" (.getAbsolutePath %))
-                                                  (re-matches #"(.*)tensegritics[\\\/]?clojuredart[\\\/]?(.*)[\\\/]?resources" (.getAbsolutePath %)))
-                                            (-> % .getParentFile)) (cp/classpath))]
-        (let [pb (doto (ProcessBuilder. ["flutter" "pub" "get"])
-                   (.directory compiler-root-file))
-              pb-analyzer (doto (ProcessBuilder. ["/bin/bash" "-c" (str "echo \"$(flutter pub run " (str (.getAbsolutePath compiler-root-file) "/bin/analyzer.dart") " " user-dir ")\"")])
-                            (.directory compiler-root-file)
-                            (.redirectOutput lib-info-edn))
-              _ (prn "== Download Clojuredart deps... ===")
-              process (.start pb)]
-          (with-open [r (io/reader (.getInputStream process))]
-            (loop []
-              (when (doto (.readLine r) prn)
-                (recur)))
-            (.waitFor process))
-          (.destroy process)
-          (prn "== Analyze your project dependencies... ===")
-          (let [process-analyze (.start pb-analyzer)]
-            (with-open [r (io/reader (.getErrorStream process-analyze))]
+      (if-some [flutter-absolute-path (some (fn [dirname]
+                                              (let [file (java.io.File. dirname "flutter")]
+                                                (when (and (.isFile file) (.canExecute file))
+                                                  (.getAbsolutePath file)))) (-> (System/getenv "PATH") (.split java.io.File/pathSeparator)))]
+        (if-some [compiler-root-file (some #(when (or (re-matches #"(.*)ClojureDartPreview\/resources$" (.getAbsolutePath %))
+                                                    (re-matches #"(.*)tensegritics\/clojuredart\/(.*)\/resources" (.getAbsolutePath %))
+                                                    (re-matches #"(.*)tensegritics[\\\/]?clojuredart[\\\/]?(.*)[\\\/]?resources" (.getAbsolutePath %)))
+                                              (-> % .getParentFile)) (cp/classpath))]
+          (let [pb (doto (ProcessBuilder. [flutter-absolute-path "pub" "get"])
+                     (.directory compiler-root-file))
+                pb-analyzer (doto (ProcessBuilder. [flutter-absolute-path "pub" "run" (str (.getAbsolutePath compiler-root-file) "/bin/analyzer.dart") user-dir])
+                              (.directory compiler-root-file)
+                              (.redirectOutput lib-info-edn))
+                _ (prn "== Download Clojuredart deps... ===")
+                process (.start pb)]
+            (with-open [r (io/reader (.getInputStream process))]
               (loop []
                 (when (doto (.readLine r) prn)
                   (recur)))
-              (.waitFor process-analyze))
-            (.destroy process-analyze)))
-        (throw (ex-info "Can't find ClojureDart on your classpath" {:classpath (cp/classpath)}))))))
+              (.waitFor process))
+            (.destroy process)
+            (prn "== Analyze your project dependencies... ===")
+            (let [process-analyze (.start pb-analyzer)]
+              (with-open [r (io/reader (.getErrorStream process-analyze))]
+                (loop []
+                  (when (doto (.readLine r) prn)
+                    (recur)))
+                (.waitFor process-analyze))
+              (.destroy process-analyze)))
+          (throw (ex-info "Can't find ClojureDart on your classpath" {:classpath (cp/classpath)})))
+        (throw (ex-info "Flutter executable not found, are you sure it's part of your PATH ?"))))))
 
 (def cli-options
   [["-v" nil "Verbosity level; may be specified multiple times to increase value"
