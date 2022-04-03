@@ -87,8 +87,9 @@
 ;; TODO : handle errors of processes
 (defn warm-up-libs-info! []
   (let [user-dir (System/getProperty "user.dir")
-        lib-info-edn (java.io.File. (str user-dir "/.clojuredart/libs-info.edn"))
-        dart-tools-json (java.io.File. (str user-dir "/.dart_tool/package_config.json"))]
+        file-separator java.io.File/separator
+        lib-info-edn (java.io.File. (str user-dir file-separator ".clojuredart" file-separator "libs-info.edn"))
+        dart-tools-json (java.io.File. (str user-dir file-separator ".dart_tool" file-separator "package_config.json"))]
     (when-not (.exists dart-tools-json)
       (throw (ex-message "Run flutter pub get at your project root before using ClojureDart.")))
     (when (or (.mkdir (.getParentFile lib-info-edn))
@@ -104,7 +105,8 @@
                                               (-> % .getParentFile)) (cp/classpath))]
           (let [pb (doto (ProcessBuilder. [flutter-absolute-path "pub" "get"])
                      (.directory compiler-root-file))
-                pb-analyzer (doto (ProcessBuilder. [flutter-absolute-path "pub" "run" (str (.getAbsolutePath compiler-root-file) "/bin/analyzer.dart") user-dir])
+                pb-analyzer (doto (ProcessBuilder. [flutter-absolute-path "pub" "run"
+                                                    (str (.getAbsolutePath compiler-root-file) file-separator "bin" file-separator "analyzer.dart") user-dir])
                               (.directory compiler-root-file)
                               (.redirectOutput lib-info-edn))
                 _ (prn "== Download Clojuredart deps... ===")
