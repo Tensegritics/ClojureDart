@@ -428,6 +428,12 @@
        (:type-parameters function-info))
      function-info]))
 
+(defn- cljdize [ns]
+  (if (symbol? ns)
+    (some-> (cljdize (name ns)) symbol (with-meta (meta ns)))
+    (when-some [[_ sub-ns] (some->> ns (re-matches #"clojure\.(.+)"))]
+      (str "cljd." sub-ns))))
+
 (defn- resolve-non-local-symbol [sym type-vars]
   (let [{:keys [libs] :as nses} @nses
         {:keys [mappings clj-aliases] :as current-ns} (nses (:current-ns nses))
@@ -437,8 +443,7 @@
                     (if-some [v (mappings sym)]
                       (recur (with-meta v (meta sym))))
                     (let [sym-ns (namespace sym)
-                          lib-ns (if (= "clojure.core" sym-ns)
-                                   "cljd.core"
+                          lib-ns (or (cljdize sym-ns)
                                    (some-> (get clj-aliases sym-ns) libs :ns name))])
                     (if (some-> lib-ns (not= sym-ns))
                       (recur (with-meta (symbol lib-ns (name sym)) (meta sym))))
@@ -2547,18 +2552,22 @@
                            (or (seq (filter #(= :refer-clojure (first %)) ns-clauses)) [[:refer-clojure]]))
           host-ns-directives (some #(when (= :host-ns (first %)) (next %)) ns-clauses)
           require-specs
-          (concat
-            (map refer-clojure-to-require refer-clojures)
-            (for [[directive & specs]
-                  ns-clauses
-                  :let [f (case directive
-                            :require #(if (sequential? %) % [%])
-                            :import import-to-require
-                            :use use-to-require
-                            (:refer-clojure :host-ns) nil)]
-                  :when f
-                  spec specs]
-              (f spec)))
+          (->>
+            (concat
+              (map refer-clojure-to-require refer-clojures)
+              (for [[directive & specs]
+                    ns-clauses
+                    :let [f (case directive
+                              :require #(if (sequential? %) % [%])
+                              :import import-to-require
+                              :use use-to-require
+                              (:refer-clojure :host-ns) nil)]
+                    :when f
+                    spec specs]
+                (f spec)))
+            (map (fn [[lib & more :as spec]]
+                   (or (some-> (cljdize lib) (cons more))
+                     spec))))
           ns-lib (ns-to-lib ns-sym)
           ns-map (-> ns-prototype
                    (assoc :lib ns-lib)
