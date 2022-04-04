@@ -36,7 +36,7 @@ cat << EOF > deps.edn
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDartPreview.git"
          :sha "f76808655dff401ddb0550f7965a46cb7131468e"}}}
-EOFm
+EOF
 ```
 
 Otherwise using HTTPS authentication:
