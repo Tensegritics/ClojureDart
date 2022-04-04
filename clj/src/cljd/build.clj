@@ -32,25 +32,26 @@
         reg*
         (fn [dir]
           (eduction (keep reg1) (tree-seq some? #(.listFiles ^java.io.File %) dir)))]
-    (loop [ks->dirs (into {} (mapcat reg*) dirs) must-reload false]
-      (if-some [k (.poll watcher (if must-reload 10 1000) java.util.concurrent.TimeUnit/MILLISECONDS)]
+    (loop [ks->dirs (into {} (mapcat reg*) dirs) to-reload #{}]
+      (if-some [k (.poll watcher (if (seq to-reload) 10 1000) java.util.concurrent.TimeUnit/MILLISECONDS)]
         (let [events (.pollEvents k)] ; make sure we remove them, no matter what happens next
           (if-some [^java.nio.file.Path dir (ks->dirs k)]
-            (let [[ks->dirs must-reload]
+            (let [[ks->dirs to-reload]
                   (reduce (fn [[ks->dirs must-reload] ^java.nio.file.WatchEvent e]
                             (let [f (some->> e .context (.resolve dir) .toFile)]
-                              [(into ks->dirs (some->> f reg*))
-                               (or must-reload (nil? f) (not (.isDirectory f))
-                                 (re-matches #"[^.].*\.clj[dc]" (.getName f)))]))
-                    [ks->dirs must-reload] events)]
-              (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) must-reload))
+                              (if (and (some? f) (not (.isDirectory f))
+                                    (re-matches #"[^.].*\.clj[dc]" (.getName f)))
+                                [(into ks->dirs (some->> f reg*))
+                                 (conj to-reload (.getPath f))]
+                                [ks->dirs to-reload])))
+                    [ks->dirs to-reload] events)]
+              (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) to-reload))
             (do
               (.cancel k)
-              (recur ks->dirs must-reload))))
+              (recur ks->dirs to-reload))))
         (do
-          (when must-reload
-            (reload))
-          (recur ks->dirs false))))))
+          (reload to-reload)
+          (recur ks->dirs #{}))))))
 
 (defn compile-cli
   [& {:keys [watch namespaces] :or {watch false}}]
@@ -59,82 +60,94 @@
             compiler/dart-libs-info (compiler/load-libs-info)]
     (println "=== Compiling ClojureDart ===")
     (compile-core)
-    (let [compile-nses
-          #(do
-             (println "=== Compiling Project Namespaces ===")
-             (doseq [n namespaces]
-               (try (compiler/compile-namespace n)
-                    (println "DONE!\n")
-                    (catch Exception e
-                      (if-some [exprs (::compiler/emit-stack (ex-data e))]
-                        (do
-                          (println (ex-message e))
-                          (run! prn (rseq exprs))
-                          (println (ex-message (ex-cause e))))
-                        (st/print-stack-trace e))))))]
-      (compile-nses)
-      (case watch
-        (false nil) nil
-        true (let [dirs (map #(java.io.File. %) (:paths (:basis (deps/basis nil))))]
-               (watch-dirs dirs compile-nses))
-        :loop
-        (loop []
-          (compile-nses)
-          (println "Press ENTER to recompile files :")
-          (when (pos? (.read (System/in)))
-            (recur)))))))
+    (let [dirs (into #{} (map #(java.io.File. %)) (:paths (:basis (deps/basis nil))))
+          compile-nses
+          (fn [namespaces]
+            (println "=== Compiling Project Namespaces ===")
+            (doseq [n namespaces]
+              (try (println "  Compiling" n)
+                (compiler/compile-namespace n)
+                   (catch Exception e
+                     (if-some [exprs (::compiler/emit-stack (ex-data e))]
+                       (do
+                         (println (ex-message e))
+                         (run! prn (rseq exprs))
+                         (println (ex-message (ex-cause e))))
+                       (st/print-stack-trace e)))))
+            (println "All done!\n"))
+          compile-files
+          (fn [files]
+            (some->
+              (set
+                (for [^java.io.File f files
+                      :let [fp (.toPath f)]
+                      ^java.io.File d dirs
+                      :let [dp (.toPath d)]
+                      :when (.startsWith fp dp)]
+                  (symbol nil
+                    (-> (.relativize dp fp) .toString
+                      (str/replace #"[\\/_]|\.cljd$|\.cljc$"
+                        {"/" "." "\\" "." "_" "-" ".cljd" "" ".cljc" ""})))))
+              seq compile-nses))]
+      (compile-nses namespaces)
+      (when watch
+        (watch-dirs dirs compile-files)))))
 
-;; TODO : handle errors of processes
+(defn exec [& args]
+  (let [opts (when (map? (first args)) (first args))
+        [bin & args] (cond-> args opts next)
+        pb (doto (ProcessBuilder. [])
+             (-> .environment (.putAll (:env opts {})))
+             (.redirectInput java.lang.ProcessBuilder$Redirect/INHERIT)
+             (.redirectOutput (:out opts java.lang.ProcessBuilder$Redirect/INHERIT))
+             (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT))
+        path (-> pb .environment (get "PATH"))
+        full-bin
+        (or
+          (some (fn [dirname]
+                  (let [file (java.io.File. dirname bin)]
+                    (when (and (.isFile file) (.canExecute file))
+                      (.getAbsolutePath file))))
+            (.split path java.io.File/pathSeparator))
+          (throw (ex-info (str "Can't find " bin " on PATH.")
+                   {:bin bin :path path})))
+        process (.start (doto pb (.command (into [full-bin] args))))
+        exit-code (.waitFor process)]
+    (when-not (zero? exit-code) exit-code)))
+
 (defn warm-up-libs-info! []
   (let [user-dir (System/getProperty "user.dir")
         file-separator java.io.File/separator
-        lib-info-edn (java.io.File. (str user-dir file-separator ".clojuredart" file-separator "libs-info.edn"))
-        dart-tools-json (java.io.File. (str user-dir file-separator ".dart_tool" file-separator "package_config.json"))]
-    (when-not (.exists dart-tools-json)
-      (throw (ex-message "Run flutter pub get at your project root before using ClojureDart.")))
-    (when (or (.mkdir (.getParentFile lib-info-edn))
-            (.createNewFile lib-info-edn)
-            (< (.lastModified lib-info-edn) (.lastModified dart-tools-json)))
-      (if-some [flutter-absolute-path (some (fn [dirname]
-                                              (let [file (java.io.File. dirname "flutter")]
-                                                (when (and (.isFile file) (.canExecute file))
-                                                  (.getAbsolutePath file)))) (-> (System/getenv "PATH") (.split java.io.File/pathSeparator)))]
-        (if-some [compiler-root-file (some #(when (or (re-matches #"(.*)ClojureDartPreview\/resources$" (.getAbsolutePath %))
-                                                    (re-matches #"(.*)tensegritics\/clojuredart\/(.*)\/resources" (.getAbsolutePath %))
-                                                    (re-matches #"(.*)tensegritics[\\\/]?clojuredart[\\\/]?(.*)[\\\/]?resources" (.getAbsolutePath %)))
-                                              (-> % .getParentFile)) (cp/classpath))]
-          (let [pb (doto (ProcessBuilder. [flutter-absolute-path "pub" "get"])
-                     (.directory compiler-root-file))
-                pb-analyzer (doto (ProcessBuilder. [flutter-absolute-path "pub" "run"
-                                                    (str (.getAbsolutePath compiler-root-file) file-separator "bin" file-separator "analyzer.dart") user-dir])
-                              (.directory compiler-root-file)
-                              (.redirectOutput lib-info-edn))
-                _ (prn "== Download Clojuredart deps... ===")
-                process (.start pb)]
-            (with-open [r (io/reader (.getInputStream process))]
-              (loop []
-                (when (doto (.readLine r) prn)
-                  (recur)))
-              (.waitFor process))
-            (.destroy process)
-            (prn "== Analyze your project dependencies... ===")
-            (let [process-analyze (.start pb-analyzer)]
-              (with-open [r (io/reader (.getErrorStream process-analyze))]
-                (loop []
-                  (when (doto (.readLine r) prn)
-                    (recur)))
-                (.waitFor process-analyze))
-              (.destroy process-analyze)))
-          (throw (ex-info "Can't find ClojureDart on your classpath" {:classpath (cp/classpath)})))
-        (throw (ex-info "Flutter executable not found, are you sure it's part of your PATH ?"))))))
+        cljd-dir (-> user-dir (java.io.File. ".clojuredart") (doto .mkdirs))
+        lib-info-edn (java.io.File. cljd-dir "libs-info.edn")
+        dart-tools-json (-> user-dir (java.io.File. ".dart_tool") (java.io.File. "package_config.json"))]
+    (when-not (and (.exists lib-info-edn) (.exists dart-tools-json)
+                (< (.lastModified dart-tools-json) (.lastModified lib-info-edn)))
+      (let [analyzer-dart (java.io.File. cljd-dir "analyzer.dart")]
+        (with-open [out (java.io.FileOutputStream. analyzer-dart)]
+          (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream "analyzer.dart") (.transferTo out)))
+        (or
+          (and
+            (do
+              (println "\n=== Adding dev dependencies ===")
+              (exec "flutter" "pub" "add" "-d" "analyzer:^3.3.1"))
+            (do
+              (println "\n=== Upgrading dev dependencies ===")
+              (exec "flutter" "pub" "upgrade" "analyzer:^3.3.1")))
+          (do
+            (println "\n=== Fetching dependencies ===")
+            (exec "flutter" "pub" "get"))
+          (do
+            (println "\n=== Dumping type information ===")
+            (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
+              "flutter" "pub" "run" (.getPath analyzer-dart))))))))
 
 (def cli-options
   [["-v" nil "Verbosity level; may be specified multiple times to increase value"
     :id :verbosity
     :default 0
     :update-fn inc]
-   ["-h" "--help"]
-   [nil "--loop" "" :id :loop]])
+   ["-h" "--help"]])
 
 (defn usage [options-summary]
   (->> ["This program compiles Clojuredart files to dart files."
@@ -188,4 +201,4 @@
           (warm-up-libs-info!)
           (case action
             "watch" (compile-cli :namespaces namespaces :watch true)
-            "compile" (compile-cli :namespaces namespaces :watch (when (:loop options) :loop)))))))
+            "compile" (compile-cli :namespaces namespaces))))))
