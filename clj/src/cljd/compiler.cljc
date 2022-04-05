@@ -7,7 +7,7 @@
 ;   You must not remove this notice, or any other, from this software.
 
 (ns cljd.compiler
-  (:refer-clojure :exclude [macroexpand macroexpand-1 munge])
+  (:refer-clojure :exclude [macroexpand macroexpand-1 munge compile])
   (:require [clojure.string :as str]
             [clojure.java.io :as io]))
 
@@ -3608,13 +3608,6 @@
                      libname)]
       (when is-test-ns
         (swap! nses rename-fresh-lib libname libname'))
-      (with-open [out (-> (java.io.File. ^String libname')
-                        (doto (-> .getParentFile .mkdirs))
-                        java.io.FileOutputStream.
-                        (java.io.OutputStreamWriter. "UTF-8")
-                        java.io.BufferedWriter.)]
-        (binding [*out* out]
-          (dump-ns (@nses current-ns))))
       libname')))
 
 (defn ns-to-paths [ns-name]
@@ -3626,36 +3619,68 @@
   [filename]
   (io/resource filename))
 
+(defn compile-url
+  "Compiles the resource at the specified url. file-path is purely indicative.
+   Returns the libname."
+  [^String file-path ^java.net.URL url]
+  (binding [*file* file-path]
+    (when *hosted*
+      (with-open [in (.openStream url)]
+        (host-load-input (java.io.InputStreamReader. in "UTF-8")))
+      (let [{:keys [current-ns] :as all-nses} @nses]
+        (doseq [{:keys [refresh! name]} (sort-by (fn [{:keys [name]}] (case name (IProtocol SeqListMixin) 0 1)) (vals (all-nses current-ns)))
+                :when refresh!]
+          (refresh!))))
+    (with-open [in (.openStream url)]
+      (compile-input (java.io.InputStreamReader. in "UTF-8")))))
+
 (defn compile-namespace [ns-name]
   ;; iterate first on file variants then on paths, not the other way!
   (let [file-paths (ns-to-paths ns-name)
         cljd-core (when-not (= ns-name 'cljd-core) (get @nses 'cljd.core))]
-    (if-some [[file-path ^java.net.URL url] (some (fn [p] (some->> (find-resource p) (vector p))) file-paths)]
-      (binding [*file* file-path]
-        (when *hosted*
-          (with-open [in (.openStream url)]
-            (host-load-input (java.io.InputStreamReader. in "UTF-8")))
-          (doseq [{:keys [refresh! name]} (sort-by (fn [{:keys [name]}] (case name (IProtocol SeqListMixin) 0 1)) (vals (get @nses ns-name)))
-                  :when refresh!]
-            (refresh!)))
-        (let [libname (with-open [in (.openStream url)]
-                        (compile-input (java.io.InputStreamReader. in "UTF-8")))]
-          ;; when new IFnMixin_* are created, we must re-dump core
-          ;; TODO: refacto: I don't like how I ended up doing this
-          (when-not (= 'cljd.core ns-name)
-            (let [cljd-core' (get @nses 'cljd.core)]
-              (when-not (= cljd-core cljd-core')
-                (with-open [out (-> (java.io.File. ^String (-> (@nses 'cljd.core) :lib))
-                                  (doto (-> .getParentFile .mkdirs))
-                                  java.io.FileOutputStream.
-                                  (java.io.OutputStreamWriter. "UTF-8")
-                                  java.io.BufferedWriter.)]
-                  (binding [*out* out]
-                    (dump-ns (@nses 'cljd.core)))))))
-          libname))
+    (if-some [[file-path url] (some (fn [p] (some->> (find-resource p) (vector p))) file-paths)]
+      (compile-url file-path url)
       (throw (ex-info (str "Could not locate "
                         (str/join " or " file-paths))
                {:ns ns-name})))))
+
+(defmacro with-dump-modified-files
+  "Dump modified Dart files upon succesful execution of the body."
+  [& body]
+  `(let [before# @nses]
+     ~@body
+     (doseq [[ns# ns-map#] @nses
+             :when (and (symbol? ns#)
+                     (not (identical? ns-map# (before# ns#))))]
+       (with-open [out# (-> (java.io.File. ^String (:lib ns-map#))
+                          (doto (-> .getParentFile .mkdirs))
+                          java.io.FileOutputStream.
+                          (java.io.OutputStreamWriter. "UTF-8")
+                          java.io.BufferedWriter.)]
+        (binding [*out* out#]
+          (dump-ns ns-map#))))))
+
+(defn compile
+  "Returns the set of compiled libs (not all modified libs)."
+  [& nses]
+  (with-dump-modified-files
+    (into #{}
+      (map (fn [ns]
+             (cond
+               (symbol? ns) (compile-namespace ns)
+               (vector? ns) (apply compile-url ns)
+               :else (/ 0))))
+      nses)))
+
+(defn dependant-nses [libs]
+  (let [{:keys [libs] :as nses} @nses])
+  (into #{}
+    (for [[ns ns-map] nses
+          :when (symbol? ns)
+          lib (keys (:imports ns-map))
+          :let [ns (-> lib libs :ns)]
+          :when ns]
+      ns)))
 
 (comment
 

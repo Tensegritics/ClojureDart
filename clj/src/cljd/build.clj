@@ -16,7 +16,7 @@
             [clojure.java.classpath :as cp]))
 
 (defn compile-core []
-  (compiler/compile-namespace 'cljd.core))
+  (compiler/compile 'cljd.core))
 
 (defn watch-dirs [dirs reload]
   (let [watcher (.newWatchService (java.nio.file.FileSystems/getDefault))
@@ -58,37 +58,34 @@
   (binding [compiler/*lib-path* (str (System/getProperty "user.dir") "/lib/")
             compiler/*hosted* true
             compiler/dart-libs-info (compiler/load-libs-info)]
-    (println "=== Compiling ClojureDart ===")
+    (println "=== Compiling cljd.core ===")
     (compile-core)
     (let [dirs (into #{} (map #(java.io.File. %)) (:paths (:basis (deps/basis nil))))
           compile-nses
           (fn [namespaces]
-            (println "=== Compiling Project Namespaces ===")
+            (println "=== Compiling Project Root Namespaces ===")
             (doseq [n namespaces]
               (try (println "  Compiling" n)
-                (compiler/compile-namespace n)
-                   (catch Exception e
-                     (if-some [exprs (::compiler/emit-stack (ex-data e))]
-                       (do
-                         (println (ex-message e))
-                         (run! prn (rseq exprs))
-                         (println (ex-message (ex-cause e))))
-                       (st/print-stack-trace e)))))
+                (compiler/compile n)
+                (catch Exception e
+                  (if-some [exprs (::compiler/emit-stack (ex-data e))]
+                    (do
+                      (println (ex-message e))
+                      (run! prn (rseq exprs))
+                      (println (ex-message (ex-cause e))))
+                    (st/print-stack-trace e)))))
             (println "All done!\n"))
           compile-files
           (fn [files]
-            (some->
-              (set
-                (for [^java.io.File f files
-                      :let [fp (.toPath f)]
-                      ^java.io.File d dirs
-                      :let [dp (.toPath d)]
-                      :when (.startsWith fp dp)]
-                  (symbol nil
-                    (-> (.relativize dp fp) .toString
-                      (str/replace #"[\\/_]|\.cljd$|\.cljc$"
-                        {"/" "." "\\" "." "_" "-" ".cljd" "" ".cljc" ""})))))
-              seq compile-nses))]
+            (some->>
+              (for [^java.io.File f files
+                    :let [fp (.toPath f)]
+                    ^java.io.File d dirs
+                    :let [dp (.toPath d)]
+                    :when (.startsWith fp dp)]
+                [(.toString (.relativize dp fp))
+                 (-> f .toURI .toURL)])
+              set seq (apply compiler/compile)))]
       (compile-nses namespaces)
       (when watch
         (watch-dirs dirs compile-files)))))
@@ -117,7 +114,6 @@
 
 (defn warm-up-libs-info! []
   (let [user-dir (System/getProperty "user.dir")
-        file-separator java.io.File/separator
         cljd-dir (-> user-dir (java.io.File. ".clojuredart") (doto .mkdirs))
         lib-info-edn (java.io.File. cljd-dir "libs-info.edn")
         dart-tools-json (-> user-dir (java.io.File. ".dart_tool") (java.io.File. "package_config.json"))]
