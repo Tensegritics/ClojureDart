@@ -37,12 +37,12 @@
         (let [events (.pollEvents k)] ; make sure we remove them, no matter what happens next
           (if-some [^java.nio.file.Path dir (ks->dirs k)]
             (let [[ks->dirs to-reload]
-                  (reduce (fn [[ks->dirs must-reload] ^java.nio.file.WatchEvent e]
+                  (reduce (fn [[ks->dirs to-reload] ^java.nio.file.WatchEvent e]
                             (let [f (some->> e .context (.resolve dir) .toFile)]
                               (if (and (some? f) (not (.isDirectory f))
                                     (re-matches #"[^.].*\.clj[dc]" (.getName f)))
                                 [(into ks->dirs (some->> f reg*))
-                                 (conj to-reload (.getPath f))]
+                                 (conj to-reload f)]
                                 [ks->dirs to-reload])))
                     [ks->dirs to-reload] events)]
               (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) to-reload))
@@ -62,8 +62,8 @@
     (compile-core)
     (let [dirs (into #{} (map #(java.io.File. %)) (:paths (:basis (deps/basis nil))))
           compile-nses
-          (fn [namespaces]
-            (println "=== Compiling Project Root Namespaces ===")
+          (fn [nses]
+            (println "=== Compiling project root namespaces ===")
             (doseq [n namespaces]
               (try (println "  Compiling" n)
                 (compiler/compile n)
@@ -77,15 +77,18 @@
             (println "All done!\n"))
           compile-files
           (fn [files]
-            (some->>
-              (for [^java.io.File f files
-                    :let [fp (.toPath f)]
-                    ^java.io.File d dirs
-                    :let [dp (.toPath d)]
-                    :when (.startsWith fp dp)]
-                [(.toString (.relativize dp fp))
-                 (-> f .toURI .toURL)])
-              set seq (apply compiler/compile)))]
+            (let [paths+urls (for [^java.io.File f files
+                                   :let [fp (.toPath f)]
+                                   ^java.io.File d dirs
+                                   :let [dp (.toPath d)]
+                                   :when (.startsWith fp dp)]
+                               [(str (.relativize dp fp))
+                                (-> f .toURI .toURL)])]
+              (when (seq paths+urls)
+                (println "=== Recompiling... ===")
+                (run! #(println " " %) (sort (map first paths+urls)))
+                (compiler/recompile (map second paths+urls))
+                (println "All done!\n"))))]
       (compile-nses namespaces)
       (when watch
         (watch-dirs dirs compile-files)))))

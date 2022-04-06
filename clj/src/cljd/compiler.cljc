@@ -439,8 +439,8 @@
         {:keys [mappings clj-aliases] :as current-ns} (nses (:current-ns nses))
         resolve (fn [sym]
                   (else->>
-                    (if-some [v (current-ns sym)] [:def v])
-                    (if-some [v (mappings sym)]
+                    (if-some [v (get current-ns sym)] [:def v])
+                    (if-some [v (get mappings sym)]
                       (recur (with-meta v (meta sym))))
                     (let [sym-ns (namespace sym)
                           lib-ns (or (cljdize sym-ns)
@@ -955,7 +955,8 @@
 (defn create-host-ns [ns-sym directives]
   (let [sym (symbol (str ns-sym "$host"))]
     (remove-ns sym)
-    (binding [*ns* *ns*]
+    (binding [*ns* *ns*
+              *err* (java.io.Writer/nullWriter)]
       (eval (list* 'ns sym directives))
       ;; NOTE: big trick here...
       (require '[clojure.core :as cljd.core])
@@ -3661,26 +3662,53 @@
           (dump-ns ns-map#))))))
 
 (defn compile
-  "Returns the set of compiled libs (not all modified libs)."
-  [& nses]
+  [ns]
   (with-dump-modified-files
-    (into #{}
-      (map (fn [ns]
-             (cond
-               (symbol? ns) (compile-namespace ns)
-               (vector? ns) (apply compile-url ns)
-               :else (/ 0))))
-      nses)))
+    (compile-namespace ns)))
 
-(defn dependant-nses [libs]
-  (let [{:keys [libs] :as nses} @nses])
-  (into #{}
-    (for [[ns ns-map] nses
-          :when (symbol? ns)
-          lib (keys (:imports ns-map))
-          :let [ns (-> lib libs :ns)]
-          :when ns]
-      ns)))
+(defn peek-ns
+  [in]
+  (with-cljd-reader
+    (let [in (clojure.lang.LineNumberingPushbackReader. in)]
+      (loop []
+        (let [form (read {:eof in :read-cond :allow} in)]
+          (cond
+            (identical? form in) nil
+            (and (seq? form) (= 'ns (first form))) (second form)
+            :else (recur)))))))
+
+(defn- transitive-closure [seeds f]
+  (loop [closure #{} todo (vec seeds)]
+    (if-some [x (peek todo)]
+      (if (closure x)
+        (recur closure (pop todo))
+        (recur (conj closure x) (into (pop todo) (f x))))
+      closure)))
+
+(defn recompile
+  "Takes a collection of urls to recompile."
+  [urls]
+  (with-dump-modified-files
+    (let [all-nses @nses
+          dependants (fn [ns]
+                       (let [lib (some-> all-nses ns :lib)]
+                         (for [[ns {:keys [imports]}] all-nses
+                               :when (get imports lib)]
+                           ns)))
+          nses-to-recompile
+          (->
+            (into []
+              (keep (fn [^java.net.URL url]
+                      (-> url .openStream (java.io.InputStreamReader. "UTF-8") peek-ns)))
+              urls)
+            (transitive-closure dependants))]
+      ; remove nses to be recompiled -- but not their libs to keep aliases stable
+      (apply swap! nses dissoc nses-to-recompile)
+      (doseq [ns nses-to-recompile
+              ; the ns may already have been transitively reloaded
+              :when (nil? (@nses ns))]
+        ; recompiling via ns and not via url because cljd/cljc shadowing
+        (compile-namespace ns)))))
 
 (comment
 
@@ -3690,60 +3718,60 @@
       (time
         (binding [*hosted* true
                   dart-libs-info li]
-          (compile-namespace 'cljd.core)))
+          (compile 'cljd.core)))
       ;; XOXO
       (time
         (binding [dart-libs-info li]
-          (compile-namespace 'cljd.string)))
+          (compile 'cljd.string)))
 
       #_(time
         (binding [*hosted* false
                   dart-libs-info li]
-          (compile-namespace 'cljd.multi)))
+          (compile 'cljd.multi)))
 
       (time
         (binding [dart-libs-info li]
-          (compile-namespace 'cljd.walk)))
+          (compile 'cljd.walk)))
 
       (time
         (binding [dart-libs-info li
                   *hosted* true]
-          (compile-namespace 'cljd.template)))
+          (compile 'cljd.template)))
 
       (time
         (binding [dart-libs-info li
                   *hosted* true]
-          (compile-namespace 'cljd.test)))
+          (compile 'cljd.test)))
 
       (time
         (binding [dart-libs-info li
                   *hosted* true]
-          (compile-namespace 'cljd.test-clojure.for)))
+          (compile 'cljd.test-clojure.for)))
 
       (time
         (binding [*hosted* false
                   dart-libs-info li]
-          (compile-namespace 'cljd.test-clojure.core-test)))
+          (compile 'cljd.test-clojure.core-test)))
 
       (time
         (binding [*hosted* false
                   dart-libs-info li]
-          (compile-namespace 'cljd.test-clojure.core-test-cljd)))
+          (compile 'cljd.test-clojure.core-test-cljd)))
 
       (time
         (binding [dart-libs-info li
                   *hosted* true]
-          (compile-namespace 'cljd.test-clojure.string)))
+          (compile 'cljd.test-clojure.string)))
 
       (time
         (binding [*hosted* true
                   dart-libs-info li]
-          (compile-namespace 'cljd.reader)))
+          (compile 'cljd.reader)))
 
       (time
         (binding [*hosted* false
                   dart-libs-info li]
-          (compile-namespace 'cljd.test-reader.reader-test)))))
+          (compile 'cljd.test-reader.reader-test)))))
 
   (binding [dart-libs-info li]
     (->
