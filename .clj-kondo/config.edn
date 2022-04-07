@@ -1,0 +1,10 @@
+{:linters {:unresolved-symbol {:exclude [bool Function fallback]}}
+ :lint-as {cljd.core/fn clojure.core/fn
+           cljd.core/defn clojure.core/defn
+           cljd.core/defn- clojure.core/defn-
+           cljd.core/let clojure.core/let
+           cljd.core/defmacro clojure.core/defmacro
+           cljd.core/definterface clojure.core/definterface
+           cljs.core/extend-type clojure.core/extend-type
+           cljd.compiler/else->> clojure.core/->>
+           cljd.compiler/with-lifted clojure.core/let}}

@@ -1,5 +1,7 @@
 .cpcache
 .lsp/.cache
 .clj-kondo/.cache
-.clojuredart/libs-info.edn
+.clojuredart
 .dart_tool
+.packages
+pubspec.lock
