@@ -67,14 +67,14 @@
             (doseq [n namespaces]
               (try (println "  Compiling" n)
                 (compiler/compile n)
+                (println "All done! 🙌\n")
                 (catch Exception e
                   (if-some [exprs (::compiler/emit-stack (ex-data e))]
                     (do
                       (println (ex-message e))
                       (run! prn (rseq exprs))
                       (println (ex-message (ex-cause e))))
-                    (st/print-stack-trace e)))))
-            (println "All done!\n"))
+                    (st/print-stack-trace e))))))
           compile-files
           (fn [files]
             (let [paths+urls (for [^java.io.File f files
@@ -87,8 +87,16 @@
               (when (seq paths+urls)
                 (println "=== Recompiling... ===")
                 (run! #(println " " %) (sort (map first paths+urls)))
-                (compiler/recompile (map second paths+urls))
-                (println "All done!\n"))))]
+                (try
+                  (compiler/recompile (map second paths+urls))
+                  (println "All done! 🙌\n")
+                  (catch Exception e
+                    (if-some [exprs (::compiler/emit-stack (ex-data e))]
+                      (do
+                        (println (ex-message e))
+                        (run! prn (rseq exprs))
+                        (println (ex-message (ex-cause e))))
+                      (st/print-stack-trace e)))))))]
       (compile-nses namespaces)
       (when watch
         (watch-dirs dirs compile-files)))))
