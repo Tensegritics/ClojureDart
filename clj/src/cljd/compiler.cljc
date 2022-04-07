@@ -3085,6 +3085,8 @@
                                                nil dc-dynamic
                                                b)]
                 (cond
+                  ;; TODO: merging Functions can done better.
+                  (= qna qnb 'dc.Function) dc-Function
                   ; fast path, also handles dc.Null dc.Null which should not set :nullable true
                   (= qna qnb) (assoc (merge-type-params a b) :nullable (or (:nullable a) (:nullable b))
                                 :type-parameters
@@ -3150,7 +3152,6 @@
          (let [[_ _ dart-then dart-else] x]
            {:dart/type (merge-types (:dart/type (infer-type dart-then)) (:dart/type (infer-type dart-else)))})
          dart/let (infer-type (last x))
-         dart/fn {:dart/fn-type :native :dart/type dc-Function}
          dart/.
          (let [[_ a meth & bs :as all] x ; TODO use type-params
                {:dart/keys [fn-type ret-type]} (infer-type a)

@@ -84,6 +84,36 @@
     (let [i ^:async (fn [] nil)]
       (is (dart/is? i #/( -> (Future Null)))))))
 
+(deftest testing-local-fn-typehints
+  (testing "inline fn typehints"
+    (let [a (fn [] 1)
+          a' a]
+      (is (dart/is? a' #/( -> int))))
+    (let [b ^:async (fn [] 1)
+          b' b]
+      (is (dart/is? b'  #/( -> (Future int)))))
+    (let [c ^:async (fn [a] (if (odd? a) 3 4))
+          c' c]
+      (is (dart/is? c' #/(dynamic -> (Future int)))))
+    (let [d ^:async (fn nom [a] (if (odd? a) (nom (inc a)) 4))
+          d' d]
+      (is (dart/is? d' #/(dynamic -> (Future int)))))
+    (let [e ^:async (fn ^num nom [a] (if (odd? a) (nom (inc a)) 4))
+          e' e]
+      (is (dart/is? e' #/(dynamic -> (Future num)))))
+    (let [f (fn ^dart:core/Never nom [] (nom))
+          f' f]
+      (is (dart/is? f' #/( -> dart:core/Never))))
+    (let [g (fn nom [] (nom))
+          g' g]
+      (is (dart/is? g' #/( -> dynamic))))
+    (let [h (fn [] nil)
+          h' h]
+      (is (dart/is? h' #/( -> Null))))
+    (let [i ^:async (fn [] nil)
+          i' i]
+      (is (dart/is? i' #/( -> (Future Null)))))))
+
 (deftest testing-dart-new-dont-need-to-be-lifted
   (testing "dart/new can be inlined"
     (is (dart/is?
