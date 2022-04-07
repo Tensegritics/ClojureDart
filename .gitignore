@@ -1,0 +1,5 @@
+.cpcache
+.lsp/.cache
+.clj-kondo/.cache
+.clojuredart/libs-info.edn
+.dart_tool
