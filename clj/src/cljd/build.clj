@@ -15,6 +15,8 @@
             [clojure.java.io :as io]
             [clojure.java.classpath :as cp]))
 
+(def ^:dynamic *ansi* false)
+
 (defn compile-core []
   (compiler/compile 'cljd.core))
 
@@ -53,28 +55,66 @@
           (reload to-reload)
           (recur ks->dirs #{}))))))
 
+(defn title [s]
+  (if *ansi*
+    (str "\u001B[1m" s "\u001B[0m")
+    (str "=== " s " ===")))
+
+(defn green [s]
+  (if *ansi*
+    (str "\u001B[1;32m" s "\u001B[0m")
+    s))
+
+(defn red [s]
+  (if *ansi*
+    (str "\u001B[1;31m" s "\u001B[0m")
+    s))
+
+(defn success []
+  (rand-nth
+    [(str (green "  All clear! ") "👌")
+     (str (green "  You rock! ") "🤘")
+     (str (green "  Bravissimo! ") "👏")
+     (str (green "  Easy peasy! ") "😎")]))
+
+(defn print-exception [e]
+  (println (rand-nth
+             [(str (red "Oh noes! ") "😵")
+              (str (red "Something horrible happened! ") "😱")
+              (str (red "$expletives ") "💩")]))
+  (if-some [exprs (seq (::compiler/emit-stack (ex-data e)))]
+    (let [exprs (into [] exprs)]
+      (println (ex-message e))
+      (run! prn (pop exprs))
+      (println (title (pr-str (peek exprs))))
+      (println (ex-message (ex-cause e))))
+    (do
+      (println (ex-message e))
+      (st/print-stack-trace e))))
+
+(defn timestamp []
+  (.format (java.text.SimpleDateFormat. "@HH:mm" java.util.Locale/FRENCH) (java.util.Date.)))
+
 (defn compile-cli
   [& {:keys [watch namespaces] :or {watch false}}]
   (binding [compiler/*lib-path* (str (System/getProperty "user.dir") "/lib/")
             compiler/*hosted* true
             compiler/dart-libs-info (compiler/load-libs-info)]
-    (println "=== Compiling cljd.core ===")
+    (newline)
+    (println (title "Compiling cljd.core"))
     (compile-core)
     (let [dirs (into #{} (map #(java.io.File. %)) (:paths (:basis (deps/basis nil))))
           compile-nses
           (fn [nses]
-            (println "=== Compiling project root namespaces ===")
-            (doseq [n namespaces]
-              (try (println "  Compiling" n)
-                (compiler/compile n)
-                (println "All done! 🙌\n")
-                (catch Exception e
-                  (if-some [exprs (::compiler/emit-stack (ex-data e))]
-                    (do
-                      (println (ex-message e))
-                      (run! prn (rseq exprs))
-                      (println (ex-message (ex-cause e))))
-                    (st/print-stack-trace e))))))
+            (newline)
+            (println (title "Compiling project root namespaces") (timestamp))
+            (try
+              (doseq [n namespaces]
+                (println "  Compiling" n)
+                (compiler/compile n))
+              (println (success))
+              (catch Exception e
+                (print-exception e))))
           compile-files
           (fn [files]
             (let [paths+urls (for [^java.io.File f files
@@ -85,18 +125,14 @@
                                [(str (.relativize dp fp))
                                 (-> f .toURI .toURL)])]
               (when (seq paths+urls)
-                (println "=== Recompiling... ===")
+                (newline)
+                (println (title "Recompiling...") (timestamp))
                 (run! #(println " " %) (sort (map first paths+urls)))
                 (try
                   (compiler/recompile (map second paths+urls))
-                  (println "All done! 🙌\n")
+                  (println (success))
                   (catch Exception e
-                    (if-some [exprs (::compiler/emit-stack (ex-data e))]
-                      (do
-                        (println (ex-message e))
-                        (run! prn (rseq exprs))
-                        (println (ex-message (ex-cause e))))
-                      (st/print-stack-trace e)))))))]
+                    (print-exception e))))))]
       (compile-nses namespaces)
       (when watch
         (watch-dirs dirs compile-files)))))
@@ -136,16 +172,20 @@
         (or
           (and
             (do
-              (println "\n=== Adding dev dependencies ===")
+              (newline)
+              (println (title "Adding dev dependencies"))
               (exec "flutter" "pub" "add" "-d" "analyzer:^3.3.1"))
             (do
-              (println "\n=== Upgrading dev dependencies ===")
+              (newline)
+              (println (title "Upgrading dev dependencies"))
               (exec "flutter" "pub" "upgrade" "analyzer:^3.3.1")))
           (do
-            (println "\n=== Fetching dependencies ===")
+            (newline)
+            (println (title "Fetching dependencies"))
             (exec "flutter" "pub" "get"))
           (do
-            (println "\n=== Dumping type information ===")
+            (newline)
+            (println (title "Dumping type information"))
             (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
               "flutter" "pub" "run" (.getPath analyzer-dart))))))))
 
@@ -201,11 +241,13 @@
       {:exit-message (usage summary)})))
 
 (defn -main [& args]
-  (let [{:keys [action options exit-message namespaces ok?]} (validate-args args)]
-    (if exit-message
-      (exit (if ok? 0 1) exit-message)
-      (do (println "== Warming up `.clojuredart/libs-info.edn` (helps us emit better code)")
+  (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))]
+    (let [{:keys [action options exit-message namespaces ok?]} (validate-args args)]
+      (if exit-message
+        (exit (if ok? 0 1) exit-message)
+        (do
+          (println (title "Warming up `.clojuredart/libs-info.edn`") "(helps us emit better code)")
           (warm-up-libs-info!)
           (case action
             "watch" (compile-cli :namespaces namespaces :watch true)
-            "compile" (compile-cli :namespaces namespaces))))))
+            "compile" (compile-cli :namespaces namespaces)))))))
