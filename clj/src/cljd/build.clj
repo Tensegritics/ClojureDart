@@ -104,35 +104,34 @@
     (println (title "Compiling cljd.core"))
     (compile-core)
     (let [dirs (into #{} (map #(java.io.File. %)) (:paths (:basis (deps/basis nil))))
+          dirty-nses (volatile! #{})
           compile-nses
           (fn [nses]
-            (newline)
-            (println (title "Compiling project root namespaces") (timestamp))
-            (try
-              (doseq [n namespaces]
-                (println "  Compiling" n)
-                (compiler/compile n))
-              (println (success))
-              (catch Exception e
-                (print-exception e))))
-          compile-files
-          (fn [files]
-            (let [paths+urls (for [^java.io.File f files
-                                   :let [fp (.toPath f)]
-                                   ^java.io.File d dirs
-                                   :let [dp (.toPath d)]
-                                   :when (.startsWith fp dp)]
-                               [(str (.relativize dp fp))
-                                (-> f .toURI .toURL)])]
-              (when (seq paths+urls)
+            (let [nses (into @dirty-nses nses)]
+              (vreset! dirty-nses #{})
+              (when (seq nses)
                 (newline)
-                (println (title "Recompiling...") (timestamp))
-                (run! #(println " " %) (sort (map first paths+urls)))
+                (println (title "Compiling...") (timestamp))
+                (run! #(println " " %) (sort nses))
                 (try
-                  (compiler/recompile (map second paths+urls))
+                  (compiler/recompile nses)
                   (println (success))
                   (catch Exception e
-                    (print-exception e))))))]
+                    (vreset! dirty-nses nses)
+                    (print-exception e))))))
+          compile-files
+          (fn [files]
+            (some->
+              (for [^java.io.File f files
+                    :let [fp (.toPath f)]
+                    ^java.io.File d dirs
+                    :let [dp (.toPath d)]
+                    :when (.startsWith fp dp)
+                    :let [ns (compiler/peek-ns f)]
+                    :when ns]
+                ns)
+              seq
+              compile-nses))]
       (compile-nses namespaces)
       (when watch
         (watch-dirs dirs compile-files)))))

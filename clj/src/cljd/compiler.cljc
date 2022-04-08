@@ -3672,14 +3672,15 @@
 
 (defn peek-ns
   [in]
-  (with-cljd-reader
-    (let [in (clojure.lang.LineNumberingPushbackReader. in)]
-      (loop []
-        (let [form (read {:eof in :read-cond :allow} in)]
-          (cond
-            (identical? form in) nil
-            (and (seq? form) (= 'ns (first form))) (second form)
-            :else (recur)))))))
+  (with-open [in (io/reader in)]
+    (with-cljd-reader
+      (let [in (clojure.lang.LineNumberingPushbackReader. in)]
+        (loop []
+          (let [form (read {:eof in :read-cond :allow} in)]
+            (cond
+              (identical? form in) nil
+              (and (seq? form) (= 'ns (first form))) (second form)
+              :else (recur))))))))
 
 (defn- transitive-closure [seeds f]
   (loop [closure #{} todo (vec seeds)]
@@ -3690,29 +3691,28 @@
       closure)))
 
 (defn recompile
-  "Takes a collection of urls to recompile."
-  [urls]
+  "Takes a collection of nses to recompile."
+  [nses-to-recompile]
   (with-dump-modified-files
-    (let [all-nses @nses
+    (let [nses-before @nses
           dependants (fn [ns]
-                       (let [lib (some-> all-nses ns :lib)]
-                         (for [[ns {:keys [imports]}] all-nses
+                       (let [lib (some-> nses-before ns :lib)]
+                         (for [[ns {:keys [imports]}] nses-before
                                :when (get imports lib)]
                            ns)))
           nses-to-recompile
-          (->
-            (into []
-              (keep (fn [^java.net.URL url]
-                      (-> url .openStream (java.io.InputStreamReader. "UTF-8") peek-ns)))
-              urls)
-            (transitive-closure dependants))]
-      ; remove nses to be recompiled -- but not their libs to keep aliases stable
-      (apply swap! nses dissoc nses-to-recompile)
-      (doseq [ns nses-to-recompile
-              ; the ns may already have been transitively reloaded
-              :when (nil? (@nses ns))]
-        ; recompiling via ns and not via url because cljd/cljc shadowing
-        (compile-namespace ns)))))
+          (transitive-closure nses-to-recompile dependants)]
+      (try
+        ; remove nses to be recompiled -- but not their libs to keep aliases stable
+        (apply swap! nses dissoc nses-to-recompile)
+        (doseq [ns nses-to-recompile
+                ; the ns may already have been transitively reloaded
+                :when (nil? (@nses ns))]
+          ; recompiling via ns and not via url because cljd/cljc shadowing
+          (compile-namespace ns))
+        (catch Exception e
+          (reset! nses nses-before) ; avoid messy states
+          (throw e))))))
 
 (comment
 
