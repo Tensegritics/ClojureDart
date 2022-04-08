@@ -1239,17 +1239,20 @@
      (and (#{'dc.List 'dc.Map 'dc.Set} (:canon-qname expected-type))
        (when-some [tps (seq (:type-parameters expected-type))]
          (every? #(not= (:canon-qname %) 'dc.dynamic) tps)))
-     (let [[dartf :as binding] (dart-binding 'castmethod dart-expr env)
-           wrapper (vary-meta (dart-local 'wrapper-f {} ) assoc :dart/type expected-type)]
+     ;; TODO ok alors déjà le suffixe f c'est du vilain copier coller
+     ;; ensuite faut tester si dart-expr est déjà un symbole (ou un litéral atomique mais osef)
+     ;; sinon faut lifter puis binding
+     (let [[bindings dart-expr] (lift-arg true dart-expr "castable" env)
+           casted (vary-meta (dart-local 'casted {} ) assoc :dart/type expected-type)]
        (list 'dart/let
-         [binding
-          [wrapper
-           (if (is-assignable? (dissoc expected-type :type-parameters) (dissoc actual-type :type-parameters))
-             (list 'dart/. dartf (into ["cast"] (:type-parameters expected-type)))
-             (list 'dart/if (list 'dart/is dartf expected-type) ; or expected-type?
-               dartf
-               (list 'dart/. (list 'dart/as dartf (dissoc expected-type :type-parameters)) (into ["cast"] (:type-parameters expected-type)))))]]
-         wrapper))
+         (conj (vec bindings)
+           [casted
+            (if (is-assignable? (dissoc expected-type :type-parameters) (dissoc actual-type :type-parameters))
+              (list 'dart/. dart-expr (into ["cast"] (:type-parameters expected-type)))
+              (list 'dart/if (list 'dart/is dart-expr expected-type) ; or expected-type?
+                dart-expr
+                (list 'dart/. (list 'dart/as dart-expr (dissoc expected-type :type-parameters)) (into ["cast"] (:type-parameters expected-type)))))])
+         casted))
      (= (:canon-qname expected-type) 'dc.Function) ; TODO : generics
      (let [{:keys [return-type parameters]} expected-type
            [fixed-types optionals] (dart-method-sig expected-type)
@@ -1438,7 +1441,7 @@
                      (:type-params (meta obj)) ; static only
                      (emit-type obj env)
                      member-info
-                     (magicast dart-obj type! type env)
+                     (simple-cast dart-obj type! type)
                      :else
                      (loop [dart-obj dart-obj]
                        (cond
