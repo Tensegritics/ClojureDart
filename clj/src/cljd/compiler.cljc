@@ -3499,7 +3499,7 @@
             (print-post locus)
             (:exit locus))))
 
-(defn- relativize-lib [^String src ^String target]
+(defn relativize-lib [^String src ^String target]
   (if (<= 0 (.indexOf target ":"))
     target
     (loop [[s & ss] (str/split src #"/") [t & ts :as all-ts] (str/split target #"/")]

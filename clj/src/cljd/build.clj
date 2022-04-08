@@ -8,6 +8,7 @@
 
 (ns cljd.build
   (:require [cljd.compiler :as compiler]
+            [clojure.edn :as edn]
             [clojure.tools.cli.api :as deps]
             [clojure.tools.cli :as ctc]
             [clojure.string :as str]
@@ -16,6 +17,7 @@
             [clojure.java.classpath :as cp]))
 
 (def ^:dynamic *ansi* false)
+(def ^:dynamic *config* {})
 
 (defn compile-core []
   (compiler/compile 'cljd.core))
@@ -75,13 +77,16 @@
     [(str (green "  All clear! ") "👌")
      (str (green "  You rock! ") "🤘")
      (str (green "  Bravissimo! ") "👏")
-     (str (green "  Easy peasy! ") "😎")]))
+     (str (green "  Easy peasy! ") "😎")
+     (str (green "  I like when a plan comes together!") "👨‍🦳")]))
 
 (defn print-exception [e]
   (println (rand-nth
              [(str (red "Oh noes! ") "😵")
               (str (red "Something horrible happened! ") "😱")
-              (str (red "$expletives ") "💩")]))
+              (str (red "$expletives ") "💩")
+              (str (red "Keep calm and fix bugs! ") "👑")
+              (str (red "What doesn’t kill you, makes you stronger. ") "🤔")]))
   (if-some [exprs (seq (::compiler/emit-stack (ex-data e)))]
     (let [exprs (into [] exprs)]
       (println (ex-message e))
@@ -94,47 +99,6 @@
 
 (defn timestamp []
   (.format (java.text.SimpleDateFormat. "@HH:mm" java.util.Locale/FRENCH) (java.util.Date.)))
-
-(defn compile-cli
-  [& {:keys [watch namespaces] :or {watch false}}]
-  (binding [compiler/*lib-path* (str (System/getProperty "user.dir") "/lib/")
-            compiler/*hosted* true
-            compiler/dart-libs-info (compiler/load-libs-info)]
-    (newline)
-    (println (title "Compiling cljd.core"))
-    (compile-core)
-    (let [dirs (into #{} (map #(java.io.File. %)) (:paths (:basis (deps/basis nil))))
-          dirty-nses (volatile! #{})
-          compile-nses
-          (fn [nses]
-            (let [nses (into @dirty-nses nses)]
-              (vreset! dirty-nses #{})
-              (when (seq nses)
-                (newline)
-                (println (title "Compiling...") (timestamp))
-                (run! #(println " " %) (sort nses))
-                (try
-                  (compiler/recompile nses)
-                  (println (success))
-                  (catch Exception e
-                    (vreset! dirty-nses nses)
-                    (print-exception e))))))
-          compile-files
-          (fn [files]
-            (some->
-              (for [^java.io.File f files
-                    :let [fp (.toPath f)]
-                    ^java.io.File d dirs
-                    :let [dp (.toPath d)]
-                    :when (.startsWith fp dp)
-                    :let [ns (compiler/peek-ns f)]
-                    :when ns]
-                ns)
-              seq
-              compile-nses))]
-      (compile-nses namespaces)
-      (when watch
-        (watch-dirs dirs compile-files)))))
 
 (defn exec [& args]
   (let [opts (when (map? (first args)) (first args))
@@ -188,6 +152,58 @@
             (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
               "flutter" "pub" "run" (.getPath analyzer-dart))))))))
 
+(defn compile-cli
+  [& {:keys [watch namespaces] :or {watch false}}]
+  (println (title "Warming up `.clojuredart/libs-info.edn`") "(helps us emit better code)")
+  (warm-up-libs-info!)
+  (binding [compiler/*hosted* true
+            compiler/dart-libs-info (compiler/load-libs-info)]
+    (newline)
+    (println (title "Compiling cljd.core"))
+    (compile-core)
+    (let [dirs (into #{} (map #(java.io.File. %)) (:paths (:basis (deps/basis nil))))
+          dirty-nses (volatile! #{})
+          compile-nses
+          (fn [nses]
+            (let [nses (into @dirty-nses nses)]
+              (vreset! dirty-nses #{})
+              (when (seq nses)
+                (newline)
+                (println (title "Compiling...") (timestamp))
+                (run! #(println " " %) (sort nses))
+                (try
+                  (compiler/recompile nses)
+                  (println (success))
+                  (catch Exception e
+                    (vreset! dirty-nses nses)
+                    (print-exception e))))))
+          compile-files
+          (fn [files]
+            (some->
+              (for [^java.io.File f files
+                    :let [fp (.toPath f)]
+                    ^java.io.File d dirs
+                    :let [dp (.toPath d)]
+                    :when (.startsWith fp dp)
+                    :let [ns (compiler/peek-ns f)]
+                    :when ns]
+                ns)
+              seq
+              compile-nses))]
+      (compile-nses namespaces)
+      (when watch
+        (watch-dirs dirs compile-files)))))
+
+(defn init-project [main-ns]
+  (let [libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
+        flutter-main (java.io.File. libdir "main.dart")
+        lib (compiler/relativize-lib (.getPath flutter-main) (compiler/ns-to-lib main-ns))]
+    (or
+      (exec "flutter" "create" (System/getProperty "user.dir"))
+      (spit (java.io.File. (System/getProperty "user.dir") "cljd.edn") (pr-str {:main main-ns}))
+      (spit flutter-main (str "export " (with-out-str (compiler/write-string-literal lib)) " show main;\n"))
+      (println "👍" (green "All setup!") "Let's write some cljd in " main-ns))))
+
 (def cli-options
   [["-v" nil "Verbosity level; may be specified multiple times to increase value"
     :id :verbosity
@@ -206,6 +222,7 @@
         ""
         "Actions:"
         "  compile Compile namespaces"
+        "  init    Initialize a Flutter project"
         "  watch   Compile namespaces and re-compile when a cljc or cljd file is modified."
         ""
         "Please refer to the manual page for more information."]
@@ -231,8 +248,7 @@
       errors ; errors => exit with description of errors
       {:exit-message (error-msg errors)}
       ;; custom validation on arguments
-      (and (< 1 (count arguments))
-        (#{"compile" "watch"} (first arguments)))
+      (#{"compile" "watch" "init"} (first arguments))
       {:action (first arguments)
        :options options
        :namespaces (map symbol (next arguments))}
@@ -240,13 +256,25 @@
       {:exit-message (usage summary)})))
 
 (defn -main [& args]
-  (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))]
-    (let [{:keys [action options exit-message namespaces ok?]} (validate-args args)]
-      (if exit-message
-        (exit (if ok? 0 1) exit-message)
-        (do
-          (println (title "Warming up `.clojuredart/libs-info.edn`") "(helps us emit better code)")
-          (warm-up-libs-info!)
-          (case action
-            "watch" (compile-cli :namespaces namespaces :watch true)
-            "compile" (compile-cli :namespaces namespaces)))))))
+  (let [f (java.io.File. (System/getProperty "user.dir") "cljd.edn")
+        config (if (.exists f)
+                 (with-open [rdr (-> f io/reader java.io.PushbackReader.)]
+                   (edn/read rdr))
+                 {})]
+    (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
+              *config* config
+              compiler/*lib-path*
+              (str (.getPath (java.io.File. (System/getProperty "user.dir") "lib")) "/")]
+      (let [{:keys [action options exit-message namespaces ok?]} (validate-args args)]
+        (if exit-message
+          (exit (if ok? 0 1) exit-message)
+          (do
+            (case action
+              "init" (init-project (first namespaces))
+              "watch" (compile-cli
+                        :namespaces (or (seq namespaces)
+                                      (some-> *config* :main list))
+                        :watch true)
+              "compile" (compile-cli
+                          :namespaces (or (seq namespaces)
+                                        (some-> *config* :main list))))))))))
