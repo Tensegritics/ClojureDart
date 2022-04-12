@@ -10,22 +10,14 @@ It's a tad laborious as you have to install dependencies.
 
 If you already have the `clj` command installed make sure to upgrade to at least the [1.10.3.814](https://clojure.org/releases/tools#v1.10.3.814). This release allows to easily use private git deps.
 
-## 3. Create your first Flutter project
+## 3. Create your first ClojureDart/Flutter project
+
+Creates a directory for the project with the following deps.edn:
 
 ``` shell
-flutter create training
-cd training
+mkdir hello
+cd hello
 ```
-
-This creates a Dart project with (among other things) a `pubspec.yaml` with Flutter dependencies.
-
-## 4. Remove existing lib/main.dart
-
-``` shell
-rm lib/main.dart
-```
-
-## 5. Create `deps.edn` file at the root of your project
 
 If your GitHub account is [configured for SSH access](https://docs.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account):
 
@@ -35,7 +27,7 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDartPreview.git"
-         :sha "f76808655dff401ddb0550f7965a46cb7131468e"}}}
+         :sha "f342daf78c5da92a7f0850773db261013797f652"}}}
 EOF
 ```
 
@@ -47,11 +39,19 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "https://github.com/tensegritics/ClojureDartPreview.git"
-         :sha "f76808655dff401ddb0550f7965a46cb7131468e"}}}
+         :sha "f342daf78c5da92a7f0850773db261013797f652"}}}
 EOF
 ```
 
-## 6. Create a ClojureDart file with a main entry-point
+## 4. Initialize the project
+
+``` shell
+clj -M -m cljd.build init acme.main
+```
+
+`acme.main` is the root namespace of the project where the `main` function is defined.
+
+## 5. Create a ClojureDart file with a main entry-point
 
 First create a directory where clojure files live
 
@@ -83,7 +83,7 @@ EOF
 ## 7. Start the ClojureDart watcher
 
 ``` shell
-clj -M -m cljd.build watch acme.main
+clj -M -m cljd.build flutter
 ```
 
 ## 8. Start a simulator
@@ -98,37 +98,6 @@ open -a Simulator
 
 Android:
 
-## 9. Run the flutter hot-reload cli
+## 9. Enjoy!
 
-In yet another terminal
-
-``` shell
-flutter run -t lib/cljd-out/acme/main.dart
-```
-
-You should get this kind of output:
-
-```
-Launching lib/cljd-out/acme/main.dart on iPhone 12 Pro Max in debug mode...
-Running Xcode build...
- └─Compiling, linking and signing...                        51,0s
-Xcode build done.                                           74,0s
-Syncing files to device iPhone 12 Pro Max...                       150ms
-
-Flutter run key commands.
-r Hot reload. 🔥🔥🔥
-R Hot restart.
-h Repeat this help message.
-d Detach (terminate "flutter run" but leave application running).
-c Clear the screen
-q Quit (terminate the application on the device).
-
-💪 Running with sound null safety 💪
-```
-
-And the application should open in the simulator.
-
-## 10. Enjoy!
-
- When you edit your cljd file (watcher re-compiles cljd files), always follow these steps:
- 1. press R in the terminal tied to the flutter cli to restart the app.
+ When you edit your cljd file, the watcher recompiles cljd files and, on success, hot reloads the application. Sometimes the application may not pick up your change so hit the return key to get the watcher to restart the application.
