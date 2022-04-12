@@ -1239,9 +1239,6 @@
      (and (#{'dc.List 'dc.Map 'dc.Set} (:canon-qname expected-type))
        (when-some [tps (seq (:type-parameters expected-type))]
          (every? #(not= (:canon-qname %) 'dc.dynamic) tps)))
-     ;; TODO ok alors déjà le suffixe f c'est du vilain copier coller
-     ;; ensuite faut tester si dart-expr est déjà un symbole (ou un litéral atomique mais osef)
-     ;; sinon faut lifter puis binding
      (let [[bindings dart-expr] (lift-arg true dart-expr "castable" env)
            casted (vary-meta (dart-local 'casted {} ) assoc :dart/type expected-type)]
        (list 'dart/let

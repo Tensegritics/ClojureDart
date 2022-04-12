@@ -10,7 +10,6 @@
   (:require [cljd.compiler :as compiler]
             [clojure.edn :as edn]
             [clojure.tools.cli.api :as deps]
-            [clojure.tools.cli :as ctc]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
             [clojure.java.io :as io]
@@ -62,6 +61,11 @@
     (str "\u001B[1m" s "\u001B[0m")
     (str "=== " s " ===")))
 
+(defn bright [s]
+  (if *ansi*
+    (str "\u001B[1m" s "\u001B[0m")
+    s))
+
 (defn green [s]
   (if *ansi*
     (str "\u001B[1;32m" s "\u001B[0m")
@@ -78,7 +82,7 @@
      (str (green "  You rock! ") "🤘")
      (str (green "  Bravissimo! ") "👏")
      (str (green "  Easy peasy! ") "😎")
-     (str (green "  I like when a plan comes together!") "👨‍🦳")]))
+     (str (green "  I like when a plan comes together! ") "👨‍🦳")]))
 
 (defn print-exception [e]
   (println (rand-nth
@@ -86,7 +90,8 @@
               (str (red "Something horrible happened! ") "😱")
               (str (red "$expletives ") "💩")
               (str (red "Keep calm and fix bugs! ") "👑")
-              (str (red "What doesn’t kill you, makes you stronger. ") "🤔")]))
+              (str (red "What doesn’t kill you, makes you stronger. ") "🤔")
+              (str (red "You’re gonna need a bigger boat! ") "🦈")]))
   (if-some [exprs (seq (::compiler/emit-stack (ex-data e)))]
     (let [exprs (into [] exprs)]
       (println (ex-message e))
@@ -101,13 +106,19 @@
   (.format (java.text.SimpleDateFormat. "@HH:mm" java.util.Locale/FRENCH) (java.util.Date.)))
 
 (defn exec [& args]
-  (let [opts (when (map? (first args)) (first args))
+  (let [{:keys [async in err out env] :as opts
+         :or {env {}
+              in java.lang.ProcessBuilder$Redirect/INHERIT
+              err java.lang.ProcessBuilder$Redirect/INHERIT
+              out java.lang.ProcessBuilder$Redirect/INHERIT}}
+        (when (map? (first args)) (first args))
         [bin & args] (cond-> args opts next)
         pb (doto (ProcessBuilder. [])
-             (-> .environment (.putAll (:env opts {})))
-             (.redirectInput java.lang.ProcessBuilder$Redirect/INHERIT)
-             (.redirectOutput (:out opts java.lang.ProcessBuilder$Redirect/INHERIT))
-             (.redirectError java.lang.ProcessBuilder$Redirect/INHERIT))
+             (-> .environment (.putAll env))
+             (cond->
+                 in (.redirectInput in)
+                 err (.redirectError err)
+                 out (.redirectOutput out)))
         path (-> pb .environment (get "PATH"))
         full-bin
         (or
@@ -118,9 +129,11 @@
             (.split path java.io.File/pathSeparator))
           (throw (ex-info (str "Can't find " bin " on PATH.")
                    {:bin bin :path path})))
-        process (.start (doto pb (.command (into [full-bin] args))))
-        exit-code (.waitFor process)]
-    (when-not (zero? exit-code) exit-code)))
+        process (.start (doto pb (.command (into [full-bin] args))))]
+    (if-not async
+      (let [exit-code (.waitFor process)]
+        (when-not (zero? exit-code) exit-code))
+      process)))
 
 (defn warm-up-libs-info! []
   (let [user-dir (System/getProperty "user.dir")
@@ -148,18 +161,18 @@
             (exec "flutter" "pub" "get"))
           (do
             (newline)
-            (println (title "Dumping type information"))
+            (println (title "Dumping type information (it may take a while)"))
             (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
               "flutter" "pub" "run" (.getPath analyzer-dart))))))))
 
 (defn compile-cli
-  [& {:keys [watch namespaces] :or {watch false}}]
+  [& {:keys [watch namespaces flutter] :or {watch false}}]
   (println (title "Warming up `.clojuredart/libs-info.edn`") "(helps us emit better code)")
   (warm-up-libs-info!)
   (binding [compiler/*hosted* true
             compiler/dart-libs-info (compiler/load-libs-info)]
     (newline)
-    (println (title "Compiling cljd.core"))
+    (println (title "Compiling cljd.core to Dart"))
     (compile-core)
     (let [dirs (into #{} (map #(java.io.File. %)) (:paths (:basis (deps/basis nil))))
           dirty-nses (volatile! #{})
@@ -169,30 +182,53 @@
               (vreset! dirty-nses #{})
               (when (seq nses)
                 (newline)
-                (println (title "Compiling...") (timestamp))
+                (println (title "Compiling to Dart...") (timestamp))
                 (run! #(println " " %) (sort nses))
                 (try
                   (compiler/recompile nses)
                   (println (success))
+                  true
                   (catch Exception e
                     (vreset! dirty-nses nses)
-                    (print-exception e))))))
+                    (print-exception e)
+                    false)))))
           compile-files
-          (fn [files]
-            (some->
-              (for [^java.io.File f files
-                    :let [fp (.toPath f)]
-                    ^java.io.File d dirs
-                    :let [dp (.toPath d)]
-                    :when (.startsWith fp dp)
-                    :let [ns (compiler/peek-ns f)]
-                    :when ns]
-                ns)
-              seq
-              compile-nses))]
+          (fn [^java.io.Writer flutter-stdin]
+            (fn [files]
+              (when (some->
+                      (for [^java.io.File f files
+                            :let [fp (.toPath f)]
+                            ^java.io.File d dirs
+                            :let [dp (.toPath d)]
+                            :when (.startsWith fp dp)
+                            :let [ns (compiler/peek-ns f)]
+                            :when ns]
+                        ns)
+                      seq
+                      compile-nses)
+                (when flutter-stdin
+                  (locking flutter-stdin
+                    (doto flutter-stdin (.write "r") .flush))))))]
       (compile-nses namespaces)
-      (when watch
-        (watch-dirs dirs compile-files)))))
+      (when (or watch flutter)
+        (newline)
+        (when flutter
+          (println (title (str/join " " (into ["Lauching flutter run"] flutter)))))
+        (let [p (some->> flutter
+                  (apply exec {:async true :in nil :env {"TERM" ""}} "flutter" "run"))]
+          (try
+            (let [flutter-stdin (some-> p .getOutputStream (java.io.OutputStreamWriter. "UTF-8"))]
+              (when flutter-stdin
+                (doto (Thread. #(while true
+                                  (let [s (read-line)]
+                                    (doto flutter-stdin
+                                      (.write (case s "" "R" s))
+                                      .flush))))
+                  (.setDaemon true)
+                  .start))
+              (watch-dirs dirs (compile-files flutter-stdin)))
+            (finally
+              (some-> p .destroy))))))))
 
 (defn init-project [main-ns]
   (let [libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
@@ -204,56 +240,78 @@
       (spit flutter-main (str "export " (with-out-str (compiler/write-string-literal lib)) " show main;\n"))
       (println "👍" (green "All setup!") "Let's write some cljd in " main-ns))))
 
-(def cli-options
-  [["-v" nil "Verbosity level; may be specified multiple times to increase value"
-    :id :verbosity
-    :default 0
-    :update-fn inc]
-   ["-h" "--help"]])
-
-(defn usage [options-summary]
-  (->> ["This program compiles Clojuredart files to dart files."
-        "It compiles all required namespace."
-        ""
-        "Usage: program-name [options] action file1 file2 file3..."
-        ""
-        "Options:"
-        options-summary
-        ""
-        "Actions:"
-        "  compile Compile namespaces"
-        "  init    Initialize a Flutter project"
-        "  watch   Compile namespaces and re-compile when a cljc or cljd file is modified."
-        ""
-        "Please refer to the manual page for more information."]
-       (str/join \newline)))
-
-(defn error-msg [errors]
-  (str "The following errors occurred while parsing your command:\n\n"
-       (str/join \newline errors)))
-
 (defn exit [status msg]
   (println msg)
   (System/exit status))
 
-(defn validate-args
-  "Validate command line arguments. Either return a map indicating the program
-  should exit (with a error message, and optional ok status), or a map
-  indicating the action the program should take and the options provided."
-  [args]
-  (let [{:keys [options arguments errors summary] :as kk} (ctc/parse-opts args cli-options)]
-    (cond
-      (:help options) ; help => exit OK with usage summary
-      {:exit-message (usage summary) :ok? true}
-      errors ; errors => exit with description of errors
-      {:exit-message (error-msg errors)}
-      ;; custom validation on arguments
-      (#{"compile" "watch" "init"} (first arguments))
-      {:action (first arguments)
-       :options options
-       :namespaces (map symbol (next arguments))}
-      :else ; failed custom validation => exit with usage summary
-      {:exit-message (usage summary)})))
+(defn parse-args [{opt-specs :options :as commands} args]
+  (let [[options & args]
+        (if (false? opt-specs)
+          (cons {} args)
+          (loop [args (seq args) options {}]
+            (if-some [[arg & more-args] args]
+              (cond
+                (= "--" arg) (cons options more-args)
+                (.startsWith ^String arg "--")
+                (if-some [{:keys [long id parser rf init] :as opt-spec}
+                          (some (fn [{:keys [long] :as spec}] (when (= long arg) spec)) opt-specs)]
+                  (let [v (if parser
+                            (parser (first more-args))
+                            (:value opt-spec true))
+                        more-args (cond-> more-args parser next)
+                        id (or id (keyword (subs long 2)))
+                        v (if rf (rf (options id init) v) v)]
+                    (recur more-args (assoc options id v)))
+                  (throw (Exception. (str "Unknown option: " arg))))
+                (.startsWith ^String arg "-")
+                (if-some [{:keys [short long id parser rf init] :as opt-spec}
+                          (some (fn [{:keys [short] :as spec}] (when (.startsWith ^String arg short) spec)) opt-specs)]
+                  (let [args (cond->> args (not= arg short)
+                                      (cons (cond->> (subs arg 2) (not parser) (str "-"))))
+                        v (if parser
+                            (parser (first more-args))
+                            (:value opt-spec true))
+                        more-args (cond-> more-args parser next)
+                        id (or id (keyword (subs long 2)))
+                        v (if rf (rf (options id init) v) v)]
+                    (recur more-args (assoc options id v)))
+                  (throw (Exception. (str "Unknown option: " arg))))
+                :else (cons options args))
+              (cons options nil))))]
+    (if (:help options)
+      (list* options :help args)
+      (if (some string? (keys commands))
+        (let [[command & args] args]
+          (if-some [subcommands (commands command)]
+            (list* options command (parse-args subcommands args))
+            (throw (Exception. (str "Unknown command: " command)))))
+        (list* options args)))))
+
+(defn print-help [{:keys [doc options] :as spec}]
+  (when doc
+    (newline)
+    (println doc))
+  (let [cmds (keep (fn [[cmd {:keys [doc]}]] (when (string? cmd) [cmd doc])) spec)]
+    (when (and options (seq options))
+      (newline)
+      (println "Options")
+      (doseq [{:keys [short long doc]} (sort-by #(or (:long %) (:short %)) options)]
+        (println " " (some-> short bright) (some-> long bright) doc)))
+    (when (seq cmds)
+      (newline)
+      (println "Actions")
+      (doseq [[cmd doc] (sort-by first cmds)]
+        (println " " (bright cmd))
+        (some->> doc (println "   "))))))
+
+(def commands
+  {:doc "This program compiles Clojuredart files to dart files."
+   :options [{:short "-h" :long "--help" :doc "Print this help."}]
+   "init" {:doc "Take the main namespace as argument. Set up the current clojure project as a ClojureDart/Flutter."}
+   "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart."}
+   "watch" {:doc "Like compile but keep recompiling in response to file updates."}
+   "flutter" {:options false
+              :doc "Like watch but hot reload the application in the simulator or device. All options are passed to flutter run."}})
 
 (defn -main [& args]
   (let [f (java.io.File. (System/getProperty "user.dir") "cljd.edn")
@@ -265,16 +323,21 @@
               *config* config
               compiler/*lib-path*
               (str (.getPath (java.io.File. (System/getProperty "user.dir") "lib")) "/")]
-      (let [{:keys [action options exit-message namespaces ok?]} (validate-args args)]
-        (if exit-message
-          (exit (if ok? 0 1) exit-message)
-          (do
-            (case action
-              "init" (init-project (first namespaces))
-              "watch" (compile-cli
-                        :namespaces (or (seq namespaces)
-                                      (some-> *config* :main list))
-                        :watch true)
-              "compile" (compile-cli
-                          :namespaces (or (seq namespaces)
-                                        (some-> *config* :main list))))))))))
+      (let [[options cmd cmd-opts & args] (parse-args commands args)]
+        (case cmd
+          :help (print-help commands)
+          "init" (init-project (symbol (first args)))
+          ("compile" "watch")
+          (compile-cli
+            :namespaces (or (seq (map symbol args))
+                          (some-> *config* :main list))
+            :watch (= cmd "watch"))
+          "flutter"
+          (let [[args [dash & flutter-args]] (split-with #(not= "--" %) args)
+                flutter-args (if dash flutter-args args)
+                args (if dash args nil)]
+            (compile-cli
+              :namespaces
+              (or (seq (map symbol args))
+                (some-> *config* :main list))
+              :flutter (vec flutter-args))))))))
