@@ -136,7 +136,8 @@
       process)))
 
 (defn warm-up-libs-info! []
-  (let [user-dir (System/getProperty "user.dir")
+  (let [bin (:bin *config*)
+        user-dir (System/getProperty "user.dir")
         cljd-dir (-> user-dir (java.io.File. ".clojuredart") (doto .mkdirs))
         lib-info-edn (java.io.File. cljd-dir "libs-info.edn")
         dart-tools-json (-> user-dir (java.io.File. ".dart_tool") (java.io.File. "package_config.json"))]
@@ -150,20 +151,20 @@
             (do
               (newline)
               (println (title "Adding dev dependencies"))
-              (exec "flutter" "pub" "add" "-d" "analyzer:^3.3.1"))
+              (exec bin "pub" "add" "-d" "analyzer:^3.3.1"))
             (do
               (newline)
               (println (title "Upgrading dev dependencies"))
-              (exec "flutter" "pub" "upgrade" "analyzer:^3.3.1")))
+              (exec bin "pub" "upgrade" "analyzer:^3.3.1")))
           (do
             (newline)
             (println (title "Fetching dependencies"))
-            (exec "flutter" "pub" "get"))
+            (exec bin "pub" "get"))
           (do
             (newline)
             (println (title "Dumping type information (it may take a while)"))
             (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
-              "flutter" "pub" "run" (.getPath analyzer-dart))))))))
+              bin "pub" "run" (.getPath analyzer-dart))))))))
 
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
@@ -230,25 +231,37 @@
             (finally
               (some-> p .destroy))))))))
 
-(defn init-project [main-ns]
-  (let [libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
-        flutter-main (java.io.File. libdir "main.dart")
-        lib (compiler/relativize-lib (.getPath flutter-main) (compiler/ns-to-lib main-ns))]
+(defn init-project [opts main-ns bin-opts]
+  (let [bin (:target opts)
+        libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
+        dir (java.io.File. (System/getProperty "user.dir"))
+        project-name (.getName dir)
+        entry-point (case bin
+                      "flutter" (java.io.File. libdir "main.dart")
+                      "dart"
+                      (->  dir (java.io.File. "bin")
+                        (java.io.File. (str project-name ".dart"))))
+        lib (compiler/relativize-lib (.getPath entry-point) (compiler/ns-to-lib main-ns))]
+    (println "Initializing" (bright project-name) "as a" (bright bin) "project!")
     (or
-      (exec "flutter" "create" (System/getProperty "user.dir"))
-      (spit (java.io.File. (System/getProperty "user.dir") "cljd.edn") (pr-str {:main main-ns}))
-      (spit flutter-main (str "export " (with-out-str (compiler/write-string-literal lib)) " show main;\n"))
-      (println "👍" (green "All setup!") "Let's write some cljd in " main-ns))))
+      (case bin
+        "flutter"
+        (apply exec bin "create" (concat bin-opts [(System/getProperty "user.dir")]))
+        "dart"
+        (apply exec bin "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
+      (spit (java.io.File. (System/getProperty "user.dir") "cljd.edn") (pr-str {:main main-ns :bin bin}))
+      (spit entry-point (str "export " (with-out-str (compiler/write-string-literal lib)) " show main;\n"))
+      (println "👍" (green "All setup!") "Let's write some cljd in" main-ns))))
 
 (defn exit [status msg]
   (println msg)
   (System/exit status))
 
-(defn parse-args [{opt-specs :options :as commands} args]
+(defn parse-args [{opt-specs :options :keys [defaults] :as commands :or {defaults {}}} args]
   (let [[options & args]
         (if (false? opt-specs)
-          (cons {} args)
-          (loop [args (seq args) options {}]
+          (cons defaults args)
+          (loop [args (seq args) options defaults]
             (if-some [[arg & more-args] args]
               (cond
                 (= "--" arg) (cons options more-args)
@@ -307,7 +320,13 @@
 (def commands
   {:doc "This program compiles Clojuredart files to dart files."
    :options [{:short "-h" :long "--help" :doc "Print this help."}]
-   "init" {:doc "Take the main namespace as argument. Set up the current clojure project as a ClojureDart/Flutter."}
+   "init" {:doc "Take the main namespace as argument. Set up the current clojure project as a ClojureDart/Flutter."
+           :options [{:short "-f" :long "--flutter" :id :target :value "flutter"}
+                     {:short "-d" :long "--dart" :id :target :value "dart"}
+                     ; TODO should be stored in a cljd.local.edn
+                     #_{:short "-p" :long "--path"
+                      :doc "Path to the flutter or dart install."}]
+           :defaults {:target "flutter"}}
    "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart."}
    "watch" {:doc "Like compile but keep recompiling in response to file updates."}
    "flutter" {:options false
@@ -326,7 +345,8 @@
       (let [[options cmd cmd-opts & args] (parse-args commands args)]
         (case cmd
           :help (print-help commands)
-          "init" (init-project (symbol (first args)))
+          "init" (init-project cmd-opts (symbol (first args))
+                   (when (= (second args) "--") (nnext args)))
           ("compile" "watch")
           (compile-cli
             :namespaces (or (seq (map symbol args))
