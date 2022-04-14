@@ -1,10 +1,11 @@
 # ClojureDart Quick Start
 
-> If you want to use Flutter, follow this document first (not mandatory but recommended) then follow our [Flutter Quick Start](flutter-quick-start.md).
+> This document is about creating a CLI app written in Dart; for a mobile app follow our [Flutter Quick Start](flutter-quick-start.md). However it's recommended to first give a try to the current document.
+
 
 ## 1. [Install the Dart SDK](https://dart.dev/get-dart#install)
 
-Make sure your version of the sdk >= 2.12 -- this version introduced a big change (types are not nullable by default) to the language. Code produced by ClojureDart wouldn't be compatible by previous versions of Dart.
+If you already have Dart installed, make sure your version of the sdk is at least 2.12 -- this version introduced a big change (types are not nullable by default) to the language, use `dart --version` to check. Code produced by ClojureDart wouldn't be compatible with previous versions of Dart.
 
 ## 2. [Install Clojure CLI Tools](https://clojure.org/guides/getting_started#_clojure_installer_and_cli_tools)
 
@@ -12,73 +13,34 @@ If you already have the `clj` command installed make sure to upgrade to at least
 
 ## 3. Create a new project
 
-### 3.1 Create a Dart project
+First, create a Clojure project:
 
-``` shell
-# create a Dart project
-dart create helloworld
+```shell
+mkdir helloworld
 # move into it
 cd helloworld
-# create a directory for clojure source files
-mkdir src
-```
-
-### 3.2 Edit `pubspec.yaml`
-
-Change these lines:
-
-``` yaml
-environment:
-  sdk: '>=2.10.0 <3.0.0'
-```
-
-into:
-
-``` yaml
-environment:
-  sdk: '>=2.12.0 <3.0.0'
-```
-
-And then call `pub get` to update dependencies.
-
-``` shell
-pub get
-```
-
-(Again it's about ensuring the right language version, otherwise the Dart compiler enters compatibility mode.)
-
-### 3.3 Create a `deps.edn` file
-
-If your GitHub account is [configured for SSH access](https://docs.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account):
-
-``` shell
+# add deps.edn
 cat << EOF > deps.edn
 {:paths ["src"] ; where your cljd files are
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDartPreview.git"
-         :sha "724fea858c0f0629f776910d442de2a2ca209dc8"}}}
+         ; or  "https://github.com/tensegritics/ClojureDartPreview.git"
+         :sha "993de05b170d7cec647d9f9b0fc322389b092da2"}}}
 EOF
 ```
 
-Otherwise using HTTPS authentication:
+Then, you need to prepare this project to also be a Dart project;
 
-``` shell
-cat << EOF > deps.edn
-{:paths ["src"] ; where your cljd files are
- :deps {org.clojure/clojure {:mvn/version "1.10.1"}
-        tensegritics/clojuredart
-        {:git/url "https://github.com/tensegritics/ClojureDartPreview.git"
-         :sha "724fea858c0f0629f776910d442de2a2ca209dc8"}}}
-EOF
+```shell
+# make this project to also be a dart project and specify the main namespace
+clj -M -m cljd.build init --dart quickstart.helloworld
 ```
 
-The `src` directory isn't special, you are free to layout your project as you like, as long as you don't
-interfere with [Dart's project layout](https://dart.dev/tools/pub/package-layout) (`bin` and `lib` especially).
+And add the main namespace:
 
-## 4. Create an actual ClojureDart file
-
-``` shell
+```shell
+# add the file for the main namespace
 mkdir -p src/quickstart
 cat << EOF > src/quickstart/helloworld.cljd
 (ns quickstart.helloworld)
@@ -88,49 +50,40 @@ cat << EOF > src/quickstart/helloworld.cljd
 EOF
 ```
 
-Note that you need a `main` function as the entry point of your program.
+The `src` directory isn't special, you are free to layout your project as you like, as long as you don't
+interfere with [Dart's project layout](https://dart.dev/tools/pub/package-layout) (`bin` and `lib` especially).
 
-## 5. Compiles to Dart
+## 4. Compiles to Dart
 
-You have to specify your main namespace (here `quickstart.helloworld`), dependencies will be transitively compiled.
-
-``` shell
-clj -M -m cljd.build compile quickstart.helloworld
-```
-
-The above command compiles the project only once and exits. When you are actively working on a piece of code
-we recommend you use `watch` instead of `compile`:
+By default compilation starts from the main namespace (here `quickstart.helloworld`) and transitively compiles dependencies.
 
 ``` shell
-clj -M -m cljd.build watch quickstart.helloworld
+clj -M -m cljd.build compile
 ```
 
-## 6. Run your program
+The above command compiles the project only once and exits. When you are actively working on a piece of code we recommend you use `watch` instead of `compile`:
+
+``` shell
+clj -M -m cljd.build watch
+```
+
+## 5. Run your program
 
 Compiled Dart files are found under `lib/cljd-out`; to execute the program, just type:
 
 ``` shell
-dart lib/cljd-out/quickstart/helloworld.dart
+dart run
 ```
 
 By doing so you have ran your program on the Dart VM. To get an actual executable, enter:
 
 ``` shell
-dart2native -o helloworld lib/cljd-out/quickstart/helloworld.dart
-./helloworld
+dart compile exe -o helloword bin/helloworld.dart
 ```
 
 Without the `-o helloworld` option it would have created a `helloworld.exe` alongside `helloworld.dart`.
 
-Last, if you feel playful you can compile it to js:
+## 6. Enjoy!
 
-``` shell
-dart2js -o helloworld.js lib/cljd-out/quickstart/helloworld.dart
-node helloworld.js
-```
-
-## 7. Enjoy!
-
-Write more clojure code, new namespaces, have fun. Once your done
-just *press enter* in your terminal where you launched the watcher.
+Write more clojure code, new namespaces, have fun. The watcher will pick up your changes.
 Then execute you dart file again.
