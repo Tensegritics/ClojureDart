@@ -79,24 +79,22 @@ cat << EOF > src/acme/main.cljd
                                         :fontSize 32.0)))))))
 EOF
 ```
-
-## 7. Start the ClojureDart watcher
-
-``` shell
-clj -M -m cljd.build flutter
-```
-
-## 8. Start a simulator
+## 7. Start a simulator
 
 In another terminal
 
 iOS:
 ``` shell
-# In an other terminal window
 open -a Simulator
 ```
 
 Android:
+
+## 8. Start the ClojureDart watcher
+
+``` shell
+clj -M -m cljd.build flutter
+```
 
 ## 9. Enjoy!
 

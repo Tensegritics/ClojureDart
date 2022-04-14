@@ -317,11 +317,14 @@
         (println " " (bright cmd))
         (some->> doc (println "   "))))))
 
+(def help-spec {:short "-h" :long "--help" :doc "Print this help."})
+
 (def commands
   {:doc "This program compiles Clojuredart files to dart files."
-   :options [{:short "-h" :long "--help" :doc "Print this help."}]
+   :options [help-spec]
    "init" {:doc "Take the main namespace as argument. Set up the current clojure project as a ClojureDart/Flutter."
-           :options [{:short "-f" :long "--flutter" :id :target :value "flutter"}
+           :options [help-spec
+                     {:short "-f" :long "--flutter" :id :target :value "flutter"}
                      {:short "-d" :long "--dart" :id :target :value "dart"}
                      ; TODO should be stored in a cljd.local.edn
                      #_{:short "-p" :long "--path"
@@ -345,8 +348,11 @@
       (let [[options cmd cmd-opts & args] (parse-args commands args)]
         (case cmd
           :help (print-help commands)
-          "init" (init-project cmd-opts (symbol (first args))
-                   (when (= (second args) "--") (nnext args)))
+          "init"
+          (do
+            (assert (first args) "A namespace must specified as argument to init.")
+            (init-project cmd-opts (symbol (first args))
+              (when (= (second args) "--") (nnext args))))
           ("compile" "watch")
           (compile-cli
             :namespaces (or (seq (map symbol args))

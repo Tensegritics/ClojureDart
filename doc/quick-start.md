@@ -17,11 +17,9 @@ First, create a Clojure project:
 
 ```shell
 mkdir helloworld
-# move into it
 cd helloworld
-# add deps.edn
 cat << EOF > deps.edn
-{:paths ["src"] ; where your cljd files are
+{:paths ["src"] ; where your cljd files will live
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDartPreview.git"
@@ -30,23 +28,21 @@ cat << EOF > deps.edn
 EOF
 ```
 
-Then, you need to prepare this project to also be a Dart project;
+Then, you need to prepare this project to also be a Dart project, you have to specify the namespace with the `main` function (here `quickstart.helloworld`):
 
 ```shell
-# make this project to also be a dart project and specify the main namespace
 clj -M -m cljd.build init --dart quickstart.helloworld
 ```
 
 And add the main namespace:
 
 ```shell
-# add the file for the main namespace
 mkdir -p src/quickstart
 cat << EOF > src/quickstart/helloworld.cljd
 (ns quickstart.helloworld)
 
 (defn main []
-  (dart:core/print "Hello World!"))
+  (print "hello, world\n"))
 EOF
 ```
 
@@ -78,7 +74,7 @@ dart run
 By doing so you have ran your program on the Dart VM. To get an actual executable, enter:
 
 ``` shell
-dart compile exe -o helloword bin/helloworld.dart
+dart compile exe -o helloworld bin/helloworld.dart
 ```
 
 Without the `-o helloworld` option it would have created a `helloworld.exe` alongside `helloworld.dart`.
