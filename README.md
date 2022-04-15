@@ -13,7 +13,7 @@ This doesn't represent a specific technical milestone, it's still a work-in-prog
 
 # Who is behind it?
 
-Tensegritics, an itty-bitty Clojure consultancy by Baptiste Dupuch and Christophe Grand.
+Tensegritics, an itty-bitty Clojure consultancy by [Baptiste Dupuch](https://github.com/dupuchba) and [Christophe Grand](https://github.com/cgrand).
 
 # Status
 
