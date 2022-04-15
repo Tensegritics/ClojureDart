@@ -7122,7 +7122,7 @@
                 extmap
                 (with-meta '__hash {:mutable true :tag `int}))
            :type-only true
-           ~@(concat record-body opts+specs))
+           ~@(concat opts+specs record-body))
          (defn ~(with-meta (symbol (str "->" name)) {:tag name})
            ~(vec fields)
            (new ~name ~@fields nil {} -1))

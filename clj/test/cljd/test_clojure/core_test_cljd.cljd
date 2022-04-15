@@ -232,3 +232,15 @@
   (is (== "Base of weird-reify"
         (str (reify
                :extends (Base. "weird-reify"))))))
+
+(definterface IRecordExtends
+  (^String? mymethod []))
+
+(defrecord RecordExtends [a]
+  :extends (cljd.core/Atom. nil nil nil {})
+  IRecordExtends
+  (mymethod [this] (str a "two")))
+
+(deftest testing-extends-on-records
+  (is (= "onetwo" (.mymethod (->RecordExtends "one"))))
+  (is (dart/is? (->RecordExtends "one") cljd.core/Atom)))
