@@ -118,7 +118,8 @@ The `:type-only` option instructs `deftype` to not create factory function (`->M
 
 #### `^:mixin`
 **`reify`, `defrecord` and `deftype`**
-This metadata on implemented classes specify these classes should be considered [mixins](https://dart.dev/guides/language/language-tour#adding-features-to-a-class-mixins) and not [interfaces](https://dart.dev/guides/language/language-tour#implicit-interfaces).
+This metadata on implemented classes specify these classes should be considered [mixins](https://dart.dev/guides/language/language-tour#adding-features-to-a-class-mix
+ins) and not [interfaces](https://dart.dev/guides/language/language-tour#implicit-interfaces).
 
 #### `^:getter`/`^:setter`
 **`reify`, `defrecord` and `deftype`**
@@ -140,11 +141,41 @@ When you must call the `super` implementation (since one can now extends a super
 Tests written with `cljd.test` can be run with `dart test` (or `flutter test`).
 
 ## Specific features
- * named parameters
+### [Named parameters](https://dart.dev/guides/language/language-tour#named-parameters)
+Dart methods may take named parameters, to call them in ClojureDart just use a keyword as the parameter name.
+
+```clj
+(widgets/IndexedStack.
+  :sizing rendering.StackFit/expand
+  :index 1
+  :children [...])
+```
+
+### Generics
+Unlike Java, Dart generics are not erased -- it means that on the JVM at runtime a `List<String>` is just a `List` but that in Dart at runtime it's still a `List<String>`. This creates two problems: expressing parametrized types and dealing with the mismatch between stroing typing of collections items and Clojure's collections.
+
+#### Parametrized types
+
+`#/(List String)` is the ClojureDart pendant of Dart `List<String>` and is in fact a tagged literal producing `^{:type-params [String]} List`. Thus parametrized types are symbols as usual.
+
+#### Typed collections
+
+ClojureDart's own persistent collection are parametrized: you can have a `#(PersistentVector String)` but it's just there to placate Dart type checker. A vector can always hold values of any type irrespective of its type parameter.
+
+Its type parameter will only be enforced at runtime when used as a Dart collection of this type.
+
+Two vectors containing the same items but with different type parameters are still equal.
+
+When a `List` of a given type is expected the [`cast`](https://api.dart.dev/stable/2.9.3/dart-core/List/cast.html) method can be used to get a vector of the expected type. It's really a lightweight operation as only the root object is changed.
+
+Furthermore, ClojureDart will automatically emits such `cast` calls. This means that in practice you can pass a Clojure vector (or a set or a map) where a typed List (resp. a Set or a Map) is expected and it will just work — as long as the items are of the right type, or at least those that will be looked up.
+
+
+### Dart literals
+Dart lists
+
  * dartlit
  * ^some
  * nullability
- * generics
  * async/await + dynamic bindings
  * dart/is
- * magicast
