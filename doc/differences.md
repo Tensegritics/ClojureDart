@@ -27,6 +27,8 @@ To use a Dart library, just put its URI as a string in lieu of the symbol referr
 
 Like in Clojurescript "Naked `:use`" is not supported: you must always provide a `:only` list.
 
+### no `instance?`
+Instead there is a special `dart/is?` where the type must be a literal `(dart/is? x SomeType)`. We have a [workaround planned](https://github.com/Tensegritics/ClojureDart/issues/11) to allow for good old `instance?` despite the platform limitations.
 ### Protocols
 Unlike Clojure and like Clojurescript, ClojureDart is extensively based on protocols.
 
@@ -172,10 +174,26 @@ Furthermore, ClojureDart will automatically emits such `cast` calls. This means 
 
 
 ### Dart literals
-Dart lists
 
- * dartlit
- * ^some
- * nullability
- * async/await + dynamic bindings
- * dart/is
+```clj
+#dart [1 2 3] ; a growable List<dynamic>
+#dart ^:fixed [1 2 3] ; a fixed List<dynamic>
+#dart ^int [1 2 3] ; a growable List<int>
+#dart ^:fixed ^int [1 2 3] ; a fixed List<int>
+```
+
+Fixed [Dart lists](https://api.dart.dev/stable/2.9.3/dart-core/List-class.html) are the closest you can get to arrays in Dart — well, except for [typed_data](https://api.dart.dev/stable/2.16.1/dart-typed_data/dart-typed_data-library.html) when you deal with arrays of scalar values.
+
+### Nullability and `^some`
+
+Nowadays in Dart, types are not nullable by default. It means that if you type something as `String` then it can't hold `nil`. You have to type it as `String?`.
+
+On a related topic if you want to type-hint a function as returning "`nil` or something but definitely not a boolean" then use the pseudotype `some`. that's the typehint for example of `seq`. This allows to only test for `nil` in boolean contexts.
+
+### async/await
+
+This is a more low-level solution than what a `core.async` port could bring.
+
+Put the metadata `^:async` on a function or method to make it [asynchronous](https://dart.dev/guides/language/language-tour#asynchrony-support) but most of the time you don't need to because **if a function uses `await` it will be implicitely considered async**.
+
+`await` is a macro on top of the special `dart/await`. The difference between the two is that `await` will convey dynamic bindings.
