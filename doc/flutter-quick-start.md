@@ -98,4 +98,4 @@ clj -M -m cljd.build flutter
 
 ## 9. Enjoy!
 
- When you edit your cljd file, the watcher recompiles cljd files and, on success, hot reloads the application. Sometimes the application may not pick up your change so hit the return key to get the watcher to restart the application.
+ When you edit your cljd file, the watcher recompiles cljd files and, on success, hot reloads the application. **Sometimes the application may not pick up your change so hit the return key to get the watcher to restart the application.**
