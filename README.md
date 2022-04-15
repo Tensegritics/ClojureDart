@@ -11,6 +11,10 @@ We promised to publicly release ClojureDart before Easter 2022, so here it is!
 
 This doesn't represent a specific technical milestone, it's still a work-in-progress but we believe it's good enough for use by the bravest Clojurists.
 
+# Who is behind it?
+
+Tensegritics, an itty-bitty Clojure consultancy by Baptiste Dupuch and Christophe Grand.
+
 # Status
 
 Here be Dragons!
