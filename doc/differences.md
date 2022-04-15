@@ -1,146 +1,150 @@
 # Differences with Clojure
 
-This document is modeled after [ClojureScript's one](https://clojurescript.org/about/differences).
+## Dart
 
-## Rationale
+ClojureDart targets [Dart](https://dart.dev/) (surprise!) and, through Dart, [Flutter](https://flutter.dev/) a GUI framework for mobile, desktop and web.
 
-The rationale for ClojureDart is much the same as for Clojure, with Dart in the role of platform to [create native apps (mobile and desktop)](https://dart.dev/overview#platform).
+Dart has three compilation targets:
+ * its own VM which is mostly used at dev time because it allows for more tooling,
+ * native code,
+ * javascript.
 
-## State and Identity
+## Missing features
+ * [REPL](https://github.com/Tensegritics/ClojureDart/issues/6)
+ * [multimethods](https://github.com/Tensegritics/ClojureDart/issues/3)
+ * [sorted collections](https://github.com/Tensegritics/ClojureDart/issues/4)
 
-Same as Clojure. Clojure’s identity model is simpler and more robust than mutable state, even in message-passing environments.
+## Divergent features
+### ns, :require, :use and :import
+In ClojureDart `:require` and `:use` supersedes `:import` and thus `:import` is rarely used.
 
-## Dynamic Development
+To use a Dart library, just put its URI as a string in lieu of the symbol referring to a namespace. Then you can use `:as`, `:refer`, :rename` as with a regular Clojure(Dart) namespace.
 
-WIP: currently Dart's hot reload provide some dynamic development experience but the end goal is to hav a working REPL.
-
-## Functional Programming
-
-ClojureDart has the same immutable persistent collections as Clojure on the JVM.
-
-## Lisp
-
-Same as in Clojure.
-
-WIP: as long as Clojuredart is not self-hosted, macros will be evaluated as Clojure/JVM code.
-
-## Runtime Polymorphism
-
-ClojureDart protocols have the same semantics as Clojure protocols.
-
-## Concurrent Programming
-
-Clojure’s model of values, state, identity, and time is valuable even in message-passing environments.
-
- * Atoms and volatiles work as in Clojure
- * No Agents, Refs nor STM
- * bindings
- * Vars
-   * not reified at runtime
-   * def produces ordinary Dart top-levels
-
-## Compiles to Dart
-
-ClojureDart compiles cljd to Dart and then Dart compiles to either Dart VM (for development), to native (for deployment) or to JavaScript (for web target).
-
-## Getting Started
-
-TODO See Quick Start
-
-## The Reader
-* Numbers
-  * ClojureDart currently only supports integer and floating point literals that map to Dart int and double types.
-  * Dart ints are a bit special as their width varies between targets (js vs native+vm).
-  * Ratio, BigDecimal, and BigInteger literals are currently not supported
-  * Equality on numbers works like JavaScript, not Clojure: (= 0.0 0) ⇒ true (TODO is this the behavior we want?)
-* Characters
-  * Dart does not have character literals. Characters are single-codeunit strings like in ClojureScript. However Dart strings offer proper access to codepoints through its runes property.
-  * Because there is no character type in Dart, \ produces a single-codeunit string.
-* Dart lists literals `#dart [x y]`, `#dart ^:fixed [x y]`, `#dart ^int [x y]`, `#dart ^int ^:fixed [x y]`
-* Type-parametrized symbols: `#/(sym u v)` is read as `^{:type-params [u v]} sym` and is equivalent to Dart `sym<u,v>` so they are generally used for type hints and more rarely for method names whose parameters can't be inferred.
-
-## Evaluation
-
-* No local-clearing
-
-## Special forms
-
-* `dart/is?`: Dart being less dynamic than Java, ClojureDart lacks the `instance?` function. Instead it offers the `dart/is?` special form which takes the type as a literal argument (it can't be the result of an expression) like in `(dart/is? x String)`.
-* `dart/await`: Dart provides async/await syntactic sugar and it's pervasively used in Dart libraries thus ClojureDart couldn't eschew providing a counterpart. Functions or methods can be marked with the `:async` metadata flag and use `await`. For single-arity functions (TODO generalize) the `:async` flag is automatically inferred if `await` is used. `await` is a macro which add bindings conveyance to the special form `dart/await`.
-
-### Example 1:
-
-``` clojure
-(fn [] (await (http/get ...)))
-;; is equivalent to
-^:async (fn [] (await (http/get ...)))
+```clj
+(ns acme.main
+  (:require ["package:flutter/material.dart" :as m :refer [Colors]]))
 ```
 
-### Example 2:
+Like in Clojurescript "Naked `:use`" is not supported: you must always provide a `:only` list.
 
+### Protocols
+Unlike Clojure and like Clojurescript, ClojureDart is extensively based on protocols.
 
-``` clojure
-(defn ^:async call-api [])
+Like Clojure default extensions are provided by extending to `Object` and/or `Null`.
+
+However instead of extending to `Object` or `Null`, it's often preferable to extend to the `fallback` pseudotype which has two distinctive qualities:
+ * it has a lower priority than other extensions,
+ * `satisfies?` returns `false` for objects which use a fallback implementation.
+
+## try/catch
+
+In Dart, when one catch an exception, the stacktrace isn't attached to the exception. Thus in ClojureDart if you want to capture the stacktrace you have to specify an extr name after the exception name in catch:
+
+```clj
+(try
+  ...
+  (catch io/HttpException e ; no stack trace binding
+    ...)
+  (catch Exception e st ; stack trace binding
+    ...))
+```
+
+When porting some Dart code you may encounter "catch-alls": `catch` clauses with no type. They are syntactic sugar for the `dynamic` type, so in ClojureDart you would write:
+
+```clj
+(try
+  ...
+  (catch dynamic e
+    ...))
 ```
 
 ## Macros
+Until ClojureDart is self-hosted macros will be a bit special: they are evaluated on the JVM so if they need some support functions from your namespace then these functions must be tagged with `^:macro-support` to also be available to macros.
 
-## Other functions
+To be clear we are talking about cases like this:
 
-* no `instance?` function, see special `dart/is?`
+```clj
+(defn ^:macro-support do-expand [expr] ...)
+(defmacro my-macro [expr]
+  (do-expand expr))
+```
 
-## Data Structures
+And not like that:
+```clj
+(defmacro my-macro [& body]
+  `(my-fn (fn [] ~@body))) ; it's ok, nothing special to do
+```
 
-## Seqs
+## Interop
+### Member names as strings
+Dart considers operators calls to be syntactically sweetened methods calls (`a+b` is going to call the `+` method on the object `a` with argument `b`).
 
-## Protocols
+It follows that `(.+ a b)` or `(. a + b)` are valid ClojureDart expresions.
 
-* protocols can be extended to the pseudo-class `fallback`. `fallback` differs from ClojureScript's `default` or Clojure's `Object` in that `satisfies?` does return `false` for objects which would get through the fallback extension.
+However while Dart is very conservative in which characters can appear in an identifier (`a-zA-Z0-9$_`) its operators names are not all valid Clojure symbols, for example: `^`, `[]`, `[]=`, `~/` ...
 
-## Metadata
+To work around this issue, **member names are allowed to be strigs**: `(. a "[]=" i v)` is the ClojureDart equivaelent of `a[i]=v`.
 
-Same as Clojure.
+This also applies when implementing operators in `reify`, `deftype` or `defrecord`.
 
-## Namespaces
+### Static members and libs aliases
 
-* Namespaces are not reified.
-* Unlike in Clojure there's no strict separation between requiring a namespace and importing a Dart lib (resp. Java package).
-  * In addition to symbols to denote Clojure namespaces, `:require` and `:use` accept strings to identify Dart libs. `:refer`, `:only`, `:as` and `:rename` work with Dart libs too.
-  * `:import` works too but it's recommended to stick to `:require` and `:use`.
+When it comes to referring to classes **in Clojure** either you have imported the class and you can refer to it by its unqualified name (e.g. `Thread`) or you refer to it using it's fully qualified name (e.g. `java.io.File`).
 
+**In ClojureDart** since lib names are URIs they usually don't make for legal symbols thus to refer to a class (or any toplevel of a lib) you either `:refer` it and use its unqualified name (e.g. `Future`) or you refer to it with the lib alias (e.g. `io/HttpException`).
 
-## Refs and Transactions
+However when you want to access a static member **in Clojure** you would write `(Thread/currentThread)` for a static method or `java.nio.charset.StandardCharsets/UTF_8` for a static field.
 
-Refs and transactions are not currently supported.
+**In ClojureDart** you write `(painting.EdgeInsets/only :left 16)` for a static method and `material.InputBorder/none` for a static property. Note that in thes cases the alias and the class name are concatenated to make the namespace of the symbol.
 
-## Agents
+### reify/deftype
+#### `^:abstract`
+**`deftype`**
+A type name can have the `:abstract` metadata to indicate the generated class to be asbtract.
 
-Agents are not currently supported.
+#### `:extends`
+**`reify` and `deftype`**
+One can derive from a super class by specifying a class (with a no-arg constructor) or a constructor expression. For `deftype` only fields can be used in the constructor expression.
 
-## Atoms
+```clj
+(reify
+  :extends material/StatelesWidget
+  (build [_ ctx] ...))
+```
 
-Atoms work as in Clojure.
+#### `:type-only`
+**deftype**
+The `:type-only` option instructs `deftype` to not create factory function (`->MyType`).
 
-## Host interop
+#### `^:mixin`
+**`reify`, `defrecord` and `deftype`**
+This metadata on implemented classes specify these classes should be considered [mixins](https://dart.dev/guides/language/language-tour#adding-features-to-a-class-mixins) and not [interfaces](https://dart.dev/guides/language/language-tour#implicit-interfaces).
 
-* **IMPORTANT:** dynamic warnings are issued by the compiler when a member access to an object can't be resolved. In such cases the emitted code relies upon Dart's `dynamic` type but this code will not behave properly more frequently than Clojure reflective accesses. That's why you can't opt out of these warnings and try to fix them.
-* Property access: property names may be prefixed by `-` for example `(.-iterator obj)` or `(.iterator obj)`.
-* Optional parameters: Dart functions and methods can have optional parameters, either positional or named.
-  * Call sites:
-    * positional optionals: nothing special; for example calling the [fillRange](https://api.dart.dev/stable/2.16.1/dart-core/List/fillRange.html) method is just `(.fillRange some-list 5 6 "filler")`
-    * named optionals: nothing special either; for example calling the [filler constructor](https://api.dart.dev/stable/2.16.1/dart-core/List/List.filled.html) with named `growable` parameter is just `(List/filled 3 "filler" :growable true)`
-  * Declarations (only for methods or single-arity fns):
-    * positional optionals: add `...` before the first optional parameter like this: `(fn [a b ... c d])`,
-    * named optionals: add `.&` before the first optional parameter like this: `(fn [a b .& c d])`,
-    * in both cases the optional parameters list is a mixed list where each symbol may be followed by a default value: `(fn [a b .& c 42 d])` here `c` will defaults to 42.
-* `^:const` TODO document
+#### `^:getter`/`^:setter`
+**`reify`, `defrecord` and `deftype`**
+Method names can be tagged with `:getter` and/or `:setter` if the method is in fact a [property](https://dart.dev/guides/language/language-tour#getters-and-setters).
 
-### Type hints
-* `^some` is a pseudo-type which means "`Object?` but not `bool`" it helps simplifying boolean conversion in just a null check.
-* In Dart, types are not nullable by default. If you type-hint something that can be null you should add a question mark at the end of the type symbol.
-  * `List` is the type of a non-nullable list of dynamic values (`List` in Dart)
-  * `#/(List String)` is the type of non-nullable list of non-nullable strings (`List<String>`)
-  * `#/(List String?)` is the type of a non-nullable list of strings or nils (`List<String?>`)
-  * `#/(List? String?)` is the the nullable type of a list of strings or nils (`List<String?>?`)
-  * `#/(List? String)` is the nullable type of a list of non-nullable strings (`List<String>?`)
-  * `#/(num String -> int)` is the function type from num * String to int (`int Function(num, String)`)
+For a getter you must provide a 1-arg arity of the method (`[this]`) and for a setter a 2-arg arity (`[this new-value]`).
+
+#### Calling `super`
+When you must call the `super` implementation (since one can now extends a super type) you have to add metadata on the "this" parameter of a method. For example when implementing a [State](https://api.flutter.dev/flutter/widgets/State/initState.html) one can write:
+
+```clj
+(initState [^{:super papa} self]
+  (.initState papa) ; here papa refers to super
+  ...
+  nil)
+```
+
+### Tests
+Tests written with `cljd.test` can be run with `dart test` (or `flutter test`).
+
+## Specific features
+ * named parameters
+ * dartlit
+ * ^some
+ * nullability
+ * generics
+ * async/await + dynamic bindings
+ * dart/is
+ * magicast
