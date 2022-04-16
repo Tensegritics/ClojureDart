@@ -18,7 +18,7 @@ Dart has three compilation targets:
 ### ns, :require, :use and :import
 In ClojureDart `:require` and `:use` supersedes `:import` and thus `:import` is rarely used.
 
-To use a Dart library, just put its URI as a string in lieu of the symbol referring to a namespace. Then you can use `:as`, `:refer`, :rename` as with a regular Clojure(Dart) namespace.
+To use a Dart library, just put its URI as a string in lieu of the symbol referring to a namespace. Then you can use `:as`, `:refer`, `:rename` as with a regular Clojure(Dart) namespace.
 
 ```clj
 (ns acme.main
@@ -40,7 +40,7 @@ However instead of extending to `Object` or `Null`, it's often preferable to ext
 
 ## try/catch
 
-In Dart, when one catch an exception, the stacktrace isn't attached to the exception. Thus in ClojureDart if you want to capture the stacktrace you have to specify an extr name after the exception name in catch:
+In Dart, when one catch an exception, the stacktrace isn't attached to the exception. Thus in ClojureDart if you want to capture the stacktrace you have to specify an extra name after the exception name in catch:
 
 ```clj
 (try
@@ -68,10 +68,10 @@ To be clear we are talking about cases like this:
 ```clj
 (defn ^:macro-support do-expand [expr] ...)
 (defmacro my-macro [expr]
-  (do-expand expr))
+  (do-expand expr)) ; do-expand declaration must be tagged as :macro-support
 ```
 
-And not like that:
+Code like this is fine:
 ```clj
 (defmacro my-macro [& body]
   `(my-fn (fn [] ~@body))) ; it's ok, nothing special to do
@@ -85,13 +85,13 @@ It follows that `(.+ a b)` or `(. a + b)` are valid ClojureDart expresions.
 
 However while Dart is very conservative in which characters can appear in an identifier (`a-zA-Z0-9$_`) its operators names are not all valid Clojure symbols, for example: `^`, `[]`, `[]=`, `~/` ...
 
-To work around this issue, **member names are allowed to be strigs**: `(. a "[]=" i v)` is the ClojureDart equivaelent of `a[i]=v`.
+To work around this issue, **member names are allowed to be strings**: `(. a "[]=" i v)` is the ClojureDart equivalent of `a[i]=v`.
 
 This also applies when implementing operators in `reify`, `deftype` or `defrecord`.
 
 ### Static members and libs aliases
 
-When it comes to referring to classes **in Clojure** either you have imported the class and you can refer to it by its unqualified name (e.g. `Thread`) or you refer to it using it's fully qualified name (e.g. `java.io.File`).
+When it comes to referring to classes **in Clojure** either you have imported the class and you can refer to it by its unqualified name (e.g. `Thread`) or you refer to it using its fully qualified name (e.g. `java.io.File`).
 
 **In ClojureDart** since lib names are URIs they usually don't make for legal symbols thus to refer to a class (or any toplevel of a lib) you either `:refer` it and use its unqualified name (e.g. `Future`) or you refer to it with the lib alias (e.g. `io/HttpException`).
 
