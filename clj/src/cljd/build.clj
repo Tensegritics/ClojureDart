@@ -17,6 +17,8 @@
 
 (def ^:dynamic *ansi* false)
 (def ^:dynamic *config* {})
+(def ^:dynamic *dart* "dart")
+(def ^:dynamic *path* "PATH")
 
 (defn compile-core []
   (compiler/compile 'cljd.core))
@@ -116,11 +118,10 @@
         pb (doto (ProcessBuilder. [])
              (-> .environment (.putAll env))
              (cond->
-                 in (.redirectInput in)
-                 err (.redirectError err)
-                 out (.redirectOutput out)))
-        path (let [pe (.environment pb)]
-               (or (get pe "PATH") (get pe "Path")))
+               in (.redirectInput in)
+               err (.redirectError err)
+               out (.redirectOutput out)))
+        path (-> pb .environment (get *path*))
         full-bin
         (or
           (some (fn [dirname]
@@ -130,9 +131,6 @@
             (.split path java.io.File/pathSeparator))
           (throw (ex-info (str "Can't find " bin " on PATH.")
                    {:bin bin :path path})))
-        full-bin (if (and (= "dart" bin)
-                          (str/includes? (str/lower-case (or (System/getProperty "os.name") "")) "windows"))
-                   (str full-bin ".bat") full-bin)
         process (.start (doto pb (.command (into [full-bin] args))))]
     (if-not async
       (let [exit-code (.waitFor process)]
@@ -252,7 +250,7 @@
         "flutter"
         (apply exec bin "create" (concat bin-opts [(System/getProperty "user.dir")]))
         "dart"
-        (apply exec bin "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
+        (apply exec *dart* "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
       (spit (java.io.File. (System/getProperty "user.dir") "cljd.edn") (pr-str {:main main-ns :bin bin}))
       (spit entry-point (str "export " (with-out-str (compiler/write-string-literal lib)) " show main;\n"))
       (println "👍" (green "All setup!") "Let's write some cljd in" main-ns))))
@@ -341,11 +339,14 @@
 
 (defn -main [& args]
   (let [f (java.io.File. (System/getProperty "user.dir") "cljd.edn")
+        is-windows? (= "windows" (str/lower-case (or (System/getProperty "os.name") "")))
         config (if (.exists f)
                  (with-open [rdr (-> f io/reader java.io.PushbackReader.)]
                    (edn/read rdr))
                  {})]
     (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
+              *dart* (if is-windows? "dart.bat" *dart*)
+              *path* (if is-windows? "Path" *path*)
               *config* config
               compiler/*lib-path*
               (str (.getPath (java.io.File. (System/getProperty "user.dir") "lib")) "/")]
