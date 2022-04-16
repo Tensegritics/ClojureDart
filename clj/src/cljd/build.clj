@@ -119,7 +119,8 @@
                  in (.redirectInput in)
                  err (.redirectError err)
                  out (.redirectOutput out)))
-        path (-> pb .environment (get "PATH"))
+        path (let [pe (.environment pb)]
+               (or (get pe "PATH") (get pe "Path")))
         full-bin
         (or
           (some (fn [dirname]
@@ -129,6 +130,9 @@
             (.split path java.io.File/pathSeparator))
           (throw (ex-info (str "Can't find " bin " on PATH.")
                    {:bin bin :path path})))
+        full-bin (if (and (= "dart" bin)
+                          (str/includes? (str/lower-case (or (System/getProperty "os.name") "")) "windows"))
+                   (str full-bin ".bat") full-bin)
         process (.start (doto pb (.command (into [full-bin] args))))]
     (if-not async
       (let [exit-code (.waitFor process)]

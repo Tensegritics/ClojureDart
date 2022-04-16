@@ -31,6 +31,8 @@ Some differences have been documented, see [Differences with Clojure](doc/differ
 
 # Quick starts
 
+> The minimum JDK version is 11
+
 - [Plain Dart](doc/quick-start.md) (recommended first step)
 - [With Flutter](doc/flutter-quick-start.md)
 
