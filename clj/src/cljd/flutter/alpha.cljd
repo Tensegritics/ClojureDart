@@ -1,0 +1,43 @@
+(ns cljd.flutter.alpha
+  "Bridging Flutter and Clojure"
+  (:require ["package:flutter/widgets.dart" :as widgets]
+            ["package:flutter/foundation.dart" :as foundation]))
+
+; TODI create our own Key type which uses equiv and not ==
+
+(defmacro widget
+  "Creates a widget by evaluating the body.
+   The body may be preceded by options in the form of interleaved
+   option names (as keywords) with their values.
+   :key expr, when present, is used as the key of the widget, plain value,
+              not a Key.
+   :watch symbol-referencing an atom: this widget will be rebuilt everytime
+          the atom change.
+   :state [name init-value] creates an atom named state initialized to init-value,
+                            watch for changes tp it.
+   :context name, if you need to access the build context then provide its name here."
+  {:arglists '[[:opt1 val1 ... :optN valN & body]]}
+  [& args]
+  (let [opts (take-while (comp keyword? first) (partition 2 args))
+        body (drop (* 2 (count opts)) args)
+        {:keys [context key state watch] :as opts} (into {} (map vec) opts)
+        flutter-build-ctx (vary-meta '&flutter-build-ctx assoc :tag `widgets/BuildContext)
+        expr (if context
+               (list* `let [context flutter-build-ctx] body)
+               (cons `do body))
+        watch (or watch (first state))]
+    (if watch
+      (cond->>
+        `(widgets/StatefulBuilder.
+           :key ~(cond-> key (contains? opts :key) (list `foundation/ValueKey.))
+           :builder (fn [~flutter-build-ctx set-state#]
+                      (add-watch ~watch ~flutter-build-ctx (fn [k# r# o# n#] (set-state# (fn []))))
+                      ~expr))
+        state
+        (list `let [(first state) `(atom ~(second state))]))
+      `(widgets/Builder.
+         :key ~(cond-> key (contains? opts :key) (list `foundation/ValueKey.))
+         :builder (fn [~flutter-build-ctx] ~expr)))))
+
+#_(defmacro with-ctx [ctx & body]
+  `(let [~ctx ~'&flutter-build-ctx] ~@body))
