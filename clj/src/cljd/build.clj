@@ -17,7 +17,8 @@
 
 (def ^:dynamic *ansi* false)
 (def ^:dynamic *config* {})
-(def ^:dynamic *dart* "dart")
+(def ^:dynamic *may-dart* ["dart"])
+(def ^:dynamic *flutter* "flutter")
 (def ^:dynamic *path* "PATH")
 
 (defn compile-core []
@@ -125,12 +126,15 @@
         full-bin
         (or
           (some (fn [dirname]
-                  (let [file (java.io.File. dirname bin)]
-                    (when (and (.isFile file) (.canExecute file))
-                      (.getAbsolutePath file))))
-            (.split path java.io.File/pathSeparator))
+                  (let [have-file? #(let [file (java.io.File. dirname %)]
+                                     (when (and (.isFile file) (.canExecute file))
+                                       (.getAbsolutePath file)))]
+                    (if (vector? bin)
+                      (some have-file? bin)
+                      (have-file? bin))))
+                (.split path java.io.File/pathSeparator))
           (throw (ex-info (str "Can't find " bin " on PATH.")
-                   {:bin bin :path path})))
+                          {:bin bin :path path})))
         process (.start (doto pb (.command (into [full-bin] args))))]
     (if-not async
       (let [exit-code (.waitFor process)]
@@ -218,7 +222,7 @@
         (when flutter
           (println (title (str/join " " (into ["Lauching flutter run"] flutter)))))
         (let [p (some->> flutter
-                  (apply exec {:async true :in nil :env {"TERM" ""}} "flutter" "run"))]
+                  (apply exec {:async true :in nil :env {"TERM" ""}} *flutter* "run"))]
           (try
             (let [flutter-stdin (some-> p .getOutputStream (java.io.OutputStreamWriter. "UTF-8"))]
               (when flutter-stdin
@@ -248,9 +252,9 @@
     (or
       (case bin
         "flutter"
-        (apply exec bin "create" (concat bin-opts [(System/getProperty "user.dir")]))
+        (apply exec *flutter* "create" (concat bin-opts [(System/getProperty "user.dir")]))
         "dart"
-        (apply exec *dart* "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
+        (apply exec *may-dart* "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
       (spit (java.io.File. (System/getProperty "user.dir") "cljd.edn") (pr-str {:main main-ns :bin bin}))
       (spit entry-point (str "export " (with-out-str (compiler/write-string-literal lib)) " show main;\n"))
       (println "👍" (green "All setup!") "Let's write some cljd in" main-ns))))
@@ -339,13 +343,14 @@
 
 (defn -main [& args]
   (let [f (java.io.File. (System/getProperty "user.dir") "cljd.edn")
-        is-windows? (= "windows" (str/lower-case (or (System/getProperty "os.name") "")))
+        is-windows? (str/includes? (str/lower-case (or (System/getProperty "os.name") "")) "windows")
         config (if (.exists f)
                  (with-open [rdr (-> f io/reader java.io.PushbackReader.)]
                    (edn/read rdr))
                  {})]
     (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
-              *dart* (if is-windows? "dart.bat" *dart*)
+              *may-dart* (if is-windows? ["dart.exe" "dart.bat"] *may-dart*)
+              *flutter* (if is-windows? "flutter.bat" *flutter*)
               *path* (if is-windows? "Path" *path*)
               *config* config
               compiler/*lib-path*
