@@ -29,14 +29,14 @@
     (if watch
       (cond->>
         `(widgets/StatefulBuilder.
-           :key ~(cond-> key (contains? opts :key) (list `foundation/ValueKey.))
+           :key ~(cond->> key (contains? opts :key) (list `foundation/ValueKey.))
            :builder (fn [~flutter-build-ctx set-state#]
                       (add-watch ~watch ~flutter-build-ctx (fn [k# r# o# n#] (set-state# (fn []))))
                       ~expr))
         state
         (list `let [(first state) `(atom ~(second state))]))
       `(widgets/Builder.
-         :key ~(cond-> key (contains? opts :key) (list `foundation/ValueKey.))
+         :key ~(cond->> key (contains? opts :key) (list `foundation/ValueKey.))
          :builder (fn [~flutter-build-ctx] ~expr)))))
 
 #_(defmacro with-ctx [ctx & body]
