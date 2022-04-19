@@ -85,4 +85,4 @@ Without the `-o helloworld` option it would have created a `helloworld.exe` alon
 ## 6. Enjoy!
 
 Write more clojure code, new namespaces, have fun. The watcher will pick up your changes.
-Then execute you dart file again.
+Then execute your dart file again.
