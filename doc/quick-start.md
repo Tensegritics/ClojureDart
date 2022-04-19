@@ -2,6 +2,9 @@
 
 > This document is about creating a CLI app written in Dart; for a mobile app follow our [Flutter Quick Start](flutter-quick-start.md). However it's recommended to first give a try to the current document.
 
+## System requirements
+
+ClojureDart needs at least Java 11.
 
 ## 1. [Install the Dart SDK](https://dart.dev/get-dart#install)
 
