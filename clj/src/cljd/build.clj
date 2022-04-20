@@ -119,15 +119,19 @@
                  in (.redirectInput in)
                  err (.redirectError err)
                  out (.redirectOutput out)))
-        path (-> pb .environment (get "PATH"))
+        os-is-windows (.startsWith (System/getProperty "os.name") "Windows")
+        PATH (if os-is-windows "Path" "PATH")
+        path (-> pb .environment (get PATH))
+        bins (if os-is-windows [(str bin ".exe") (str bin ".bat")] [bin])
         full-bin
         (or
-          (some (fn [dirname]
-                  (let [file (java.io.File. dirname bin)]
-                    (when (and (.isFile file) (.canExecute file))
-                      (.getAbsolutePath file))))
-            (.split path java.io.File/pathSeparator))
-          (throw (ex-info (str "Can't find " bin " on PATH.")
+          (first
+            (for [bin bins
+                  dir (.split path java.io.File/pathSeparator)
+                  :let [file (java.io.File. dir bin)]
+                  :when (and (.isFile file) (.canExecute file))]
+              (.getAbsolutePath file)))
+          (throw (ex-info (str "Can't find " (str/join " nor " bins) " on PATH.")
                    {:bin bin :path path})))
         process (.start (doto pb (.command (into [full-bin] args))))]
     (if-not async
