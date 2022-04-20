@@ -3820,7 +3820,7 @@
       (throw (ArgumentError. (str "Cannot compare " x " to " y)))))
   ISubvecable
   (-subvec [coll start1 end1]
-    (SubVec. nil v (+ start ^int start1) (+ end ^int end1) -1)))
+    (SubVec. nil v (+ start ^int start1) (+ start ^int end1) -1)))
 
 (defn subvec
   "Returns a persistent vector of the items in vector from

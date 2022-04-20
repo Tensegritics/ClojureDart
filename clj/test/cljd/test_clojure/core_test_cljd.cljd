@@ -244,3 +244,10 @@
 (deftest testing-extends-on-records
   (is (= "onetwo" (.mymethod (->RecordExtends "one"))))
   (is (dart/is? (->RecordExtends "one") cljd.core/Atom)))
+
+(deftest testing-subvec-issue-23
+  (is (= [4 5]
+        (-> [1 2 3 4 5 6 7]
+          (subvec 1)
+          (subvec 1)
+          (subvec 1 3)))))
