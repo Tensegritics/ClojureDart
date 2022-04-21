@@ -1,1 +1,2 @@
-{:hooks {:analyze-call {cljd.flutter.alpha/widget hooks.flutter/widget}}}
+{:linters {:non-arg-vec-return-type-hint {:level :off}} 
+ :hooks {:analyze-call {cljd.flutter.alpha/widget hooks.flutter/widget}}}
