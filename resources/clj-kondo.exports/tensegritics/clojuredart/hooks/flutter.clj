@@ -10,6 +10,7 @@
           opts-nodes (take-while (comp api/keyword-node? first) (partition 2 args))
           pairs->value (fn [k] (first (filter #(-> % first (api/sexpr) (= k)) opts-nodes)))
           [_ state] (pairs->value :state)
+          [s-name s-value] (:children state)
           [_ context] (pairs->value :context)
           [_ watch] (pairs->value :watch)
           [_ key] (pairs->value :key)
@@ -31,7 +32,7 @@
 
         (and state (or (not (api/vector-node? state))
                        (not= (count (:children state)) 2)
-                       (not (-> state :children first api/token-node?))))
+                       (not (api/token-node? s-name))))
         (error ":state should be a vector [name initial-value]")
 
         (seq unknown-keys)
@@ -44,10 +45,11 @@
         {:node (api/list-node 
                  (list
                    (api/token-node 'let)
-                   (api/vector-node (concat (if context 
+                   (api/vector-node (conj (if context 
                                               [context (api/token-node 'identity)]
                                               []) 
-                                            (:children state)))
+                                            s-name 
+                                            (api/list-node [(api/token-node 'atom) s-value])))
                    watch ;; to lint 'watch and 'key  
                    key
                    body))})))
