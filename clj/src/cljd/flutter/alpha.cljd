@@ -5,6 +5,12 @@
 
 ; TODI create our own Key type which uses equiv and not ==
 
+(defmacro nest
+  "Nest forms (the first form being the root form, the 2nd its child, the 3rd its grand child...) adding the :child keyword before each nested form."
+  [form & forms]
+  (let [[form & forms] (reverse (cons form forms))]
+    `(->> ~form ~@(for [form forms] (-> form (cond-> (symbol? form) list) (concat  [:child]) (with-meta (meta form)))))))
+
 (defmacro widget
   "Creates a widget by evaluating the body.
    The body may be preceded by options in the form of interleaved
