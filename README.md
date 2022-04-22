@@ -1,45 +1,51 @@
-# What is ClojureDart?
+# 클로저다트 무엇인가요?
 
-ClojureDart is a port of the Clojure language to Dart.
+클로저다트는 클로저 언어를 다트로 포팅한것 입니다.
+주요 목표는 Dart와 Flutter를 활용하여 Clojure의 범위를 다음으로 확장하는 것입니다.
 
-Its primary goal is to leverage Dart and Flutter to extend Clojure's reach to
-mobile and desktop apps.
+# 머리말
 
-# Foreword
+우리는 2022년 부활절 (4월 17일 일요일) 이전에 ClojureDart를 공개하기로 약속했습니다.그래서 이곳에 전달합니다!
 
-We promised to publicly release ClojureDart before Easter 2022, so here it is!
+획기적 사건은 아니지며 여전히 진행 중인 작업이지만, 새로운 기술에 용감한 사람들이 사용하기에는 충분합니다.
 
-This doesn't represent a specific technical milestone, it's still a work-in-progress but we believe it's good enough for use by the bravest Clojurists.
+# 누가 배후죠?
 
-# Who is behind it?
+Christophe Grand🐦
+Bapiste Dupuch🐦
+아주 작은 Clojure 컨설턴트인 Tensiongritics.
 
-Tensegritics, an itty-bitty Clojure consultancy by [Baptiste Dupuch](https://github.com/dupuchba)[🐦](https://twitter.com/BaptisteDupuch) and [Christophe Grand](https://github.com/cgrand)[🐦](https://twitter.com/cgrand).
 
-# Status
+# 상황
 
-Here be Dragons!
+드래곤이 온다!
 
-ClojureDart is a work-in-progress. Some features may be outright missing or
-partially implemented or even bugged. In any case get in touch with us or open
-an issue.
 
-- no REPL yet
-- multi-method (WIP)
-- sorted-collection (WIP)
+ClojureDart는 진행 중인 작업입니다. 일부 기능은 완전히 누락되거나 부분적으로 구현되거나 심지어는 버깅될 수도 있다. 어쨌든 우리에게 연락하거나 이슈를 열어보세요.
 
-Some differences have been documented, see [Differences with Clojure](doc/differences.md).
 
-# Quick starts
+- 아직 REPL 없음
+- 다중 방식(WIP)
+- 정렬된 수집(WIP)
 
-- [Plain Dart](doc/quick-start.md) (recommended first step)
-- [With Flutter](doc/flutter-quick-start.md)
+몇 가지 차이점이 문서화되어 있습니다. Clojure와의 차이점을 참조하십시오.
 
-# Thanks!
 
-To all individuals who blindly believed in our endeavor and sponsored our work.
+# 빠른 시작
 
-To NuBank who approached us very early for sponsorship.
+- 일반 다트(권장되는 첫번째 단계)
 
-To Roam Research who bet their mobile apps development (now in the App Store and Play Store) on ClojureDart and allowed us to make steady progress since Summer 2021.
+- 플러터 포함
 
-If you want to sponsor our work, you can sponsor either of us, we'll balance sponsorship. If you are a company you can also contact us directly.
+# 감사합니다!
+
+우리의 노력을 맹목적으로 믿고 우리의 일을 후원해준 모든 사람들에게.
+
+
+일찍부터 협찬을 받으러 와주신 NuBank님께.
+
+
+ClojureDart에 모바일 앱 개발(현재는 앱스토어 및 플레이스토어)을 걸고 2021년 여름부터 꾸준히 발전할 수 있게 해준 로밍 리서치에게.
+
+
+저희 작업을 후원하고 싶으시면 저희 둘 중 하나를 후원해 주시면, 협찬의 균형을 맞출 수 있습니다. 당신이 회사라면 우리에게 직접 연락할 수도 있다.
