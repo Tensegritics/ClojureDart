@@ -27,10 +27,8 @@
   (let [opts (take-while (comp keyword? first) (partition 2 args))
         body (drop (* 2 (count opts)) args)
         {:keys [context key state watch with ticker tickers] :as opts} (into {} (map vec) opts)
-        flutter-build-ctx (vary-meta '&flutter-build-ctx assoc :tag `widgets/BuildContext)
-        expr (if context
-               (list* `let [context flutter-build-ctx] body)
-               (cons `do body))
+        flutter-build-ctx (vary-meta (or context `ctx#) assoc :tag `widgets/BuildContext)
+        expr (cons `do body)
         watch (or watch (first state))
         key-expr (some->> key (list `foundation/ValueKey.))
         ticker-mixin (cond tickers `^:mixin widgets/TickerProviderStateMixin ticker `^:mixin widgets/SingleTickerProviderStateMixin)
@@ -55,7 +53,7 @@
       (cond->>
           `(reify :extends (widgets/StatefulWidget. :key ~key-expr)
              :no-meta true
-             (createState [_#]
+             (~'createState [_#]
                (reify :extends widgets/State
                  :no-meta true
                  (~'initState [~(with-meta state-sym {:super super-sym})]
@@ -69,7 +67,8 @@
                             (fn [] ~@dispose-statements
                               (vreset! ~build+dispose nil))])))
                    ~(when watch
-                      `(add-watch ~watch ~state-sym (fn [k# r# o# n#] (.setState ~state-sym (fn []))))))
+                      `(add-watch ~watch ~state-sym (fn [k# r# o# n#] (.setState ~state-sym (fn [])))))
+                  nil)
                  (~'dispose [~(with-meta state-sym {:super super-sym})]
                    ~(when watch `(remove-watch ~watch ~state-sym))
                    ~(when (seq with)
@@ -86,31 +85,4 @@
         (seq with)
         (list `let [build+dispose `(volatile! nil)]))
       `(reify :extends (widgets/StatelessWidget. :key ~key-expr)
-         (build [_# ~flutter-build-ctx] ~expr)))))
-
-; let's rathere add a :with key to widget
-; this key would work like this:
-#_[name expr
-   :let [....]
-   name expr
-   ...]
-; thus you can protect intermediate stuff
-
-#_(defmacro with-disposable [bindings & body]
-  (let [locals (take-nth 2 bindings)]
-    (reify
-      :extends (StatefulWidget. :key XXX)
-      (createState [_]
-        (reify :extends State
-          (initState [_]
-            (let [~@bindings]
-              (vreset! state# [~@locals])))
-          (dispose [_]
-            (let [[~@locals] @state#]
-              ~@(map #(list '.dispose %) (reverse locals))))
-          (build [_ ctx]
-            (let [[~@locals] @state#]
-              ~@body)))))))
-
-#_(defmacro with-ctx [ctx & body]
-  `(let [~ctx ~'&flutter-build-ctx] ~@body))
+         (~'build [_# ~flutter-build-ctx] ~expr)))))
