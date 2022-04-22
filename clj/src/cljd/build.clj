@@ -167,8 +167,10 @@
           (do
             (newline)
             (println (title "Dumping type information (it may take a while)"))
-            (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
-              bin "pub" "run" (.getPath analyzer-dart))))))))
+            (when (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
+                    bin "pub" "run" (.getPath analyzer-dart))
+              (.delete lib-info-edn)
+              (System/exit 1))))))))
 
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
