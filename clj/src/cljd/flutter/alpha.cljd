@@ -49,7 +49,7 @@
         build+dispose `build+dispose#
         state-sym `^widgets/State state#
         super-sym `super#]
-    (if watch
+    (if (or watch (seq with) ticker-mixin)
       (cond->>
           `(reify :extends (widgets/StatefulWidget. :key ~key-expr)
              :no-meta true
