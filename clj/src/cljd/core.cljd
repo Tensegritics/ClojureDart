@@ -1295,19 +1295,6 @@
         (. l "[]" n)
         not-found))))
 
-(extend-type MapEntry
-  IIndexed
-  (-nth [me n]
-    (cond
-      (== 0 n) (.-key me)
-      (== 1 n) (.-value me)
-      :else (throw (ArgumentError. "Index out of bounds"))))
-  (-nth [me n not-found]
-    (cond
-      (== 0 n) (.-key me)
-      (== 1 n) (.-value me)
-      :else not-found)))
-
 (extend-type Null
   IIndexed
   (-nth [m n] nil)
@@ -1365,17 +1352,6 @@
   (-contains-key? [o k]
     (and (dart/is? k int) (satisfies? IIndexed o)
       (not (identical? sentinel (-nth o k sentinel))))))
-
-(extend-type Map
-  ILookup
-  (-lookup [m k]
-    (. m "[]" k))
-  (-lookup [m k not-found]
-    (if (.containsKey m k)
-      (. m "[]" k)
-      not-found))
-  (-contains-key? [m k]
-    (.containsKey m k)))
 
 (extend-type List
   ILookup
@@ -4193,6 +4169,21 @@
 ;;;
 
 ;;; Mapentry
+(extend-type MapEntry
+  IMapEntry
+  (-key [node] (.-key node))
+  (-val [node] (.-value node))
+  ICounted
+  (-count [_] 2)
+  IIndexed
+  (-nth [node n]
+    (cond (== n 0) (.-key node)
+          (== n 1) (.-value node)
+          :else    (throw (ArgumentError. "Index out of bounds"))))
+  (-nth [node n not-found]
+    (cond (== n 0) (.-key node)
+          (== n 1) (.-value node)
+          :else    not-found)))
 
 (deftype #/(PersistentMapEntry K V)
   [_k _v ^:mutable ^int __hash]
@@ -4770,6 +4761,19 @@
               true)
       false m))
   (.write sink "}"))
+
+(extend-type Map
+  ISeqable
+  (-seq [coll] (iterator-seq (.-iterator (.-entries coll))))
+  ILookup
+  (-lookup [m k]
+    (. m "[]" k))
+  (-lookup [m k not-found]
+    (if (.containsKey m k)
+      (. m "[]" k)
+      not-found))
+  (-contains-key? [m k]
+    (.containsKey m k)))
 
 (deftype #/(PersistentHashMap K V)
   [meta ^BitmapNode root ^:mutable ^int __hash]

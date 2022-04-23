@@ -251,3 +251,20 @@
           (subvec 1)
           (subvec 1)
           (subvec 1 3)))))
+
+(deftest testing-dart-map-comply-with-iseqable-ilookup
+  (let [dart-map (Map/fromEntries (. (seq {:a :b }) #/(cast MapEntry)))]
+    (is (= :b (get dart-map :a)))
+    (is (true? (contains? dart-map :a)))
+    (is (false? (contains? dart-map :e)))
+    (is (= {:a :b} (into {} dart-map)))))
+
+(deftest testing-dart-mapentry-comply-with-imapentry-iidexed
+  (let [dart-map (Map/fromEntries (. (seq {:a :b }) #/(cast MapEntry)))
+        me (first dart-map)]
+    (is (= :a (nth me 0)))
+    (is (= :b (nth me 1)))
+    (is (= 2 (count me)))
+    (is (= :a (key me)))
+    (is (= :b (val me)))
+    (is (= {:a :b} (into {} [me])))))
