@@ -3,6 +3,17 @@
             [clojure.set :as set]
             [clojure.string :as str]))
 
+(defn- with->bindings
+  "Get :with form, returns mapcat-ed bindigs"
+  [with]
+  (into []
+        (mapcat (fn [[lhs rhs :as binding]]
+                  (condp = (str lhs)
+                    ":dispose" nil
+                    ":let" (:children rhs)
+                    binding)))
+        (partition 2 (:children with))))
+
 (defn widget 
   "Hook for cljd.flutter.alpha/widget macro"
   [{:keys [:node]}]
@@ -14,14 +25,16 @@
           [_ context] (pairs->value :context)
           [_ watch] (pairs->value :watch)
           [_ key] (pairs->value :key)
-
+          [_ ticker] (pairs->value :ticker)
+          [_ tickers] (pairs->value :tickers)
+          [_ with] (pairs->value :with)
           bindings-count (* 2 (count opts-nodes))
           body (drop bindings-count args)
           error (fn [msg] (throw (ex-info msg {})))
           unknown-keys (set/difference 
                          (into #{} (map (comp api/sexpr first) opts-nodes))
-                         #{:state :key :watch :context})]
-
+                         #{:state :key :watch :context :with :ticker :tickers})]
+      
       (cond
         (and (seq (filter api/keyword-node? args))   ; has top keywords
              (not (api/keyword-node? (first args)))) ; but first form is not a keyword
@@ -29,6 +42,18 @@
 
         (and state watch)
         (error ":state and :watch option keys are mutually exclusive")
+
+        (and ticker tickers)
+        (error "Both :ticker and :tickers are not allowed")
+
+        (and (not (or state watch)) (or with ticker tickers))
+        (error "keys [:tickers :ticker :with] are only allowed with either :state or :watch")
+        
+        (and with 
+             (or (not (api/vector-node? with))
+                 (some #(not (or (api/token-node? %) (api/keyword-node? %))) 
+                       (take-nth 2 (:children with)))))
+        (error ":with left hand simbols should be simple simbols, :let, or :dispose forms")
 
         (and state (or (not (api/vector-node? state))
                        (not= (count (:children state)) 2)
@@ -45,11 +70,12 @@
         {:node (api/list-node 
                  (list
                    (api/token-node 'let)
-                   (api/vector-node (conj (if context 
-                                              [context (api/token-node 'identity)]
-                                              []) 
-                                            s-name 
-                                            (api/list-node [(api/token-node 'atom) s-value])))
+                   (api/vector-node 
+                     (concat (if context [context (api/token-node 'identity)] []) 
+                             (if ticker [ticker (api/token-node 'identity)] [])
+                             (if tickers [tickers (api/token-node 'identity)] [])
+                             (if state [s-name (api/list-node [(api/token-node 'atom) s-value])] [])
+                             (with->bindings with)))
                    watch ;; to lint 'watch and 'key  
                    key
                    body))})))
