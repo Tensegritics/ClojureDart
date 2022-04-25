@@ -4,7 +4,7 @@
             [clojure.string :as str]))
 
 (defn- with->bindings
-  "Get :with form, returns mapcat-ed bindigs"
+  "Returns :with bindings vector, :let included"
   [with]
   (into []
         (mapcat (fn [[lhs rhs :as binding]]
@@ -46,9 +46,6 @@
         (and ticker tickers)
         (error "Both :ticker and :tickers are not allowed")
 
-        (and (not (or state watch)) (or with ticker tickers))
-        (error "keys [:tickers :ticker :with] are only allowed with either :state or :watch")
-        
         (and with 
              (or (not (api/vector-node? with))
                  (some #(not (or (api/token-node? %) (api/keyword-node? %))) 
