@@ -154,7 +154,7 @@ Dart methods may take named parameters, to call them in ClojureDart just use a k
 ```
 
 ### Generics
-Unlike Java, Dart generics are not erased -- it means that on the JVM at runtime a `List<String>` is just a `List` but that in Dart at runtime it's still a `List<String>`. This creates two problems: expressing parametrized types and dealing with the mismatch between stroing typing of collections items and Clojure's collections.
+Unlike Java, Dart generics are not erased -- it means that on the JVM at runtime a `List<String>` is just a `List` but that in Dart at runtime it's still a `List<String>`. This creates two problems: expressing parametrized types and dealing with the mismatch between string typing of collections items and Clojure's collections.
 
 #### Parametrized types
 
