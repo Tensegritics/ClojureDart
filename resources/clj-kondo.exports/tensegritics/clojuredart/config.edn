@@ -1,2 +1,3 @@
-{:linters {:non-arg-vec-return-type-hint {:level :off}} 
+{:linters {:non-arg-vec-return-type-hint {:level :off}
+           :unresolved-symbol {:exclude [bool Function fallback List Map]}} 
  :hooks {:analyze-call {cljd.flutter.alpha/widget hooks.flutter/widget}}}

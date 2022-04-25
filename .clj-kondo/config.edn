@@ -1,4 +1,4 @@
-{:linters {:unresolved-symbol {:exclude [bool Function fallback]}}
+{:linters {:unresolved-symbol {:exclude [fallback]}}
  :lint-as {cljd.core/fn clojure.core/fn
            cljd.core/defn clojure.core/defn
            cljd.core/defn- clojure.core/defn-
