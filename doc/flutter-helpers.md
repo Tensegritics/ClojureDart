@@ -1,10 +1,10 @@
 # `cljd.flutter.alpha`
 
-`cljd.flutter.alpha` is a library which strives to unclutter Flutter code 😜.
+`cljd.flutter.alpha` strives to unclutter Flutter code 😜.
 
 Its two goals are to cut on Flutter boilerplate and make it more Clojure-like.
 
-## `f/nest` macro
+## `nest` macro
 
 In Flutter code, it's very common to have medium to long chains of widgets chained through `:child`.
 
@@ -60,7 +60,7 @@ which translates directly to
         (m/Icon. m.Icons/create)))))
 ```
 
-can be flattened with `f/nest` into:
+can be flattened with `nest` into:
 
 ```clj
 (f/nest
@@ -81,6 +81,54 @@ can be flattened with `f/nest` into:
   (m/Icon. m.Icons/create))
   ```
 
-## `f/widget` macro
+## `widget` macro
 
 It's the Swiss army knife of Flutter in ClojureDart: it replaces instances of `StatelessWidget`, `StatefulWidget`, `State`, `Builder` and `StatefulBuilder`.
+
+The general structure of `widget` is a body preceded by inlined `:option value` pairs.
+
+The body always evaluates to a `Widget` and the whole `widget` form itself evaluates to a `Widget` too.
+
+Supported options are `:key`, `:state`, `:watch`, `:with`, `:ticker` and `:tickers`.
+
+### `:key k`
+
+Specifiy the local key (a plain non-nil value) for this widget.
+
+`nil` (default) means no key.
+
+Local keys are used to identify siblings across reordering and updates.
+
+### `:state [my-state init]`
+
+`:state [my-state init]` creates an atom as per `(let [my-state (atom init)] ...)`. Any change to this atom will trigger an update of the widget.
+
+### `:watch pre-existing-atom`
+
+Any change to the atom named `pre-existing-atom` will trigger an update of the widget.
+
+### `:with [resource init ...]`
+
+This one is about resources management. For example if you need a `ScrollController` you can simply use `:with [controller (m/ScrollController.)]`, it will be initialized in [`initState`](https://api.flutter.dev/flutter/widgets/State/initState.html) and discarded in [`dispose`](https://api.flutter.dev/flutter/widgets/State/dispose.html).
+
+By default a resource is disposed by calling its `.dispose` method. However if the resource must be freed differently you have to specify it like this:
+
+```clj
+:with [file (.openSync (io/File "log"))
+       :dispose .closeSync]
+```
+
+The resource name is threaded (as per `->`) through the `:dispose` form. Most of the time it will be simply a method or a function.
+
+Last, you can introduce intermediate values to use in resource initialization via `:let`:
+
+```clj
+:with [res1 init1
+       :dispose .cancel
+       :let [v expr]
+       res2 (init2 v)]
+```
+
+### `:ticker name` or `:tickers name`
+
+This will bind `name` to a [`TickerProvider`](https://api.flutter.dev/flutter/scheduler/TickerProvider-class.html) to use in `AnimationController`s. Use `:ticker` if you have a single `AnimationController` (the common case).
