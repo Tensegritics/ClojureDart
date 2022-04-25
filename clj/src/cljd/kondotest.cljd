@@ -1,0 +1,21 @@
+(ns cljd.kondotest
+  (:require 
+    [cljd.flutter.alpha :as f]))
+
+(defn- expandable-fab [& {:keys [init-open]}]
+  (f/widget
+    :key bob
+    :state [open 1]
+    :tickers tick
+    :context ctx
+    :with [:let [[a b] [1 2 3]]
+           controller (list
+                        :value (if init-open 1.0 0.0)
+                        :vsync tick)
+           :dispose .dispose
+           expand-animation (list :parent )]
+    (do 
+      (reset! open 1)
+      (list ctx expand-animation controller a b))))
+
+(expandable-fab)
