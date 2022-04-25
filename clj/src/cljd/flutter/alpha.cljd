@@ -39,7 +39,7 @@
                                         :dispose nil
                                         binding)))
                             (partition 2 with))
-        dispose-statements (second (reduce ; we lsoe inferred types
+        dispose-statements (second (reduce ; we lose inferred types
                                      (fn [[dispose stmts] [lhs rhs]]
                                        (case lhs
                                          :let [nil stmts]
