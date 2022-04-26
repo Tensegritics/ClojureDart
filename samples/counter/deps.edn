@@ -1,0 +1,6 @@
+{:paths ["src"] ; where your cljd files are
+ :deps {org.clojure/clojure {:mvn/version "1.10.1"}
+        tensegritics/clojuredart
+        {:local/root "../../"}
+	#_{:git/url "git@github.com:tensegritics/ClojureDartPreview.git"
+         :sha "b4b20ee2e82af28360ea95ddd5ce3c1a71ba5b11"}}}
