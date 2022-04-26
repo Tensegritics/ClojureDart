@@ -89,7 +89,7 @@ The general structure of `widget` is a body preceded by inlined `:option value` 
 
 The body always evaluates to a `Widget` and the whole `widget` form itself evaluates to a `Widget` too.
 
-Supported options are `:key`, `:state`, `:watch`, `:with`, `:ticker` and `:tickers`.
+Supported options are `:key`, `:context`, `:state`, `:watch`, `:with`, `:ticker` and `:tickers`.
 
 ### `:key k`
 
@@ -98,6 +98,10 @@ Specifiy the local key (a plain non-nil value) for this widget.
 `nil` (default) means no key.
 
 Local keys are used to identify siblings across reordering and updates.
+
+### `:context ctx`
+
+Will bind `ctx` to the `BuildContext` of this widget.
 
 ### `:state [my-state init]`
 

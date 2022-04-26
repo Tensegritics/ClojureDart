@@ -34,6 +34,12 @@ Some differences have been documented, see [Differences with Clojure](doc/differ
 - [Plain Dart](doc/quick-start.md) (recommended first step)
 - [With Flutter](doc/flutter-quick-start.md)
 
+# `cljd.flutter.alpha`
+
+`cljd.flutter.alpha` is an utility namespace to remove Flutter boilerplate and integrate it a bit more with Clojure.
+
+[Learn more about it!](doc/flutter-helpers.md)
+
 # Thanks!
 
 To all individuals who blindly believed in our endeavor and sponsored our work.
