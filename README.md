@@ -40,6 +40,38 @@ Some differences have been documented, see [Differences with Clojure](doc/differ
 
 [Learn more about it!](doc/flutter-helpers.md)
 
+# Going furthe with Flutter
+
+In the [samples directory](samples/) you'll find some ports of [Flutter recipes](https://docs.flutter.dev/cookbook**.
+
+## How to run a sample project
+
+Clone the ClojureDart repo.
+
+```shell
+git clone https://github.com/Tensegritics/ClojureDart.git`
+```
+
+Go to the sample you want to try, let's say `fab`:
+
+```shell
+cd ClojureDart/samples/fab
+```
+
+Init the project:
+```shell
+clj -M -m cljd.build init sample.fab
+```
+
+Start a simulator or connect a device.
+
+Then launch the watcher:
+```shell
+clj -M -m cljd.build flutter
+```
+
+Enjoy! 🧃
+
 # Thanks!
 
 To all individuals who blindly believed in our endeavor and sponsored our work.
