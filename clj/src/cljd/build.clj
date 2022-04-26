@@ -242,17 +242,19 @@
         libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
         dir (java.io.File. (System/getProperty "user.dir"))
         project-name (.getName dir)
+        project_name (str/replace project-name #"[- ]" "_")
         entry-point (case bin
                       "flutter" (java.io.File. libdir "main.dart")
                       "dart"
                       (->  dir (java.io.File. "bin")
-                        (java.io.File. (str (str/replace project-name #"[- ]" "_") ".dart"))))
+                        (java.io.File. (str project_name ".dart"))))
         lib (compiler/relativize-lib (.getPath entry-point) (compiler/ns-to-lib main-ns))]
     (println "Initializing" (bright project-name) "as a" (bright bin) "project!")
     (or
       (case bin
         "flutter"
-        (apply exec bin "create" (concat bin-opts [(System/getProperty "user.dir")]))
+        (apply exec bin "create" "--project-name" project_name
+          (concat bin-opts [(System/getProperty "user.dir")]))
         "dart"
         (apply exec bin "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
       (spit (java.io.File. (System/getProperty "user.dir") "cljd.edn") (pr-str {:main main-ns :bin bin}))
