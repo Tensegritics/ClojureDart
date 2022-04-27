@@ -3473,7 +3473,7 @@
   IFind
   (-find [coll n]
     (when-some [v' (-lookup coll n nil)]
-      (PersistentMapEntry. n v' -1)))
+      (new #/(PersistentMapEntry int E) n v' -1)))
   #_APersistentVector
   IVector
   (-assoc-n [coll n val]
@@ -3766,7 +3766,7 @@
   IFind
   (-find [coll n]
     (when-some [v' (-lookup coll n nil)]
-      (PersistentMapEntry. n v' -1)))
+      (new #/(PersistentMapEntry int E) n v' -1)))
   IVector
   (-assoc-n [coll n val]
     (let [^int n n
@@ -4785,7 +4785,7 @@
        (BitmapIterator. root 0 0 0 1
          (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
          (.filled #/(List BitmapNode) 7 root)
-         #(PersistentMapEntry. %1 %2 -1))
+         #(new #/(PersistentMapEntry K V) %1 %2 -1))
        )))
   ("[]" [coll k]
    (-lookup coll k nil))
@@ -4860,7 +4860,7 @@
   IFind
   (-find [coll k]
     (when-some [v (-lookup coll k nil)]
-      (PersistentMapEntry. k v -1)))
+      (new #/(PersistentMapEntry K V) k v -1)))
   IMap
   (-dissoc [coll k]
     (let [new-root (.inode_without root 0 (hash k) k)]
@@ -7033,6 +7033,7 @@
              (new ~name ~@(conj (vec fields) 'meta) (or (dissoc ~extmap k#) {}) -1)))
          'cljd.core/ISeqable
          `(~'-seq [coll#]
+           ;; TODO: cast PME to K & V
            (seq (concat [~@(map #(list 'new 'cljd.core/PersistentMapEntry (keyword %) % -1) fields)]  ~extmap)))
          'cljd.core/IAssociative
          (let [v (gensym "val")]
@@ -7074,6 +7075,7 @@
          (let [coll (gensym "coll")]
            `(~'entries [~coll]
              (-> ~(tagged-literal 'dart
+                    ;; TODO: cast PME to K V
                     (with-meta (into [] (map #(list 'new 'cljd.core/PersistentMapEntry (keyword %) % -1) fields))
                       {:fixed true
                        :tag '^{:type-params (K V)} dart:core/MapEntry}))
