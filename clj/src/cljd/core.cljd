@@ -1600,7 +1600,15 @@
                 (= (get y (first xkv) never-equiv) (second xkv)))
               x)))))))
 
+(deftype ^:abstract EqualsEquivMixin []
+  Object
+  (== [x y] (-equiv x y))
+  (hashCode [x] (-hash x)))
+
 (deftype ^:abstract EquivSequentialHashMixin [^:mutable ^int __hash]
+  Object
+  (== [x y] (-equiv-sequential x y))
+  (hashCode [x] (-hash x))
   ISequential
   IEquiv
   (-equiv [x y] (-equiv-sequential x y))
@@ -1611,6 +1619,7 @@
 (deftype Keyword [^String? ns ^String name ^int _hash]
   :type-only true
   ^:mixin ToStringMixin
+  ^:mixin EqualsEquivMixin
   IPrint
   (-print [o ^StringSink sink]
     (.write sink ":")
@@ -1646,10 +1655,7 @@
                (if (zero? nsc)
                  (.compareTo name (.-name y))
                  nsc)))
-        :else (.compareTo name (.-name y)))))
-  Object
-  (hashCode [_] _hash)
-  (== [this other] (-equiv this other)))
+        :else (.compareTo name (.-name y))))))
 
 (defn keyword
   "Returns a Keyword with the given namespace and name.  Do not use :
@@ -1698,6 +1704,7 @@
 (deftype Symbol [^String? ns ^String name meta ^:mutable ^int _hash]
   :type-only true
   ^:mixin ToStringMixin
+  ^:mixin EqualsEquivMixin
   IPrint
   (-print [o ^StringSink sink]
     (when ns (.write sink ns) (.write sink "/"))
@@ -4778,6 +4785,7 @@
 (deftype #/(PersistentHashMap K V)
   [meta ^BitmapNode root ^:mutable ^int __hash]
   :type-only true
+  ^:mixin EqualsEquivMixin
   ^:mixin #/(dart-coll/MapMixin K V)
   (entries [coll]
     (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
@@ -4937,6 +4945,7 @@
 (deftype #/(PersistentHashSet E)
   [meta ^#/(PersistentHashMap E E) hm ^:mutable ^int __hash]
   :type-only true
+  ^:mixin EqualsEquivMixin
   ^:mixin #/(dart-coll/SetMixin E)
   (contains [this e]
     (-contains-key? hm e))
@@ -7014,7 +7023,8 @@
         extmap (with-meta 'extmap {:tag (with-meta 'dart:core/Map
                                           {:type-params '(K V)})})
         record-body
-        ['cljd.core/IRecord
+        ['^:mixin cljd.core/EqualsEquivMixin
+         'cljd.core/IRecord
          'cljd.core/IEquiv
          (let [this (with-meta (gensym "this") {:tag name})
                other (gensym "other")]

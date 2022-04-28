@@ -287,3 +287,17 @@
 
     (is (false? (dart/is? (find {"a" "b"} "a") #/(cljd.core/PersistentMapEntry String String))))
     (is (true? (dart/is? (find (. {"a" "b"} #/(cast String String)) "a") #/(cljd.core/PersistentMapEntry String String))))))
+
+(deftest colls-are-equal-for-dart
+  (let [ma {:a 1}
+        mb (assoc {} :a 1)
+        va [1]
+        vb (conj [] 1)
+        sa #{1}
+        sb (conj #{} 1)]
+    (is (.== ma mb))
+    (is (not (identical? ma mb)))
+    (is (.== va vb))
+    (is (not (identical? va vb)))
+    (is (.== sa sb))
+    (is (not (identical? sa sb)))))

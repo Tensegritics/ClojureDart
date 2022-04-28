@@ -309,20 +309,22 @@
        true))
     (^dt/Description describeMismatch [_ r ^dt/Description mismatch-description ^Map match-state ^bool verbose]
      (doto mismatch-description
-       (.add
-         (with-out-str
-           (when-let [message (:message match-state)] (println message))
-           (case (:type match-state)
-             :fail nil
-             :error
-             (do
-               (prn (:exception match-state))
-               (prn (:stacktrace match-state))))
-           (when-some [[group & more-groups] (seq *groups*)]
-             (print "occured in: ")
-             (when more-groups (newline))
-             (println group)
-             (doseq [g more-groups] (println g)))))))))
+       (cond->
+           (:type match-state)
+         (.add
+           (with-out-str
+             (when-let [message (:message match-state)] (println message))
+             (case (:type match-state)
+               :fail nil
+               :error
+               (do
+                 (prn (:exception match-state))
+                 (prn (:stacktrace match-state))))
+             (when-some [[group & more-groups] (seq *groups*)]
+               (print "occured in: ")
+               (when more-groups (newline))
+               (println group)
+               (doseq [g more-groups] (println g))))))))))
 
 ;;; ASSERTION MACROS
 
