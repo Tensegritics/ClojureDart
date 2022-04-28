@@ -3,7 +3,7 @@
   (:require ["package:flutter/widgets.dart" :as widgets]
             ["package:flutter/foundation.dart" :as foundation]))
 
-; TODI create our own Key type which uses equiv and not ==
+; TODO create our own Key type which uses equiv and not ==
 
 (defmacro nest
   "Nest forms (the first form being the root form, the 2nd its child, the 3rd its grand child...) adding the :child keyword before each nested form."
@@ -21,7 +21,18 @@
           the atom change.
    :state [name init-value] creates an atom named state initialized to init-value,
                             watch for changes tp it.
-   :context name, if you need to access the build context then provide its name here."
+   :context name, if you need to access the build context then provide its name here.
+   :ticker name, bind name to a TickerProvider for a single AnimationController
+   :tickers name, bind name to a TickerProvider for a several AnimationControllers
+   :with [name-or-opt expr ...], declare resources whose lifecycle is managed
+   by this widget. (They are initializzed and disposed by this widget.)
+   Each name-or-opt expr pair is either:
+     * name init-expr: initialize resource with init-expr and bind it under
+       name, by default the resource will be freed by calling .dispose on it;
+     * :dispose dispose-expr (right after a name init-expr pair) which tells
+       to dispose of the resource by doing (-> name dispose-expr);
+     * :let bindings, to introduce intermediate values which are not
+       managed resources."
   {:arglists '[[:opt1 val1 ... :optN valN & body]]}
   [& args]
   (let [opts (take-while (comp keyword? first) (partition 2 args))

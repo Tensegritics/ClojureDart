@@ -268,3 +268,22 @@
     (is (= :a (key me)))
     (is (= :b (val me)))
     (is (= {:a :b} (into {} [me])))))
+
+(deftest testing-map-entry-should-be-cast-if-map-are-casted
+  (let [original {"aa" 4 "bb" 5}
+        casted-map (. original #/(cast String int))]
+    (is (false? (dart/is? original #/(cljd.core/PersistentHashMap String int))))
+    (is (true? (dart/is? original #/(cljd.core/PersistentHashMap dynamic dynamic))))
+    (is (false? (dart/is? (first original) #/(cljd.core/PersistentMapEntry String int))))
+
+    (is (true? (dart/is? casted-map #/(cljd.core/PersistentHashMap String int))))
+    (is (true? (dart/is? (first casted-map) #/(cljd.core/PersistentMapEntry String int))))
+
+    (is (false? (dart/is? (find [0 1 2] 1) #/(cljd.core/PersistentMapEntry int int))))
+    (is (true? (dart/is? (find (. [0 1 2] #/(cast int)) 1) #/(cljd.core/PersistentMapEntry int int))))
+
+    (is (false? (dart/is? (find (subvec [0 1 2] 1) 1) #/(cljd.core/PersistentMapEntry int int))))
+    (is (true? (dart/is? (find (. (subvec [0 1 2] 1) #/(cast int)) 1) #/(cljd.core/PersistentMapEntry int int))))
+
+    (is (false? (dart/is? (find {"a" "b"} "a") #/(cljd.core/PersistentMapEntry String String))))
+    (is (true? (dart/is? (find (. {"a" "b"} #/(cast String String)) "a") #/(cljd.core/PersistentMapEntry String String))))))
