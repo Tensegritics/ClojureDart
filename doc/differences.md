@@ -38,6 +38,15 @@ However instead of extending to `Object` or `Null`, it's often preferable to ext
  * it has a lower priority than other extensions,
  * `satisfies?` returns `false` for objects which use a fallback implementation.
 
+### Records
+
+For now record creation requires 3 additional arguments: meta, extmap and hash, like: `nil {} -1`:
+```clj
+(defrecord R [a])
+(R. "arg" nil {} -1)
+(new R "arg" nil {} -1)
+```
+
 ## try/catch
 
 In Dart, when one catch an exception, the stacktrace isn't attached to the exception. Thus in ClojureDart if you want to capture the stacktrace you have to specify an extra name after the exception name in catch:
