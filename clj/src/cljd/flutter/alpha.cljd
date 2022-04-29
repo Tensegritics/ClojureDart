@@ -3,13 +3,16 @@
   (:require ["package:flutter/widgets.dart" :as widgets]
             ["package:flutter/foundation.dart" :as foundation]))
 
-; TODO create our own Key type which uses equiv and not ==
+; TODI create our own Key type which uses equiv and not ==
 
 (defmacro nest
   "Nest forms (the first form being the root form, the 2nd its child, the 3rd its grand child...) adding the :child keyword before each nested form."
   [form & forms]
   (let [[form & forms] (reverse (cons form forms))]
     `(->> ~form ~@(for [form forms] (-> form (cond-> (symbol? form) list) (concat  [:child]) (with-meta (meta form)))))))
+
+(defn- ^:macro-support camel-kebab [s]
+  (str/replace s #"(^[A-Z])|[A-Z]" (fn [[s start]] (cond->> (str/lower-case s) (not start) (str "-")))))
 
 (defmacro widget
   "Creates a widget by evaluating the body.
@@ -37,12 +40,36 @@
   [& args]
   (let [opts (take-while (comp keyword? first) (partition 2 args))
         body (drop (* 2 (count opts)) args)
-        {:keys [context key state watch with ticker tickers] :as opts} (into {} (map vec) opts)
+        {:keys [context key state watch with ticker tickers inherits] :as opts} (into {} (map vec) opts)
         flutter-build-ctx (vary-meta (or context `ctx#) assoc :tag `widgets/BuildContext)
-        expr (cons `do body)
         watch (or watch (first state))
         key-expr (some->> key (list `foundation/ValueKey.))
         ticker-mixin (cond tickers `^:mixin widgets/TickerProviderStateMixin ticker `^:mixin widgets/SingleTickerProviderStateMixin)
+        inherits (if (vector? inherits) {:of inherits} inherits)
+        inherits (if-some [shortcuts (:of inherits)]
+                   (into (dissoc inherits :of)
+                     (map (fn [type-or-kw]
+                            (let [hint (cond-> type-or-kw (seq? type-or-kw) first)]
+                              [(symbol
+                                 (if (keyword? hint)
+                                   (name hint)
+                                   (camel-kebab (re-find #"[^.]+$" (name hint)))))
+                               type-or-kw])))
+                     shortcuts)
+                   inherits)
+        inherits-bindings
+        (mapcat
+          (fn [[sym type-or-kw]]
+            (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)
+                  op (if (keyword? type-or-kw)
+                       (throw (Exception. "Not implemented"))
+                       (symbol
+                         (if-some [ns (namespace type-or-kw)]
+                           (str ns "." (name type-or-kw))
+                           (name type-or-kw))
+                         "of"))]
+              [sym (list* op flutter-build-ctx args)]))
+          inherits)
         init-let-bindings (into []
                             (mapcat (fn [[lhs rhs :as binding]]
                                       (case lhs
@@ -59,7 +86,8 @@
                                      [nil []] (reverse (partition 2 with))))
         build+dispose `build+dispose#
         state-sym `^widgets/State state#
-        super-sym `super#]
+        super-sym `super#
+        expr `(let [~@inherits-bindings] ~@body)]
     (if (or watch (seq with) ticker-mixin)
       (cond->>
           `(reify :extends (widgets/StatefulWidget. :key ~key-expr)
