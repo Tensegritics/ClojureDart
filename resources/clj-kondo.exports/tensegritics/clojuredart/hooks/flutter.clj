@@ -98,8 +98,9 @@
                    (concat (bind-identity context) 
                            (bind-identity ticker)
                            (bind-identity tickers)
-                           (when (vector? state) ;; TODO when   
-                             [(token-node (first state))
+                           (when (vector? state)  
+                             [(with-meta (token-node (first state)) 
+                                         (meta (-> :state pairs->value second :children first)))
                               (list-node [(token-node 'atom) (token-node (second state))])])
                            (with->bindings with-node)))
                  (when watch (with-meta (token-node watch) (meta (second (pairs->value :watch)))))
