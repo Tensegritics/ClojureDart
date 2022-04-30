@@ -26,7 +26,7 @@
 
 (defn- find! [condition node msg]
   (when condition 
-    (api/reg-finding! (assoc (meta node) :message msg :type :cljd/widget))))
+    (api/reg-finding! (assoc (meta node) :message msg :type :flutter/widget))))
 
 (defn widget 
   "Hook for cljd.flutter.alpha/widget macro"
