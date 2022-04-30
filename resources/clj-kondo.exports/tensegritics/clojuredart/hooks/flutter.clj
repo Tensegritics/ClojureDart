@@ -65,7 +65,7 @@
 
     (find! (and with 
                 (or (not (vector? with))
-                    (some #(not (or (symbol? %) (keyword? %))) (take-nth 2 with))))
+                    (some #(not (or (symbol? %) (= :let %) (= :dispose %))) (take-nth 2 with))))
            with-node 
            ":with left hand simbols should be simple simbols, :let, or :dispose")
 
