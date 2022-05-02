@@ -1,7 +1,8 @@
 (ns cljd.flutter.alpha
   "Bridging Flutter and Clojure"
   (:require ["package:flutter/widgets.dart" :as widgets]
-            ["package:flutter/foundation.dart" :as foundation]))
+            ["package:flutter/foundation.dart" :as foundation]
+            [clojure.string :as str]))
 
 ; TODI create our own Key type which uses equiv and not ==
 
