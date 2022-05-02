@@ -10,7 +10,8 @@
 ;;
 
 (ns cljd.test-clojure.core-test-cljd
-  (:require ["dart:async" :as async])
+  (:require ["dart:async" :as async]
+            [cljd.string :as str])
   (:use [cljd.test :only [deftest is testing are]]))
 
 (deftest testing-rseq
@@ -301,3 +302,7 @@
     (is (not (identical? va vb)))
     (is (.== sa sb))
     (is (not (identical? sa sb)))))
+
+(deftest vars-dont-shadow-aliases
+  (is (= "ab" (str/join ["a" "b"])))
+  (is (= "1" (str 1))))

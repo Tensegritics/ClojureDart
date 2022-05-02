@@ -504,7 +504,8 @@
                        int dc-int
                        int? (assoc dc-int :nullable true)
                        double dc-double
-                       double? (assoc dc-double :nullable true))
+                       double? (assoc dc-double :nullable true)
+                       not-found)
               not-found)
        not-found))))
 
