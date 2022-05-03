@@ -2595,10 +2595,19 @@
                     (for [to refer :let [from (get rename to to)]]
                       [from (with-meta (symbol clj-alias (name to))
                               {:dart (nil? clj-ns)})]))))))
+          host-aliases (into #{}
+                         (for [[op & more] host-ns-directives
+                               :when (= :require op)
+                               lib more
+                               :when (sequential? lib)
+                               :let [[_ & {:keys [as]}] lib]
+                               :when as]
+                           as))
           host-ns-directives
           (concat
             host-ns-directives
             (for [[lib & {:keys [refer as] :as options}] require-specs
+                  :when (not (host-aliases as))
                   :let [host-ns (some-> (get @nses lib) :host-ns ns-name)]
                   :when (and host-ns (not= ns-sym lib))
                   :let [options

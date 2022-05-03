@@ -31,17 +31,16 @@
 
 (defn action-button [& {:keys [on-pressed icon]}]
   (f/widget
-    :context ctx
-    (let [theme (m.Theme/of ctx)]
-      (m/Material.
-        :shape ^:const (m/CircleBorder.)
-        :clipBehavior m.Clip/antiAlias
-        :color (-> theme .-colorScheme .-secondary)
-        :elevation 4.0
-        :child (m/IconButton.
-                 :onPressed on-pressed
-                 :icon icon
-                 :color (-> theme .-colorScheme .-secondary))))))
+    :inherits [m/Theme]
+    (m/Material.
+      :shape ^:const (m/CircleBorder.)
+      :clipBehavior m.Clip/antiAlias
+      :color (-> theme .-colorScheme .-secondary)
+      :elevation 4.0
+      :child (m/IconButton.
+               :onPressed on-pressed
+               :icon icon
+               :color (-> theme .-colorScheme .-secondary)))))
 
 (defn expanding-action-button
   [& {:keys [direction-degrees max-distance ^#/(m/Animation double) progress child]}]
@@ -69,7 +68,7 @@
     :key key
     :state [open init-open]
     :ticker tick
-    :context ctx
+    :inherits [m/Theme]
     :with [controller (m/AnimationController.
                         :value (if init-open 1.0 0.0)
                         :duration ^:const (m/Duration. :milliseconds 250)
@@ -93,7 +92,7 @@
               :elevation 4.0)
             (m/InkWell. :onTap toggle)
             (m/Padding. :padding ^:const (m.EdgeInsets/all 8.0))
-            (m/Icon. m.Icons/close :color (-> ctx m.Theme/of .-primaryColor)))
+            (m/Icon. m.Icons/close :color (.-primaryColor theme)))
           tap-to-open-fab
           (f/nest
             (m/IgnorePointer. :ignoring (boolean @open))

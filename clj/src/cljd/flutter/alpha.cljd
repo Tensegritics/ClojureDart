@@ -1,9 +1,12 @@
 (ns cljd.flutter.alpha
   "Bridging Flutter and Clojure"
   (:require ["package:flutter/widgets.dart" :as widgets]
-            ["package:flutter/foundation.dart" :as foundation]))
+            ["package:flutter/foundation.dart" :as foundation]
+            [cljd.string :as str])
+  (:host-ns
+   (:require [clojure.string :as str])))
 
-; TODI create our own Key type which uses equiv and not ==
+; TODO create our own Key type which uses equiv and not ==
 
 (defmacro nest
   "Nest forms (the first form being the root form, the 2nd its child, the 3rd its grand child...) adding the :child keyword before each nested form."
