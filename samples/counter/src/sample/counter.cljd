@@ -12,7 +12,7 @@
       :home
       (f/widget
         :state [counter 0]
-        :context ctx
+        :inherits [m/Theme]
         (m/Scaffold
           :appBar (m/AppBar :title (m/Text "ClojureDart Home Page"))
           :body
@@ -23,7 +23,7 @@
               :children
               [(m/Text "You have pushed the button this many times:")
                (m/Text (str @counter)
-                 :style (-> ctx m.Theme/of .textTheme .displayLarge))]))
+                 :style (-> theme .textTheme .displayLarge))]))
           :floatingActionButton
           (m/FloatingActionButton
             :onPressed #(swap! counter inc)

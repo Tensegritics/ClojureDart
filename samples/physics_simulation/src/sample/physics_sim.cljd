@@ -14,32 +14,33 @@
 
 (defn draggable-card [& {:keys [child]}]
   (f/widget
+    :inherits [m/MediaQuery]
     :context ctx
     :ticker tick
-    :with [controller (m/AnimationController. :vsync tick)]
+    :with [controller (m/AnimationController :vsync tick)]
     :state [drag-alignment m.Alignment/center]
-    (let [size (.-size (m.MediaQuery/of ctx))
+    (let [size (.-size media-query)
           run-animation
           (fn [^m/Offset px-per-s]
             (let [animation (.drive controller
-                              (m/AlignmentTween.
+                              (m/AlignmentTween
                                 :begin @drag-alignment
                                 :end m.Alignment/center))
                   units-per-s-x (/ (.-dx px-per-s) (.-width size))
                   units-per-s-y (/ (.-dy px-per-s) (.-height size))
-                  units-per-s (m/Offset. units-per-s-x units-per-s-y)
+                  units-per-s (m/Offset units-per-s-x units-per-s-y)
                   unit-velocity (.-distance units-per-s)
-                  spring ^:const (p/SpringDescription.
+                  spring ^:const (p/SpringDescription
                                    :mass 30
                                    :stiffness 1
                                    :damping 1)
-                  simulation (p/SpringSimulation. spring 0 1 (- unit-velocity))]
+                  simulation (p/SpringSimulation spring 0 1 (- unit-velocity))]
               (doto controller
                 .clearListeners
                 (.addListener #(reset! drag-alignment (.-value animation)))
                 (.animateWith simulation))))]
       (f/nest
-        (m/GestureDetector.
+        (m/GestureDetector
           :onPanDown (fn [details] (.stop controller)
                        nil)
           :onPanUpdate (fn [^m/DragUpdateDetails details]
@@ -52,15 +53,15 @@
           :onPanEnd (fn [^m/DragEndDetails details]
                       (run-animation (-> details .-velocity .-pixelsPerSecond))
                       nil))
-        (m/Align. :alignment @drag-alignment)
-        m/Card.
+        (m/Align :alignment @drag-alignment)
+        m/Card
         child))))
 
 (def physics-card-demo
   (f/widget
-    (m/Scaffold.
-      :appBar (m/AppBar.)
-      :body (draggable-card :child (m/FlutterLogo. :size 128)))))
+    (m/Scaffold
+      :appBar (m/AppBar)
+      :body (draggable-card :child (m/FlutterLogo :size 128)))))
 
 (defn main []
-  (m/runApp (m/MaterialApp. :home physics-card-demo)))
+  (m/runApp (m/MaterialApp :home physics-card-demo)))

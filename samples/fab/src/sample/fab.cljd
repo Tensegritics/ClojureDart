@@ -33,7 +33,7 @@
   (f/widget
     :inherits [m/Theme]
     (m/Material
-      :shape ^:const (m/CircleBorder.)
+      :shape ^:const (m/CircleBorder)
       :clipBehavior m.Clip/antiAlias
       :color (-> theme .-colorScheme .-secondary)
       :elevation 4.0
@@ -87,7 +87,7 @@
               :height 56.0)
             m/Center
             (m/Material
-              :shape ^:const (m/CircleBorder.)
+              :shape ^:const (m/CircleBorder)
               :clipBehavior m.Clip/antiAlias
               :elevation 4.0)
             (m/InkWell :onTap toggle)
