@@ -1390,7 +1390,7 @@
         member-info (some-> (dart-member-lookup dart-type (:element-name dart-type) env) actual-member)
         _ (when (not member-info)
             (binding [*out* *err*]
-              (println "Dynamic warning: can't resolve default constructor for type" (:element-name dart-type "dynamic") "of library" (:lib dart-type "dart:core") (source-info))))
+              (println "Stern warning: can't resolve default constructor for type" (:element-name dart-type "dynamic") "of library" (:lib dart-type "dart:core") (source-info))))
         method-sig (some-> member-info dart-method-sig)
         split-args+types (split-args args method-sig env)
         [bindings dart-args] (lift-args split-args+types env)]
@@ -1453,7 +1453,7 @@
               (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:element-name type!)))))
           _ (when (not member-info)
               (binding [*out* *err*]
-                (println "Dynamic warning: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
+                (println "Stern warning: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
           special-num-op-sig (case (:canon-qname type!) ; see sections 17.30 and 17.31 of Dart lang spec
                                dc.int (case member-name
                                         ("-" "+" "%" "*")
@@ -2250,7 +2250,7 @@
                 super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)]
             (when (not super-ctor-info)
               (binding [*out* *err*]
-                (println "Dynamic warning: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
+                (println "Stern warning: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
             (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))))
         super-ctor-split-params
         (into [] (map (fn [[name _]] [name (dart-local (or name "param") env)])) super-ctor-split-args+types)
@@ -2354,7 +2354,7 @@
                 super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)]
             (when (not super-ctor-info)
               (binding [*out* *err*]
-                (println "Dynamic warning: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
+                (println "Stern warning: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
             (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))))
         class (-> class
                 (assoc :name dart-type
