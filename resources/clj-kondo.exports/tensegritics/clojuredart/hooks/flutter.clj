@@ -26,7 +26,7 @@
 
 (defn- find! [condition node msg]
   (when condition 
-    (api/reg-finding! (assoc (meta node) :message msg :type :cljd/widget))))
+    (api/reg-finding! (assoc (meta node) :message msg :type :flutter/widget))))
 
 (defn widget 
   "Hook for cljd.flutter.alpha/widget macro"
@@ -65,7 +65,7 @@
 
     (find! (and with 
                 (or (not (vector? with))
-                    (some #(not (or (symbol? %) (keyword? %))) (take-nth 2 with))))
+                    (some #(not (or (symbol? %) (= :let %) (= :dispose %))) (take-nth 2 with))))
            with-node 
            ":with left hand simbols should be simple simbols, :let, or :dispose")
 
@@ -98,8 +98,9 @@
                    (concat (bind-identity context) 
                            (bind-identity ticker)
                            (bind-identity tickers)
-                           (when (vector? state) ;; TODO when   
-                             [(token-node (first state))
+                           (when (vector? state)  
+                             [(with-meta (token-node (first state)) 
+                                         (meta (-> :state pairs->value second :children first)))
                               (list-node [(token-node 'atom) (token-node (second state))])])
                            (with->bindings with-node)))
                  (when watch (with-meta (token-node watch) (meta (second (pairs->value :watch)))))

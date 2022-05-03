@@ -1,3 +1,6 @@
 {:linters {:non-arg-vec-return-type-hint {:level :off}
-           :flutter/widget {:level :error}} 
+           :flutter/widget {:level :error}
+           :clojure-lsp/unused-public-var {:exclude #{main}}
+           :unresolved-namespace {:exclude [dart dart:core]}
+           :unresolved-symbol {:exclude [bool Function fallback List Map]}} 
  :hooks {:analyze-call {cljd.flutter.alpha/widget hooks.flutter/widget}}}
