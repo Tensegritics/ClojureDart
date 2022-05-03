@@ -1957,7 +1957,8 @@
                            (emit d env)])
         super-param (:super (meta this-param))
         env (into (cond-> (assoc env this-param (with-meta 'this (dart-meta (vary-meta this-param assoc :tag class-name) env)))
-                    super-param (assoc super-param 'super))
+                    ;; TODO: hack: super's type should be the super class of class-name
+                    super-param (assoc super-param (with-meta 'super (dart-meta (vary-meta super-param assoc :tag class-name) env))))
                   (zipmap (concat fixed-params (map first opt-params))
                           (concat dart-fixed-params (map first dart-opt-params))))
         dart-body (emit (cons 'do body) env)
@@ -2225,11 +2226,14 @@
         ;; And by checking the presence of this-this and this-super in the emitetd code
         ;; we know whether we need to close over the outermost values of this and super.
         env (into env (keep (fn [[clj-sym dart-expr]] (case dart-expr this [clj-sym this-this] super [clj-sym this-super] nil))) env)
-        class (emit-class-specs 'dart:core/Object (parse-class-specs nil opts specs env) env)
         class-name (if-some [var-name (:var-name opts)]
                      (munge var-name "ifn" env)
                      (dart-global (or (:name-hint opts) "Reify")))
         mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
+        parsed-class-specs (parse-class-specs nil opts specs env)
+        ;; it's ok to predecl the class without fields because in a closure you don't have direct access to them nor to the constructor.
+        _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env) :type :class})
+        class (emit-class-specs mclass-name parsed-class-specs env)
         ; extract references to parent's super in dart closures
         [super-fn-bindings methods]
         (reduce (fn [[bindings meths] meth]
