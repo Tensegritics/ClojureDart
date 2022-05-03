@@ -38,6 +38,9 @@ However instead of extending to `Object` or `Null`, it's often preferable to ext
  * it has a lower priority than other extensions,
  * `satisfies?` returns `false` for objects which use a fallback implementation.
 
+### `new` and `.` can be omitted
+The usage of `new` and `.` for constructors are optional. You can write `(List)` instead of `(List.)` or `(new List)`.
+
 ### Records
 
 For now record creation requires 3 additional arguments: meta, extmap and hash, like: `nil {} -1`:
