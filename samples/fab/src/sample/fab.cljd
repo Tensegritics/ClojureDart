@@ -51,13 +51,13 @@
         :builder (fn [ctx child]
                    (let [offset (m.Offset/fromDirection
                                   (* direction-degrees (/ math/pi 180.0))
-                                  (* (.-value progress) max-distance))]
+                                  (* (.value progress) max-distance))]
                      (f/nest
                        (m/Positioned
-                         :right (+ 4.0 (.-dx offset))
-                         :bottom (+ 4.0 (.-dy offset)))
+                         :right (+ 4.0 (.dx offset))
+                         :bottom (+ 4.0 (.dy offset)))
                        (m.Transform/rotate
-                         :angle (* (- 1.0 (.-value progress))
+                         :angle (* (- 1.0 (.value progress))
                                   math/pi 0.5))
                        child))))
       (m/FadeTransition :opacity progress)
@@ -92,7 +92,7 @@
               :elevation 4.0)
             (m/InkWell :onTap toggle)
             (m/Padding :padding ^:const (m.EdgeInsets/all 8.0))
-            (m/Icon m.Icons/close :color (.-primaryColor theme)))
+            (m/Icon m.Icons/close :color (.primaryColor theme)))
           tap-to-open-fab
           (f/nest
             (m/IgnorePointer :ignoring (boolean @open))

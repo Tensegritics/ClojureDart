@@ -70,15 +70,15 @@ cat << EOF > src/acme/main.cljd
 
 (defn main []
   (material/runApp
-    (material/MaterialApp.
+    (material/MaterialApp
       :title "Welcome to Flutter"
-      :theme (material/ThemeData. :primarySwatch material.Colors/pink)
-      :home (material/Scaffold.
-              :appBar (material/AppBar.
-                        :title (widgets/Text. "Welcome to ClojureDart"))
-              :body (widgets/Center.
-                      :child (widgets/Text. "This text is Centered."
-                               :style (painting/TextStyle.
+      :theme (material/ThemeData :primarySwatch material.Colors/pink)
+      :home (material/Scaffold
+              :appBar (material/AppBar
+                        :title (widgets/Text "Welcome to ClojureDart"))
+              :body (widgets/Center
+                      :child (widgets/Text "This text is Centered."
+                               :style (painting/TextStyle
                                         :color material.Colors/red
                                         :fontSize 32.0)))))))
 EOF
