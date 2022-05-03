@@ -6,3 +6,7 @@
 .dart_tool
 .packages
 pubspec.lock
+lib/cljd-out/*
+test/cljd-out/*
+*.md-e
+.*
