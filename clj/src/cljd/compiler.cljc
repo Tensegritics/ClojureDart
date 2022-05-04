@@ -1385,19 +1385,8 @@
          :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
        env))))
 
-(defn emit-new [[_ class & args] env]
-  (let [dart-type (emit-type class env)
-        member-info (some-> (dart-member-lookup dart-type (:element-name dart-type) env) actual-member)
-        _ (when (not member-info)
-            (binding [*out* *err*]
-              (println "Stern warning: can't resolve default constructor for type" (:element-name dart-type "dynamic") "of library" (:lib dart-type "dart:core") (source-info))))
-        method-sig (some-> member-info dart-method-sig)
-        split-args+types (split-args args method-sig env)
-        [bindings dart-args] (lift-args split-args+types env)]
-    (cond->> (with-meta (list* 'dart/new dart-type dart-args)
-               {:dart/type dart-type
-                :dart/inferred true})
-      (seq bindings) (list 'dart/let bindings))))
+(defn emit-new [[_ class & args :as form] env]
+  (emit-dot (with-meta (list* '. class (name class) args) (meta form))))
 
 (defn- fake-member-lookup [type! member n]
   (case (:canon-qname type!)
@@ -1434,21 +1423,20 @@
                             (dart-member-lookup type! (str (:element-name static) "." member-name) env)
                             (dart-member-lookup dc-Object member-name+ env)))
                         actual-member)
-          dart-obj (cond
-                     (= "==" member-name+) dart-obj
-                     (:type-params (meta obj)) ; static only
-                     (emit-type obj env)
-                     member-info
-                     (simple-cast dart-obj type! type)
-                     :else
-                     (loop [dart-obj dart-obj]
-                       (cond
-                         (and (seq? dart-obj) (= 'dart/as (first dart-obj)))
-                         (recur (second dart-obj))
-                         (= 'dc.dynamic (:canon-qname (or (:dart/type (infer-type dart-obj)) dc-dynamic)))
-                         dart-obj
-                         :else
-                         (list 'dart/as dart-obj dc-dynamic))))
+          dart-obj (or static
+                     (cond
+                       (= "==" member-name+) dart-obj
+                       member-info
+                       (simple-cast dart-obj type! type)
+                       :else
+                       (loop [dart-obj dart-obj]
+                         (cond
+                           (and (seq? dart-obj) (= 'dart/as (first dart-obj)))
+                           (recur (second dart-obj))
+                           (= 'dc.dynamic (:canon-qname (or (:dart/type (infer-type dart-obj)) dc-dynamic)))
+                           dart-obj
+                           :else
+                           (list 'dart/as dart-obj dc-dynamic)))))
           _ (when (and static (not (or (:static member-info) (= :constructor (:kind member-info)))))
               (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:element-name type!)))))
           _ (when (not member-info)
@@ -1471,14 +1459,20 @@
                  :field true
                  (nil :method :constructor) prop)
           name (if prop member-name (into [member-name] (map #(emit-type % env)) (:type-params (meta member))))
-          op (if prop 'dart/.- 'dart/.)
+          op (if prop 'dart/.-
+                 (case (:kind member-info)
+                   :constructor 'dart/new
+                   'dart/.))
           expr-type (if special-num-op-sig
                       (num-type (:dart/type (infer-type (first dart-args))))
                       (cond
                         (not prop) (:return-type member-info)
                         (= :method (:kind member-info)) nil ; TODO type delegate
                         :else (:type member-info)))
-          expr (cond-> (list* op dart-obj name dart-args)
+          expr (cond->
+                   (case op
+                     dart/new (list* 'dart/new (list 'dart/. dart-obj name) dart-args)
+                     (list* op dart-obj name dart-args))
                  expr-type (vary-meta assoc :dart/type expr-type :dart/inferred true))
           bindings (concat dart-obj-bindings dart-args-bindings)]
       (cond->> expr
@@ -3493,7 +3487,13 @@
         (print-pre locus)
         (when (:dart/const (meta x))
           (print "const "))
-        (write-type type)
+        (if (seq? type)
+          (let [[_ type [ctor type-params]] type]
+            (write-type type)
+            (when-not (= (:element-name type) (name ctor))
+              (print (str "." ctor)))
+            (write-types type-params "<" ">"))
+          (write-type type))
         (write-args args)
         (print-post locus)
         (:exit locus))
