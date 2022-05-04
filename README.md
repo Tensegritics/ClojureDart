@@ -49,7 +49,7 @@ In the [samples directory](samples/) you'll find some ports of [Flutter recipes]
 Clone the ClojureDart repo.
 
 ```shell
-git clone https://github.com/Tensegritics/ClojureDart.git`
+git clone https://github.com/Tensegritics/ClojureDart.git
 ```
 
 Go to the sample you want to try, let's say `fab`:

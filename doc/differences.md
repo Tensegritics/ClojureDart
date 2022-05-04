@@ -114,7 +114,7 @@ However when you want to access a static member **in Clojure** you would write `
 ### reify/deftype
 #### `^:abstract`
 **`deftype`**
-A type name can have the `:abstract` metadata to indicate the generated class to be asbtract.
+A type name can have the `:abstract` metadata to indicate the generated class to be abstract.
 
 #### `:extends`
 **`reify` and `deftype`**
@@ -132,8 +132,7 @@ The `:type-only` option instructs `deftype` to not create factory function (`->M
 
 #### `^:mixin`
 **`reify`, `defrecord` and `deftype`**
-This metadata on implemented classes specify these classes should be considered [mixins](https://dart.dev/guides/language/language-tour#adding-features-to-a-class-mix
-ins) and not [interfaces](https://dart.dev/guides/language/language-tour#implicit-interfaces).
+This metadata on implemented classes specify these classes should be considered [mixins](https://dart.dev/guides/language/language-tour#adding-features-to-a-class-mixins) and not [interfaces](https://dart.dev/guides/language/language-tour#implicit-interfaces).
 
 #### `^:getter`/`^:setter`
 **`reify`, `defrecord` and `deftype`**
@@ -142,7 +141,7 @@ Method names can be tagged with `:getter` and/or `:setter` if the method is in f
 For a getter you must provide a 1-arg arity of the method (`[this]`) and for a setter a 2-arg arity (`[this new-value]`).
 
 #### Calling `super`
-When you must call the `super` implementation (since one can now extends a super type) you have to add metadata on the "this" parameter of a method. For example when implementing a [State](https://api.flutter.dev/flutter/widgets/State/initState.html) one can write:
+When you must call the `super` implementation (since one can now extend a super type) you have to add metadata on the "this" parameter of a method. For example when implementing a [State](https://api.flutter.dev/flutter/widgets/State/initState.html) one can write:
 
 ```clj
 (initState [^{:super papa} self]
@@ -166,7 +165,7 @@ Dart methods may take named parameters, to call them in ClojureDart just use a k
 ```
 
 ### Generics
-Unlike Java, Dart generics are not erased -- it means that on the JVM at runtime a `List<String>` is just a `List` but that in Dart at runtime it's still a `List<String>`. This creates two problems: expressing parametrized types and dealing with the mismatch between string typing of collections items and Clojure's collections.
+Unlike Java, Dart generics are not erased — it means that on the JVM at runtime a `List<String>` is just a `List` but that in Dart at runtime it's still a `List<String>`. This creates two problems: expressing parametrized types and dealing with the mismatch between strong typing of collections items and Clojure's collections.
 
 #### Parametrized types
 
@@ -182,7 +181,7 @@ Two vectors containing the same items but with different type parameters are sti
 
 When a `List` of a given type is expected the [`cast`](https://api.dart.dev/stable/2.9.3/dart-core/List/cast.html) method can be used to get a vector of the expected type. It's really a lightweight operation as only the root object is changed.
 
-Furthermore, ClojureDart will automatically emits such `cast` calls. This means that in practice you can pass a Clojure vector (or a set or a map) where a typed List (resp. a Set or a Map) is expected and it will just work — as long as the items are of the right type, or at least those that will be looked up.
+Furthermore, ClojureDart will automatically emit such `cast` calls. This means that in practice you can pass a Clojure vector (or a set or a map) where a typed List (resp. a Set or a Map) is expected and it will just work — as long as the items are of the right type, or at least those that will be looked up.
 
 
 ### Dart literals

@@ -124,7 +124,7 @@ By default a resource is disposed by calling its `.dispose` method. However if t
 
 The resource name is threaded (as per `->`) through the `:dispose` form. Most of the time it will be simply a method or a function.
 
-Last, you can introduce intermediate values to use in resource initialization via `:let`:
+Lastly, you can introduce intermediate values to use in resource initialization via `:let`:
 
 ```clj
 :with [res1 init1
