@@ -1,3 +1,12 @@
 #!/bin/bash
 git rev-parse HEAD >> .hashes
 sed -i -e "s/`tail -2 .hashes | sed -e 'N;s/\n/\//'`/g" README.md doc/*.md
+git add .hashes
+for i in doc/*.md
+do
+  if ! cmp -s $i $i-e
+  then
+    git add $i
+  fi
+done
+git commit -m "update shas"
