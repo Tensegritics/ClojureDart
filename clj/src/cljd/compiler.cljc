@@ -1905,7 +1905,8 @@
 (defn closed-overs
   "Returns the set of dart locals (values of the env) referenced in the emitted code."
   [emitted env] ; TODO now that env may have expressions (dart/as ..) as values we certainly have subtle bugs
-  (into #{} (comp (filter symbol?) (keep (set (vals env)))) (tree-seq sequential? seq emitted)))
+  (let [dart-locals (into #{} (map #(cond-> % (seq? %) second)) (vals env))]
+    (into #{} (comp (filter symbol?) (keep dart-locals)) (tree-seq sequential? seq emitted))))
 
 (defn emit-letfn [[_ fns & body] env]
   (let [env (reduce (fn [env [name]] (assoc env name (dart-local name env))) env fns)
@@ -2284,7 +2285,7 @@
         all-fields
         (cond->> closed-overs meta-field (cons meta-field))
         dart-type (new-dart-type mclass-name (:type-vars env) all-fields env)
-        _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
+        _ (swap! nses alter-def class-name assoc :dart/type dart-type)
         class (-> class
                 (assoc
                   :name (emit-type mclass-name env)
