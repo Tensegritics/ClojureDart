@@ -3473,6 +3473,8 @@
           ;; else plain method
           (do
             (assert is-plain-method (str "not a plain method: " meth))
+            (when (:dart/const (meta x)) ; should only be on constructors, see #53
+              (print "const "))
             (if (= :class (:kind obj))
               (write-type obj)
               (write obj (assoc expr-locus :this-position true)))

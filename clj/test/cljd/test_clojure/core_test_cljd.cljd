@@ -311,3 +311,7 @@
   ; https://clojurians.slack.com/archives/C03A6GE8D32/p1651592868443379
   (let [f (fn [^String oops] (reify Object (toString [this] oops)))]
     (is (= "abc" (str (f "abc"))))))
+
+(deftest named-const-constructors-GH53
+  (is (not (identical? (Iterable/empty) (Iterable/empty))))
+  (is (identical? ^:const (Iterable/empty) ^:const (Iterable/empty))))
