@@ -1385,9 +1385,6 @@
          :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
        env))))
 
-(defn emit-new [[_ class & args :as form] env]
-  (emit-dot (with-meta (list* '. class (name class) args) (meta form))))
-
 (defn- fake-member-lookup [type! member n]
   (case (:canon-qname type!)
     dc.bool
@@ -1477,6 +1474,9 @@
           bindings (concat dart-obj-bindings dart-args-bindings)]
       (cond->> expr
         (seq bindings) (list 'dart/let bindings)))))
+
+(defn emit-new [[_ class & args :as form] env]
+  (emit-dot (with-meta (list* '. class (name class) args) (meta form))))
 
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
