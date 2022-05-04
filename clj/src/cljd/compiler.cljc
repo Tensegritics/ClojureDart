@@ -1476,7 +1476,7 @@
         (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-new [[_ class & args :as form] env]
-  (emit-dot (with-meta (list* '. class (name class) args) (meta form))))
+  (emit-dot (with-meta (list* '. class (name class) args) (meta form)) env))
 
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
