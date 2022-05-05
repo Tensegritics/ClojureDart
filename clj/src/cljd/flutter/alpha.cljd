@@ -98,8 +98,8 @@
              (~'createState [_#]
                (reify :extends widgets/State
                  :no-meta true
-                 (~'initState [~(with-meta state-sym {:super super-sym})]
-                   (.initState ~super-sym)
+                 (~'initState [~state-sym]
+                   (.initState ~(vary-meta state-sym assoc :tag 'super))
                    ~(when (seq with)
                       `(let [~@(when ticker-mixin
                                  [(vary-meta (or ticker tickers) assoc :tag ticker-mixin) state-sym])
@@ -111,11 +111,11 @@
                    ~(when watch
                       `(add-watch ~watch ~state-sym (fn [k# r# o# n#] (.setState ~state-sym (fn [])))))
                   nil)
-                 (~'dispose [~(with-meta state-sym {:super super-sym})]
+                 (~'dispose [~state-sym]
                    ~(when watch `(remove-watch ~watch ~state-sym))
                    ~(when (seq with)
                       `((second (deref ~build+dispose))))
-                   (.dispose ~super-sym))
+                  (.dispose ~(vary-meta state-sym assoc :tag 'super)))
                  (~'build [~state-sym ~flutter-build-ctx]
                    ~(if (seq with)
                       `((first (deref ~build+dispose)) ~flutter-build-ctx)

@@ -29,6 +29,7 @@ Like in Clojurescript "Naked `:use`" is not supported: you must always provide a
 
 ### no `instance?`
 Instead there is a special `dart/is?` where the type must be a literal `(dart/is? x SomeType)`. We have a [workaround planned](https://github.com/Tensegritics/ClojureDart/issues/11) to allow for good old `instance?` despite the platform limitations.
+
 ### Protocols
 Unlike Clojure and like Clojurescript, ClojureDart is extensively based on protocols.
 
@@ -141,11 +142,11 @@ Method names can be tagged with `:getter` and/or `:setter` if the method is in f
 For a getter you must provide a 1-arg arity of the method (`[this]`) and for a setter a 2-arg arity (`[this new-value]`).
 
 #### Calling `super`
-When you must call the `super` implementation (since one can now extend a super type) you have to add metadata on the "this" parameter of a method. For example when implementing a [State](https://api.flutter.dev/flutter/widgets/State/initState.html) one can write:
+When you must call the `super` implementation (since one can now extend a super type) you have to add metadata on the "this" at the super call site. For example when implementing a [State](https://api.flutter.dev/flutter/widgets/State/initState.html) one can write:
 
 ```clj
-(initState [^{:super papa} self]
-  (.initState papa) ; here papa refers to super
+(initState [self]
+  (.initState ^super self)
   ...
   nil)
 ```

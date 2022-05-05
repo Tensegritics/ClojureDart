@@ -323,3 +323,31 @@
                          (toString [inner-this]
                            (str (.hashCode outer-this)))))))]
     (is (= (str "+" (.hashCode x)) (.toString x)))))
+
+(deftest super-pseudo-type
+  (let [x (reify Object
+            (hashCode [_] 42)
+            (toString [self] (str (.hashCode ^super self))))]
+    (is (= (str (dart:core/identityHashCode x)) (str x)))
+    (is (= 42 (.hashCode x)))))
+
+
+(deftest closing-over-super
+  (let [v (volatile! nil)
+        x (reify Object
+            (hashCode [this]
+              (vreset! v #(.hashCode ^super this))
+              42))
+        y (reify Object
+            (hashCode [that]
+              (vreset! v
+                (reify Object
+                  (hashCode [this]
+                    (bit-xor (.hashCode ^super that) (.hashCode ^super this)))))
+              43))]
+    (is (= 42 (.hashCode x)))
+    (is (= (dart:core/identityHashCode x) (@v)))
+    (is (= 43 (.hashCode y)))
+    (is (= (bit-xor (dart:core/identityHashCode y)
+             (dart:core/identityHashCode @v))
+          (.hashCode @v)))))

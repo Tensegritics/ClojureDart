@@ -108,6 +108,11 @@
                    :lib "dart:core"
                    :canon-qname pseudo.some})
 
+(def pseudo-super '{:kind :class
+                    :qname       dc.dynamic
+                    :lib "dart:core"
+                    :canon-qname pseudo.super})
+
 (declare global-lib-alias)
 
 (defn update-if
@@ -527,6 +532,7 @@
   [tag {:keys [type-vars] :as env}]
   (cond
     (= 'some tag) pseudo-some
+    (= 'super tag) pseudo-super
     ('#{void dart:core/void} tag) dc-void
     :else
     (or (resolve-type tag type-vars nil) (when *hosted* (resolve-type (symbol (name tag)) type-vars nil))
@@ -1217,6 +1223,12 @@
    (simple-cast dart-expr expected-type (:dart/type (infer-type dart-expr))))
   ([dart-expr expected-type actual-type]
    (cond
+     (= (:canon-qname expected-type) 'pseudo.super)
+     (let [super-type (:super (full-class-info actual-type) 'dc.Object)
+           super (if (= 'this dart-expr) 'super (:that-super (meta dart-expr)))]
+       (when-not super
+         (throw (Exception. "Can't tag with pseudo-type super a local which isn't a this.")))
+       (with-meta super {:dart/type super-type}))
      (is-assignable? expected-type actual-type) dart-expr
      (= (:canon-qname expected-type) 'void) dart-expr
      (= (:canon-qname expected-type) 'pseudo.num-tower)
@@ -1956,10 +1968,9 @@
                              :named p ; here p must be a valid dart identifier
                              :positional (dart-local p env))
                            (emit d env)])
-        super-param (:super (meta this-param))
-        env (into (cond-> (assoc env this-param (with-meta 'this (dart-meta (vary-meta this-param assoc :tag class-name) env)))
-                    ;; TODO: hack: super's type should be the super class of class-name
-                    super-param (assoc super-param (with-meta 'super (dart-meta (vary-meta super-param assoc :tag class-name) env))))
+        _ (when (:super (meta this-param))
+            (throw (Exception. "DEPRECATED super access has changed: use ^super on this at call sites. For example (.initState ^super self).")))
+        env (into (assoc env this-param (with-meta 'this (dart-meta (vary-meta this-param assoc :tag class-name) env)))
                   (zipmap (concat fixed-params (map first opt-params))
                           (concat dart-fixed-params (map first dart-opt-params))))
         dart-body (emit (cons 'do body) env)
@@ -2218,9 +2229,9 @@
 
 (defn emit-reify* [[_ opts & specs] env]
   (let [[outer-clj-this outer-dart-this] (some (fn [[clj dart :as e]] (when (= 'this dart) e)) env)
-        that-this (vary-meta (dart-local "that" env) into (meta outer-dart-this))
-        [outer-clj-super outer-dart-super] (some (fn [[clj dart :as e]] (when (= 'super dart) e)) env)
         that-super (dart-local "that-super" env)
+        that-this (vary-meta (dart-local "that" env)
+                    merge (meta outer-dart-this) {:that-super that-super})
         ;; when we have nested closures we must take care to not take a this relating
         ;; to the outermost clojure for a this relating to the innermost.
         ;; That's why we remap existing bindings to this and super.
@@ -2228,9 +2239,7 @@
         ;; innermost closure.
         ;; And by checking the presence of that-this and that-super in the emitetd codeper
         ;; we know whether we need to close over the outermost values of this and super.
-        env (cond-> env
-              outer-clj-this (assoc outer-clj-this that-this)
-              outer-clj-super (assoc outer-clj-super that-super))
+        env (cond-> env outer-clj-this (assoc outer-clj-this that-this))
         class-name (if-some [var-name (:var-name opts)]
                      (munge var-name "ifn" env)
                      (dart-global (or (:name-hint opts) "Reify")))
