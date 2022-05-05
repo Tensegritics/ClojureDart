@@ -315,3 +315,11 @@
 (deftest named-const-constructors-GH53
   (is (not (identical? (Iterable/empty) (Iterable/empty))))
   (is (identical? ^:const (Iterable/empty) ^:const (Iterable/empty))))
+
+(deftest parent-this-capture
+  (let [x (reify Object
+            (toString [outer-this]
+              (str "+" (reify Object
+                         (toString [inner-this]
+                           (str (.hashCode outer-this)))))))]
+    (is (= (str "+" (.hashCode x)) (.toString x)))))

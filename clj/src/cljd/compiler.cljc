@@ -2217,16 +2217,20 @@
          (:methods parsed-class-specs))))))
 
 (defn emit-reify* [[_ opts & specs] env]
-  (let [this-this (dart-local "this" env)
-        this-super (dart-local "super" env)
+  (let [[outer-clj-this outer-dart-this] (some (fn [[clj dart :as e]] (when (= 'this dart) e)) env)
+        that-this (vary-meta (dart-local "that" env) into (meta outer-dart-this))
+        [outer-clj-super outer-dart-super] (some (fn [[clj dart :as e]] (when (= 'super dart) e)) env)
+        that-super (dart-local "that-super" env)
         ;; when we have nested closures we must take care to not take a this relating
         ;; to the outermost clojure for a this relating to the innermost.
         ;; That's why we remap existing bindings to this and super.
         ;; Thus in the emitted code all references to this and super will relate to their
         ;; innermost closure.
-        ;; And by checking the presence of this-this and this-super in the emitetd code
+        ;; And by checking the presence of that-this and that-super in the emitetd codeper
         ;; we know whether we need to close over the outermost values of this and super.
-        env (into env (keep (fn [[clj-sym dart-expr]] (case dart-expr this [clj-sym this-this] super [clj-sym this-super] nil))) env)
+        env (cond-> env
+              outer-clj-this (assoc outer-clj-this that-this)
+              outer-clj-super (assoc outer-clj-super that-super))
         class-name (if-some [var-name (:var-name opts)]
                      (munge var-name "ifn" env)
                      (dart-global (or (:name-hint opts) "Reify")))
@@ -2238,7 +2242,7 @@
         ; extract references to parent's super in dart closures
         [super-fn-bindings methods]
         (reduce (fn [[bindings meths] meth]
-                  (let [[bindings' meth'] (method-extract-super-call meth this-super)]
+                  (let [[bindings' meth'] (method-extract-super-call meth that-super)]
                     [(into bindings bindings') (conj meths meth')]))
           [[] []] (:methods class))
         ; closed-overs are a seq of dart locals
@@ -2272,7 +2276,6 @@
           (let [env-for-ctor-call ; hack where dart syms become clj syms
                 (-> env
                   (into (map (fn [v] [v v])) closed-overs)
-                  #_(assoc this-this 'this)
                   (assoc meta-field meta-field))]
             (emit-class-specs 'dart:core/Object
               (parse-class-specs nil {} ; TODO
@@ -2305,7 +2308,8 @@
           bindings (concat super-fn-bindings bindings)]
       (cond->>
           (list* 'dart/new (emit-type class-name env)
-            (concat (when meta-field [nil]) closed-overs dart-args))
+            (concat (when meta-field [nil])
+              (map #(if (= that-this %) outer-dart-this %) closed-overs) dart-args))
         (seq bindings)
         (list 'dart/let bindings)))))
 
