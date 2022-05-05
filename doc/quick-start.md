@@ -74,7 +74,7 @@ Compiled Dart files are found under `lib/cljd-out`; to execute the program, just
 dart run
 ```
 
-By doing so you have ran your program on the Dart VM. To get an actual executable, enter:
+By doing so you have run your program on the Dart VM. To get an actual executable, enter:
 
 ``` shell
 dart compile exe -o helloworld bin/helloworld.dart

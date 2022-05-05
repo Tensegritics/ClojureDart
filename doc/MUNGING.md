@@ -43,7 +43,7 @@ In some contexts, suffixes may be appended to the munged name of a symbol. A suf
 
 `$iproto` is for the class implementing the IProtocol for a given protocol.
 
-`$cext` is for a a class implementing a class extension.
+`$cext` is for a class implementing a class extension.
 
 `$extension` is for the actual singleton of a `$cext`.
 
