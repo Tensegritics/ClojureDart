@@ -2104,12 +2104,13 @@
                       (resolve-dart-method (:dart/type t) mname arglist type-env)
                       (throw (Exception. (str "In class " class-name ", can't resolve method " mname (vec arglist) " on class " (:element-name (:dart/type t)) " from lib " (:lib (:dart/type t)) (source-info)))))))
                 mname (vary-meta mname' merge (meta mname))]
-            `(~mname ~(parse-dart-params arglist')
-              (let [~@(mapcat (fn [a a']
-                                (when-some [t (:tag (meta a))]
-                                  (when-not (= t (:tag (meta a')))
-                                    [a a']))) arglist arglist')]
-                ~@body)))
+            (list* mname (parse-dart-params arglist')
+              (when (seq body) ; don't emit a body if no explicit body
+                [`(let [~@(mapcat (fn [a a']
+                                    (when-some [t (:tag (meta a))]
+                                      (when-not (= t (:tag (meta a')))
+                                        [a a']))) arglist arglist')]
+                    ~@body)])))
           (:mixin (meta spec)) (do (reset! last-seen-type
                                      {:type :class
                                       :dart/type (resolve-type spec type-env)}) spec)
