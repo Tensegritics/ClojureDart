@@ -1981,6 +1981,8 @@
         dart-body (cond->> dart-body
                     recur-params
                     (list 'dart/loop (map vector recur-params dart-fixed-params)))
+        mname (cond-> mname
+                (has-await? dart-body) (vary-meta assoc :async true))
         mname (with-meta mname (dart-meta mname env))]
     [mname mtype-params dart-fixed-params opt-kind dart-opt-params (nil? (seq body)) dart-body]))
 

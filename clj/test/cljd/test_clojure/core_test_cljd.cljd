@@ -351,3 +351,26 @@
     (is (= (bit-xor (dart:core/identityHashCode y)
              (dart:core/identityHashCode @v))
           (.hashCode @v)))))
+
+(deftype InferredAwait [^#/(Future int) prop]
+  (coucou [this] (await prop)))
+
+(deftype NotInferredAwait [^#/(Future int) prop]
+  (^:async coucou [this] (await prop)))
+
+(definterface ConcreteInterface (^#/(Future int) mymethod []))
+
+(deftype Concrete []
+  ConcreteInterface
+  (mymethod [this] (await (Future/value 42))))
+
+(deftest await-inference
+  (let [num (.value #/(Future int) 42)]
+    (is (= (await (.coucou (InferredAwait. num)))
+          (await (.coucou (NotInferredAwait. num)))))
+    (is (= (inc (await (.coucou (InferredAwait. num))))
+          (await ((fn [& more] (inc (await (first more)))) num))
+          43))
+    (is (= 42 (.hashCode (reify Object
+                           (hashCode [this] ((fn ([] 42) ([one] (await one)))))))))
+    (is (= 42 (let [x (await (.mymethod (Concrete.)))] x)))))
