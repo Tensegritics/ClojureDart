@@ -1003,7 +1003,9 @@
       (let [f-name (name f)
             [f-type f-v] (resolve-symbol f env)
             macro-fn (case f-type
-                       :def (-> f-v :meta :macro-host-fn)
+                       :def (case (:type f-v) ; TODO rename :type into :kind
+                              :class (fn [form _ & _] (with-meta (cons 'new form) (meta form)))
+                              (-> f-v :meta :macro-host-fn))
                        :dart (case (:kind f-v)
                                :class (fn [form _ & _] (with-meta (cons 'new form) (meta form)))
                                nil)
