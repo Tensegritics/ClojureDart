@@ -10,7 +10,7 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
 
-final Set<String> libsToDo = {};
+final Set<String> libsToDo = {"dart:developer"};
 
 final Set<String> libsDone = {};
 
@@ -116,6 +116,7 @@ class TopLevelVisitor extends ThrowingElementVisitor {
     for(final c in e.constructors.where(isPublic)) {
       classData["\"${c.displayName}\""]=
       M({':kind': ':constructor',
+          ':named': !c.isDefaultConstructor,
           ':return-type': emitType(c.returnType),
           ':parameters': c.parameters.map(emitParameter),
           ':type-parameters': c.typeParameters.map(emitTypeParameter)

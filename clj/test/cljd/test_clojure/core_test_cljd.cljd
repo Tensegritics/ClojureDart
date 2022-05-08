@@ -11,6 +11,7 @@
 
 (ns cljd.test-clojure.core-test-cljd
   (:require ["dart:async" :as async]
+            ["dart:developer" :as dev]
             [cljd.string :as str])
   (:use [cljd.test :only [deftest is testing are]]))
 
@@ -374,3 +375,9 @@
     (is (= 42 (.hashCode (reify Object
                            (hashCode [this] ((fn ([] 42) ([one] (await one)))))))))
     (is (= 42 (let [x (await (.mymethod (Concrete.)))] x)))))
+
+;; this case happened with dev.ServiceExtensionResponse/result
+(deftest infer-named-constructor-when-same-name-prop-exists
+  (let [ser (dev.ServiceExtensionResponse/result "coucou")]
+    (is (dart/is? ser dev/ServiceExtensionResponse))
+    (is (dart/is? (.-result ser) String?))))

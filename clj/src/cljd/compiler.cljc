@@ -1439,12 +1439,13 @@
           member-name (if (and (= "-" member-name) (empty? args)) "unary-" member-name)
           member-name+ (case member-name "!=" "==" member-name)
           member-info (some->
-                        (or
-                          (fake-member-lookup type! member-name+ (count args))
-                          (dart-member-lookup type! member-name+ (meta member) env)
-                          (if static
-                            (dart-member-lookup type! (str (:element-name static) "." member-name) env)
-                            (dart-member-lookup dc-Object member-name+ env)))
+                        (else->>
+                          (if-some [mi (fake-member-lookup type! member-name+ (count args))] mi)
+                          (let [[_ member-info :as mi] (dart-member-lookup type! member-name+ (meta member) env)])
+                          ;; in case a property/method has the same name of a named constructor
+                          (or (and (or (not static) (:static member-info)) mi))
+                          (if static (dart-member-lookup type! (str (:element-name static) "." member-name) env))
+                          (dart-member-lookup dc-Object member-name+ env))
                         actual-member)
           dart-obj (cond
                      (= "==" member-name+) dart-obj
