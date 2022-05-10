@@ -31,7 +31,7 @@
 
 (defn action-button [& {:keys [on-pressed icon]}]
   (f/widget
-    :inherits [m/Theme]
+    :inherit [m/Theme]
     (m/Material
       :shape ^:const (m/CircleBorder)
       :clipBehavior m.Clip/antiAlias
@@ -68,7 +68,7 @@
     :key key
     :state [open init-open]
     :ticker tick
-    :inherits [m/Theme]
+    :inherit [m/Theme]
     :with [controller (m/AnimationController
                         :value (if init-open 1.0 0.0)
                         :duration ^:const (dart:core/Duration :milliseconds 250)

@@ -14,7 +14,7 @@
 
 (defn draggable-card [& {:keys [child]}]
   (f/widget
-    :inherits [m/MediaQuery]
+    :inherit [m/MediaQuery]
     :context ctx
     :ticker tick
     :with [controller (m/AnimationController :vsync tick)]

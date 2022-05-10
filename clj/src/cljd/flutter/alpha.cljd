@@ -23,56 +23,67 @@
    option names (as keywords) with their values.
    :key expr, when present, is used as the key of the widget, plain value,
               not a Key.
+
    :watch symbol-referencing an atom: this widget will be rebuilt everytime
           the atom change.
    :state [name init-value] creates an atom named state initialized to init-value,
                             watch for changes tp it.
+
    :context name, if you need to access the build context then provide its name here.
+
    :ticker name, bind name to a TickerProvider for a single AnimationController
    :tickers name, bind name to a TickerProvider for a several AnimationControllers
+
    :with [name-or-opt expr ...], declare resources whose lifecycle is managed
-   by this widget. (They are initializzed and disposed by this widget.)
+   by this widget. (They are initialized and disposed by this widget.)
    Each name-or-opt expr pair is either:
      * name init-expr: initialize resource with init-expr and bind it under
        name, by default the resource will be freed by calling .dispose on it;
      * :dispose dispose-expr (right after a name init-expr pair) which tells
        to dispose of the resource by doing (-> name dispose-expr);
      * :let bindings, to introduce intermediate values which are not
-       managed resources."
+       managed resources.
+   "
   {:arglists '[[:opt1 val1 ... :optN valN & body]]}
   [& args]
   (let [opts (take-while (comp keyword? first) (partition 2 args))
         body (drop (* 2 (count opts)) args)
-        {:keys [context key state watch with ticker tickers inherits] :as opts} (into {} (map vec) opts)
+        {:keys [context key state watch with ticker tickers bind inherit nested-in] :as opts} (into {} (map vec) opts)
         flutter-build-ctx (vary-meta (or context `ctx#) assoc :tag `widgets/BuildContext)
         watch (or watch (first state))
-        key-expr (some->> key (list `foundation/ValueKey.))
+        key-level (cond
+                    (seq bind) :bind
+                    (seq nested-in) :nested-in
+                    :else :base)
+        key-exprs {key-level (cond-> key (not= key-level :bind) (some->> (list `foundation/ValueKey.)))}
         ticker-mixin (cond tickers `^:mixin widgets/TickerProviderStateMixin ticker `^:mixin widgets/SingleTickerProviderStateMixin)
-        inherits (if (vector? inherits) {:of inherits} inherits)
-        inherits (if-some [shortcuts (:of inherits)]
-                   (into (dissoc inherits :of)
-                     (map (fn [type-or-kw]
-                            (let [hint (cond-> type-or-kw (seq? type-or-kw) first)]
-                              [(symbol
-                                 (if (keyword? hint)
-                                   (name hint)
-                                   (camel-kebab (re-find #"[^.]+$" (name hint)))))
-                               type-or-kw])))
-                     shortcuts)
-                   inherits)
+        inherit (if (vector? inherit) {:of inherit} inherit)
+        inherit (if-some [shortcuts (:of inherit)]
+                  (into (dissoc inherit :of)
+                    (map (fn [type-or-kw]
+                           (let [hint (cond-> type-or-kw (seq? type-or-kw) first)]
+                             [(symbol
+                                (if (keyword? hint)
+                                  (name hint)
+                                  (camel-kebab (re-find #"[^.]+$" (name hint)))))
+                              type-or-kw])))
+                    shortcuts)
+                  inherit)
         inherits-bindings
         (mapcat
           (fn [[sym type-or-kw]]
-            (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)
-                  op (if (keyword? type-or-kw)
-                       (throw (Exception. "Not implemented"))
-                       (symbol
-                         (if-some [ns (namespace type-or-kw)]
-                           (str ns "." (name type-or-kw))
-                           (name type-or-kw))
-                         "of"))]
-              [sym (list* op flutter-build-ctx args)]))
-          inherits)
+            (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)]
+              [sym
+               (if (keyword? type-or-kw)
+                 `(get-state-of ~flutter-build-ctx ~type-or-kw ~(vec args))
+                 (list*
+                   (symbol
+                     (if-some [ns (namespace type-or-kw)]
+                       (str ns "." (name type-or-kw))
+                       (name type-or-kw))
+                     "of")
+                   flutter-build-ctx args))]))
+          inherit)
         init-let-bindings (into []
                             (mapcat (fn [[lhs rhs :as binding]]
                                       (case lhs
@@ -90,41 +101,140 @@
         build+dispose `build+dispose#
         state-sym `^widgets/State state#
         super-sym `super#
-        expr `(let [~@inherits-bindings] ~@body)]
-    (if (or watch (seq with) ticker-mixin)
-      (cond->>
-          `(reify :extends (widgets/StatefulWidget. :key ~key-expr)
-             :no-meta true
-             (~'createState [_#]
-               (reify :extends widgets/State
+        expr `(let [~@inherits-bindings] ~@body)
+        user-widget
+        (if (or watch (seq with) ticker-mixin)
+          (cond->>
+              `(reify :extends (widgets/StatefulWidget. :key ~(:base key-exprs))
                  :no-meta true
-                 (~'initState [~state-sym]
-                   (.initState ~(vary-meta state-sym assoc :tag 'super))
-                   ~(when (seq with)
-                      `(let [~@(when ticker-mixin
-                                 [(vary-meta (or ticker tickers) assoc :tag ticker-mixin) state-sym])
-                             ~@init-let-bindings]
-                         (vreset! ~build+dispose
-                           [(fn [~flutter-build-ctx] ~expr)
-                            (fn [] ~@dispose-statements
-                              (vreset! ~build+dispose nil))])))
-                   ~(when watch
-                      `(add-watch ~watch ~state-sym (fn [k# r# o# n#] (.setState ~state-sym (fn [])))))
+                 (~'debugFillProperties [this# props-builder#]
+                  (.debugFillProperties ^{:tag ~'super} this# props-builder#)
+                  (doto props-builder#
+                    ~@(cond-> []
+                        watch
+                        (conj `(.add (foundation/MessageProperty "atom" (pr-str @~watch))))))
                   nil)
-                 (~'dispose [~state-sym]
-                   ~(when watch `(remove-watch ~watch ~state-sym))
-                   ~(when (seq with)
-                      `((second (deref ~build+dispose))))
-                  (.dispose ~(vary-meta state-sym assoc :tag 'super)))
-                 (~'build [~state-sym ~flutter-build-ctx]
-                   ~(if (seq with)
-                      `((first (deref ~build+dispose)) ~flutter-build-ctx)
-                      ; when no :with, just build here
-                      expr))
-                 ~@(when ticker-mixin [ticker-mixin]))))
-        state
-        (list `let [(first state) `(atom ~(second state))])
-        (seq with)
-        (list `let [build+dispose `(volatile! nil)]))
-      `(reify :extends (widgets/StatelessWidget. :key ~key-expr)
-         (~'build [_# ~flutter-build-ctx] ~expr)))))
+                 (~'createState [_#]
+                  (reify :extends widgets/State
+                    :no-meta true
+                    (~'initState [~state-sym]
+                     (.initState ~(vary-meta state-sym assoc :tag 'super))
+                     ~(when (seq with)
+                        `(let [~@(when ticker-mixin
+                                   [(vary-meta (or ticker tickers) assoc :tag ticker-mixin) state-sym])
+                               ~@init-let-bindings]
+                           (vreset! ~build+dispose
+                             [(fn [~flutter-build-ctx] ~expr)
+                              (fn [] ~@dispose-statements
+                                (vreset! ~build+dispose nil))])))
+                     ~(when watch
+                        `(add-watch ~watch ~state-sym (fn [k# r# o# n#] (.setState ~state-sym (fn [])))))
+                     nil)
+                    (~'dispose [~state-sym]
+                     ~(when watch `(remove-watch ~watch ~state-sym))
+                     ~(when (seq with)
+                        `((second (deref ~build+dispose))))
+                     (.dispose ~(vary-meta state-sym assoc :tag 'super)))
+                    (~'build [~state-sym ~flutter-build-ctx]
+                     ~(if (seq with)
+                        `((first (deref ~build+dispose)) ~flutter-build-ctx)
+                        ; when no :with, just build here
+                        expr))
+                    ~@(when ticker-mixin [ticker-mixin]))))
+            state
+            (list `let [(first state) `(atom ~(second state))])
+            (seq with)
+            (list `let [build+dispose `(volatile! nil)]))
+          `(reify :extends (widgets/StatelessWidget. :key ~(:base key-exprs))
+             (~'build [_# ~flutter-build-ctx] ~expr)))
+        user-widget
+        (if-some [[top & others] (seq nested-in)]
+          `(nest
+             (~@(if (seq? top) top (list top)) :key ~(key-exprs :nested-in))
+             ~@others
+             ~user-widget)
+          user-widget)]
+    (if (seq bind)
+      `(let [user-widget# ~user-widget]
+         (widget
+           :key ~(:bind key-exprs)
+           :state [bindings# ~(zipmap (keys bind)
+                                (for [v (vals bind)] `(ensure-model ~v)))]
+           :context pctx#
+           (cljd.flutter.alpha/InheritedBindings. bindings# pctx# @bindings#
+             (->> user-widget#
+               ))))
+      user-widget)))
+
+(defprotocol IModel
+  (-state [v args swp! trck!] "Returns a mutable view of this binding in this context.")
+  (-updated? [v prev-v q])
+  (-update [v f]))
+
+(deftype AssociativeState [v path swp! trck!]
+  cljd.core/IDeref
+  (-deref [_]
+    (trck! path)
+    v)
+  cljd.core/ISwap
+  (-swap! [o f]
+    (swp! (if (seq path) #(update-in % path f) f)))
+  (-swap! [o f a]
+    (swp! (if (seq path) #(update-in % path f a) #(f % a))))
+  (-swap! [o f a b]
+    (swp! (if (seq path) #(update-in % path f a b) #(f % a b))))
+  (-swap! [o f a b xs]
+    (swp! (if (seq path) #(apply update-in % path f a b xs) #(apply f % a b xs))))
+  cljd.core/IReset
+  (-reset! [o v']
+    (swp! (if (seq path) #(assoc-in % path v') (constantly v'))))
+  cljd.core/ILookup
+  (-lookup [o k]
+    (AssociativeState. (-lookup v k) (conj path k) swp! trck!))
+  (-lookup [o k not-found]
+    (AssociativeState. (-lookup v k not-found) (conj path k) swp! trck!))
+  (-contains-key? [o k]
+    (trck! (conj path k))
+    (contains? v k)))
+
+(deftype AssociativeModel [v]
+  IModel
+  (-state [model args swp! trck!]
+    (AssociativeState. (get-in v args) args swp! trck!))
+  (-updated? [model prev-model ks] (not= (get-in v ks) (get-in (.v ^AssociativeModel prev-model) ks)))
+  (-update [_ f] (AssociativeModel. (f v))))
+
+(defn ensure-model [x]
+  (if (satisfies? IModel x) x (AssociativeModel. x)))
+
+(deftype StaticModel [v]
+  IModel
+  (-state [model args swp! trck!] (trck! args) (get-in v args))
+  (-updated? [model prev-model ks] (not= (get-in v ks) (get-in (.v ^StaticModel prev-model) ks))))
+
+(defn static
+  "Returns a value model (not derefable, not updatable)."
+  [v]
+  (StaticModel. v))
+
+(deftype InheritedBindings [state pctx snapshot child]
+  :extends (widgets/InheritedModel. :child child)
+  (isSupportedAspect [this name]
+    (contains? snapshot name))
+  (updateShouldNotify [this prev-this]
+    (not= snapshot (.-snapshot ^InheritedBindings prev-this)))
+  (updateShouldNotifyDependent [this prev-this aspects]
+    (let [prev-snapshot (.-snapshot ^InheritedBindings prev-this)]
+      (boolean
+        (some (fn [[name q]]
+                (-updated? (snapshot name) (prev-snapshot name) q)) aspects)))))
+
+(defn get-state-of [^widgets/BuildContext ctx id args]
+  (if-some [elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)]
+    (let [ib ^InheritedBindings (.widget elt)]
+      (if (.isSupportedAspect ib id)
+        (-state (get (.snapshot ib) id) args
+          #(swap! (.state ib) update id -update %)
+          #(.dependOnInheritedElement ctx elt :aspect [id %]))
+        (recur (.pctx ib) id args)))
+    (throw (Exception (str "No inherited state for id" id)))))

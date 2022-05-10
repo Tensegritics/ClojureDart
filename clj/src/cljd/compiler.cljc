@@ -1012,8 +1012,8 @@
                        nil)]
         (cond
           (env f) form
-          (= 'defprotocol f) (apply expand-defprotocol args)
-          (= 'extend-type f) (apply expand-extend-type args)
+          (or (= 'cljd.core/defprotocol f) (= 'defprotocol f)) (apply expand-defprotocol args)
+          (or (= 'cljd.core/extend-type f) (= 'extend-type f)) (apply expand-extend-type args)
           (= '. f) form
           macro-fn
           (apply macro-fn form (assoc env :nses @nses) (next form))
@@ -1445,7 +1445,7 @@
                           (if-some [mi (fake-member-lookup type! member-name+ (count args))] mi)
                           (let [[_ member-info :as mi] (dart-member-lookup type! member-name+ (meta member) env)])
                           ;; in case a property/method has the same name of a named constructor
-                          (or (and (or (not static) (:static member-info)) mi))
+                          (or (when-not (and static (not (:static member-info))) mi))
                           (if static (dart-member-lookup type! (str (:element-name static) "." member-name) env))
                           (dart-member-lookup dc-Object member-name+ env))
                         actual-member)
@@ -1515,15 +1515,15 @@
           [[nil (list 'dart/set! dart-sym (emit expr env))]]
           dart-sym))
       (and (seq? target) (= '. (first target)))
-      (let [[_ obj member] target]
-        (if-some [[_ fld] (re-matches #"-(.+)" (name member))]
-          (let [[bindings [dart-obj dart-val]] (lift-args true (split-args [obj expr] nil env) env)]
-            (list 'dart/let
-              (conj (vec bindings)
-                [nil (list 'dart/set! (list 'dart/.- dart-obj fld) dart-val)])
-              dart-val))
-          (throw (ex-info (str "Cannot assign to a non-property: " member ", make sure the property name is prefixed by a dash.")
-                          {:target target}))))
+      (let [[_ obj member] target
+            [_ fld] (re-matches #"-?(.+)" (name member))
+       #_     (dart-member-lookup type! fld nil env)
+            ; TODO actual field resolution + simple-cast
+            [bindings [dart-obj dart-val]] (lift-args true (split-args [obj expr] nil env) env)]
+        (list 'dart/let
+          (conj (vec bindings)
+            [nil (list 'dart/set! (list 'dart/.- dart-obj fld) dart-val)])
+          dart-val))
       :else
       (throw (ex-info (str "Unsupported target for assignment: " target) {:target target})))))
 
@@ -3810,13 +3810,36 @@
                   dart-libs-info li]
           (compile 'cljd.test-reader.reader-test)))))
 
-  (binding [dart-libs-info li]
-    (->
-      (dart-member-lookup
-        (resolve-type 'cljd.core/PersistentHashMap #{})
-        "entries" {})
-      actual-member)
+  (binding [*locals-gen* {}
+            dart-libs-info li]
+    (write (emit
+             '(deftype Foo [x]
+                  (bar [this])) {}) return-locus)
   )
+
+  (binding [*locals-gen* {}
+            dart-libs-info li]
+    (write (emit
+             '(->Foo 14) {}) return-locus)
+    )
+
+  (binding [*locals-gen* {}
+            dart-libs-info li]
+    (write (emit
+             '(Foo 14) {}) return-locus)
+    )
+
+  (binding [*locals-gen* {}
+            dart-libs-info li]
+    (write (emit ;-fn-call
+             '(map 14) {}) return-locus)
+    )
+
+  (binding [*locals-gen* {}
+            dart-libs-info li]
+    (keys (infer-type (emit ;-fn-call
+                                     'Foo {})))
+    )
 
   (write
     (binding [dart-libs-info li]

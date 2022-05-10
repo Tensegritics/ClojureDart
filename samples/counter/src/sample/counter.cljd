@@ -12,7 +12,7 @@
       :home
       (f/widget
         :state [counter 0]
-        :inherits [m/Theme]
+        :inherit [m/Theme]
         (m/Scaffold
           :appBar (m/AppBar :title (m/Text "ClojureDart Home Page"))
           :body

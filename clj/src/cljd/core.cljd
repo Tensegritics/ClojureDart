@@ -1967,7 +1967,7 @@
   IReset
   (-reset! [this new-value] (set-and-validate-atom-state! this new-value)))
 
-(defn reset! [^Atom atom new-value]
+(defn reset! [atom new-value]
   (-reset! atom new-value))
 
 (defn ^bool compare-and-set!
@@ -2062,10 +2062,10 @@
   (apply f current-value-of-atom args). Note that f may be called
   multiple times, and thus should be free of side effects.  Returns
   the value that was swapped in."
-  ([^Atom a f] (-swap! a f))
-  ([^Atom a f x] (-swap! a f x))
-  ([^Atom a f x y] (-swap! a f x y))
-  ([^Atom a f x y & more] (-swap! a f x y more)))
+  ([a f] (-swap! a f))
+  ([a f x] (-swap! a f x))
+  ([a f x y] (-swap! a f x y))
+  ([a f x y & more] (-swap! a f x y more)))
 
 (defn reset-vals!
   "Sets the value of atom to newval. Returns [old new], the value of the
@@ -7151,3 +7151,10 @@
              nil
              (reduce dissoc (into {} ~m) ~(into [] (map keyword) fields))
              -1)))))
+
+(defmacro extend-protocol [protocol & types+impls]
+  (when-some [[type & more] (seq types+impls)]
+    (let [[impls types+impls] (split-with seq? more)]
+      `(do
+         (extend-type ~type ~protocol ~@impls)
+         (extend-protocol ~protocol ~@types+impls)))))
