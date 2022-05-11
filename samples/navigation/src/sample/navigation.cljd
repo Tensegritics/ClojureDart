@@ -1,0 +1,35 @@
+(ns sample.navigation
+  "Port of https://docs.flutter.dev/cookbook/navigation/navigation-basics"
+  (:require
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter.alpha :as f]))
+
+(def second-route
+  (f/widget
+    :inherit [m/Navigator]
+    (m/Scaffold
+      :appBar (m/AppBar :title (m/Text "Second Route"))
+      :body
+      (f/nest
+        m/Center
+        (m/ElevatedButton :onPressed #(.pop navigator))
+        (m/Text "Go back!")))))
+
+(def first-route
+  (f/widget
+    :inherit [m/Navigator]
+    (m/Scaffold
+      :appBar (m/AppBar :title (m/Text "First Route"))
+      :body
+      (f/nest
+        m/Center
+        (m/ElevatedButton :onPressed #(do
+                                        (.push navigator (#/(m/MaterialPageRoute Object) :builder (fn [_] second-route)))
+                                        nil))
+        (m/Text "Open route")))))
+
+(defn main []
+  (m/runApp
+    (m/MaterialApp
+      :title "Navigation Basics"
+      :home first-route)))
