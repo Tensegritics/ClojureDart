@@ -4531,7 +4531,7 @@
               ;; TODO not=
               (not (= k' k))
               (let [net-size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
-                    gross-size (inc (bit-or 7 (dec net-size)))
+                    gross-size (bit-and -8 (+ 7 net-size))
                     shift' (+ 5 ^int shift)
                     n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
                     bit' (u32-bit-shift-left 1 n')
@@ -4592,7 +4592,7 @@
                 (let [k (aget (.-arr child') 0)
                       v (aget (.-arr child') 1)
                       net-size (inc (u32x2-bit-count bitmap-hi bitmap-lo))
-                      gross-size (inc (bit-or 7 (dec net-size)))
+                      gross-size (bit-and -8 (+ 7 net-size))
                       from-arr arr]
                   (when (< (.-length arr) net-size)
                     (set! arr (aresize arr idx gross-size nil)))
@@ -4610,7 +4610,7 @@
           ; the right kv pair
           (= k (aget arr idx))
           (let [net-size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
-                gross-size (inc (bit-or 7 (dec net-size)))
+                gross-size (bit-and -8 (+ 7 net-size))
                 from-arr arr]
             (when (< gross-size (.-length arr))
               (set! arr (aresize arr idx gross-size nil)))
@@ -4900,7 +4900,8 @@
     (let [bitmap-hi (.-bitmap_hi root)
           bitmap-lo (.-bitmap_lo root)
           net-size (u32x2-bit-count bitmap-hi bitmap-lo)
-          gross-size (inc (bit-or 7 (dec net-size)))]
+          gross-size
+          (bit-and -9 (+ 7 net-size))]
       (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil))))))
 
 (def ^PersistentHashMap -EMPTY-MAP
