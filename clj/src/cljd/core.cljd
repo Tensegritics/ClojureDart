@@ -4900,8 +4900,7 @@
     (let [bitmap-hi (.-bitmap_hi root)
           bitmap-lo (.-bitmap_lo root)
           net-size (u32x2-bit-count bitmap-hi bitmap-lo)
-          gross-size
-          (bit-and -9 (+ 7 net-size))]
+          gross-size (bit-and -8 (+ 7 net-size))]
       (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil))))))
 
 (def ^PersistentHashMap -EMPTY-MAP
