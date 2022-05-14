@@ -129,14 +129,15 @@
           clojure.lang.LineNumberingPushbackReader.
           clojure.edn/read)
         inline-exports
-        (fn export [{exports :exports :as v}]
-          (into v (map (fn [{:keys [lib shown hidden]}]
-                         (cond
-                           shown
-                           (select-keys (export (dart-libs-info lib)) shown)
-                           hidden
-                           (reduce dissoc (export (dart-libs-info lib)) hidden)
-                           :else (export (dart-libs-info lib))))) exports))
+        (fn export [{exports :exports :as v} past-exports]
+          (into v (keep (fn [{:keys [lib shown hidden]}]
+                          (when-not (contains? past-exports lib)
+                            (cond
+                              shown
+                              (select-keys (export (dart-libs-info lib) past-exports) shown)
+                              hidden
+                              (reduce dissoc (export (dart-libs-info lib) past-exports) hidden)
+                              :else (export (dart-libs-info lib) (conj past-exports lib)))))) exports))
         assoc->qnames
         (fn [{name :element-name :as entity}]
           (case name
@@ -205,7 +206,7 @@
                                       :toplevel true
                                       :canon-lib (:lib entity))
                                     qualify-entity))]))
-                        (inline-exports content))]))
+                        (inline-exports content #{lib}))]))
           dart-libs-info)
       (assoc-in ["dart:core" "Never"] dc-Never)
       (assoc-in ["dart:core" "dynamic"] dc-dynamic)
