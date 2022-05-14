@@ -31,7 +31,7 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDart.git"
-         :sha "756ed252e41e6eacc96dcbbed59190f2a3bdf3c2"}}}
+         :sha "e1f6cf7740b0e6fff42e48b51f384181d2627765"}}}
 EOF
 ```
 
@@ -43,7 +43,7 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "https://github.com/tensegritics/ClojureDart.git"
-         :sha "756ed252e41e6eacc96dcbbed59190f2a3bdf3c2"}}}
+         :sha "e1f6cf7740b0e6fff42e48b51f384181d2627765"}}}
 EOF
 ```
 
