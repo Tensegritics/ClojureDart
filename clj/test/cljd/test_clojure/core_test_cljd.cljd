@@ -381,3 +381,19 @@
   (let [ser (dev.ServiceExtensionResponse/result "coucou")]
     (is (dart/is? ser dev/ServiceExtensionResponse))
     (is (dart/is? (.-result ser) String?))))
+
+(definterface INullableFunctionBug
+  (^String text [^^{:params-types (void)} Function? onPressed]))
+
+(deftype NullableFunctionBug []
+  INullableFunctionBug
+  (text [this ^^{:params-types (void)} Function? onPressed]
+    (if-not (nil? onPressed)
+      (do (onPressed)
+          "hooo")
+      "Heeyyy")))
+
+(deftest nullable-function-bug
+  (let [x (NullableFunctionBug.)]
+    (is (= "Heeyyy" (.text x nil)))
+    (is (= "hooo" (.text x (fn [] "dd" nil))))))

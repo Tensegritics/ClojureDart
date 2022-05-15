@@ -57,6 +57,7 @@ String emitType(DartType t) {
   if (lib != null) libsToDo.add(lib);
   if (t is FunctionType) {
     return M({':type': "\"Function\"",
+        ':nullable': t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question,
         ':return-type': emitType(t.returnType),
         ':parameters': t.parameters.map(emitParameter),
         ':type-parameters': t.typeFormals.map(emitTypeParameter)});
