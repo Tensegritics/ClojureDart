@@ -515,7 +515,7 @@
               not-found)
        not-found))))
 
-(defn unresolve-type [{:keys [is-param lib qname element-name type-parameters nullable] :as x}]
+(defn unresolve-type [{:keys [is-param lib qname canon-qname element-name type-parameters nullable] :as x}]
   (if is-param
     (symbol (cond-> qname nullable (str "?")))
     (let [{:keys [current-ns] :as nses} @nses]
@@ -527,7 +527,8 @@
             (or (get-in nses [current-ns :imports lib :clj-alias])
               (some-> lib (global-lib-alias nil) (->> (str "$lib:")))))
           (cond-> element-name nullable (str "?")))
-        {:type-params (mapv unresolve-type type-parameters)}))))
+        (cond-> {:type-params (mapv unresolve-type type-parameters)}
+          (= (:canon-qname dc-Function) canon-qname) (assoc :params-types (map unresolve-type (cons (:return-type x) (map :type (:parameters x))))))))))
 
 (defn emit-type
   [tag {:keys [type-vars] :as env}]
