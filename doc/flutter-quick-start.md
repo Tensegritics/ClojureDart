@@ -113,11 +113,7 @@ Please follow [those guidelines](https://docs.genymotion.com/desktop/Get_started
 
     * Select the path to your Genymotion folder
 
-* within your **flutter project**, run `flutter devices` ; you should see appear genymotion among connected devices. (make sure your genymotion device is still on)
-
-    * run `clj -M -m cljd.build flutter` and your application should run in the emulator ;)
-
-
+* within your **flutter project**, run `flutter devices` ; Genymotion should appears among connected devices. (make sure your genymotion device is still on)
 
 ## 8. Start the ClojureDart watcher
 
