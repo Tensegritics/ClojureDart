@@ -108,9 +108,6 @@ Please follow [those guidelines](https://docs.genymotion.com/desktop/Get_started
     * `Select Tools > SDK Manager > Plugins > Genymotion`, and restart AS
     * Then, select `Files > Settings`
     * On the sidebar, select `Tools > Genymotion plugin`
-
-> :bulb: if ou do not find it, search for "genymotion" on the search bar
-
     * Select the path to your Genymotion folder
 
 * within your **flutter project**, run `flutter devices` ; Genymotion should appears among connected devices. (make sure your genymotion device is still on)
