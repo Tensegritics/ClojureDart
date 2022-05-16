@@ -100,25 +100,18 @@ Please follow [those guidelines](https://docs.genymotion.com/desktop/Get_started
 
 
 * Install the Genymotion plug-in for Android Studio (Within AS: Tools > SDK Manager > Plugins > Genymotion). Restart AS
+    * Configure the SDK within Genymotion (Genymotion > Preferences > ADB > Use custom Android SDK tools) then use the path /$Home/Android/sdk (default location after installing AS)
+    * Create a new device within Genymotion
 
-* Configure the SDK within Genymotion (Genymotion > Preferences > ADB > Use custom Android SDK tools) then use the path /$Home/Android/sdk (default location after installing AS)
-
-* Create a new device within Genymotion
-
-On the other hand, within Android Studio:
-
-* Files > Settings
-
-* On the sidebar, select Tools > Genymotion plugin
+* In Android Studio
+    * Files > Settings
+    * Then, on the sidebar, select Tools > Genymotion plugin
 
 > :bulb: if ou do not find it, search for "genymotion" on the search bar
 
-
-* Select the path to your Genymotion folder
-
-* within your flutter project, run `flutter devices` ; you should see appear genymotion among the 2 connected devices. (make sure your genymotion device is still on)
-
-* run `flutter run` and your application should emulates ;)
+    * Select the path to your Genymotion folder
+    * within your flutter project, run `flutter devices` ; you should see appear genymotion among connected devices. (make sure your genymotion device is still on)
+    * run `clj -M -m cljd.build flutter` and your application should run in the emulator ;)
 
 
 
