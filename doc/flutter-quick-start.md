@@ -94,6 +94,34 @@ open -a Simulator
 
 Android:
 
+> :bulb: We recommand you to use Genymotion plugin for Android Studio, since its lighter than the AS native one.
+
+Please follow [those guidelines](https://docs.genymotion.com/desktop/Get_started/Requirements/) to install and setup Genymotion.
+
+
+* Install the Genymotion plug-in for Android Studio (Within AS: Tools > SDK Manager > Plugins > Genymotion). Restart AS
+
+* Configure the SDK within Genymotion (Genymotion > Preferences > ADB > Use custom Android SDK tools) then use the path /$Home/Android/sdk (default location after installing AS)
+
+* Create a new device within Genymotion
+
+On the other hand, within Android Studio:
+
+* Files > Settings
+
+* On the sidebar, select Tools > Genymotion plugin
+
+> :bulb: if ou do not find it, search for "genymotion" on the search bar
+
+
+* Select the path to your Genymotion folder
+
+* within your flutter project, run `flutter devices` ; you should see appear genymotion among the 2 connected devices. (make sure your genymotion device is still on)
+
+* run `flutter run` and your application should emulates ;)
+
+
+
 ## 8. Start the ClojureDart watcher
 
 ``` shell
