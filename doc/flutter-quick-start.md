@@ -99,18 +99,18 @@ Android:
 Please follow [those guidelines](https://docs.genymotion.com/desktop/Get_started/Requirements/) to install and setup Genymotion.
 
 
-* Configure the SDK **within Genymotion** (`Genymotion > Preferences > ADB > Use custom Android SDK tools`) then use the path `/$HOME/Android/sdk` (default location after installing AS)
+* Configure the SDK **within Genymotion** (`Genymotion > Preferences > ADB > Use custom Android SDK tools`) then use the path `/$HOME/Android/sdk` (default location after installing Android Studio)
 
     * Create a new device within Genymotion
 
 * In **Android Studio**
 
-    * `Select Tools > SDK Manager > Plugins > Genymotion`, and restart AS
+    * `Select Tools > SDK Manager > Plugins > Genymotion`, and restart Android Studio
     * Then, select `Files > Settings`
     * On the sidebar, select `Tools > Genymotion plugin`
     * Select the path to your Genymotion folder
 
-* within your **flutter project**, run `flutter devices` ; Genymotion should appears among connected devices. (make sure your genymotion device is still on)
+* within your **flutter project**, run `flutter devices`: Genymotion should appear among connected devices. (make sure your genymotion device is still on)
 
 ## 8. Start the ClojureDart watcher
 
