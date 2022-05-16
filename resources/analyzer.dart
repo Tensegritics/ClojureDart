@@ -10,7 +10,7 @@ import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
 
-final Set<String> libsToDo = {"dart:developer"};
+final Set<String> libsToDo = {"dart:developer", "dart:mirrors", "dart:ffi", "dart:io", "dart:isolate", "dart:async", "dart:collection", "dart:convert", "dart:math", "dart:typed_data", "dart:html", "dart:indexed_db", "dart:js", "dart:js_util", "dart:svg", "dart:web_audio", "dart:web_gl"};
 
 final Set<String> libsDone = {};
 
