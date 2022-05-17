@@ -4519,7 +4519,7 @@
           (let [^BitmapNode child (aget arr idx)]
             (if (zero? hi)
               ; if node is not owned
-              (let [^BitmapNode child' (.inode_assoc child shift h k v)]
+              (let [^BitmapNode child' (.inode_assoc child (+ shift 5) h k v)]
                 (when-not (identical? child child')
                   (set! bitmap-hi (bit-xor hi bitmap-hi))
                   (set! bitmap-lo (bit-xor hi bitmap-lo))
