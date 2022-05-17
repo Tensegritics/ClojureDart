@@ -1,0 +1,21 @@
+(ns sample.gridlist
+  "Faithful port of https://docs.flutter.dev/cookbook/lists/grid-lists"
+ (:require
+  ["package:flutter/material.dart" :as m]
+  [cljd.flutter.alpha :as f]))
+
+(defn main
+  []
+  (let [title "Grid List"]
+    (m/runApp
+     (m/MaterialApp
+      :title title
+      :home (m/Scaffold
+             :appBar (m/AppBar :title (m/Text title))
+             :body (f/widget
+                    :inherit [m/Theme]
+                    (m.GridView/count
+                     :crossAxisCount 2
+                     :children (map
+                                (fn [i] (m/Center :child (m/Text (str "Item " i) :style (-> theme .textTheme .headline3))))
+                                (range 100)))))))))
