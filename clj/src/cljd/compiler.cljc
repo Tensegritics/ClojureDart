@@ -443,17 +443,19 @@
 (defn- resolve-non-local-symbol [sym type-vars]
   (let [{:keys [libs] :as nses} @nses
         {:keys [mappings clj-aliases] :as current-ns} (nses (:current-ns nses))
-        resolve (fn [sym]
+        ensure-class (fn [v] (when (= :class (:type v)) v))
+        resolve (fn [sym ensure-right-type]
                   (else->>
-                    (if-some [v (get current-ns sym)] [:def v])
+                    (if-some [v (ensure-right-type (get current-ns sym))] [:def v])
                     (if-some [v (get mappings sym)]
-                      (recur (with-meta v (meta sym))))
+                      (recur (with-meta v (meta sym)) ensure-right-type))
                     (let [sym-ns (namespace sym)
                           lib-ns (or (cljdize sym-ns)
                                    (some-> (get clj-aliases sym-ns) libs :ns name))])
                     (if (some-> lib-ns (not= sym-ns))
-                      (recur (with-meta (symbol lib-ns (name sym)) (meta sym))))
-                    (if-some [info (some-> sym-ns symbol nses (get (symbol (name sym))))]
+                      (recur (with-meta (symbol lib-ns (name sym)) (meta sym))
+                        ensure-right-type))
+                    (if-some [info (some-> sym-ns symbol nses (get (symbol (name sym))) ensure-right-type)]
                       [:def info])
                     (when-not (non-nullable sym))
                     (if-some [atype (resolve-dart-type sym type-vars)]
@@ -465,8 +467,8 @@
                                     :function (specialize-function info  sym type-vars)
                                     :class (specialize-type info nullable sym type-vars)
                                     :field info))])]
-    (or (some-> (resolve sym) (specialize false))
-      (some-> (non-nullable sym) resolve (specialize true)))))
+    (or (some-> (resolve sym identity) (specialize false))
+      (some-> (non-nullable sym) (resolve ensure-class) (specialize true)))))
 
 (defn resolve-symbol
   "Returns either a pair [tag value] or nil when the symbol can't be resolved.
@@ -3864,8 +3866,6 @@
     (binding [dart-libs-info li]
       (emit-test '(fn [x] (loop [i x] (recur (inc i)))) {}))
     return-locus)
-
-  (nil? (swap! nses assoc :current-ns 'cljd.core))
 
   (binding [*host-eval* true]
     (write
