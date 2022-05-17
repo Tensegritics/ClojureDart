@@ -456,6 +456,11 @@
     false
     true))
 
+(defn ^bool boolean?
+  "Return true if x is a Boolean"
+  [x]
+  (dart/is? x bool))
+
 (defn ^bool some?
   "Returns true if x is not nil, false otherwise."
   {:inline-arities #{1}
