@@ -406,3 +406,7 @@
 (deftest CLJD-77-first-on-subvec
   (let [v (into [] (range 100))]
     (is (= 1 (first (subvec v 1))))))
+
+(deftest CLJD-76-case-on-symbols
+  (is (= true (case 'x x true false)))
+  (is (= false (case 'y x true false))))

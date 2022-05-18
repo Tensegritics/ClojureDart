@@ -1616,7 +1616,7 @@
       (string? x) (hash x) ; cljd hashes string like clj/jvm
       (char? x) (hash (str x))
       (symbol? x) (cljd-hash-combine
-                    (clojure.lang.Murmur3/hashUnencodedChars (name x))
+                    (cljd-u32 (clojure.lang.Murmur3/hashUnencodedChars (name x)))
                     (hash (namespace x)))
       (keyword? x)
       (cljd-hash-combine
