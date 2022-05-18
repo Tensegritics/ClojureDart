@@ -3719,7 +3719,10 @@
             :else #dart ^:fixed [(key v) (val v)]))
         (. #/(cast E))
         .-iterator)
-      (PVIterator. v start end  (.-tail ^PersistentVector v))))
+      (PVIterator. v start end
+        (if (<= (bit-and-not (dec (.-cnt v)) 31) start)
+          (.-tail v)
+          (unchecked-array-for (.-root v) (.-shift v) start)))))
   ^:mixin #/(SeqListMixin E)
   (^#/(SubVec R) #/(cast R) [coll]
    (new #/(SubVec R) meta v start end __hash))
