@@ -4591,7 +4591,7 @@
                 child-cnt (.-cnt child)
                 ^BitmapNode? child'
                 (if (zero? hi)
-                  (let [child' (.inode_without child (+ shift 5) h k)]
+                  (let [child' (.inode_without child shift h k)]
                     (when-not (identical? child child') child'))
                   (.inode_without_transient child (+ shift 5) h k))]
             (when child'
