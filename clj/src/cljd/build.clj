@@ -258,7 +258,7 @@
         "dart"
         (apply exec bin "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
       (spit (java.io.File. (System/getProperty "user.dir") "cljd.edn") (pr-str {:main main-ns :bin bin}))
-      (spit entry-point (str "export " (with-out-str (compiler/write-string-literal lib)) " show main;\n"))
+      (spit entry-point (str "export " (compiler/with-dart-str (compiler/write-string-literal lib)) " show main;\n"))
       (println "👍" (green "All setup!") "Let's write some cljd in" main-ns))))
 
 (defn exit [status msg]

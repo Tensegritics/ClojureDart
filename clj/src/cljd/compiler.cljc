@@ -214,7 +214,7 @@
 
 (def ^:dynamic ^java.io.Writer *dart-out*)
 
-(defmacro ^:private with-dart-str [& body]
+(defmacro with-dart-str [& body]
   `(let [w# (java.io.StringWriter.)]
      (binding [*dart-out* w#]
        ~@body)
