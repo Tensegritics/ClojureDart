@@ -397,3 +397,32 @@
   (let [x (NullableFunctionBug.)]
     (is (= "Heeyyy" (.text x nil)))
     (is (= "hooo" (.text x (fn [] "dd" nil))))))
+
+(deftest CLJD-74-assoc!-subnode
+  (let [m '{tiltontec.util.base/*trdeep* 5 tiltontec.cell.base/*call-stack* 7}
+        m' (persistent! (assoc! (transient m) 'tiltontec.util.base/*trdeep* 50))]
+    (is (= (count m) (count m')))))
+
+(deftest CLJD-77-first-on-subvec
+  (let [v (into [] (range 100))]
+    (is (= 1 (first (subvec v 1))))))
+
+(deftest CLJD-76-case-on-symbols
+  (is (= true (case 'x x true false)))
+  (is (= false (case 'y x true false))))
+
+(definterface ICastNullable
+  (^String text [^#/(List? String) actions]))
+
+(deftype CastNullable []
+  ICastNullable
+  (text [this actions]
+    (if-not (nil? actions)
+      (.-last actions)
+      "worked")))
+
+(deftest cast-nullable-to-non-nullable-for-castable-collections
+  (let [x (CastNullable.)]
+    (is (= "clojuredart" (.text x (cond-> ["coucou"]
+                                    true (conj "clojuredart")))))
+    (is (= "worked" (.text x nil)))))

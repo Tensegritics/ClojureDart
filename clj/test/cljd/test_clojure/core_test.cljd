@@ -1606,6 +1606,12 @@
 #_(deftest test-cljs-2552
     (is (boolean? (tap> nil))))
 
+(deftest test-boolean?
+  (is (boolean? true))
+  (is (boolean? false))
+  (is (not (boolean? nil)))
+  (is (not (boolean? 10))))
+
 ;; TODO
 #_(deftest test-cljs-2693
   (is (chunked-seq? (range 5)))
