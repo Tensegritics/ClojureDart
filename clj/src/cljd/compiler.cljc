@@ -1275,7 +1275,7 @@
               (list 'dart/. dart-expr (into ["cast"] (:type-parameters expected-type)))
               (list 'dart/if (list 'dart/is dart-expr expected-type) ; or expected-type?
                 dart-expr
-                (list 'dart/. (list 'dart/as dart-expr (dissoc expected-type :type-parameters)) (into ["cast"] (:type-parameters expected-type)))))])
+                (list 'dart/. (list 'dart/as dart-expr (dissoc expected-type :type-parameters :nullable)) (into ["cast"] (:type-parameters expected-type)))))])
          casted))
      (= (:canon-qname expected-type) 'dc.Function) ; TODO : generics
      (let [{:keys [return-type parameters]} expected-type

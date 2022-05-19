@@ -410,3 +410,19 @@
 (deftest CLJD-76-case-on-symbols
   (is (= true (case 'x x true false)))
   (is (= false (case 'y x true false))))
+
+(definterface ICastNullable
+  (^String text [^#/(List? String) actions]))
+
+(deftype CastNullable []
+  ICastNullable
+  (text [this actions]
+    (if-not (nil? actions)
+      (.-last actions)
+      "worked")))
+
+(deftest cast-nullable-to-non-nullable-for-castable-collections
+  (let [x (CastNullable.)]
+    (is (= "clojuredart" (.text x (cond-> ["coucou"]
+                                    true (conj "clojuredart")))))
+    (is (= "worked" (.text x nil)))))
