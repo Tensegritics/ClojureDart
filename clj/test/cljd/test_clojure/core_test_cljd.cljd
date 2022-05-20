@@ -425,4 +425,5 @@
   (let [x (CastNullable.)]
     (is (= "clojuredart" (.text x (cond-> ["coucou"]
                                     true (conj "clojuredart")))))
-    (is (= "worked" (.text x nil)))))
+    (is (= "worked" (.text x nil)))
+    (is (= "worked" (.text x ^List? (identity nil))))))
