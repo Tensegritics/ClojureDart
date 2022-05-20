@@ -3704,7 +3704,7 @@
       (RSeq. nil rev (dec cnt) -1))))
 
 (deftype #/(SubVec E)
-  [meta v ^int start ^int end ^:mutable ^int __hash]
+  [meta ^PersistentVector v ^int start ^int end ^:mutable ^int __hash]
   :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)

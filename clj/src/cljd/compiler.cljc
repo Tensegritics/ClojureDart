@@ -1192,6 +1192,21 @@
       [dc-Null (dissoc type :nullable)]
       [type])))
 
+(defn- nullable-type? [type]
+  (or (:nullable type)
+    (case (:canon-qname type)
+      dc.dynamic true
+      da.FutureOr (recur (first (:type-parameters type)))
+      false)))
+
+(defn- positive-type
+  [{:keys [canon-qname nullable] :as type}]
+  (case canon-qname
+    dc.dynamic dc-Object
+    da.FutureOr (let [[t] (:type-parameters type)]
+                  (assoc da-FutureOr :type-parameters [(positive-type t)]))
+    (dissoc type :nullable)))
+
 (defn is-assignable?
   "Returns true when a value of type value-type can be used as a value of type slot-type."
   [slot-type value-type]
@@ -1256,9 +1271,16 @@
    (magicast dart-expr expected-type (:dart/type (infer-type dart-expr)) env))
   ([dart-expr expected-type actual-type env]
    (cond
-     (is-assignable? expected-type actual-type) dart-expr
+     (is-assignable? expected-type actual-type) dart-expr ; <1>
      (and (= (:canon-qname expected-type) 'dc.double)
        (= (:canon-qname actual-type) 'dc.int)) dart-expr
+     (and (nullable-type? expected-type) (nullable-type? actual-type))
+     (with-lifted [dart-expr dart-expr] env
+       (list 'dart/if (list 'dart/. nil "!=" dart-expr)
+           ; by construction expected-type can't be dynamic or FutureOr<dynamic>, otherwise
+           ; it would have matched the assignability test <1> above
+           (magicast dart-expr (positive-type expected-type) actual-type env)
+           nil))
      ;; When inlined #dart[], we keep it inlines
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
      (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
@@ -2785,12 +2807,21 @@
                   env {:type-vars (set type-params)}
                   def-me!
                   (fn def-me! [resolve-fully]
-                    (let [dart-type (if resolve-fully
-                                      (new-dart-type mclass-name type-params
-                                        (map #(with-meta % (dart-meta % env)) fields)
-                                        (parse-class-specs class-name opts specs env)
-                                        env)
-                                      (new-dart-type mclass-name type-params nil env))];
+                    (let [dart-type
+                          (if resolve-fully
+                            (new-dart-type mclass-name type-params
+                              (map #(with-meta % (dart-meta % env)) fields)
+                              (parse-class-specs class-name opts specs env)
+                              env)
+                            (do
+                              (swap! nses do-def class-name
+                                {:dart/name mclass-name
+                                 :dart/type (new-dart-type mclass-name type-params nil env)
+                                 :type :class})
+                              (new-dart-type mclass-name type-params nil
+                                (parse-class-specs class-name opts
+                                  (map #(cond->> % (seq? %) (take 2)) specs) env)
+                                env)))]
                       (swap! nses do-def class-name
                         (cond->
                             {:dart/name mclass-name

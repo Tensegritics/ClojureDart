@@ -255,14 +255,14 @@
           (subvec 1 3)))))
 
 (deftest testing-dart-map-comply-with-iseqable-ilookup
-  (let [dart-map (Map/fromEntries (. (seq {:a :b }) #/(cast MapEntry)))]
+  (let [dart-map (Map/fromEntries (. ^List (seq {:a :b }) #/(cast MapEntry)))]
     (is (= :b (get dart-map :a)))
     (is (true? (contains? dart-map :a)))
     (is (false? (contains? dart-map :e)))
     (is (= {:a :b} (into {} dart-map)))))
 
 (deftest testing-dart-mapentry-comply-with-imapentry-iidexed
-  (let [dart-map (Map/fromEntries (. (seq {:a :b }) #/(cast MapEntry)))
+  (let [dart-map (Map/fromEntries (. ^List (seq {:a :b }) #/(cast MapEntry)))
         me (first dart-map)]
     (is (= :a (nth me 0)))
     (is (= :b (nth me 1)))
@@ -285,7 +285,7 @@
     (is (true? (dart/is? (find (. [0 1 2] #/(cast int)) 1) #/(cljd.core/PersistentMapEntry int int))))
 
     (is (false? (dart/is? (find (subvec [0 1 2] 1) 1) #/(cljd.core/PersistentMapEntry int int))))
-    (is (true? (dart/is? (find (. (subvec [0 1 2] 1) #/(cast int)) 1) #/(cljd.core/PersistentMapEntry int int))))
+    (is (true? (dart/is? (find (. ^List (subvec [0 1 2] 1) #/(cast int)) 1) #/(cljd.core/PersistentMapEntry int int))))
 
     (is (false? (dart/is? (find {"a" "b"} "a") #/(cljd.core/PersistentMapEntry String String))))
     (is (true? (dart/is? (find (. {"a" "b"} #/(cast String String)) "a") #/(cljd.core/PersistentMapEntry String String))))))
@@ -414,7 +414,7 @@
 (definterface ICastNullable
   (^String text [^#/(List? String) actions]))
 
-(deftype CastNullable []
+(deftype CastNullable [useless]
   ICastNullable
   (text [this actions]
     (if-not (nil? actions)
@@ -422,7 +422,8 @@
       "worked")))
 
 (deftest cast-nullable-to-non-nullable-for-castable-collections
-  (let [x (CastNullable.)]
+  (let [x (CastNullable. nil)]
     (is (= "clojuredart" (.text x (cond-> ["coucou"]
                                     true (conj "clojuredart")))))
-    (is (= "worked" (.text x nil)))))
+    (is (= "worked" (.text x nil)))
+    (is (= "worked" (.text x ^List? (identity nil))))))
