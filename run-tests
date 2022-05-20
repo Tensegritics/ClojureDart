@@ -11,7 +11,7 @@ cat > tmp/tests/deps.edn <<EOF
 EOF
 
 cd tmp/tests
-clj -M -m cljd.build init --dart cljd.run-tests
+clojure -M -m cljd.build init --dart cljd.run-tests
 dart pub add -d test
 cat > src/cljd/run_tests.cljd <<EOF
 (ns ci.core
@@ -22,5 +22,5 @@ cat > src/cljd/run_tests.cljd <<EOF
     cljd.test-clojure.for
     cljd.test-reader.reader-test))
 EOF
-clj -M -m cljd.build compile cljd.test-clojure.core-test-cljd cljd.test-clojure.string cljd.test-clojure.core-test cljd.test-clojure.for cljd.test-reader.reader-test
+clojure -M -m cljd.build compile cljd.test-clojure.core-test-cljd cljd.test-clojure.string cljd.test-clojure.core-test cljd.test-clojure.for cljd.test-reader.reader-test
 dart test
