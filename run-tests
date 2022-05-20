@@ -1,0 +1,26 @@
+#!/usr/bin/env bash
+
+mkdir tmp
+rm -rf tmp/tests
+mkdir -p tmp/tests/src/cljd
+cat > tmp/tests/deps.edn <<EOF
+{:paths ["src"] ; where your cljd files are
+ :deps {org.clojure/clojure {:mvn/version "1.10.1"}
+        tensegritics/clojuredart
+        {:local/root "../../"}}}
+EOF
+
+cd tmp/tests
+clj -M -m cljd.build init --dart cljd.run-tests
+dart pub add -d test
+cat > src/cljd/run_tests.cljd <<EOF
+(ns ci.core
+  (:require
+    cljd.test-clojure.core-test-cljd
+    cljd.test-clojure.string
+    cljd.test-clojure.core-test
+    cljd.test-clojure.for
+    cljd.test-reader.reader-test))
+EOF
+clj -M -m cljd.build compile cljd.test-clojure.core-test-cljd cljd.test-clojure.string cljd.test-clojure.core-test cljd.test-clojure.for cljd.test-reader.reader-test
+dart test
