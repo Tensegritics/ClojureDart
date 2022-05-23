@@ -12,6 +12,7 @@
 (ns cljd.test-clojure.core-test-cljd
   (:require ["dart:async" :as async]
             ["dart:developer" :as dev]
+            ["dart:io" :as io]
             [cljd.string :as str])
   (:use [cljd.test :only [deftest is testing are]]))
 
@@ -427,3 +428,13 @@
                                     true (conj "clojuredart")))))
     (is (= "worked" (.text x nil)))
     (is (= "worked" (.text x ^List? (identity nil))))))
+
+(deftest no-core-private-lib-exposed-by-compilation
+  ; it's a compile time "test": if it compiles it's ok
+  (let [s (fn []
+            (let [server (await (.bind io/HttpServer (.-anyIPv6 io/InternetAddress) 8080))]
+              (.forEach server (fn [^io/HttpRequest r]
+                                 (.close (.-response r))
+                                 nil))))]
+    ;; here we only test compilation works
+    (is (some? s))))

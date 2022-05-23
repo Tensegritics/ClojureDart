@@ -1,4 +1,4 @@
-(ns samples.tabs
+(ns sample.tabs
   "Faithful port of https://docs.flutter.dev/cookbook/design/tabs"
   (:require
    ["package:flutter/material.dart" :as m]
@@ -13,17 +13,17 @@
       :home
       (m/DefaultTabController
        :length 3
-       :child 
+       :child
        (m/Scaffold
-        :appBar 
+        :appBar
         (m/AppBar
          :bottom
-         (m/TabBar 
+         (m/TabBar
           :tabs [(m/Tab :icon (m/Icon. m.Icons/directions_car)),
                  (m/Tab :icon (m/Icon. m.Icons/directions_transit)),
                  (m/Tab :icon (m/Icon. m.Icons/directions_bike))]))
-        :body 
-        (m/TabBarView 
+        :body
+        (m/TabBarView
          :children [(m/Tab :icon (m/Icon. m.Icons/directions_car)),
                     (m/Tab :icon (m/Icon. m.Icons/directions_transit)),
                     (m/Tab :icon (m/Icon. m.Icons/directions_bike))])))))))
