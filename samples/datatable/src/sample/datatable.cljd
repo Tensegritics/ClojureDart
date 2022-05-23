@@ -1,0 +1,41 @@
+(ns sample.datatable
+  (:require
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter.alpha :as f]))
+
+(defn data-table [& {:keys [cols rows]}]
+  (f/widget
+   (m/SingleChildScrollView
+    :scrollDirection m.Axis/horizontal
+    :child
+    (m/DataTable
+     :headingTextStyle (m/TextStyle
+                        :fontWeight m.FontWeight/bold
+                        :color m.Colors/blue)
+     ;; :columnSpacing 18.0
+     ;; :sortColumnIndex 2
+     ;; :sortAscending true
+     :showBottomBorder true
+     :columns (mapv (fn [col] (m/DataColumn :label (m/Text col))) cols)
+     :rows (mapv (fn [row] (m/DataRow :cells (mapv (fn [cell] (m/DataCell (m/Text cell))) row))) rows)))))
+
+(def demo
+  (f/widget
+   (m/Scaffold
+    :appBar (m/AppBar :title (m/Text "DataTable Sample"))
+    :body
+    (f/nest
+     m/Center
+     (data-table :cols ["#" "Name" "Age" "City"]
+                   :rows [["1" "zm" "42" "guangzhou"]
+                          ["2" "zrj" "10" "guangzhou"]
+                          ["3" "wrp" "13" "hongkong"]
+                          ["4" "wrl" "11" "guangzhou"]
+                          ["5" "wrj" "10" "beijing"]])))))
+
+(defn main
+  []
+  (m/runApp
+   (m/MaterialApp
+     :home demo
+     :debugShowCheckedModeBanner false)))
