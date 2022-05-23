@@ -1,5 +1,5 @@
 (ns sample.form
-  "Faithful port of https://docs.flutter.dev/cookbook/forms/text-field-changes"
+  "Faithful port of https://docs.flutter.dev/cookbook/forms/retrieve-input"
   (:require ["package:flutter/material.dart" :as m]
             [cljd.flutter.alpha :as f]))
 
