@@ -307,10 +307,6 @@ RET=\"ddd\";
   (emit '(def oo (fn* [x] (if (.-isOdd x) (recur (. x + 1)) x ))) {})
   nses
 
-  (emit '(def oo "caca\n") {})
-
-  (emit '(def oo "docstring" (let [a "caca"] a)) {})
-
   (write *1 return-locus)
 
   (emit '(fn* aa [x] x) {})
