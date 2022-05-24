@@ -1170,9 +1170,8 @@
   (amethod [t]))
 
 (deftest test-cljs-1451
-  (testing "caca"
-    (is (= "foobar"
-          (amethod (reify IFooBar (amethod [_] "foobar")))))))
+  (is (= "foobar"
+        (amethod (reify IFooBar (amethod [_] "foobar"))))))
 
 (deftest test-cljs-1569
   (is (= (meta (with-meta (seq [1 2 3]) {:a 1})) {:a 1})))

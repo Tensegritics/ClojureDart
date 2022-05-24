@@ -26,14 +26,12 @@
     :body
     (f/nest
      m/Center
-     (m/ListView
-      :children
-      [(data-table :cols ["#" "Name" "Age" "City"]
+     (data-table :cols ["#" "Name" "Age" "City"]
                    :rows [["1" "zm" "42" "guangzhou"]
                           ["2" "zrj" "10" "guangzhou"]
                           ["3" "wrp" "13" "hongkong"]
                           ["4" "wrl" "11" "guangzhou"]
-                          ["5" "wrj" "10" "beijing"]])])))))
+                          ["5" "wrj" "10" "beijing"]])))))
 
 (defn main
   []

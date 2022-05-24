@@ -129,24 +129,27 @@
           clojure.lang.LineNumberingPushbackReader.
           clojure.edn/read)
         inline-exports
-        (fn export [{exports :exports :as v} past-exports]
-          (into v (keep (fn [{:keys [lib shown hidden]}]
-                          (when-not (contains? past-exports lib)
-                            (cond
-                              shown
-                              (select-keys (export (dart-libs-info lib) past-exports) shown)
-                              hidden
-                              (reduce dissoc (export (dart-libs-info lib) past-exports) hidden)
-                              :else (export (dart-libs-info lib) (conj past-exports lib)))))) exports))
+        (fn export [{exports :exports :as v} source-lib past-exports]
+          (let [v (into v (keep (fn [{:keys [lib shown hidden]}]
+                                  (when-not (contains? past-exports lib)
+                                    (cond
+                                      shown
+                                      (select-keys (export (dart-libs-info lib) lib past-exports) shown)
+                                      hidden
+                                      (reduce dissoc (export (dart-libs-info lib) lib past-exports) hidden)
+                                      :else (export (dart-libs-info lib) lib (conj past-exports lib)))))) exports)]
+            (assoc v :export-fn (if exports
+                                  #(if (v (:element-name %)) (assoc % :lib source-lib) %)
+                                  identity))))
         assoc->qnames
-        (fn [{name :element-name :as entity}]
+        (fn [export-fn {name :element-name :as entity}]
           (case name
             "void" (assoc entity :qname (:qname dc-void) :canon-qname (:qname dc-void))
             (if (:is-param entity)
               (let [qname (symbol name)]
                 (assoc entity :qname qname :canon-qname qname))
-              (let [lib (:lib entity "dart:core")
-                    canon-lib (or (:canon-lib entity) lib)
+              (let [lib (:lib (export-fn entity) "dart:core")
+                    canon-lib (or (:canon-lib entity) (:lib entity "dart:core"))
                     canon-qname (-> (global-lib-alias canon-lib nil) (str "." name) symbol)
                     qname (if (= lib canon-lib)
                             canon-qname
@@ -157,56 +160,59 @@
                   :lib lib
                   :canon-lib canon-lib)))))
         qualify-entity
-        (fn qualify-entity [entity]
-          (case (:kind entity)
-            :class (->
-                     (assoc->qnames entity)
-                     (update-if :type-parameters #(into [] (map qualify-entity) %))
-                     (update-if :super qualify-entity)
-                     (update-if :bound qualify-entity)
-                     (update-if :interfaces #(into [] (map qualify-entity) %))
-                     (update-if :on #(into [] (map qualify-entity) %))
-                     (update-if :mixins #(into [] (map qualify-entity) %))
-                     (into (comp (filter #(string? (first %)))
-                             (map (fn [[n v]] [n (qualify-entity v)])))
-                       entity))
-            :field (cond-> (update entity :type qualify-entity)
-                     (:toplevel entity) assoc->qnames)
-            :function (->
-                        (assoc->qnames entity)
-                        (update-if :return-type qualify-entity)
+        (fn qualify-entity [export-fn entity]
+          (let [qualify-entity #(qualify-entity export-fn %)
+                assoc->qnames #(assoc->qnames export-fn %)]
+            (case (:kind entity)
+              :class (->
+                       (assoc->qnames entity)
+                       (update-if :type-parameters #(into [] (map qualify-entity) %))
+                       (update-if :super qualify-entity)
+                       (update-if :bound qualify-entity)
+                       (update-if :interfaces #(into [] (map qualify-entity) %))
+                       (update-if :on #(into [] (map qualify-entity) %))
+                       (update-if :mixins #(into [] (map qualify-entity) %))
+                       (into (comp (filter #(string? (first %)))
+                               (map (fn [[n v]] [n (qualify-entity v)])))
+                         entity))
+              :field (cond-> (update entity :type qualify-entity)
+                       (:toplevel entity) assoc->qnames)
+              :function (->
+                          (assoc->qnames entity)
+                          (update-if :return-type qualify-entity)
+                          (update-if :parameters #(into [] (map qualify-entity) %))
+                          (update-if :type-parameters #(into [] (map qualify-entity) %)))
+              :method (-> entity
+                        (update :return-type qualify-entity)
                         (update-if :parameters #(into [] (map qualify-entity) %))
                         (update-if :type-parameters #(into [] (map qualify-entity) %)))
-            :method (-> entity
-                      (update :return-type qualify-entity)
-                      (update-if :parameters #(into [] (map qualify-entity) %))
-                      (update-if :type-parameters #(into [] (map qualify-entity) %)))
-            :constructor (-> entity
-                           (update-if :parameters #(into [] (map qualify-entity) %))
-                           (update-if :type-parameters #(into [] (map qualify-entity) %))
-                           (update :return-type qualify-entity))
-            (:named :positional) (update entity :type qualify-entity)
-            ; type
-            (recur (-> entity
-                     (dissoc :type)
-                     (assoc
-                       :kind (case (:type entity) "Function" :function :class)
-                       :element-name (:type entity))))))]
+              :constructor (-> entity
+                             (update-if :parameters #(into [] (map qualify-entity) %))
+                             (update-if :type-parameters #(into [] (map qualify-entity) %))
+                             (update :return-type qualify-entity))
+              (:named :positional) (update entity :type qualify-entity)
+              ; type
+              (recur export-fn (-> entity
+                                 (dissoc :type)
+                                 (assoc
+                                   :kind (case (:type entity) "Function" :function :class)
+                                   :element-name (:type entity)))))))]
     (-> (into {}
           (map (fn [[lib content]]
-                 [lib (into {}
-                        (map (fn [[name entity]]
-                               [name
-                                (cond-> entity
-                                  (string? name)
-                                  (->
-                                    (assoc
-                                      :element-name name
-                                      :lib lib
-                                      :toplevel true
-                                      :canon-lib (:lib entity))
-                                    qualify-entity))]))
-                        (inline-exports content #{lib}))]))
+                 (let [{:keys [export-fn] :as libs} (inline-exports content lib #{lib})]
+                   [lib (into {}
+                          (map (fn [[name entity]]
+                                 [name
+                                  (cond-> entity
+                                    (string? name)
+                                    (->
+                                      (assoc
+                                        :element-name name
+                                        :lib lib
+                                        :toplevel true
+                                        :canon-lib (:lib entity))
+                                      (->> (qualify-entity export-fn))))]))
+                          libs)])))
           dart-libs-info)
       (assoc-in ["dart:core" "Never"] dc-Never)
       (assoc-in ["dart:core" "dynamic"] dc-dynamic)
