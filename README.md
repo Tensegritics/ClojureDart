@@ -1,3 +1,5 @@
+<img src="logo1024.png" width="100%">
+
 # What is ClojureDart?
 
 ClojureDart is a port of the Clojure language to Dart.
