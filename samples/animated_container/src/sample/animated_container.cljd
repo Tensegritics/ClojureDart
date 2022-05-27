@@ -1,0 +1,39 @@
+(ns sample.animated-container
+  "Faithful port of https://docs.flutter.dev/cookbook/animation/physics-simulation#interactive-example"
+  (:require
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter.alpha :as f]))
+
+(defn random-to-double [max] 
+  (-> max rand-int .toDouble))
+
+(defn random-color [_]
+  (m.Color/fromRGBO (rand-int 256) 
+                    (rand-int 256)
+                    (rand-int 256)
+                    1))
+
+
+(defn animated-container []
+  (f/widget
+   :state [config {:width 50.0 :height 50.0 :color m.Colors/green :border-radius (m.BorderRadius/circular 8.0)}]
+   (m/Scaffold
+    :appBar (m/AppBar :title (m/Text "AnimatedContainer Demo"))
+    :body
+    (m/Center
+     :child
+     (m/AnimatedContainer
+      :width (:width @config)
+      :height (:height @config)
+      :decoration (m/BoxDecoration :color (:color @config) :borderRadius (:border-radius @config))
+      :duration ^:const (Duration :seconds 1)
+      :curve m.Curves/fastOutSlowIn))
+    :floatingActionButton
+    (m/FloatingActionButton :onPressed #(swap! config (fn [config] (-> config (assoc-in [:width] (random-to-double 300))
+                                                           (assoc :height (random-to-double 300))
+                                                           (update :color random-color)
+                                                           (assoc :border-radius (m.BorderRadius/circular (random-to-double 100))))))
+                            :child (m/Icon. m.Icons/play_arrow)))))
+
+(defn main [] (m/runApp (m/MaterialApp :home (animated-container))))
+
