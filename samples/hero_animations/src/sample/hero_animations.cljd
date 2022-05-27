@@ -3,6 +3,18 @@
   (:require ["package:flutter/material.dart" :as m]
             [cljd.flutter.alpha :as f]))
 
+(def detail-screen
+  (f/widget
+    :inherit [m/Navigator]
+    (m/Scaffold
+      :body
+      (f/nest
+        (m/GestureDetector
+          :onTap #(.pop navigator))
+        m/Center
+        (m/Hero :tag "imageHero")
+        (m.Image/network "https://picsum.photos/250?image=9")))))
+
 (def main-screen
   (f/widget
     :inherit [m/Navigator]
@@ -15,22 +27,9 @@
                   nil)
         :child  (m/Hero
                   :tag "imageHero"
-                  :child (m.Image/network "https://picsum.photos/250?image=9")))
-      ))
-  )
+                  :child (m.Image/network "https://picsum.photos/250?image=9"))))))
 
-(def detail-screen
-  (f/widget
-    :inherit [m/Navigator]
-    (m/Scaffold
-      :body
-      (f/nest
-        (m/GestureDetector
-          :onTap #(.pop navigator))
-        m/Center
-        (m/Hero :tag "imageHero")
-        (m.Image/network "https://picsum.photos/250?image=9"))
-          )))
+
 
 (defn main
   []
