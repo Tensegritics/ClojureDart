@@ -2,11 +2,14 @@
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         org.clojure/java.classpath {:mvn/version "1.0.0"}
         org.clojure/tools.cli {:mvn/version "1.0.206"}
-        org.clojure/tools.deps.alpha {:mvn/version "0.12.1162"}
+        org.clojure/tools.deps.alpha {:mvn/version "0.12.1162"
+                                      :exclusions [com.google.guava/guava]}
 
         ;; VMService dependencies
         org.dartlang/vm.service {:local/root "third_party/vm_service_lib.jar"}
         com.google.code.gson/gson {:local/root "third_party/gson-2.2.4.jar"}
         com.google.guava/guava {:local/root "third_party/guava-13.0.1.jar"}
         com.github.pmairif/weberknecht {:local/root "third_party/weberknecht-0.1.5.jar"}
-        javax.xml.bind/jaxb-api {:mvn/version "2.4.0-b180830.0359"}}}
+        javax.xml.bind/jaxb-api {:mvn/version "2.4.0-b180830.0359"}
+
+        vvvvalvalval/scope-capture {:mvn/version "0.3.2"}}}

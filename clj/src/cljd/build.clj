@@ -13,7 +13,10 @@
             [clojure.string :as str]
             [clojure.stacktrace :as st]
             [clojure.java.io :as io]
-            [clojure.java.classpath :as cp]))
+            [clojure.java.classpath :as cp])
+  (:import (org.dartlang.vm.service VmService)
+           (org.dartlang.vm.service.consumer VMConsumer GetIsolateConsumer EvaluateConsumer)
+           (org.dartlang.vm.service.element VM InstanceRef IsolateRef Isolate ErrorRef)))
 
 (def ^:dynamic *ansi* false)
 (def ^:dynamic *config* {})
@@ -237,6 +240,57 @@
             (finally
               (some-> p .destroy))))))))
 
+(def ^:dynamic *ns*)
+
+(defn repl-prompt
+  "Default :prompt hook for repl"
+  [ns]
+  (printf "%s=> " (name ns)))
+
+(defn get-vm [^VmService vm-service cb]
+  (.getVM vm-service (reify VMConsumer (^void received [_ ^VM response] (cb response)))))
+
+(defn get-isolate [^VmService vm-service isolate-id cb]
+  (.getIsolate vm-service ^int isolate-id (reify GetIsolateConsumer (^void received [_ ^Isolate response] (cb response)))))
+
+(defn evaluate [^VmService vm-service isolate-id scope-id expr on-success on-error]
+  (.evaluate vm-service isolate-id scope-id expr
+    (reify EvaluateConsumer
+      (^void received [_ ^InstanceRef response] (on-success response))
+      (^void received [_ ^ErrorRef error] (on-error error)))))
+
+(defn repl []
+  (println (title "REPL"))
+  (compile-cli :namespaces '(sample.counter) :watch false)
+  (binding [compiler/dart-libs-info (compiler/load-libs-info)
+            compiler/*locals-gen* {}
+            compiler/*hosted* true]
+    (let [vm-service (VmService/connect "ws://127.0.0.1:52341/cxXHMZ84YUE=/")]
+      (while true
+        (repl-prompt 'sample.counter) (.flush *out*)
+        (let [ln (.readLine (java.io.BufferedReader. *in*))
+              result (promise)
+              input
+              (compiler/with-dart-str
+                (compiler/write
+                  (compiler/emit (read-string {:read-cond :allow :features #{:cljd}} (str "(pr-str " ln ")")) {})
+                  compiler/return-locus))]
+          (get-vm vm-service
+            (fn [^VM vm]
+              (when-some [isolate-id
+                          (some (fn [^IsolateRef ir]
+                                  (when (= "main" (.getName ir))
+                                    (.getId ir))) (seq (.getIsolates vm)))]
+                (get-isolate vm-service isolate-id
+                  (fn [^Isolate isolate]
+                    (evaluate vm-service isolate-id (.getId (.getRootLib isolate))
+                      (str "(() {" input "})()")
+                      (fn [^InstanceRef ir]
+                        (deliver result (.getValueAsString ir)))
+                      (fn [^ErrorRef er]
+                        (prn (.getMessage er)))))))))
+          (println @result))))))
+
 (defn init-project [opts main-ns bin-opts]
   (let [bin (:target opts)
         libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
@@ -349,6 +403,7 @@
            :defaults {:target "flutter"}}
    "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart."}
    "watch" {:doc "Like compile but keep recompiling in response to file updates."}
+   "repl" {:doc "caca"}
    "flutter" {:options false
               :doc "Like watch but hot reload the application in the simulator or device. All options are passed to flutter run."}})
 
@@ -385,4 +440,6 @@
               :namespaces
               (or (seq (map symbol args))
                 (some-> *config* :main list))
-              :flutter (vec flutter-args))))))))
+              :flutter (vec flutter-args)))
+          "repl"
+          (repl))))))

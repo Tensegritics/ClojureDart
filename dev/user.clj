@@ -6,6 +6,9 @@
 (do
   (import '(org.dartlang.vm.service VmService))
   (import '(org.dartlang.vm.service.element VM))
+  (import '(org.dartlang.vm.service.element BoundField))
+  (import '(org.dartlang.vm.service.element FieldRef))
+  (import '(org.dartlang.vm.service.element Field))
   (import '(org.dartlang.vm.service.element Obj))
   (import '(org.dartlang.vm.service.element Func))
   (import '(org.dartlang.vm.service.consumer VMConsumer))
@@ -56,7 +59,7 @@
                             (.getId ir))) (seq (.getIsolates vm)))]
         (get-isolate vm-service isolate-id
           (fn [^Isolate isolate]
-            (evaluate vm-service isolate-id (.getId (.getRootLib isolate)) #_"((el) => [1, 2, el])(4)" "caca"
+            (evaluate vm-service isolate-id (.getId (.getRootLib isolate)) #_"((el) => [1, 2, el])(4)" "todos"
               (fn [^InstanceRef ir]
                 (println (.getValueAsString ir))
                 (case (doto (.ordinal (doto (.getKind ir) prn)) prn)
@@ -75,45 +78,71 @@
                   22 (do (prn (.getName (.getClassRef ir)))
                          (get-object vm-service isolate-id (.getId ir)
                            (fn [^Instance obj]
-                             (.getValueAsString ^Instance obj)))))))))))))
+                             (let [fields (.getFields obj)]
+                               (->> fields
+                                 (map #(vector (.getDecl ^BoundField %) (.getValue ^BoundField %)))
+
+                                 (map (fn [[^FieldRef d v]]
+                                        (get-object vm-service isolate-id (.getId d)
+                                          (fn [^Field field]
+                                            (prn 'here)
+                                            (prn (.getName field))))))
+                                 (into [])))))))))))))))
+
+(let [vm-service (VmService/connect "ws://127.0.0.1:52341/cxXHMZ84YUE=/")]
+  (let [p (promise)]
+    (get-vm vm-service
+      (fn [^VM vm]
+        (when-some [isolate-id
+                    (some (fn [^IsolateRef ir]
+                            (when (= "main" (.getName ir))
+                              (.getId ir))) (seq (.getIsolates vm)))]
+          (get-isolate vm-service isolate-id
+            (fn [^Isolate isolate]
+              (evaluate vm-service isolate-id (.getId (.getRootLib isolate)) "(() {final dc.int a$1=42;\nreturn a$1;\n})()"
+                (fn [^InstanceRef ir]
+                  (prn "coucou")
+                  (deliver p (.getValueAsString ir))
+                  (println (.getValueAsString ir)))))))))
+    (prn "aahh" @p)))
+;; [w1, w2, w3]
 
 
 
-
-  ;; Bool,
-  ;; BoundedType,
-  ;; Closure,
-  ;; Double,
-  ;; Float32List,
-  ;; Float32x4,
-  ;; Float32x4List,
-  ;; Float64List,
-  ;; Float64x2,
-  ;; Float64x2List,
-  ;; FunctionType,
-  ;; Int,
-  ;; Int16List,
-  ;; Int32List,
-  ;; Int32x4,
-  ;; Int32x4List,
-  ;; Int64List,
-  ;; Int8List,
-  ;; List,
-  ;; Map,
-  ;; MirrorReference,
-  ;; Null,
-  ;; PlainInstance,
-  ;; ReceivePort,
-  ;; RegExp,
-  ;; StackTrace,
-  ;; String,
-  ;; Type,
-  ;; TypeParameter,
-  ;; TypeRef,
-  ;; Uint16List,
-  ;; Uint32List,
-  ;; Uint64List,
-  ;; Uint8ClampedList,
-  ;; Uint8List,
-  ;; WeakProperty,
-  ;; Unknown
+;; Bool,
+;; BoundedType,
+;; Closure,
+;; Double,
+;; Float32List,
+;; Float32x4,
+;; Float32x4List,
+;; Float64List,
+;; Float64x2,
+;; Float64x2List,
+;; FunctionType,
+;; Int,
+;; Int16List,
+;; Int32List,
+;; Int32x4,
+;; Int32x4List,
+;; Int64List,
+;; Int8List,
+;; List,
+;; Map,
+;; MirrorReference,
+;; Null,
+;; PlainInstance,
+;; ReceivePort,
+;; RegExp,
+;; StackTrace,
+;; String,
+;; Type,
+;; TypeParameter,
+;; TypeRef,
+;; Uint16List,
+;; Uint32List,
+;; Uint64List,
+;; Uint8ClampedList,
+;; Uint8List,
+;; WeakProperty,
+;; Unknown
