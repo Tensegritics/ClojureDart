@@ -1,5 +1,5 @@
 (ns sample.animated-container
-  "Faithful port of https://docs.flutter.dev/cookbook/animation/physics-simulation#interactive-example"
+  "Faithful port of https://docs.flutter.dev/cookbook/animation/animated-container"
   (:require
    ["package:flutter/material.dart" :as m]
    [cljd.flutter.alpha :as f]))
