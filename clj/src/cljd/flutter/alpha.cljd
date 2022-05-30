@@ -230,11 +230,12 @@
                 (-updated? (snapshot name) (prev-snapshot name) q)) aspects)))))
 
 (defn get-state-of [^widgets/BuildContext ctx id args]
-  (if-some [elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)]
-    (let [ib ^InheritedBindings (.widget elt)]
-      (if (.isSupportedAspect ib id)
-        (-state (get (.snapshot ib) id) args
-          #(swap! (.state ib) update id -update %)
-          #(.dependOnInheritedElement ctx elt :aspect [id %]))
-        (recur (.pctx ib) id args)))
-    (throw (Exception (str "No inherited state for id" id)))))
+  (loop [^widgets/BuildContext ctx' ctx]
+    (if-some [elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx')]
+      (let [ib ^InheritedBindings (.widget elt)]
+        (if (.isSupportedAspect ib id)
+          (-state (get (.snapshot ib) id) args
+            #(swap! (.state ib) update id -update %)
+            #(.dependOnInheritedElement ctx elt :aspect [id %]))
+          (recur (.pctx ib))))
+      (throw (Exception (str "No inherited state for id" id))))))

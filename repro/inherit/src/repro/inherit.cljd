@@ -1,0 +1,56 @@
+(ns repro.inherit
+  (:require [cljd.flutter.alpha :as f]
+            ["package:flutter/material.dart" :as m]))
+
+(def inner-component
+    (f/widget
+      :inherit [:outer-value
+                :inner-value]
+      (dart:core/print "---- draw-inner-component")
+      (m/GestureDetector
+        :onTap (fn []
+                 (dart:core/print (str "tap inner-component"))
+                 (swap! outer-value inc)
+                 (swap! inner-value inc))
+        :child
+        (m/Container
+          :decoration (m/BoxDecoration
+                        :border (m.Border/all :color m.Colors/black))
+          :child
+          (m/Text (str "inner-component :outer-value " @outer-value
+                    " :inner-value " @inner-value)
+            :style (m/TextStyle :fontSize 18))))))
+
+(def outer-component
+ (f/widget
+  :inherit [:outer-value]
+  :bind {:inner-value 100}
+  (dart:core/print "-- draw-outer-component")
+  (m/MaterialApp
+   :debugShowCheckedModeBanner false
+   :home
+   (m/Scaffold
+     :body
+     (m/Center
+       :child
+       (m/Container
+         :height 300
+         :decoration (m/BoxDecoration :border (m.Border/all :color m.Colors/black))
+         :child
+         (m/Column
+           :children [(m/GestureDetector
+                        :onTap (fn []
+                                 (dart:core/print (str "tap outer-component"))
+                                 (swap! outer-value inc))
+                        :child
+                        (m/Text (str "outer-component:outer-value" @outer-value)
+                          :style (m/TextStyle :fontSize 18)))
+                      (m/SizedBox :height 36)
+                      ;;
+                      inner-component])))))))
+
+(defn main []
+   (m/runApp
+    (f/widget
+     :bind {:outer-value 0}
+     outer-component)))
