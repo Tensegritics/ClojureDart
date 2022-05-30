@@ -18,7 +18,7 @@
    (m/Center
     :child
     (m/ElevatedButton
-     :onPressed (fn [] (assoc scaffold-messenger (.showSnackBar snackbar))) nil
+     :onPressed #(swap! scaffold-messenger (.showSnackBar snackbar))
      :child (m/Text "Show text")))))
 
 (defn main []
