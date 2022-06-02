@@ -1,0 +1,44 @@
+(ns sample.drawer
+  "Faithful port of https://docs.flutter.dev/cookbook/design/drawer"
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter.alpha :as f]))
+
+(defn my-home-page [title]
+  (f/widget
+   :inherit [m/Navigator]
+   (m/Scaffold
+    :appBar (m/AppBar :title (m/Text title))
+    :body (m/Center :child (m/Text "My Page!"))
+    :drawer (m/Drawer
+                ; Add a ListView to the drawer. This ensures the user can scroll
+                ; through the options in the drawer if there isn't enough vertical
+                ; space to fit everything.
+             :child (m/ListView
+                      ; Important: Remove any padding from the ListView.
+                     :padding m.EdgeInsets/zero
+                     :children [(m/DrawerHeader
+                                 :decoration (m/BoxDecoration :color m.Colors/blue)
+                                 :child (m/Text "Drawer Header"))
+                                (m/ListTile
+                                 :title (m/Text "Item 1")
+                                 :onTap
+                                      ; Update the state of the app
+                                      ; ...
+                                      ; Then close the drawer
+                                 #(.pop navigator))
+                                (m/ListTile
+                                 :title (m/Text "Item 2")
+                                 :onTap
+                                        ; Update the state of the app
+                                        ; ...
+                                        ; Then close the drawer
+                                 #(.pop navigator))])))))
+
+(defn main
+  []
+  (m/runApp
+   (m/MaterialApp
+    :home (my-home-page "Drawer Demo")
+    :debugShowCheckedModeBanner false)))
+
+
