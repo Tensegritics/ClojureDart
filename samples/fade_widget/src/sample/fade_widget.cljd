@@ -1,0 +1,28 @@
+(ns sample.fade-widget
+  "Faithful port of https://docs.flutter.dev/cookbook/animation/opacity-animation"
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter.alpha :as f]))
+
+(defn my-home-page [title]
+  (f/widget
+   :state [visible true]
+    (m/Scaffold
+     :appBar (m/AppBar :title (m/Text title))
+     :body
+      (m/Center
+       :child
+       (m/AnimatedOpacity
+        :opacity (cond (true? @visible) 1.0 :else 0.0)
+        :duration ^:const (Duration :milliseconds 500)
+        :child (m/Container :width 200.0 :height 200.0 :color (m.Colors/green))))
+     :floatingActionButton
+      (m/FloatingActionButton :onPressed (fn [] (swap! visible not))
+                              :tooltip "Toggle Opacity"
+                              :child ^:const (m/Icon m.Icons/flip)))))
+
+(defn main []
+  (let [title "Opacity Demo"]
+    (m/runApp
+     (m/MaterialApp
+      :title title
+      :home (my-home-page title)))))
