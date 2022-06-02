@@ -246,8 +246,7 @@
         entry-point (case bin
                       "flutter" (java.io.File. libdir "main.dart")
                       "dart"
-                      (->  dir (java.io.File. "bin")
-                        (java.io.File. (str project_name ".dart"))))
+                      (java.io.File. "bin" (str project_name ".dart")))
         lib (compiler/relativize-lib (.getPath entry-point) (compiler/ns-to-lib main-ns))]
     (println "Initializing" (bright project-name) "as a" (bright bin) "project!")
     (or
