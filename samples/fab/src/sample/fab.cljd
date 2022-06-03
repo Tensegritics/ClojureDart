@@ -40,7 +40,7 @@
       :child (m/IconButton
                :onPressed on-pressed
                :icon icon
-               :color (-> theme .-colorScheme .-onSecondary)))))
+               :color (-> theme .-colorScheme .-secondary)))))
 
 (defn expanding-action-button
   [& {:keys [direction-degrees max-distance ^#/(m/Animation double) progress child]}]
