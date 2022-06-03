@@ -35,12 +35,12 @@
     (m/Material
       :shape ^:const (m/CircleBorder)
       :clipBehavior m.Clip/antiAlias
-      :color (-> theme .-colorScheme .-onSecondary)
+      :color (-> theme .-colorScheme .-secondary)
       :elevation 4.0
       :child (m/IconButton
                :onPressed on-pressed
                :icon icon
-               :color (-> theme .-colorScheme .-secondary)))))
+               :color (-> theme .-colorScheme .-onSecondary)))))
 
 (defn expanding-action-button
   [& {:keys [direction-degrees max-distance ^#/(m/Animation double) progress child]}]
