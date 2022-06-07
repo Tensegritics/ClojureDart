@@ -841,6 +841,9 @@
       (-print o sb)
       (.toString sb))))
 
+(defn ^:macro-support ^:private call-to [f]
+  (fn [& args] (cons f args)))
+
 (defprotocol INamed
   "Protocol for adding a name."
   (-name [x]
@@ -855,7 +858,7 @@
 
 (defn ^String? namespace
   "Returns the namespace String of a symbol or keyword, or nil if not present."
-  {:inline (fn [x] `(-namespace ~x))
+  {:inline (call-to `-namespace)
    :inline-arities #{1}}
   [x]
   (-namespace x))
@@ -877,7 +880,7 @@
     that implement Iterable. Note that seqs cache values, thus seq
     should not be used on any Iterable whose iterator repeatedly
     returns the same mutable object."
-  {:inline (fn [coll] `(-seq ~coll))
+  {:inline (call-to `-seq)
    :inline-arities #{1}}
   [coll] (-seq coll))
 
@@ -940,7 +943,7 @@
 (defn ^bool realized?
   "Returns true if a value has been produced for a promise, delay, future or lazy sequence."
   {:inline-arities #{1}
-   :inline (fn [x] `(-realized? ~x))}
+   :inline (call-to `-realized?)}
   [x]
   (-realized? x))
 
@@ -953,7 +956,7 @@
 (defn ^bool realized?
   "Returns true if a value has been produced for a promise, delay, future or lazy sequence."
   {:inline-arities #{1}
-   :inline (fn [x] `(-realized? ~x))}
+   :inline (call-to `-realized?)}
   [x]
   (-realized? x))
 
@@ -1120,7 +1123,7 @@
     (reduce (fn [n _] (inc n)) 0 coll)))
 
 (defn ^int count
-  {:inline (fn [coll] `(-count ~coll))
+  {:inline (call-to `-count)
    :inline-arities #{1}}
   [coll]
   (-count coll))
@@ -1193,7 +1196,7 @@
   [x] (satisfies? IAssociative x))
 
 (defn assoc
-  {:inline (fn [map key val] `(-assoc ~map ~key ~val))
+  {:inline (call-to `-assoc)
    :inline-arities #{3}}
   ([map key val] (-assoc map key val))
   ([map key val & kvs]
@@ -1520,7 +1523,7 @@
   (-meta [_] nil))
 
 (defn meta
-  {:inline (fn [obj] `(-meta ~obj))
+  {:inline (call-to `-meta)
    :inline-arities #{1}}
   [obj]
   (-meta obj))
@@ -1979,7 +1982,7 @@
   "Atomically sets the value of atom to newval if and only if the
   current value of the atom is equal to oldval. Returns true if
   set happened, else false."
-  [^Atom a oldval newval]
+  [a oldval newval]
   (if (= (-deref a) oldval)
     (do (reset! a newval) true)
     false))
@@ -2033,7 +2036,7 @@
   [^Atom atom f & args]
   (set! (.-meta atom) (apply f (.-meta atom) args)))
 
-(defn ^Atom add-watch
+(defn add-watch
   "Adds a watch function to an atom reference. The watch fn must be a
   fn of 4 args: a key, the reference, its old-state, its
   new-state. Whenever the reference's state might have been changed,
@@ -2052,15 +2055,17 @@
       ;; Assertion Error
       (deref a)
       ;=> 1"
-  [^Atom reference key fn]
-  (-add-watch reference key fn)
-  reference)
+  {:inline (fn [r k f] `(doto ~r (-add-watch ~k ~f)))
+   :inline-arities #{3}}
+  [reference key fn]
+  (doto reference (-add-watch key fn)))
 
-(defn ^Atom remove-watch
+(defn remove-watch
   "Removes a watch (set by add-watch) from a reference"
-  [^Atom reference key]
-  (-remove-watch reference key)
-  reference)
+  {:inline (fn [r k] `(doto ~r (-remove-watch ~k)))
+   :inline-arities #{2}}
+  [reference key]
+  (doto reference (-remove-watch key)))
 
 (defn swap!
   "Atomically swaps the value of atom to be:
@@ -2075,9 +2080,8 @@
 (defn reset-vals!
   "Sets the value of atom to newval. Returns [old new], the value of the
    atom before and after the reset."
-  [^Atom a newval]
-  (let [old-state (.-state a)]
-    [old-state (set-and-validate-atom-state! a newval)]))
+  [a newval]
+  [@a (set-and-validate-atom-state! a newval)])
 
 (defn reset-meta!
   [^Atom iref metadata-map]
@@ -2088,17 +2092,17 @@
   (apply f current-value-of-atom args). Note that f may be called
   multiple times, and thus should be free of side effects.
   Returns [old new], the value of the atom before and after the swap."
-  ([^Atom a f]
-   (let [old-state (.-state a)]
+  ([a f]
+   (let [old-state @a]
      [old-state (swap! a f)]))
-  ([^Atom a f x]
-   (let [old-state (.-state a)]
+  ([a f x]
+   (let [old-state @a]
      [old-state (swap! a f x)]))
-  ([^Atom a f x y]
-   (let [old-state (.-state a)]
+  ([a f x y]
+   (let [old-state @a]
      [old-state (swap! a f x y)]))
-  ([^Atom a f x y & more]
-   (let [old-state (.-state a)]
+  ([a f x y & more]
+   (let [old-state @a]
      [old-state (apply swap! a f x y more)])))
 
 (defprotocol IRecord
