@@ -438,3 +438,10 @@
                                  nil))))]
     ;; here we only test compilation works
     (is (some? s))))
+
+(deftest CLJD-101-cast-them-all
+  (let [path ["first" "second"]]
+    (is (some?
+          (Uri.
+            :path (when (string? path) path)
+            :pathSegments (when (coll? path) path))))))

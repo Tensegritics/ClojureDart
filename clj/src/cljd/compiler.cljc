@@ -1271,6 +1271,16 @@
      :else
      (list 'dart/as dart-expr expected-type))))
 
+(defn has-cast-method? [type]
+  (if-some [member-info
+            (some->
+              (dart-member-lookup type "cast" {:type-vars #{}})
+              actual-member)]
+    ; TODO check the return type
+    (case (:kind member-info)
+      :method (and (zero? (count (:parameters member-info))))
+      nil)))
+
 (defn magicast
   "Note (magicast x nil env) is x."
   ([dart-expr expected-type env]
@@ -1291,7 +1301,9 @@
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
      (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
        (vector? dart-expr)) dart-expr
-     (and (#{'dc.List 'dc.Map 'dc.Set} (:canon-qname expected-type))
+     (and
+       (has-cast-method? expected-type)
+       #_(#{'dc.List 'dc.Map 'dc.Set} (:canon-qname expected-type))
        (when-some [tps (seq (:type-parameters expected-type))]
          (every? #(not= (:canon-qname %) 'dc.dynamic) tps)))
      (let [[bindings dart-expr] (lift-arg true dart-expr "castable" env)
@@ -1302,7 +1314,7 @@
             (if (is-assignable? (dissoc expected-type :type-parameters) (dissoc actual-type :type-parameters))
               (list 'dart/. dart-expr (into ["cast"] (:type-parameters expected-type)))
               (list 'dart/if (list 'dart/is dart-expr expected-type) ; or expected-type?
-                dart-expr
+                (list 'dart/as dart-expr expected-type)
                 (list 'dart/. (list 'dart/as dart-expr (dissoc expected-type :type-parameters :nullable)) (into ["cast"] (:type-parameters expected-type)))))])
          casted))
      (= (:canon-qname expected-type) 'dc.Function) ; TODO : generics
