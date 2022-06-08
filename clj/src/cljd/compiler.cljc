@@ -1305,7 +1305,7 @@
        (has-cast-method? expected-type)
        #_(#{'dc.List 'dc.Map 'dc.Set} (:canon-qname expected-type))
        (when-some [tps (seq (:type-parameters expected-type))]
-         (every? #(not= (:canon-qname %) 'dc.dynamic) tps)))
+         (not-every? #(= (:canon-qname %) 'dc.dynamic) tps)))
      (let [[bindings dart-expr] (lift-arg true dart-expr "castable" env)
            casted (vary-meta (dart-local 'casted {} ) assoc :dart/type expected-type)]
        (list 'dart/let
@@ -3916,10 +3916,11 @@
                                      'Foo {})))
     )
 
-  (write
-    (binding [dart-libs-info li]
-      (emit-test '(math/max 1 2) {}))
-    return-locus)
+  (binding [*dart-out* *out*
+            dart-libs-info li]
+    (write
+      (emit-test '(Uri. :queryParameters {"a" 1}) {})
+      return-locus))
 
   (write
     (binding [dart-libs-info li]

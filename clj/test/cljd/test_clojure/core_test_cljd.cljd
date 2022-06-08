@@ -445,3 +445,7 @@
           (Uri.
             :path (when (string? path) path)
             :pathSegments (when (coll? path) path))))))
+
+(deftest dart-apply
+  (is (false?
+        (Function/apply dart:core/identical ["hello" "world"] {}))))
