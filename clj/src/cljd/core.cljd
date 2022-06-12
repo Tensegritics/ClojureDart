@@ -6503,11 +6503,14 @@
   ([] #{})
   ([& keys] (into #{} keys)))
 
-(defn ^PersistentHashMap -map-lit [^List kvs]
-  (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
-    (if (< i (.-length kvs))
-      (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
-      ^PersistentHashMap (-persistent! tm))))
+(defn ^PersistentHashMap -map-lit [kvs]
+  (if (nil? kvs)
+    {}
+    (let [^List kvs kvs]
+      (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
+        (if (< i (.-length kvs))
+          (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
+          ^PersistentHashMap (-persistent! tm))))))
 
 (defn ^PersistentHashMap hash-map
   "keyval => key val

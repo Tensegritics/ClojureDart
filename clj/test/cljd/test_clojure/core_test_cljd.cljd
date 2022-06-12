@@ -449,3 +449,11 @@
 (deftest dart-apply
   (is (false?
         (Function/apply dart:core/identical ["hello" "world"] {}))))
+
+(deftest CLJD-96-destructure-test
+  (let [sample-destructure-test (fn [& {:keys [foo]}] foo)]
+    (testing "Destructuring in many ways"
+      (is (nil? (sample-destructure-test)))
+      (is (zero? (sample-destructure-test :foo 0)))
+      (is (zero? (sample-destructure-test :foo 1 :foo 0)))
+      (is (nil? (sample-destructure-test :bar 1))))))
