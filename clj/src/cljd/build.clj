@@ -238,7 +238,10 @@
               (some-> p .destroy))))))))
 
 (defn init-project [opts main-ns bin-opts]
-  (let [bin (:target opts)
+  (let [deps-cljd-opts (:cljd/opts (:basis (deps/basis nil)))
+        bin (or (some-> deps-cljd-opts :kind name) (:target opts))
+        main-ns (or (:main deps-cljd-opts) main-ns
+                  (throw (Exception. "A namespace must be specified in deps.edn under :cljd/opts :main or as argument to init.")))
         libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
         dir (java.io.File. (System/getProperty "user.dir"))
         project-name (.getName dir)
@@ -367,10 +370,8 @@
         (case cmd
           :help (print-help commands)
           "init"
-          (do
-            (assert (first args) "A namespace must specified as argument to init.")
-            (init-project cmd-opts (symbol (first args))
-              (when (= (second args) "--") (nnext args))))
+          (let [[args [_ & target-args]] (split-with (complement #{"--"}) args)]
+            (init-project cmd-opts (some-> (first args) symbol) target-args))
           ("compile" "watch")
           (compile-cli
             :namespaces (or (seq (map symbol args))
