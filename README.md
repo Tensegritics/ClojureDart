@@ -44,7 +44,7 @@ Some differences have been documented, see [Differences with Clojure](doc/differ
 
 # Going further with Flutter
 
-In the [samples directory](samples/) you'll find some ports of [Flutter recipes](https://docs.flutter.dev/cookbook**.
+In the [samples directory](samples/) you'll find some ports of [Flutter recipes](https://docs.flutter.dev/cookbook).
 
 ## How to run a sample project
 
