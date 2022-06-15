@@ -31,7 +31,10 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDart.git"
-         :sha "885a3797ccc756d8eb91a08223d3a52817646612"}}}
+         :sha "cb428974b7c9af6fbc41f8f15db750cc8a23b588"}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :mvn/opts {:kind :flutter
+            :main acme.main}}
 EOF
 ```
 
@@ -43,17 +46,20 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "https://github.com/tensegritics/ClojureDart.git"
-         :sha "885a3797ccc756d8eb91a08223d3a52817646612"}}}
+         :sha "cb428974b7c9af6fbc41f8f15db750cc8a23b588"}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :mvn/opts {:kind :flutter
+            :main acme.main}}
 EOF
 ```
+
+`acme.main` is the root namespace of the project where the `main` function is defined.
 
 ## 4. Initialize the project
 
 ``` shell
-clj -M -m cljd.build init acme.main
+clj -Mcljd init
 ```
-
-`acme.main` is the root namespace of the project where the `main` function is defined.
 
 ## 5. Create a ClojureDart file with a main entry-point
 
