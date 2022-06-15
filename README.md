@@ -62,14 +62,14 @@ cd ClojureDart/samples/fab
 
 Init the project:
 ```shell
-clj -M -m cljd.build init sample.fab
+clj -Mcljd init
 ```
 
 Start a simulator or connect a device.
 
 Then launch the watcher:
 ```shell
-clj -M -m cljd.build flutter
+clj -Mcljd flutter
 ```
 
 Enjoy! 🧃

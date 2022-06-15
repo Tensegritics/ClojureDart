@@ -121,7 +121,7 @@ Please follow [those guidelines](https://docs.genymotion.com/desktop/Get_started
 ## 8. Start the ClojureDart watcher
 
 ``` shell
-clj -M -m cljd.build flutter
+clj -Mcljd flutter
 ```
 
 ## 9. Enjoy!
