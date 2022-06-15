@@ -33,8 +33,8 @@ cat << EOF > deps.edn
         {:git/url "git@github.com:tensegritics/ClojureDart.git"
          :sha "cb428974b7c9af6fbc41f8f15db750cc8a23b588"}}
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
- :mvn/opts {:kind :flutter
-            :main acme.main}}
+ :cljd/opts {:kind :flutter
+             :main acme.main}}
 EOF
 ```
 
@@ -48,8 +48,8 @@ cat << EOF > deps.edn
         {:git/url "https://github.com/tensegritics/ClojureDart.git"
          :sha "cb428974b7c9af6fbc41f8f15db750cc8a23b588"}}
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
- :mvn/opts {:kind :flutter
-            :main acme.main}}
+ :cljd/opts {:kind :flutter
+             :main acme.main}}
 EOF
 ```
 
