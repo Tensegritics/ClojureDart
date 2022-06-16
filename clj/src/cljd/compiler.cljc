@@ -1268,6 +1268,10 @@
      (= (:canon-qname expected-type) 'void) dart-expr
      (= (:canon-qname expected-type) 'pseudo.num-tower)
      (recur dart-expr (num-type actual-type) actual-type)
+     (= (:canon-qname expected-type) 'dc.double)
+     (if (int? dart-expr)
+       (double dart-expr)
+       (list 'dart/. (simple-cast dart-expr dc-num) 'toDouble))
      :else
      (list 'dart/as dart-expr expected-type))))
 
@@ -1288,8 +1292,6 @@
   ([dart-expr expected-type actual-type env]
    (cond
      (is-assignable? expected-type actual-type) dart-expr ; <1>
-     (and (= (:canon-qname expected-type) 'dc.double)
-       (= (:canon-qname actual-type) 'dc.int)) dart-expr
      (and (nullable-type? expected-type) (nullable-type? actual-type))
      (with-lifted [dart-expr dart-expr] env
        (list 'dart/if (list 'dart/. nil "!=" dart-expr)
@@ -1421,11 +1423,8 @@
                  more-items))
              lsym))
          (emit (list '. list-tag 'empty) env)))
-     (let [[bindings items]
-           (reduce (fn [[bindings fn-call] x]
-                     (let [[bindings' x'] (lift-arg (seq bindings) (emit x env) "item" env)]
-                       [(concat bindings' bindings) (cons x' fn-call)]))
-             [nil ()] (rseq x))]
+     (let [item-type (resolve-type item-tag (:type-vars env))
+           [bindings items] (lift-args (for [item x] [nil (emit item env) item-type]) env)]
        (cond->> #_(vec items) (with-meta (vec items) (meta (dart-local (with-meta 'fl {:tag list-tag}) env)))
                 (seq bindings) (list 'dart/let bindings))))))
 
@@ -3299,6 +3298,7 @@
   (cond
     (vector? x)
     (do (print-pre locus)
+        (some-> x meta :dart/type :type-parameters (write-types "<" ">"))
         (dart-print "[")
         (run! #(write % arg-locus) x)
         (dart-print "]")

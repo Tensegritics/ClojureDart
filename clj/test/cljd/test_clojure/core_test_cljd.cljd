@@ -120,10 +120,10 @@
 (deftest testing-dart-new-dont-need-to-be-lifted
   (testing "dart/new can be inlined"
     (is (dart/is?
-          #dart [(dart:core/Symbol. "one") (dart:core/Symbol. "two") (dart:core/Symbol. "three")]
+          #dart ^Symbol [(dart:core/Symbol. "one") (dart:core/Symbol. "two") (dart:core/Symbol. "three")]
           #/(List Symbol)))
     (is (dart/is?
-          #dart [(dart:core/Symbol. "one") (dart:core/Symbol. (let [a "a" b "b"] (str a b)))]
+          #dart ^Symbol [(dart:core/Symbol. "one") (dart:core/Symbol. (let [a "a" b "b"] (str a b)))]
           #/(List Symbol)))))
 
 (def baptiste {:first-name "Baptiste" :last-name "Dupuch"})
@@ -457,3 +457,8 @@
       (is (zero? (sample-destructure-test :foo 0)))
       (is (zero? (sample-destructure-test :foo 1 :foo 0)))
       (is (nil? (sample-destructure-test :bar 1))))))
+
+(deftest casting-to-double
+  (is (= 1.0 (first #dart ^double [1.0])))
+  (is (= 1.0 (first #dart ^double [1])))
+  (is (= 1.0 (first #dart ^double [(identity 1)]))))
