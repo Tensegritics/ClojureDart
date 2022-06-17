@@ -544,7 +544,7 @@
               (some-> lib (global-lib-alias nil) (->> (str "$lib:")))))
           (cond-> element-name nullable (str "?")))
         (cond-> {:type-params (mapv unresolve-type type-parameters)}
-          (= (:canon-qname dc-Function) canon-qname) (assoc :params-types (map unresolve-type (cons (:return-type x) (map :type (:parameters x))))))))))
+          (= (:canon-qname dc-Function) canon-qname) (assoc :params-types (map unresolve-type (cons (or (:return-type x) dc-dynamic) (map :type (:parameters x))))))))))
 
 (defn emit-type
   [tag {:keys [type-vars] :as env}]
@@ -838,7 +838,7 @@
         as-sym (fn [{:keys [name type]}]
                  (with-meta (symbol name) {:tag (unresolve-type type)}))]
     [(into [] (map as-sym) fixed)
-     (conj (into opts (map as-sym) optionals))]))
+     (into opts (map as-sym) optionals)]))
 
 (defn- transfer-tag [actual decl]
   (let [m (meta actual)]
@@ -861,8 +861,13 @@
         [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args])
       :method
       (let [[fixeds opts] (unresolve-params (:parameters member-info))
-            {:as actual :keys [opt-kind] [this & fixed-opts] :fixed-params}
+            {:as actual :keys [opt-kind opt-params] [this & fixed-opts] :fixed-params}
             (parse-dart-params args)
+            _ (case opt-kind
+                :named nil
+                :positional
+                (when-not (<= (count opt-params) (count opts))
+                  (throw (Exception. (str "Too many optional positional arguments (" (- (count opt-params) (count opts))  " extra(s)) for method " mname " for " (:element-name type) " of library " (:lib type))))))
             _ (when-not (= (count fixeds) (count fixed-opts))
                 (throw (Exception. (str "Fixed arity mismatch on " mname " for " (:element-name type) " of library " (:lib type)))))
             _ (when-not (case opt-kind :named (set? opts) (vector? opts))
@@ -876,7 +881,13 @@
                 (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d]))
                 (:opt-params actual))
               :positional
-              (mapv transfer-tag (:opt-params actual) opts))]
+              (mapcat (fn [[p v] d]
+                        (let [p (transfer-tag p d)
+                              tag (:tag (meta p))]
+                          (when (and (nil? v) (nil? tag))
+                            (throw (Exception. (str "A non-nil default value must be provided for parameter " p " of type " tag))))
+                          [p v]))
+                (concat (:opt-params actual) (repeat '[_ nil])) opts))]
         (when (= (:return-type member-info) {:nullable true})
           (throw (ex-info (pr-str mname member-info) {:member-info member-info})))
         [(vary-meta mname assoc :tag (unresolve-type (:return-type member-info)))
@@ -2017,11 +2028,11 @@
         env (assoc env :type-vars
               (into (:type-vars env #{}) mtype-params))
         dart-fixed-params (map #(dart-local % env) fixed-params)
-        dart-opt-params (for [[p d] opt-params]
-                          [(case opt-kind
-                             :named p ; here p must be a valid dart identifier
-                             :positional (dart-local p env))
-                           (emit d env)])
+        dart-opt-params  (for [[p d] opt-params]
+                           [(case opt-kind
+                              :named (with-meta p (dart-meta p env)) ; here p must be a valid dart identifier
+                              :positional (dart-local p env))
+                            (emit d env)])
         _ (when (:super (meta this-param))
             (throw (Exception. "DEPRECATED super access has changed: use ^super on this at call sites. For example (.initState ^super self).")))
         env (into (assoc env this-param (with-meta 'this (dart-meta (vary-meta this-param assoc :tag class-name) env)))
@@ -3059,9 +3070,10 @@
     (dart-print " ") (dart-print p) (dart-print ", "))
   (when (seq opt-params)
     (dart-print (case opt-kind :positional "[" "{"))
-    (doseq [[p d] opt-params] ; TODO types
-      (dart-print p "= ")
-      (write d arg-locus))
+    (doseq [[p d] opt-params
+            :let [{:dart/keys [type]} (meta p)]]
+      (write-type (or type dc-dynamic))
+      (dart-print " ") (dart-print p "= ") (write d expr-locus) (dart-print ", "))
     (dart-print (case opt-kind :positional "]" "}")))
   (dart-print ")"))
 
