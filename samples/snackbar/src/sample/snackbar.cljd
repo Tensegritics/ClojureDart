@@ -14,7 +14,6 @@
 (def snackbar-demo
   (f/widget
    :inherit [m/ScaffoldMessenger]
-   :context ctx
    (m/Center
     :child
     (m/ElevatedButton
@@ -26,7 +25,7 @@
 (defn main []
   (let [title "Snackbar Demo"]
     (m/runApp
-     (m/MaterialApp 
+     (m/MaterialApp
       :title title
       :home
        (m/Scaffold
