@@ -864,7 +864,12 @@
             {:as actual :keys [opt-kind opt-params] [this & fixed-opts] :fixed-params}
             (parse-dart-params args)
             _ (case opt-kind
-                :named nil
+                :named
+                (do
+                  (when-not (<= (count opt-params) (count opts))
+                    (throw (Exception. (str "Too many optional named arguments (" (- (count opt-params) (count opts))  " extra(s)) for method " mname " for " (:element-name type) " of library " (:lib type)))))
+                  (when-some [missed (seq (reduce disj opts (into #{} (map first) opt-params)))]
+                    (throw (Exception. (str "Missing optional named arguments " missed  " for method " mname " for " (:element-name type) " of library " (:lib type))))))
                 :positional
                 (when-not (<= (count opt-params) (count opts))
                   (throw (Exception. (str "Too many optional positional arguments (" (- (count opt-params) (count opts))  " extra(s)) for method " mname " for " (:element-name type) " of library " (:lib type))))))
@@ -876,10 +881,7 @@
             (into [this] (map transfer-tag fixed-opts fixeds))
             actual-opts
             (case opt-kind
-              :named
-              (into []
-                (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d]))
-                (:opt-params actual))
+              :named (into [] (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d])) opt-params)
               :positional
               (mapcat (fn [[p v] d]
                         (let [p (transfer-tag p d)
