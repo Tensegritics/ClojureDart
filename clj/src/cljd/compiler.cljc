@@ -544,7 +544,7 @@
               (some-> lib (global-lib-alias nil) (->> (str "$lib:")))))
           (cond-> element-name nullable (str "?")))
         (cond-> {:type-params (mapv unresolve-type type-parameters)}
-          (= (:canon-qname dc-Function) canon-qname) (assoc :params-types (map unresolve-type (cons (:return-type x) (map :type (:parameters x))))))))))
+          (= (:canon-qname dc-Function) canon-qname) (assoc :params-types (map unresolve-type (cons (or (:return-type x) dc-dynamic) (map :type (:parameters x))))))))))
 
 (defn emit-type
   [tag {:keys [type-vars] :as env}]
@@ -838,7 +838,7 @@
         as-sym (fn [{:keys [name type]}]
                  (with-meta (symbol name) {:tag (unresolve-type type)}))]
     [(into [] (map as-sym) fixed)
-     (conj (into opts (map as-sym) optionals))]))
+     (into opts (map as-sym) optionals)]))
 
 (defn- transfer-tag [actual decl]
   (let [m (meta actual)]
@@ -861,8 +861,18 @@
         [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args])
       :method
       (let [[fixeds opts] (unresolve-params (:parameters member-info))
-            {:as actual :keys [opt-kind] [this & fixed-opts] :fixed-params}
+            {:as actual :keys [opt-kind opt-params] [this & fixed-opts] :fixed-params}
             (parse-dart-params args)
+            _ (case opt-kind
+                :named
+                (do
+                  (when-not (<= (count opt-params) (count opts))
+                    (throw (Exception. (str "Too many optional named arguments (" (- (count opt-params) (count opts))  " extra(s)) for method " mname " for " (:element-name type) " of library " (:lib type)))))
+                  (when-some [missed (seq (reduce disj opts (into #{} (map first) opt-params)))]
+                    (throw (Exception. (str "Missing optional named arguments " missed  " for method " mname " for " (:element-name type) " of library " (:lib type))))))
+                :positional
+                (when-not (<= (count opt-params) (count opts))
+                  (throw (Exception. (str "Too many optional positional arguments (" (- (count opt-params) (count opts))  " extra(s)) for method " mname " for " (:element-name type) " of library " (:lib type))))))
             _ (when-not (= (count fixeds) (count fixed-opts))
                 (throw (Exception. (str "Fixed arity mismatch on " mname " for " (:element-name type) " of library " (:lib type)))))
             _ (when-not (case opt-kind :named (set? opts) (vector? opts))
@@ -871,12 +881,15 @@
             (into [this] (map transfer-tag fixed-opts fixeds))
             actual-opts
             (case opt-kind
-              :named
-              (into []
-                (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d]))
-                (:opt-params actual))
+              :named (into [] (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d])) opt-params)
               :positional
-              (mapv transfer-tag (:opt-params actual) opts))]
+              (mapcat (fn [[p v] d]
+                        (let [p (transfer-tag p d)
+                              tag (:tag (meta p))]
+                          (when (and (nil? v) (nil? tag))
+                            (throw (Exception. (str "A non-nil default value must be provided for parameter " p " of type " tag))))
+                          [p v]))
+                (concat (:opt-params actual) (repeat '[_ nil])) opts))]
         (when (= (:return-type member-info) {:nullable true})
           (throw (ex-info (pr-str mname member-info) {:member-info member-info})))
         [(vary-meta mname assoc :tag (unresolve-type (:return-type member-info)))
@@ -2017,11 +2030,11 @@
         env (assoc env :type-vars
               (into (:type-vars env #{}) mtype-params))
         dart-fixed-params (map #(dart-local % env) fixed-params)
-        dart-opt-params (for [[p d] opt-params]
-                          [(case opt-kind
-                             :named p ; here p must be a valid dart identifier
-                             :positional (dart-local p env))
-                           (emit d env)])
+        dart-opt-params  (for [[p d] opt-params]
+                           [(case opt-kind
+                              :named (with-meta p (dart-meta p env)) ; here p must be a valid dart identifier
+                              :positional (dart-local p env))
+                            (emit d env)])
         _ (when (:super (meta this-param))
             (throw (Exception. "DEPRECATED super access has changed: use ^super on this at call sites. For example (.initState ^super self).")))
         env (into (assoc env this-param (with-meta 'this (dart-meta (vary-meta this-param assoc :tag class-name) env)))
@@ -2276,7 +2289,7 @@
                                          :type (:dart/type (dart-meta p env) dc-dynamic)})
                                       (next fixed-params)) ; get rid of this
                                     (map
-                                      (fn [p]
+                                      (fn [[p]]
                                         {:name p
                                          :kind opt-kind
                                          :optional true
@@ -2302,8 +2315,9 @@
                      (dart-global (or (:name-hint opts) "Reify")))
         mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
         parsed-class-specs (parse-class-specs nil opts specs env)
+        dart-type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env)
         ;; it's ok to predecl the class without fields because in a closure you don't have direct access to them nor to the constructor.
-        _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env) :type :class})
+        _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (emit-class-specs mclass-name parsed-class-specs env)
         ; extract references to parent's super in dart closures
         [super-fn-bindings methods]
@@ -2337,23 +2351,24 @@
         ;; Note: one can also opt out of default meta by using the option :no-meta true
         no-meta (or (:no-meta opts) (seq super-ctor-split-args+types))
         meta-field (when-not no-meta (dart-local 'meta env))
-        {meta-methods :methods meta-implements :implements}
+        [parsed-class-meta-specs {meta-methods :methods meta-implements :implements}]
         (when meta-field
           (let [env-for-ctor-call ; hack where dart syms become clj syms
                 (-> env
                   (into (map (fn [v] [v v])) closed-overs)
-                  (assoc meta-field meta-field))]
-            (emit-class-specs 'dart:core/Object
-              (parse-class-specs nil {} ; TODO
-                `[cljd.core/IMeta
-                  (~'-meta [_#] ~meta-field)
-                  cljd.core/IWithMeta
-                  (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs))]
-                env-for-ctor-call)
-              env-for-ctor-call)))
+                  (assoc meta-field meta-field))
+                parsed-class-meta-specs
+                (parse-class-specs nil {} ; TODO
+                  `(cljd.core/IMeta
+                     (~'-meta [_#] ~meta-field)
+                     cljd.core/IWithMeta
+                     (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs)))
+                  env-for-ctor-call)]
+            [parsed-class-meta-specs (emit-class-specs 'dart:core/Object parsed-class-meta-specs env-for-ctor-call)]))
         all-fields
         (cond->> closed-overs meta-field (cons meta-field))
-        dart-type (new-dart-type mclass-name (:type-vars env) all-fields env)
+        dart-type (let [const-meta-dart-type (new-dart-type mclass-name (:type-vars env) all-fields (when meta-field parsed-class-meta-specs) env)]
+                    (into (update dart-type :interfaces (fnil conj []) (:interfaces const-meta-dart-type)) (filter (comp string? first)) const-meta-dart-type))
         _ (swap! nses alter-def class-name assoc :dart/type dart-type)
         class (-> class
                 (assoc
@@ -2373,9 +2388,11 @@
           [bindings dart-args] (lift-args ctor-split-args env)
           bindings (concat super-fn-bindings bindings)]
       (cond->>
-          (list* 'dart/new (emit-type class-name env)
-            (concat (when meta-field [nil])
-              (map #(if (= that-this %) outer-dart-this %) closed-overs) dart-args))
+          (with-meta (list* 'dart/new (emit-type class-name env)
+                       (concat (when meta-field [nil])
+                         (map #(if (= that-this %) outer-dart-this %) closed-overs) dart-args))
+            {:dart/type dart-type
+             :dart/inferred true})
         (seq bindings)
         (list 'dart/let bindings)))))
 
@@ -3059,9 +3076,10 @@
     (dart-print " ") (dart-print p) (dart-print ", "))
   (when (seq opt-params)
     (dart-print (case opt-kind :positional "[" "{"))
-    (doseq [[p d] opt-params] ; TODO types
-      (dart-print p "= ")
-      (write d arg-locus))
+    (doseq [[p d] opt-params
+            :let [{:dart/keys [type]} (meta p)]]
+      (write-type (or type dc-dynamic))
+      (dart-print " ") (dart-print p "= ") (write d expr-locus) (dart-print ", "))
     (dart-print (case opt-kind :positional "]" "}")))
   (dart-print ")"))
 
