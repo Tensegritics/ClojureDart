@@ -462,3 +462,24 @@
   (is (= 1.0 (first #dart ^double [1.0])))
   (is (= 1.0 (first #dart ^double [1])))
   (is (= 1.0 (first #dart ^double [(identity 1)]))))
+
+;; see https://github.com/Tensegritics/ClojureDart/issues/112
+(definterface IIssue112
+  (^String? positionalopts [^String one ... ^int? two ^^{:params-types (String String String)} Function? three])
+  (^String? namedopts [^String one .& ^int? two ^^{:params-types (String String String)} Function? three]))
+
+(deftype ConcreteIssue112 []
+  IIssue112
+  (positionalopts [this one ... two three] (when three (three "one" "two")))
+  (namedopts [this one .& two three] (when three (three "one" "two"))))
+
+(deftest opt-named-pos-param-type-inference-github-11
+  (let [rei (reify :no-meta true
+              IIssue112
+              (positionalopts [this one ... two three] (when three (three "one" "two")))
+              (namedopts [this one .& two three] (when three (three "one" "two"))))
+        concrete (ConcreteIssue112)]
+    (is (= "onetwo" (.positionalopts rei "one" 2 (fn [a b] (str a b)))))
+    (is (= "onetwo" (.namedopts rei "one" :three (fn [a b] (str a b)))))
+    (is (= "onetwo" (.positionalopts concrete "one" 2 (fn [a b] (str a b)))))
+    (is (= "onetwo" (.namedopts concrete "one" :three (fn [a b] (str a b)))))))

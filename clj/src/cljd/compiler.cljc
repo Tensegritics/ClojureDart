@@ -2287,7 +2287,7 @@
                                          :type (:dart/type (dart-meta p env) dc-dynamic)})
                                       (next fixed-params)) ; get rid of this
                                     (map
-                                      (fn [p]
+                                      (fn [[p]]
                                         {:name p
                                          :kind opt-kind
                                          :optional true
@@ -2313,8 +2313,9 @@
                      (dart-global (or (:name-hint opts) "Reify")))
         mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
         parsed-class-specs (parse-class-specs nil opts specs env)
+        dart-type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env)
         ;; it's ok to predecl the class without fields because in a closure you don't have direct access to them nor to the constructor.
-        _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env) :type :class})
+        _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (emit-class-specs mclass-name parsed-class-specs env)
         ; extract references to parent's super in dart closures
         [super-fn-bindings methods]
@@ -2348,23 +2349,24 @@
         ;; Note: one can also opt out of default meta by using the option :no-meta true
         no-meta (or (:no-meta opts) (seq super-ctor-split-args+types))
         meta-field (when-not no-meta (dart-local 'meta env))
-        {meta-methods :methods meta-implements :implements}
+        [parsed-class-meta-specs {meta-methods :methods meta-implements :implements}]
         (when meta-field
           (let [env-for-ctor-call ; hack where dart syms become clj syms
                 (-> env
                   (into (map (fn [v] [v v])) closed-overs)
-                  (assoc meta-field meta-field))]
-            (emit-class-specs 'dart:core/Object
-              (parse-class-specs nil {} ; TODO
-                `[cljd.core/IMeta
-                  (~'-meta [_#] ~meta-field)
-                  cljd.core/IWithMeta
-                  (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs))]
-                env-for-ctor-call)
-              env-for-ctor-call)))
+                  (assoc meta-field meta-field))
+                parsed-class-meta-specs
+                (parse-class-specs nil {} ; TODO
+                  `(cljd.core/IMeta
+                     (~'-meta [_#] ~meta-field)
+                     cljd.core/IWithMeta
+                     (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs)))
+                  env-for-ctor-call)]
+            [parsed-class-meta-specs (emit-class-specs 'dart:core/Object parsed-class-meta-specs env-for-ctor-call)]))
         all-fields
         (cond->> closed-overs meta-field (cons meta-field))
-        dart-type (new-dart-type mclass-name (:type-vars env) all-fields env)
+        dart-type (let [const-meta-dart-type (new-dart-type mclass-name (:type-vars env) all-fields (when meta-field parsed-class-meta-specs) env)]
+                    (into (update dart-type :interfaces (fnil conj []) (:interfaces const-meta-dart-type)) (filter (comp string? first)) const-meta-dart-type))
         _ (swap! nses alter-def class-name assoc :dart/type dart-type)
         class (-> class
                 (assoc
@@ -2384,9 +2386,11 @@
           [bindings dart-args] (lift-args ctor-split-args env)
           bindings (concat super-fn-bindings bindings)]
       (cond->>
-          (list* 'dart/new (emit-type class-name env)
-            (concat (when meta-field [nil])
-              (map #(if (= that-this %) outer-dart-this %) closed-overs) dart-args))
+          (with-meta (list* 'dart/new (emit-type class-name env)
+                       (concat (when meta-field [nil])
+                         (map #(if (= that-this %) outer-dart-this %) closed-overs) dart-args))
+            {:dart/type dart-type
+             :dart/inferred true})
         (seq bindings)
         (list 'dart/let bindings)))))
 
