@@ -2,5 +2,13 @@
            :flutter/widget {:level :error}
            :clojure-lsp/unused-public-var {:exclude #{main}}
            :unresolved-namespace {:exclude [dart dart:core]}
-           :unresolved-symbol {:exclude [bool Function fallback List Map]}} 
+           :unresolved-symbol 
+           {:exclude [AbstractClassInstantiationError ArgumentError AssertionError BidirectionalIterator 
+                      BigIntbool CastError Comparable Comparator ConcurrentModificationError 
+                      CyclicInitializationError DateTime double Duration Error Exception Expando  
+                      FallThroughError Finalizer FormatException Function IndexError IntegerDivisionByZeroException
+                      Invocation Iterable Iterator List Map MapEntry Match NoSuchMethodError Null NullThrownError
+                      Object OutOfMemoryError Pattern pragma RangeError RegExp RegExpMatch Runes RuneIterator Set 
+                      Sink StackOverflowError StackTrace StateError Stopwatch String StringBuffer StringSink
+                      Symbol Type TypeError UnimplementedError UnsupportedError Uri WeakReference]}} 
  :hooks {:analyze-call {cljd.flutter.alpha/widget hooks.flutter/widget}}}
