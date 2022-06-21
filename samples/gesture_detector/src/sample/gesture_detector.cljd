@@ -1,0 +1,53 @@
+(ns sample.gesture-detector
+  (:require
+   ["package:flutter/gestures.dart" :as g]
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter.alpha :as f]))
+
+
+(def radius 50)
+
+(defn vertex
+  [index]
+  (f/widget
+   :inherit [:global :vertexes]
+   (let [coord (get vertexes index)] 
+     (m/GestureDetector
+      :onPanStart
+      (fn [^g/DragStartDetails details]
+        (reset! (:is-hit global) true)
+        (let [new-delta (.- (.localPosition details) @coord)]
+          (swap! global assoc :delta (when (< (.distance new-delta) radius) new-delta))))
+      :onPanUpdate
+      (fn [^g/DragUpdateDetails details]
+        (when-some [delta (.-delta details)]
+          (swap! vertexes assoc index (.- (.localPosition details) delta))))
+      :onPanEnd (fn [_] (reset! (:is-hit global) false))
+      :behavior m.HitTestBehavior/opaque
+      :dragStartBehavior g.DragStartBehavior/start
+      :child
+      (m/CustomPaint
+       :painter
+       (reify :extends m/CustomPainter
+         (paint [this canvas size]
+           (let [paint (m/Paint)]
+             (set! (.color paint) m.Colors/grey)
+             (set! (.style paint) m.PaintingStyle/fill)
+             (.drawCircle canvas @coord radius paint)))
+         (shouldRepaint [this _] true))
+       :child 
+       (m/Container))))))
+
+
+(def gesture-parallelogram
+  (f/widget
+   :bind {:vertexes [(m/Offset 150 150) (m/Offset 250 150) (m/Offset 150 350)] :global {:is-hit false :delta nil}} 
+   (m/Scaffold
+    :body
+    (m/Container
+     :child (vertex 0)))))
+
+(defn main []
+  (m/runApp
+   (m/MaterialApp :title "Gesture Demo App"
+                  :home gesture-parallelogram)))
