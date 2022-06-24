@@ -2,52 +2,76 @@
   (:require
    ["package:flutter/gestures.dart" :as g]
    ["package:flutter/material.dart" :as m]
+   ["package:vector_math/vector_math_64.dart" :as vm]
    [cljd.flutter.alpha :as f]))
 
+(def radius 25)
 
-(def radius 50)
+(defn inside-parallelogram
+  [[o a b] mouse-pos]
+  (let [oa (.- a o)
+        ob (.- b o)
+        m (doto
+           (vm/Matrix3 (.-dx oa) (.-dy oa) 0
+                      (.-dx ob) (.-dy ob) 0
+                      (.-dx o)  (.-dy o)  1)
+            .invert) 
+        p-1 (.* m (vm/Vector3 (.-dx mouse-pos) (.-dy mouse-pos) 1))]
+    (dart:core/print (str p-1))
+    (when (and (<= 0 (.-x p-1) 1) (<= 0 (.-y p-1) 1))
+      (.- mouse-pos o))))
 
-(defn vertex
-  [index]
-  (f/widget
-   :inherit [:global :vertexes]
-   (let [coord (get vertexes index)] 
-     (m/GestureDetector
-      :onPanStart
-      (fn [^g/DragStartDetails details]
-        (reset! (:is-hit global) true)
-        (let [new-delta (.- (.localPosition details) @coord)]
-          (swap! global assoc :delta (when (< (.distance new-delta) radius) new-delta))))
-      :onPanUpdate
-      (fn [^g/DragUpdateDetails details]
-        (when-some [delta (.-delta details)]
-          (swap! vertexes assoc index (.- (.localPosition details) delta))))
-      :onPanEnd (fn [_] (reset! (:is-hit global) false))
-      :behavior m.HitTestBehavior/opaque
-      :dragStartBehavior g.DragStartBehavior/start
-      :child
-      (m/CustomPaint
-       :painter
-       (reify :extends m/CustomPainter
-         (paint [this canvas size]
-           (let [paint (m/Paint)]
-             (set! (.color paint) m.Colors/grey)
-             (set! (.style paint) m.PaintingStyle/fill)
-             (.drawCircle canvas @coord radius paint)))
-         (shouldRepaint [this _] true))
-       :child 
-       (m/Container))))))
+(defn move-to
+  [[o a b] o']
+  (let [oo' (.- o' o)]
+    [o' (.+ a oo') (.+ b oo')]))
 
 
 (def gesture-parallelogram
   (f/widget
-   :bind {:vertexes [(m/Offset 150 150) (m/Offset 250 150) (m/Offset 150 350)] :global {:is-hit false :delta nil}} 
-   (m/Scaffold
-    :body
-    (m/Container
-     :child (vertex 0)))))
+   :state [app-state {:vertices [(m/Offset 150 150) (m/Offset 250 150) (m/Offset 150 350)]
+                      :delta nil :dragged nil}]
+   (m/GestureDetector
+    :onPanStart
+    (fn [^g/DragStartDetails details]
+      (when-some [delta (inside-parallelogram (:vertices @app-state) (.localPosition details))]
+        (swap! app-state assoc :dragged :parallelogram :delta delta))
+      (doseq [[i coord] (map-indexed vector (:vertices @app-state))]
+        (let [delta (.- (.localPosition details) coord)]
+          (when (< (.distance delta) radius)
+            (swap! app-state assoc :dragged i :delta delta)))))
+    :onPanUpdate
+    (fn [^g/DragUpdateDetails details]
+      (let [{:keys [dragged]} @app-state]
+        (cond
+          (= dragged :parallelogram)
+          (let [o' (.- (.localPosition details) (:delta @app-state))]
+            (swap! app-state update :vertices move-to o')) 
+          (int? dragged) 
+          (swap! app-state assoc-in [:vertices dragged] (.- (.localPosition details) (:delta @app-state))))))
+    :onPanEnd (fn [_] (swap! app-state assoc :dragged nil))
+    :behavior m.HitTestBehavior/opaque
+    :dragStartBehavior g.DragStartBehavior/start
+    :child
+    (m/CustomPaint
+     :size (m/Size double/infinity double/infinity)
+     :painter
+     (reify :extends m/CustomPainter
+       (paint [this canvas size]
+         (let [paint (m/Paint)
+               [o a b :as vertices] (:vertices @app-state)
+               c (.- (.+ b a) o)]
+           (set! (.color paint) m.Colors/grey)
+           (set! (.style paint) m.PaintingStyle/fill)
+           (.drawLine canvas o a paint)
+           (.drawLine canvas o b paint)
+           (.drawLine canvas b c paint)
+           (.drawLine canvas a c paint)
+           (doseq [vertex vertices] (.drawCircle canvas vertex radius paint))))
+       (shouldRepaint [this _] true))
+     :child (m/Container)))))
 
 (defn main []
   (m/runApp
    (m/MaterialApp :title "Gesture Demo App"
-                  :home gesture-parallelogram)))
+                  :home (m/Scaffold :body gesture-parallelogram))))
