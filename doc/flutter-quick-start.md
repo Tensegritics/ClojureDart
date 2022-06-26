@@ -58,7 +58,7 @@ EOF
 ## 4. Initialize the project
 
 ``` shell
-clj -Mcljd init
+clj -M:cljd init
 ```
 
 ## 5. Create a ClojureDart file with a main entry-point
@@ -121,7 +121,7 @@ Please follow [those guidelines](https://docs.genymotion.com/desktop/Get_started
 ## 8. Start the ClojureDart watcher
 
 ``` shell
-clj -Mcljd flutter
+clj -M:cljd flutter
 ```
 
 ## 9. Enjoy!
