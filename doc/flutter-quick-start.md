@@ -31,7 +31,7 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDart.git"
-         :sha "690f481c0a2aae0e76f39ab6de61ed3e494bbaac"}}
+         :sha "3b16e0f598485d3eac9812f3a01858c46f19596a"}}
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
  :cljd/opts {:kind :flutter
              :main acme.main}}
@@ -46,7 +46,7 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "https://github.com/tensegritics/ClojureDart.git"
-         :sha "690f481c0a2aae0e76f39ab6de61ed3e494bbaac"}}
+         :sha "3b16e0f598485d3eac9812f3a01858c46f19596a"}}
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
  :cljd/opts {:kind :flutter
              :main acme.main}}
