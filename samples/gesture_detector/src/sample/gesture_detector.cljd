@@ -63,10 +63,11 @@
                c (.- (.+ b a) o)]
            (set! (.color paint) m.Colors/grey)
            (set! (.style paint) m.PaintingStyle/fill)
-           (.drawLine canvas o a paint)
-           (.drawLine canvas o b paint)
-           (.drawLine canvas b c paint)
-           (.drawLine canvas a c paint)
+           (doto canvas
+             (.drawLine o a paint)
+             (.drawLine o b paint)
+             (.drawLine b c paint)
+             (.drawLine a c paint))
            (doseq [vertex vertices] (.drawCircle canvas vertex radius paint))))
        (shouldRepaint [this _] true))
      :child (m/Container)))))
