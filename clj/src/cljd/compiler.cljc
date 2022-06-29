@@ -1003,8 +1003,15 @@
 (defn- hint-as [x tag]
   (cond-> x (and tag (or (seq? x) (symbol? x))) (vary-meta assoc :tag tag)))
 
+(defn- reannotate-as [x annotations]
+  (cond-> x (and annotations (or (seq? x) (symbol? x))) (vary-meta assoc :annotations annotations)))
+
 (defn- propagate-hints [expansion form]
-  (cond-> expansion (not (identical? form expansion)) (hint-as (:tag (meta form)))))
+  (if (identical? form expansion)
+    expansion
+    (-> expansion
+      (hint-as (:tag (meta form)))
+      (reannotate-as (:annotations (meta form))))))
 
 (defn inline-expand-1 [env form]
   (->
@@ -2404,7 +2411,7 @@
     (list (list 'dart/fn () :positional () false (list 'dart/let bindings dart-expr)))
     dart-expr))
 
-(declare write-top-dartfn write-top-field write-dynamic-var-top-field)
+(declare write-top-dartfn write-top-field write-dynamic-var-top-field write-annotations)
 
 (defn emit-defprotocol* [[_ pname spec] env]
   (let [dartname (munge pname env)]
@@ -2487,7 +2494,7 @@
     (into [] (repeat (count args) {:kind :positional
                                    :type dc-dynamic}))))
 
-(defn emit-def [[_ sym & doc-string?+expr] env]
+(defn emit-def [[_ sym & doc-string?+expr :as form] env]
   (let [[doc-string expr]
         (case (count doc-string?+expr)
           0 nil
@@ -2526,9 +2533,12 @@
         (do
           (swap! nses do-def sym {:dart/name dartname :type :field :dart/type dart-type}) ; predecl so that the def is visible in recursive defs
           (emit expr env))
+        dart-annotations
+        (when-not *host-eval* (into [] (map #(emit % env)) (-> form meta :annotations)))
         dart-code
         (when-not *host-eval*
           (with-dart-str
+            (write-annotations dart-annotations)
             (cond
               (:dynamic (meta sym))
               (let [k (symbol (name (:current-ns @nses)) (name sym))]
@@ -2991,7 +3001,14 @@
       :decl (str "late final " (some-> vartype type-str (str " ")) varname ";\n")
       :fork (assignment-locus varname)})))
 
+(def annotation-locus
+  {:pre "@"
+   :post "\n"})
+
 (declare write)
+
+(defn write-annotations [annotations]
+  (run! #(write % annotation-locus) annotations))
 
 (defn write-top-dartfn [sym x]
   (case (first x)
