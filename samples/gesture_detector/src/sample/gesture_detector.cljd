@@ -1,0 +1,80 @@
+(ns sample.gesture-detector
+  (:require
+   ["package:flutter/gestures.dart" :as g]
+   ["package:flutter/material.dart" :as m]
+   ["package:vector_math/vector_math_64.dart" :as vm]
+   [cljd.flutter.alpha :as f]))
+
+(def radius 25)
+
+(defn inside-parallelogram
+  [[^m/Offset o ^m/Offset a ^m/Offset b] ^m/Offset mouse-pos]
+  (let [oa (.- a o)
+        ob (.- b o)
+        m (doto
+           (vm/Matrix3 (.-dx oa) (.-dy oa) 0
+                      (.-dx ob) (.-dy ob) 0
+                      (.-dx o)  (.-dy o)  1)
+            .invert)
+        p-1 (.transform m (vm/Vector3 (.-dx mouse-pos) (.-dy mouse-pos) 1))]
+    (when (and (<= 0 (.-x p-1) 1) (<= 0 (.-y p-1) 1))
+      (.- mouse-pos o))))
+
+(defn move-to
+  [[^m/Offset o ^m/Offset a ^m/Offset b] ^m/Offset o']
+  (let [oo' (.- o' o)]
+    [o' (.+ a oo') (.+ b oo')]))
+
+(def gesture-parallelogram
+  (f/widget
+   :state [app-state {:vertices [(m/Offset 150 150) (m/Offset 250 150) (m/Offset 150 350)]
+                      :delta nil :dragged nil}]
+   (m/GestureDetector
+    :onPanStart
+    (fn [^g/DragStartDetails details]
+      (let [{:keys [vertices]} @app-state
+            pointer (.localPosition details)
+            [[id delta]]
+            (concat
+             (for [[i vertex] (map-indexed vector vertices)
+                   :let [delta (.- pointer vertex)]
+                   :when (< (.distance delta) radius)]
+               [i delta])
+             (when-some [delta (inside-parallelogram vertices pointer)]
+               [[:parallelogram delta]]))]
+        (swap! app-state assoc :dragged id :delta delta)))
+    :onPanUpdate
+    (fn [^g/DragUpdateDetails details]
+      (let [{:keys [dragged delta]} @app-state
+            new-pos (when dragged (.- (.localPosition details) delta))]
+        (cond
+          (= dragged :parallelogram)
+          (swap! app-state update :vertices move-to new-pos)
+          (int? dragged)
+          (swap! app-state assoc-in [:vertices dragged] new-pos))))
+    :child
+    (m/CustomPaint
+     :size (m/Size double/infinity double/infinity)
+     :painter
+     (reify :extends m/CustomPainter
+       (paint [this canvas size]
+         (let [[^m/Offset o ^m/Offset a ^m/Offset b] (:vertices @app-state)
+               c (.- (.+ b a) o)
+               paint (doto (m/Paint)
+                       (-> .-color (set! m.Colors/grey))
+                       (-> .-style (set! m.PaintingStyle/fill)))]
+           (doto canvas
+             (.drawLine o a paint)
+             (.drawLine o b paint)
+             (.drawLine b c paint)
+             (.drawLine a c paint)
+             (.drawCircle o radius paint)
+             (.drawCircle a radius paint)
+             (.drawCircle b radius paint))
+           nil))
+       (shouldRepaint [this _] true))))))
+
+(defn main []
+  (m/runApp
+   (m/MaterialApp :title "Gesture Demo App"
+                  :home (m/Scaffold :body gesture-parallelogram))))
