@@ -34,14 +34,14 @@
     (fn [^g/DragStartDetails details]
       (let [{:keys [vertices]} @app-state
             pointer (.localPosition details)
-            [id delta]
-            (or (first
-                  (for [[i vertex] (map-indexed vector vertices)
-                        :let [delta (.- pointer vertex)]
-                                :when (< (.distance delta) radius)]
-                    [i delta]))
-              (some->> (inside-parallelogram vertices pointer)
-                (vector :parallelogram)))]
+            [[id delta]]
+            (concat
+             (for [[i vertex] (map-indexed vector vertices)
+                   :let [delta (.- pointer vertex)]
+                   :when (< (.distance delta) radius)]
+               [i delta])
+             (when-some [delta (inside-parallelogram vertices pointer)]
+               [[:parallelogram delta]]))]
         (swap! app-state assoc :dragged id :delta delta)))
     :onPanUpdate
     (fn [^g/DragUpdateDetails details]
