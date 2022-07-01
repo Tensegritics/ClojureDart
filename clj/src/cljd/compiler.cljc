@@ -1183,6 +1183,18 @@
         :else
         [nil x])))
 
+(defn- dot-symbol? [x]
+  (and (symbol? x)
+    (.startsWith (name x) ".")))
+
+(defn- ensure-kw [x]
+  (if (keyword? x)
+    (let [s (symbol (str "." (name x)))]
+      (binding [*out* *err*]
+        (println "DEPRECATED use" s "instead of" x "for named parameters" (source-info)))
+      x)
+    (-> x name (subs 1) keyword)))
+
 (defn- split-args
   "Returns a collection of triples [name dart-code expected-type]
    where name is nil for positional parameters, dart-code MAY NOT BE A DART EXPR
@@ -1190,20 +1202,23 @@
   [args [fixed-types opts-types :as method-sig] env]
   (cond
     (nil? method-sig)
-    (let [[positional-args [_ & named-args]] (split-with (complement '#{.&}) args)]
+    (let [[positional-args named-args]
+          (split-with (complement dot-symbol?) args)
+          named-args (cond-> named-args (= '.& (first named-args)) next)]
       (-> [] (into (map #(vector nil (emit % env)) positional-args))
-        (into (comp (partition-all 2) (map (fn [[name x]] [name (emit x env)]))) named-args)))
+        (into (comp (partition-all 2) (map (fn [[name x]] [(ensure-kw name) (emit x env)]))) named-args)))
     (map? opts-types)
     (let [args (remove '#{.&} args) ; temporary
           positional-args (mapv #(vector nil (emit %1 env) %2) args fixed-types)
           rem-args (drop (count positional-args) args)
           all-args (into positional-args
                      (map (fn [[k expr]]
-                            (if-some [[_ type] (find opts-types k)]
-                              [k (emit expr env) type]
-                              (throw (Exception.
-                                       (str "Not an expected argument name: " (pr-str k)
-                                         ", valid names: " (str/join ", " (keys opts-types))))))))
+                            (let [k (ensure-kw k)]
+                              (if-some [[_ type] (find opts-types k)]
+                                [k (emit expr env) type]
+                                (throw (Exception.
+                                         (str "Not an expected argument name: " (pr-str k)
+                                           ", valid names: " (str/join ", " (keys opts-types)))))))))
                      (partition 2 rem-args))]
       (when-not (= (count positional-args) (count fixed-types))
         (throw (Exception. (str "Not enough positional arguments: expected " (count fixed-types) " got " (count positional-args)))))
@@ -1485,9 +1500,8 @@
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class env)
         member-info (some-> (dart-member-lookup dart-type (:element-name dart-type) env) actual-member)
-        _ (when (not member-info)
-            (binding [*out* *err*]
-              (println "Stern warning: can't resolve default constructor for type" (:element-name dart-type "dynamic") "of library" (:lib dart-type "dart:core") (source-info))))
+        _ (when-not (= :constructor (:kind member-info))
+            (throw (Exception. (str "Can't resolve default constructor for type " (:element-name dart-type "dynamic") " of library " (:lib dart-type "dart:core") " " (source-info)))))
         method-sig (some-> member-info dart-method-sig)
         split-args+types (split-args args method-sig env)
         [bindings dart-args] (lift-args split-args+types env)]
@@ -1548,10 +1562,10 @@
                          :else
                          (list 'dart/as dart-obj dc-dynamic))))
           _ (when (and static (not (or (:static member-info) (= :constructor (:kind member-info)))))
-              (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:element-name type!)))))
+              (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:element-name type!) " " (source-info)))))
           _ (when (not member-info)
               (binding [*out* *err*]
-                (println "Stern warning: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
+                (println "Dynamic warning: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
           special-num-op-sig (case (:canon-qname type!) ; see sections 17.30 and 17.31 of Dart lang spec
                                dc.int (case member-name
                                         ("-" "+" "%" "*")
@@ -1566,7 +1580,15 @@
           split-args+types (split-args args method-sig env)
           [dart-args-bindings dart-args] (lift-args split-args+types env)
           prop (case (:kind member-info)
-                 :field true
+                 :field (do
+                          (when-not prop
+                            (binding [*out* *err*]
+                              (println "Warning: " member-name " is a property and as such should be prefixed by a dash" (str "-" member-name)  (source-info))))
+                          true)
+                 ; DO NOT emit warning when prop and method/ctor because
+                 ; it's valid: it's a tear-off
+                 ; https://dart.dev/guides/language/effective-dart/usage#dont-create-a-lambda-when-a-tear-off-will-do
+                 ; TODO: properly infer type of tear-offs
                  (nil :method :constructor) prop)
           name (if prop member-name (into [member-name] (map #(emit-type % env)) (:type-params (meta member))))
           op (if prop 'dart/.- 'dart/.)
@@ -2384,9 +2406,8 @@
           (let [meth (-> class :super-ctor :method)
                 super-ctor-meth (cond-> (:element-name dart-super-type) meth (str "." meth))
                 super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)]
-            (when (not super-ctor-info)
-              (binding [*out* *err*]
-                (println "Stern warning: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
+            (when-not (= :constructor (:kind super-ctor-info))
+              (throw (Exception. (str "Can't resolve constructor " super-ctor-meth " for type " (:element-name dart-super-type "dynamic") " of library " (:lib dart-super-type "dart:core") " " (source-info)))))
             (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))))
         super-ctor-split-params
         (into [] (map (fn [[name _]] [name (dart-local (or name "param") env)])) super-ctor-split-args+types)

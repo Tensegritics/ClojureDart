@@ -13,6 +13,7 @@
   (:require ["dart:async" :as async]
             ["dart:developer" :as dev]
             ["dart:io" :as io]
+            ["dart:math" :as math]
             [cljd.string :as str])
   (:use [cljd.test :only [deftest is testing are]]))
 
@@ -443,8 +444,8 @@
   (let [path ["first" "second"]]
     (is (some?
           (Uri.
-            :path (when (string? path) path)
-            :pathSegments (when (coll? path) path))))))
+            .path (when (string? path) path)
+            .pathSegments (when (coll? path) path))))))
 
 (deftest dart-apply
   (is (false?
