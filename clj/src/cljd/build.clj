@@ -12,8 +12,7 @@
             [clojure.tools.cli.api :as deps]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
-            [clojure.java.io :as io]
-            [clojure.java.classpath :as cp]))
+            [clojure.java.io :as io]))
 
 (def ^:dynamic *ansi* false)
 (def ^:dynamic *config* {})
@@ -86,20 +85,23 @@
 
 (defn print-exception [e]
   (println (rand-nth
-             [(str (red "Oh noes! ") "😵")
-              (str (red "Something horrible happened! ") "😱")
-              (str (red "$expletives ") "💩")
-              (str (red "Keep calm and fix bugs! ") "👑")
-              (str (red "What doesn’t kill you, makes you stronger. ") "🤔")
-              (str (red "You’re gonna need a bigger boat! ") "🦈")]))
+            [(str (red "Oh noes! ") "😵")
+             (str (red "Something horrible happened! ") "😱")
+             (str (red "$expletives ") "💩")
+             (str (red "Keep calm and fix bugs! ") "👑")
+             (str (red "What doesn’t kill you, makes you stronger. ") "🤔")
+             (str (red "You’re gonna need a bigger boat! ") "🦈")]))
   (if-some [exprs (seq (::compiler/emit-stack (ex-data e)))]
-    (let [exprs (into [] exprs)]
-      (println (ex-message e))
-      (run! prn (pop exprs))
-      (println (title (pr-str (peek exprs))))
-      (println (ex-message (ex-cause e))))
     (do
       (println (ex-message e))
+      (println "⛔️" (title (ex-message (ex-cause e))))
+      (if (next exprs)
+        (do
+          (println (title "Faulty subform and/or expansion") (pr-str (first exprs)))
+          (println (title "While compiling") (pr-str (last exprs))))
+        (println (title "Faulty form") (pr-str (first exprs)))))
+    (do
+      (println "⛔️" (title (ex-message e)))
       (st/print-stack-trace e))))
 
 (defn timestamp []
