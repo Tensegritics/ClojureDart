@@ -483,3 +483,10 @@
     (is (= "onetwo" (.namedopts rei "one" :three (fn [a b] (str a b)))))
     (is (= "onetwo" (.positionalopts concrete "one" 2 (fn [a b] (str a b)))))
     (is (= "onetwo" (.namedopts concrete "one" :three (fn [a b] (str a b)))))))
+
+(deftest close-over-values-not-slots
+  (let [fs (loop [fs [] i 4]
+             (if (neg? i)
+               fs
+               (recur (conj fs (fn [] i)) (dec i))))]
+    (is (= [4 3 2 1 0] (map (fn [f] (f)) fs)))))

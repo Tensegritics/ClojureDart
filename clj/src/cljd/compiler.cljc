@@ -1621,7 +1621,7 @@
          (fn [[dart-bindings env] [k v]]
            (let [dart-v (emit v env)
                  {:dart/keys [type]} (infer-type dart-v)
-                 decl (dart-local k env)]
+                 decl (vary-meta (dart-local k env) assoc :dart/loop-local true)]
              [(conj dart-bindings [decl (magicast dart-v (-> decl meta :dart/type) env)])
               (assoc env k decl)]))
          [[] env] (partition 2 bindings))]
@@ -1888,6 +1888,12 @@
 (defn- ensure-future [type]
   (assoc dc-Future :type-parameters [(no-future (or type dc-dynamic))]))
 
+(defn closed-overs
+  "Returns the set of dart locals (values of the env) referenced in the emitted code."
+  [emitted env] ; TODO now that env may have expressions (dart/as ..) as values we certainly have subtle bugs
+  (let [dart-locals (into #{} (map #(cond-> % (seq? %) second)) (vals env))]
+    (into #{} (comp (filter symbol?) (keep dart-locals)) (tree-seq sequential? seq emitted))))
+
 (defn- emit-dart-fn [async fn-name [params & body] env]
   (let [ret-type (some-> (or (:tag (meta fn-name)) (:tag (meta params))) (emit-type env))
         ; there's definitely an overlap between parse-dart-params and dart-method-sig
@@ -1933,12 +1939,29 @@
         ; 1st pass
         dart-body (emit (cons 'do body) (patch-env env (function-type async (or ret-type dc-Never))))
         async' (or async (has-await? dart-body))
+        mutable-closed-overs
+        (when-some [dart-locals (seq (filter #(or (:dart/loop-local (meta %)) (:dart/mutable (meta %))) (closed-overs dart-body env)))]
+          (let [dart-locals (set dart-locals)]
+            (into {}
+              (keep (fn [[clj dart]]
+                      (when (dart-locals dart)
+                        [dart (with-meta (dart-local (name clj) env)
+                                (dissoc (meta dart) :dart/mutable :dart/loop-local))])))
+              env)))
         dart-body
         (if (or (and fn-name (nil? ret-type)) ; potentially recursive fn of unknow type
-              (and (not async) async')) ; implicit async
+              (and (not async) async') ; implicit async
+              (seq mutable-closed-overs))
           ; 2nd pass
-          (emit (cons 'do body)
-            (patch-env env (function-type async' (:dart/type (infer-type dart-body)))))
+          (let [env (patch-env env (function-type async' (:dart/type (infer-type dart-body))))
+                env (if (seq mutable-closed-overs)
+                      (into env
+                        (keep (fn [[clj dart]]
+                                (when-some [dart (mutable-closed-overs dart)]
+                                  [clj dart])))
+                        env)
+                      env)]
+            (emit (cons 'do body) env))
           dart-body)
         async async'
         recur-params (when (has-recur? dart-body) dart-fixed-params)
@@ -1966,10 +1989,16 @@
           (vary-meta assoc
             :dart/ret-type  ret-type
             :dart/fn-type   :native
-            :dart/type      (function-type async ret-type)))]
-    (if fn-name
-      (let [dart-fn-name (with-meta (env fn-name) (meta dart-fn))]
-        (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name))
+            :dart/type      (function-type async ret-type)))
+        dart-fn
+        (if fn-name
+          (let [dart-fn-name (with-meta (env fn-name) (meta dart-fn))]
+            (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name))
+          dart-fn)]
+    (if (seq mutable-closed-overs)
+      (list 'dart/let
+        (into [] (map (fn [[mutable immutable]] [immutable mutable])) mutable-closed-overs)
+        dart-fn)
       dart-fn)))
 
 (defn emit-fn* [[fn* & bodies :as form] env]
@@ -1987,12 +2016,6 @@
     (case fn-type
       :ifn (emit-ifn async var-name name bodies env)
       (emit-dart-fn async name body env))))
-
-(defn closed-overs
-  "Returns the set of dart locals (values of the env) referenced in the emitted code."
-  [emitted env] ; TODO now that env may have expressions (dart/as ..) as values we certainly have subtle bugs
-  (let [dart-locals (into #{} (map #(cond-> % (seq? %) second)) (vals env))]
-    (into #{} (comp (filter symbol?) (keep dart-locals)) (tree-seq sequential? seq emitted))))
 
 (defn emit-letfn [[_ fns & body] env]
   (let [env (reduce (fn [env [name]] (assoc env name (dart-local name env))) env fns)
