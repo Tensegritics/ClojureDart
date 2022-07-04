@@ -1,0 +1,25 @@
+(ns sample.future
+  ""
+  (:require
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter.alpha :as f]))
+
+(defn main []
+  (let [title "Future always happen"]
+    (m/runApp
+     (m/MaterialApp
+      :title title
+      :home
+      (m/Scaffold
+       :appBar (m/AppBar :title (m/Text title))
+       :body
+       (f/widget
+        :watch [text (Future/delayed (Duration :seconds 10)
+                                     (fn [] "It's the future!"))
+                :or "Not yet..."
+                tick (Stream/periodic (Duration :seconds 1) identity)
+                :or "Let's go!"]
+        (m/Column
+         :children
+         [(f/nest m/Center (m/Text text))
+          (f/nest m/Center (m/Text (str tick)))])))))))

@@ -18,11 +18,11 @@
   (-subscribe [f opts cb]
     (let [cancelled (volatile! false)]
       (.then f (fn [x] (when-not @cancelled (cb x))))
-      [(:init opts) #(vreset! cancelled true)]))
+      [(:or opts) #(vreset! cancelled true)]))
   async/Stream
   (-subscribe [s opts cb]
     (let [sub (.listen s cb)]
-      [(:init opts) #(.cancel sub)]))
+      [(:or opts) #(.cancel sub)]))
   fallback
   (-subscribe [watchable opts cb]
     (let [k (Object)]
@@ -41,7 +41,7 @@
 (defmacro ^:private ^:macro-support else->> [& forms] `(->> ~@(reverse forms)))
 
 (defn update-subscriptions [new-watchees+opts old-watchees+opts ^List vals-then-cancels ^widgets/State state]
-  (let [N (* 2 (.-length vals-then-cancels))]
+  (let [N (quot (.-length vals-then-cancels) 2)]
     (dotimes [i N]
       (let [n (nth new-watchees+opts i)
             o (nth old-watchees+opts i)]
@@ -62,7 +62,8 @@
               [l r opts] (peek triples)])
         (if (nil? l) (throw (Exception. "Options must follow a binding form.")))
         (if-not supported (throw (Exception. (str "Unsupported option " lhs))))
-        (if (fn? supported) [l r (merge-with supported opts {lhs rhs})])
+        (if (fn? supported)
+          (conj (pop triples) [l r (merge-with supported opts {lhs rhs})]))
         (if (contains? opts lhs) (throw (Exception. (str "Duplicate option " lhs))))
         (conj (pop triples) [l r (assoc opts lhs rhs)])))
     []
@@ -150,12 +151,13 @@
                                     `(-> ~lhs ~(or dispose '.dispose))))
                              (rseq with-triples))
         build+dispose `build+dispose#
+        watchees-state `watchees-state#
         state-sym `^widgets/State state#
         super (vary-meta state-sym assoc :tag 'super)
         expr `(let [~@inherits-bindings] ~@body)
         user-widget
         (if (or (seq state) (seq watch-triples) (seq with-triples) ticker-mixin)
-          `(let [watchees+opts# [~@(map next watch-triples)]] ; watchees are tied to the the widget
+          `(let [watchees+opts# [~@(for [[_ e o] watch-triples] [e o])]] ; watchees are tied to the the widget
              (reify :extends (widgets/StatefulWidget. :key ~(:base key-exprs))
                :no-meta true
                (~'debugFillProperties [~state-sym props-builder#]
@@ -173,8 +175,7 @@
                           [(first state) `(atom ~(second state))])
                       ; watchees-states is an array of current values followed by
                       ; cancel functions.
-                      watchees-state# (List/filled ~(* 2 (count watch-triples)) nil
-                                        :growable false)]
+                      ~watchees-state (List/filled ~(* 2 (count watch-triples)) nil)]
                   (reify :extends widgets/State
                     :no-meta true
                     (~'initState [~state-sym]
@@ -184,15 +185,15 @@
                         `(add-watch ~(first state) ~state-sym
                            (fn [k# r# o# n#] (.setState ~state-sym (fn [])))))
                      ; watchees
-                     (update-subscriptions watchees+opts# nil watchees-state# ~state-sym)
+                     (update-subscriptions watchees+opts# nil ~watchees-state ~state-sym)
                      ; resources
-                     ~(when (seq with)
+                     ~(when (or (seq with) (seq watch))
                         `(let [~@(when ticker-mixin
                                    [(vary-meta (or ticker tickers) assoc :tag ticker-mixin) state-sym])
                                ~@init-let-bindings]
                            (vreset! ~build+dispose
                              [(fn [~flutter-build-ctx]
-                                (let [[~@(map first watch-triples)] watchees-states#]
+                                (let [[~@(map first watch-triples)] ~watchees-state]
                                   ~expr))
                               (fn [] ~@dispose-statements
                                 (vreset! ~build+dispose nil))])))
@@ -202,15 +203,15 @@
                      ~(when (seq with)
                         `((second (deref ~build+dispose))))
                      ; watchees
-                     (update-subscriptions nil watchees+opts# watchees-state# ~state-sym)
+                     (update-subscriptions nil watchees+opts# ~watchees-state ~state-sym)
                      ; atomic state
                      ~(when (seq state) `(remove-watch ~(first state) ~state-sym))
                      (.dispose ~super))
                     (~'didUpdateWidget [~state-sym old-widget#]
                      (.didUpdateWidget ~super old-widget#)
-                     (update-subscriptions watchees+opts# @old-widget#  watchees-state# ~state-sym))
+                     (update-subscriptions watchees+opts# @old-widget# ~watchees-state ~state-sym))
                     (~'build [~state-sym ~flutter-build-ctx]
-                     ~(if (seq with)
+                     ~(if (or (seq with) (seq watch))
                         `((first (deref ~build+dispose)) ~flutter-build-ctx)
                         ; when no :with, just build here
                         expr))
