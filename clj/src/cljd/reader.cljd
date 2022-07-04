@@ -12,13 +12,13 @@
              (fn [^String s]
                (assert (nil? buffer))
                (when-not (== "" s)
-                 (.complete completer s)
-                 (.pause subscription))) .&
+                 (.complete (.-completer this) s)
+                 (.pause (.-subscription this)))) .&
              :onDone
              (fn []
                (assert (nil? buffer))
-               (.complete completer nil)
-               (set! subscription nil)
+               (.complete (.-completer this) nil)
+               (set! (.-subscription this) nil)
                nil))
        (.pause)))
    nil)
