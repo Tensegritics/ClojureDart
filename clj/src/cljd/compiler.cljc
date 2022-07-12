@@ -134,9 +134,9 @@
                                   (when-not (contains? past-exports lib)
                                     (cond
                                       shown
-                                      (select-keys (export (dart-libs-info lib) lib past-exports) shown)
+                                      (select-keys (export (dart-libs-info lib) lib (conj past-exports lib)) shown)
                                       hidden
-                                      (reduce dissoc (export (dart-libs-info lib) lib past-exports) hidden)
+                                      (reduce dissoc (export (dart-libs-info lib) lib (conj past-exports lib)) hidden)
                                       :else (export (dart-libs-info lib) lib (conj past-exports lib)))))) exports)]
             (assoc v :export-fn (if exports
                                   #(if (v (:element-name %)) (assoc % :lib source-lib) %)
@@ -400,7 +400,8 @@
    Returns a function from types (as maps) to types (as maps)."
   [type-map]
   #(if-some [t (when (:is-param %) (type-map (:element-name %)))]
-     (assoc t :nullable (:nullable %))
+     (cond-> t
+       (when-not (:nullable t) (:nullable %)) (assoc :nullable true))
      %))
 
 (defn- type-map-for

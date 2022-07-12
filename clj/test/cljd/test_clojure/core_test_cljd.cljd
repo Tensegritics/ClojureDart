@@ -490,3 +490,8 @@
                fs
                (recur (conj fs (fn [] i)) (dec i))))]
     (is (= [4 3 2 1 0] (map (fn [f] (f)) fs)))))
+
+(deftest resulting-type-arg-nullable-iff-input-type-arg-nullable-and-param-null
+  (let [m {"color" "red"}
+        m (. m #/(cast String String?))]
+    (is (= true (dart/is? m #/(Map String String?))))))
