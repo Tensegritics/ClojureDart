@@ -618,29 +618,33 @@
    "\\"   "$BSLASH_"
    "?"    "$QMARK_"})
 
+(defn munge-str
+  "Returns a dart-safe id as string."
+  [x]
+  (let [s (name x)]
+    (or (when (reserved-words s) (str "$" s "_"))
+      (replace-all s #"__(\d+)|__auto__|(^-)|[^a-zA-Z0-9]"
+        (fn [[x n leading-dash]]
+          (else->>
+            (if leading-dash "$_")
+            (if n (str "$" n "_"))
+            (if (= "__auto__" x) "$AUTO_")
+            (or (char-map x))
+            (str "$u"
+              ;; TODO SELFHOST :cljd version
+              (str/join "_$u" (map #(-> % int Long/toHexString .toUpperCase) x))
+              "_")))))))
+
 (defn munge
   ([sym env] (munge sym nil env))
   ([sym suffix env]
-   (let [s (name sym)]
-     (with-meta
-       (or
-         (-> sym meta :dart/name)
-         (symbol
-          (cond->
-              (or (when (reserved-words s) (str "$" s "_"))
-                (replace-all s #"__(\d+)|__auto__|(^-)|[^a-zA-Z0-9]"
-                  (fn [[x n leading-dash]]
-                    (else->>
-                      (if leading-dash "$_")
-                      (if n (str "$" n "_"))
-                      (if (= "__auto__" x) "$AUTO_")
-                      (or (char-map x))
-                      (str "$u"
-                        ;; TODO SELFHOST :cljd version
-                        (str/join "_$u" (map #(-> % int Long/toHexString .toUpperCase) x))
-                        "_")))))
-              suffix (str "$" suffix))))
-       (dart-meta sym env)))))
+   (with-meta
+     (or
+       (-> sym meta :dart/name)
+       (symbol
+         (cond-> (munge-str sym)
+           suffix (str "$" suffix))))
+     (dart-meta sym env))))
 
 (defn munge* [dart-names]
   (let [sb (StringBuilder. "$C$")]
@@ -665,6 +669,7 @@
   ([prefix] (munge prefix (swap! gens inc) {})))
 
 (def ^:dynamic *locals-gen*)
+(def ^:dynamic *class-prefix* "")
 
 (defn dart-local
   "Generates a unique (relative to the top-level being compiled) dart symbol.
@@ -676,6 +681,12 @@
          {n dart-hint} (set! *locals-gen* (assoc *locals-gen* dart-hint (inc (*locals-gen* dart-hint 0))))
          {:dart/keys [type] :as dart-meta} (dart-meta hint env)]
      (with-meta (symbol (str dart-hint "$" n)) dart-meta))))
+
+(defn anonymous-global
+  [suffix]
+  (let [basis (str *class-prefix* suffix)
+        {n basis} (set! *locals-gen* (assoc *locals-gen* basis (inc (*locals-gen* basis 0))))]
+    (symbol (str basis "$" n))))
 
 (defn- parse-dart-params [params]
   (let [[fixed-params [delim & opt-params]] (split-with (complement '#{.& ...}) params)]
@@ -2332,7 +2343,7 @@
   (let [[outer-clj-this outer-dart-this] (some (fn [[clj dart :as e]] (when (= 'this dart) e)) env)
         that-super (dart-local "that-super" env)
         that-this (vary-meta (dart-local "that" env)
-                    merge (meta outer-dart-this) {:that-super that-super})
+                             merge (meta outer-dart-this) {:that-super that-super})
         ;; when we have nested closures we must take care to not take a this relating
         ;; to the outermost clojure for a this relating to the innermost.
         ;; That's why we remap existing bindings to this and super.
@@ -2341,11 +2352,16 @@
         ;; And by checking the presence of that-this and that-super in the emitetd codeper
         ;; we know whether we need to close over the outermost values of this and super.
         env (cond-> env outer-clj-this (assoc outer-clj-this that-this))
-        class-name (if-some [var-name (:var-name opts)]
-                     (munge var-name "ifn" env)
-                     (dart-global (or (:name-hint opts) "Reify")))
-        mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
         parsed-class-specs (parse-class-specs nil opts specs env)
+        fingerprint (Integer/toUnsignedString
+                     (hash [(:canon-qname (:extends parsed-class-specs))
+                            (into #{} (map :canon-qname) (:implements parsed-class-specs))
+                            (into #{} (map :canon-qname) (:mixins parsed-class-specs))]) 36)
+        class-name (anonymous-global
+                    (munge-str
+                     (str (if-some [var-name (:var-name opts)] "ifn" (or (:name-hint opts) "Reify"))
+                          fingerprint)))
+        mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
         dart-type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env)
         ;; it's ok to predecl the class without fields because in a closure you don't have direct access to them nor to the constructor.
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
@@ -2355,14 +2371,14 @@
         (reduce (fn [[bindings meths] meth]
                   (let [[bindings' meth'] (method-extract-super-call meth that-super)]
                     [(into bindings bindings') (conj meths meth')]))
-          [[] []] (:methods class))
+                [[] []] (:methods class))
         ; closed-overs are a seq of dart locals
         ; (they are found by walking the emitted dart sexp)
         ; super-fns extracted above are part of the closed overs
         closed-overs (concat
-                       (transduce (map #(method-closed-overs % env)) into #{}
-                         methods)
-                       (map first super-fn-bindings))
+                      (transduce (map #(method-closed-overs % env)) into #{}
+                                 methods)
+                      (map first super-fn-bindings))
         super-ctor-split-args+types
         (when-some [dart-super-type (:extends class)]
           (let [meth (-> class :super-ctor :method)
@@ -2386,15 +2402,15 @@
         (when meta-field
           (let [env-for-ctor-call ; hack where dart syms become clj syms
                 (-> env
-                  (into (map (fn [v] [v v])) closed-overs)
-                  (assoc meta-field meta-field))
+                    (into (map (fn [v] [v v])) closed-overs)
+                    (assoc meta-field meta-field))
                 parsed-class-meta-specs
                 (parse-class-specs nil {} ; TODO
-                  `(cljd.core/IMeta
-                     (~'-meta [_#] ~meta-field)
-                     cljd.core/IWithMeta
-                     (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs)))
-                  env-for-ctor-call)]
+                                   `(cljd.core/IMeta
+                                     (~'-meta [_#] ~meta-field)
+                                     cljd.core/IWithMeta
+                                     (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs)))
+                                   env-for-ctor-call)]
             [parsed-class-meta-specs (emit-class-specs 'dart:core/Object parsed-class-meta-specs env-for-ctor-call)]))
         all-fields
         (cond->> closed-overs meta-field (cons meta-field))
@@ -2402,28 +2418,28 @@
                     (into (update dart-type :interfaces (fnil conj []) (:interfaces const-meta-dart-type)) (filter (comp string? first)) const-meta-dart-type))
         _ (swap! nses alter-def class-name assoc :dart/type dart-type)
         class (-> class
-                (assoc
-                  :name (emit-type mclass-name env)
-                  :ctor class-name
-                  :fields all-fields
-                  :methods (concat meta-methods methods)
-                  :implements (concat meta-implements (:implements class))
-                  :ctor-params
-                  (concat
+                  (assoc
+                   :name (emit-type mclass-name env)
+                   :ctor class-name
+                   :fields all-fields
+                   :methods (concat meta-methods methods)
+                   :implements (concat meta-implements (:implements class))
+                   :ctor-params
+                   (concat
                     (map #(list '. %) all-fields)
                     (map second super-ctor-split-params)))
-                (assoc-in [:super-ctor :args]
-                  (into [] (comp cat (remove nil?)) super-ctor-split-params)))]
+                  (assoc-in [:super-ctor :args]
+                            (into [] (comp cat (remove nil?)) super-ctor-split-params)))]
     (swap! nses alter-def class-name assoc :dart/code (with-dart-str (write-class class)))
     (let [ctor-split-args (map #(assoc % 0 nil) super-ctor-split-args+types)
           [bindings dart-args] (lift-args ctor-split-args env)
           bindings (concat super-fn-bindings bindings)]
       (cond->>
-          (with-meta (list* 'dart/new (emit-type class-name env)
-                       (concat (when meta-field [nil])
-                         (map #(if (= that-this %) outer-dart-this %) closed-overs) dart-args))
-            {:dart/type dart-type
-             :dart/inferred true})
+       (with-meta (list* 'dart/new (emit-type class-name env)
+                         (concat (when meta-field [nil])
+                                 (map #(if (= that-this %) outer-dart-this %) closed-overs) dart-args))
+         {:dart/type dart-type
+          :dart/inferred true})
         (seq bindings)
         (list 'dart/let bindings)))))
 
@@ -2554,7 +2570,7 @@
                  (with-meta (cons (vary-meta (first expr) assoc :var-name sym) (next expr)) (meta expr))
                  expr))
         dart-fn
-        (do
+        (binding [*class-prefix* (str *class-prefix* dartname)]
           (swap! nses do-def sym {:dart/name dartname :type :field :dart/type dart-type}) ; predecl so that the def is visible in recursive defs
           (emit expr env))
         dart-annotations
