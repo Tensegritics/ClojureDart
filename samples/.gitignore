@@ -1,6 +1,13 @@
+/*/analysis_options.yaml
 /*/android/*
-/*/windows/*
+/*/cljd.edn
 /*/ios/*
-/*/web/*
 /*/lib/*
-
+/*/lib/*
+/*/linux/*
+/*/macos/*
+/*/pubspec.yaml
+/*/README.md
+/*/test/*
+/*/web/*
+/*/windows/*
