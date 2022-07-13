@@ -13,8 +13,8 @@
                (assert (nil? buffer))
                (when-not (== "" s)
                  (.complete (.-completer this) s)
-                 (.pause (.-subscription this)))) .&
-             :onDone
+                 (.pause (.-subscription this))))
+             .onDone
              (fn []
                (assert (nil? buffer))
                (.complete (.-completer this) nil)
@@ -102,7 +102,7 @@
 (defn ^:async read-comment [^ReaderInput rdr]
   (loop []
     (if-some [s (await (.read rdr))]
-      (let [index (or (some-> (.matchAsPrefix COMMENT-CONTENT-REGEXP s) .end) 0)]
+      (let [index (or (some-> (.matchAsPrefix COMMENT-CONTENT-REGEXP s) .-end) 0)]
         (if (< index (.-length s))
           (doto rdr (.unread (.substring s index)))
           (recur)))
@@ -151,7 +151,7 @@
                     (let [sb (StringBuffer.)]
                       (loop []
                         (if-some [^String string (await (.read rdr))]
-                          (let [^int i (or (some-> (.matchAsPrefix STRING-CONTENT-REGEXP string) (.-end)) 0)]
+                          (let [^int i (or (some-> (.matchAsPrefix STRING-CONTENT-REGEXP string) .-end) 0)]
                             (.write sb (.substring string 0 i))
                             (if (< i (.-length string))
                               (do (.unread rdr (.substring string (inc i)))
@@ -164,9 +164,9 @@
         (if-some [^String m1 (.group m 1)]
           (if (< (.-length m1) 4)
             (throw (FormatException. (str "Unsupported escape for character: \\u" m1 " \\u MUST be followed by 4 hexadecimal digits")))
-            (String/fromCharCode (int/parse m1 .& :radix 16)))
+            (String/fromCharCode (int/parse m1 .radix 16)))
           (if-some [^String m2 (.group m 2)]
-            (String/fromCharCode (int/parse m2 .& :radix 8))
+            (String/fromCharCode (int/parse m2 .radix 8))
             (let [m3 (.group m 3)]
               (case m3
                 "\"" (str m3)
@@ -464,7 +464,7 @@
     (cond
       (< -1 (.indexOf "'#%" ch)) false
       (macros ch) true
-      (< 0 (or (some-> (.matchAsPrefix SPACE-REGEXP ch) .end) 0)) true
+      (< 0 (or (some-> (.matchAsPrefix SPACE-REGEXP ch) .-end) 0)) true
       :else false)))
 
 (defn ^#/(Future String) ^:async read-token [^ReaderInput rdr ^String init]
@@ -495,11 +495,11 @@
     (if-some [m (.matchAsPrefix INT-REGEXP token)]
       (let [parse (if ^some (.group m 8)
                     (if (== "-" (.group m 1))
-                      (fn ^BigInt [^String s ^int radix] (- (BigInt/parse s .& :radix radix)))
-                      (fn ^BigInt [^String s ^int radix] (BigInt/parse s .& :radix radix)))
+                      (fn ^BigInt [^String s ^int radix] (- (BigInt/parse s .radix radix)))
+                      (fn ^BigInt [^String s ^int radix] (BigInt/parse s .radix radix)))
                     (if (== "-" (.group m 1))
-                      (fn ^int [^String s ^int radix] (- (int/parse s .& :radix radix)))
-                      (fn ^int [^String s ^int radix] (int/parse s .& :radix radix))))]
+                      (fn ^int [^String s ^int radix] (- (int/parse s .radix radix)))
+                      (fn ^int [^String s ^int radix] (int/parse s .radix radix))))]
         (cond
           (not (nil? (.group m 2))) 0
           (not (nil? (.group m 3))) (parse (.group m 3) 10)
@@ -535,7 +535,7 @@
   (binding [*top-level-form* (nil? *top-level-form*)]
     (loop []
       (if-some [string (await (.read rdr))]
-        (let [index (or (some-> (.matchAsPrefix SPACE-REGEXP string) .end) 0)]
+        (let [index (or (some-> (.matchAsPrefix SPACE-REGEXP string) .-end) 0)]
           (if (== index (.-length string))
             (recur)
             (let [ch (.codeUnitAt string index)]

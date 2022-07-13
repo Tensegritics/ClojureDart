@@ -2519,10 +2519,10 @@
   [^List array] (.-length array))
 
 (defn ^List aclone
-  {:inline (fn [arr] `(.from dart:core/List ~arr .& :growable false))
+  {:inline (fn [arr] `(.from dart:core/List ~arr .growable false))
    :inline-arities #{1}}
   [^List arr]
-  (.from List arr .& :growable false))
+  (.from List arr .growable false))
 
 (defmacro amap
   "Maps an expression across an array a, using an index named idx, and
@@ -2555,7 +2555,7 @@
      ([~'size-or-seq]
       (if (int? ~'size-or-seq)
         (.filled ^{:type-params (~class-name)} List ~'size-or-seq ~default-value)
-        (.from ^{:type-params (~class-name)} List ~'size-or-seq ~'.& :growable false)))
+        (.from ^{:type-params (~class-name)} List ~'size-or-seq .growable false)))
      ([~'size ~'init-val-or-seq]
       (if (seq? ~'init-val-or-seq)
         (let [a# (.filled ^{:type-params (~class-name)} List ~'size ~default-value)]
@@ -5060,7 +5060,7 @@
 (defn ^List to-array
   [coll]
   (if (dart/is? coll List)
-    (.toList ^List coll :growable false)
+    (.toList ^List coll .growable false)
     (let [length (count coll)
           ^#/(List dynamic) ary (.filled List length nil)]
       (loop [s (seq coll)
@@ -6702,11 +6702,11 @@
   java.util.regex.Matcher.matches().  Uses re-groups to return the
   groups."
   [^RegExp re ^String s]
-  (let [re (RegExp. (str "(?:" (.-pattern re) ")$") .&
-             :multiLine (.-isMultiLine re)
-             :caseSensitive (.-isCaseSensitive re)
-             :unicode (.-isUnicode re)
-             :dotAll (.-isDotAll re))]
+  (let [re (RegExp. (str "(?:" (.-pattern re) ")$")
+             .multiLine (.-isMultiLine re)
+             .caseSensitive (.-isCaseSensitive re)
+             .unicode (.-isUnicode re)
+             .dotAll (.-isDotAll re))]
     (when-some [m (.matchAsPrefix re s)]
       (re-groups m))))
 
@@ -6750,7 +6750,7 @@
   [s]
   (if (dart/is? s RegExp)
     s
-    (RegExp. s .& :unicode true)))
+    (RegExp. s .unicode true)))
 
 (defmacro assert
   "Evaluates expr and throws an exception if it does not evaluate to
@@ -7052,7 +7052,7 @@
                           `(= ~(list (symbol (str ".-" field)) this)
                              ~(list (symbol (str ".-" field)) (with-meta other {:tag name})))) fields)
                  (= ~extmap
-                   (~'.-extmap ~(with-meta other {:tag name})))))))
+                   (.-extmap ~(with-meta other {:tag name})))))))
          'cljd.core/IMap
          `(~'-dissoc [coll# k#]
            (if (contains? #{~@(map keyword fields)} k#)

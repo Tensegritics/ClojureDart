@@ -424,10 +424,10 @@
           test-set (apply hash-set (range 200))
           #_#_test-queue (into cljs.core.PersistentQueue.EMPTY (vec (range 100)))
           test-record (into (->TestIterRec 1 2) {:c 3 :d 4})]
-      (is (= true (seq-iter-match (.-entries test-map))))
+      (is (= true (seq-iter-match (.-entries ^Map test-map))))
       (is (= true (seq-iter-match test-set)))
       #_(is (= true (seq-iter-match test-queue)))
-      (is (= true (seq-iter-match (.-entries test-record)))))))
+      (is (= true (seq-iter-match (.-entries ^Map test-record)))))))
 
 ;; NOTE: no sense in our context
 #_(deftest test-es6-interfaces
@@ -1652,11 +1652,11 @@
     (is (not (uri? {})))
     (is (uri? (.dataFromString Uri "http://clojurescript.org")))))
 
-(defrecord CLJS-2787 [])
+(defrecord CLJS_2787 [])
 
 (deftest test-cljs-2787
-  (let [x (map->CLJS-2787 {1 2})
-        y (map->CLJS-2787 x)]
+  (let [x (map->CLJS_2787 {1 2})
+        y (map->CLJS_2787 x)]
     (is (= x y))))
 
 ;; TODO
