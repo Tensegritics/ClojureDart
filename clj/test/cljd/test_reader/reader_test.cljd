@@ -39,10 +39,10 @@
   (is (== -0x42e (await (r/read-string "-0x42e"))))
 
   ;;oct
-  (is (== 511 (int/parse "777" .& :radix 8) (await (r/read-string "0777"))))
-  (is (== -511 (int/parse "-777" .& :radix 8) (await (r/read-string "-0777"))))
-  (is (== 1340 (int/parse "02474" .& :radix 8) (await (r/read-string "02474"))))
-  (is (== -1340 (int/parse "-02474" .& :radix 8) (await (r/read-string "-02474"))))
+  (is (== 511 (int/parse "777" .radix 8) (await (r/read-string "0777"))))
+  (is (== -511 (int/parse "-777" .radix 8) (await (r/read-string "-0777"))))
+  (is (== 1340 (int/parse "02474" .radix 8) (await (r/read-string "02474"))))
+  (is (== -1340 (int/parse "-02474" .radix 8) (await (r/read-string "-02474"))))
   (is (thrown-with-msg? FormatException #"Invalid number: 09."
         (await (r/read-string "09")))))
 

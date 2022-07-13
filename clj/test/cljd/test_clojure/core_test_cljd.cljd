@@ -10,10 +10,8 @@
 ;;
 
 (ns cljd.test-clojure.core-test-cljd
-  (:require ["dart:async" :as async]
-            ["dart:developer" :as dev]
+  (:require ["dart:developer" :as dev]
             ["dart:io" :as io]
-            ["dart:math" :as math]
             [cljd.string :as str])
   (:use [cljd.test :only [deftest is testing are]]))
 
@@ -324,36 +322,36 @@
             (toString [outer-this]
               (str "+" (reify Object
                          (toString [inner-this]
-                           (str (.hashCode outer-this)))))))]
-    (is (= (str "+" (.hashCode x)) (.toString x)))))
+                           (str (.-hashCode outer-this)))))))]
+    (is (= (str "+" (.-hashCode x)) (.toString x)))))
 
 (deftest super-pseudo-type
   (let [x (reify Object
             (hashCode [_] 42)
-            (toString [self] (str (.hashCode ^super self))))]
+            (toString [self] (str (.-hashCode ^super self))))]
     (is (= (str (dart:core/identityHashCode x)) (str x)))
-    (is (= 42 (.hashCode x)))))
+    (is (= 42 (.-hashCode x)))))
 
 
 (deftest closing-over-super
   (let [v (volatile! nil)
         x (reify Object
             (hashCode [this]
-              (vreset! v #(.hashCode ^super this))
+              (vreset! v #(.-hashCode ^super this))
               42))
         y (reify Object
             (hashCode [that]
               (vreset! v
                 (reify Object
                   (hashCode [this]
-                    (bit-xor (.hashCode ^super that) (.hashCode ^super this)))))
+                    (bit-xor (.-hashCode ^super that) (.-hashCode ^super this)))))
               43))]
-    (is (= 42 (.hashCode x)))
+    (is (= 42 (.-hashCode x)))
     (is (= (dart:core/identityHashCode x) (@v)))
-    (is (= 43 (.hashCode y)))
+    (is (= 43 (.-hashCode y)))
     (is (= (bit-xor (dart:core/identityHashCode y)
              (dart:core/identityHashCode @v))
-          (.hashCode @v)))))
+          (.-hashCode @v)))))
 
 (deftype InferredAwait [^#/(Future int) prop]
   (coucou [this] (await prop)))
@@ -374,7 +372,7 @@
     (is (= (inc (await (.coucou (InferredAwait. num))))
           (await ((fn [& more] (inc (await (first more)))) num))
           43))
-    (is (= 42 (.hashCode (reify Object
+    (is (= 42 (.-hashCode (reify Object
                            (hashCode [this] ((fn ([] 42) ([one] (await one)))))))))
     (is (= 42 (let [x (await (.mymethod (Concrete.)))] x)))))
 
@@ -481,9 +479,9 @@
               (namedopts [this one .& two three] (when three (three "one" "two"))))
         concrete (ConcreteIssue112)]
     (is (= "onetwo" (.positionalopts rei "one" 2 (fn [a b] (str a b)))))
-    (is (= "onetwo" (.namedopts rei "one" :three (fn [a b] (str a b)))))
+    (is (= "onetwo" (.namedopts rei "one" .three (fn [a b] (str a b)))))
     (is (= "onetwo" (.positionalopts concrete "one" 2 (fn [a b] (str a b)))))
-    (is (= "onetwo" (.namedopts concrete "one" :three (fn [a b] (str a b)))))))
+    (is (= "onetwo" (.namedopts concrete "one" .three (fn [a b] (str a b)))))))
 
 (deftest close-over-values-not-slots
   (let [fs (loop [fs [] i 4]

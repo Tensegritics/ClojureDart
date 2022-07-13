@@ -1565,7 +1565,7 @@
               (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:element-name type!) " " (source-info)))))
           _ (when (not member-info)
               (binding [*out* *err*]
-                (println "Dynamic warning: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
+                (println "DYNAMIC WARNING: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
           special-num-op-sig (case (:canon-qname type!) ; see sections 17.30 and 17.31 of Dart lang spec
                                dc.int (case member-name
                                         ("-" "+" "%" "*")
@@ -1583,7 +1583,7 @@
                  :field (do
                           (when-not prop
                             (binding [*out* *err*]
-                              (println "Warning: " member-name " is a property and as such should be prefixed by a dash" (str "-" member-name)  (source-info))))
+                              (println "INFO:" member-name "is a property and should be prefixed by a dash to work even when the type of the object is dynamic:" (str "-" member-name) (source-info))))
                           true)
                  ; DO NOT emit warning when prop and method/ctor because
                  ; it's valid: it's a tear-off
@@ -2483,20 +2483,23 @@
         :type :protocol))))
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
+  (assert (and (re-matches #"[_$a-zA-Z][_$a-zA-Z0-9]*" (name class-name))
+            (not (reserved-words (name class-name))))
+    "class-names must be valid dart ids")
   (let [abstract (:abstract (meta class-name))
         [class-name & type-params] (cons class-name (:type-params (meta class-name)))
         mclass-name (with-meta
-                      (or (:dart/name (meta class-name)) (munge class-name env))
+                      (or (:dart/name (meta class-name)) class-name)
                       {:type-params type-params}) ; TODO shouldn't it be dne by munge?
         env {:type-vars (set type-params)}
         env (into env
-              (for [f fields
-                    :let [{:keys [mutable]} (meta f)
-                          {:keys [dart/type] :as m} (dart-meta f env)
-                          m (cond-> m
-                              mutable (assoc :dart/mutable true)
-                              abstract (assoc :dart/late true))]]
-                [f (vary-meta (munge f env) merge m)]))
+                  (for [f fields
+                        :let [{:keys [mutable]} (meta f)
+                              {:keys [dart/type] :as m} (dart-meta f env)
+                              m (cond-> m
+                                  mutable (assoc :dart/mutable true)
+                                  abstract (assoc :dart/late true))]]
+                    [f (vary-meta (munge f env) merge m)]))
         dart-fields (map env fields)
         parsed-class-specs (parse-class-specs class-name opts specs env)
         _ (when-not *hosted*
@@ -2514,22 +2517,22 @@
                 super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)]
             (when (not super-ctor-info)
               (binding [*out* *err*]
-                (println "Stern warning: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
+                (println "DYNAMIC WARNING: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
             (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))))
         class (-> class
-                (assoc :name dart-type
-                  :ctor mclass-name
-                  :abstract abstract
-                  :fields dart-fields
-                  :ctor-params (map #(list '. %) dart-fields))
-                (assoc-in [:super-ctor :args]
-                  (into []
-                    (mapcat
-                      (fn [[name arg]]
-                        (if (nil? name)
-                          (-> arg (ensure-dart-expr env) list)
-                          [name (-> arg (ensure-dart-expr env))])))
-                    super-ctor-split-args+types)))]
+                  (assoc :name dart-type
+                         :ctor mclass-name
+                         :abstract abstract
+                         :fields dart-fields
+                         :ctor-params (map #(list '. %) dart-fields))
+                  (assoc-in [:super-ctor :args]
+                            (into []
+                                  (mapcat
+                                   (fn [[name arg]]
+                                     (if (nil? name)
+                                       (-> arg (ensure-dart-expr env) list)
+                                       [name (-> arg (ensure-dart-expr env))])))
+                                  super-ctor-split-args+types)))]
     (swap! nses alter-def class-name assoc :dart/code (with-dart-str (write-class class)))
     (emit class-name env)))
 
