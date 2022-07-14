@@ -1553,9 +1553,9 @@
   (-hash [o]
     ; values taken from cljs
     (cond
-      (.== double/negativeInfinity o) -1048576
-      (.== double/infinity o) 2146435072
-      (.== double/nan o) 2146959360
+      (.== double/-negativeInfinity o) -1048576
+      (.== double/-infinity o) 2146435072
+      (.== double/-nan o) 2146959360
       true (m3-hash-int (.-hashCode o))))
   (-hash-realized? [o] true))
 
@@ -4946,14 +4946,14 @@
   "Returns a sequence of the map's keys, in the same order as (seq map)."
   [coll]
   (if (dart/is? coll dart:core/Map)
-    (chunked-iterator-seq (.-iterator (.keys ^dart:core/Map coll)))
+    (chunked-iterator-seq (.-iterator (.-keys ^dart:core/Map coll)))
     (seq (map key coll))))
 
 (defn vals
   "Returns a sequence of the map's values, in the same order as (seq map)."
   [coll]
   (if (dart/is? coll dart:core/Map)
-    (chunked-iterator-seq (.-iterator (.values ^dart:core/Map coll)))
+    (chunked-iterator-seq (.-iterator (.-values ^dart:core/Map coll)))
     (seq (map val coll))))
 
 (deftype #/(PersistentHashSet E)

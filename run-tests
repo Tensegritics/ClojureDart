@@ -1,6 +1,5 @@
 #!/usr/bin/env bash
 
-mkdir tmp
 rm -rf tmp/tests
 mkdir -p tmp/tests/src/cljd
 cat > tmp/tests/deps.edn <<EOF

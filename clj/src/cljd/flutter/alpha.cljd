@@ -12,7 +12,7 @@
   "Nest forms (the first form being the root form, the 2nd its child, the 3rd its grand child...) adding the :child keyword before each nested form."
   [form & forms]
   (let [[form & forms] (reverse (cons form forms))]
-    `(->> ~form ~@(for [form forms] (-> form (cond-> (symbol? form) list) (concat  [:child]) (with-meta (meta form)))))))
+    `(->> ~form ~@(for [form forms] (-> form (cond-> (symbol? form) list) (concat  ['.child]) (with-meta (meta form)))))))
 
 (defn- ^:macro-support camel-kebab [s]
   (str/replace s #"(^[A-Z])|[A-Z]" (fn [[s start]] (cond->> (str/lower-case s) (not start) (str "-")))))
@@ -105,7 +105,7 @@
         user-widget
         (if (or watch (seq with) ticker-mixin)
           (cond->>
-              `(reify :extends (widgets/StatefulWidget. :key ~(:base key-exprs))
+              `(reify :extends (widgets/StatefulWidget. .key ~(:base key-exprs))
                  :no-meta true
                  (~'debugFillProperties [this# props-builder#]
                   (.debugFillProperties ^{:tag ~'super} this# props-builder#)
@@ -145,12 +145,12 @@
             (list `let [(first state) `(atom ~(second state))])
             (seq with)
             (list `let [build+dispose `(volatile! nil)]))
-          `(reify :extends (widgets/StatelessWidget. :key ~(:base key-exprs))
+          `(reify :extends (widgets/StatelessWidget. .key ~(:base key-exprs))
              (~'build [_# ~flutter-build-ctx] ~expr)))
         user-widget
         (if-some [[top & others] (seq nested-in)]
           `(nest
-             (~@(if (seq? top) top (list top)) :key ~(key-exprs :nested-in))
+             (~@(if (seq? top) top (list top)) .key ~(key-exprs :nested-in))
              ~@others
              ~user-widget)
           user-widget)]
@@ -162,8 +162,8 @@
                                 (for [v (vals bind)] `(ensure-model ~v)))]
            :context pctx#
            (cljd.flutter.alpha/InheritedBindings. bindings# pctx# @bindings#
-             (->> user-widget#
-               ))))
+             (->> user-widget#))))
+
       user-widget)))
 
 (defprotocol IModel
@@ -201,7 +201,7 @@
   IModel
   (-state [model args swp! trck!]
     (AssociativeState. (get-in v args) args swp! trck!))
-  (-updated? [model prev-model ks] (not= (get-in v ks) (get-in (.v ^AssociativeModel prev-model) ks)))
+  (-updated? [model prev-model ks] (not= (get-in v ks) (get-in (.-v ^AssociativeModel prev-model) ks)))
   (-update [_ f] (AssociativeModel. (f v))))
 
 (defn ensure-model [x]
@@ -210,7 +210,7 @@
 (deftype StaticModel [v]
   IModel
   (-state [model args swp! trck!] (trck! args) (get-in v args))
-  (-updated? [model prev-model ks] (not= (get-in v ks) (get-in (.v ^StaticModel prev-model) ks))))
+  (-updated? [model prev-model ks] (not= (get-in v ks) (get-in (.-v ^StaticModel prev-model) ks))))
 
 (defn static
   "Returns a value model (not derefable, not updatable)."
@@ -218,7 +218,7 @@
   (StaticModel. v))
 
 (deftype InheritedBindings [state pctx snapshot child]
-  :extends (widgets/InheritedModel. :child child)
+  :extends (widgets/InheritedModel. .child child)
   (isSupportedAspect [this name]
     (contains? snapshot name))
   (updateShouldNotify [this prev-this]
@@ -232,10 +232,10 @@
 (defn get-state-of [^widgets/BuildContext ctx id args]
   (loop [^widgets/BuildContext ctx' ctx]
     (if-some [elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx')]
-      (let [ib ^InheritedBindings (.widget elt)]
+      (let [ib ^InheritedBindings (.-widget elt)]
         (if (.isSupportedAspect ib id)
-          (-state (get (.snapshot ib) id) args
-            #(swap! (.state ib) update id -update %)
-            #(.dependOnInheritedElement ctx elt :aspect [id %]))
-          (recur (.pctx ib))))
+          (-state (get (.-snapshot ib) id) args
+            #(swap! (.-state ib) update id -update %)
+            #(.dependOnInheritedElement ctx elt .aspect [id %]))
+          (recur (.-pctx ib))))
       (throw (Exception (str "No inherited state for id" id))))))
