@@ -15,7 +15,7 @@ mobile and desktop apps.
 
 # Foreword
 
-ClojureDart is a work-in-progress but it's good enough for the bravest Clojurists to put in in production.
+ClojureDart is a work-in-progress but it's good enough for the bravest Clojurists to put in in production. Learn more about [what's going on.](NEWS.md)
 
 # Who is behind it?
 
