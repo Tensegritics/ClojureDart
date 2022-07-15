@@ -7,24 +7,32 @@ ClojureDart is a port of the Clojure language to Dart.
 Its primary goal is to leverage Dart and Flutter to extend Clojure's reach to
 mobile and desktop apps.
 
+# Links dump
+
+[Slack](https://clojurians.slack.com/app_redirect?channel=clojuredart)
+[Youtube](https://www.youtube.com/channel/UCCkvOkh6pXzYqkFKDgoyWRg)
+[Twitter](https://twitter.com/clojuredart)
+
 # Foreword
 
-We promised to publicly release ClojureDart before Easter 2022, so here it is!
-
-This doesn't represent a specific technical milestone, it's still a work-in-progress but we believe it's good enough for use by the bravest Clojurists.
+ClojureDart is a work-in-progress but it's good enough for the bravest Clojurists to put in in production.
 
 # Who is behind it?
 
 Tensegritics, an itty-bitty Clojure consultancy by [Baptiste Dupuch](https://github.com/dupuchba)[🐦](https://twitter.com/BaptisteDupuch) and [Christophe Grand](https://github.com/cgrand)[🐦](https://twitter.com/cgrand).
 
+ClojureDart is not a revenue source for us, even if we build it for fun and hopefully profit -- by being the proverbial rising tide which lifts all boats.
+
+Sponsorships to either of us are welcome. Sponsorship money allowed us to have an intern on the project writing samples and producing videos.
+
 # Status
 
 Here be Dragons!
 
-ClojureDart is a work-in-progress. Some features may be outright missing or
-partially implemented or even bugged. In any case get in touch with us or open
-an issue.
+Let's repeat it: ClojureDart is a work-in-progress. Some features may be outright missing or
+partially implemented or even bugged. In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart)) or open an issue.
 
+Most notable missing bits are:
 - no REPL yet
 - multi-method (WIP)
 - sorted-collection (WIP)
@@ -33,18 +41,12 @@ Some differences have been documented, see [Differences with Clojure](doc/differ
 
 # Quick starts
 
-- [Plain Dart](doc/quick-start.md) (recommended first step)
-- [With Flutter](doc/flutter-quick-start.md)
+- [For Flutter](doc/flutter-quick-start.md) to build GUIs
+- [For Plain Dart](doc/quick-start.md) to build CLI apps.
 
-# `cljd.flutter.alpha`
+# Examples
 
-`cljd.flutter.alpha` is an utility namespace to remove Flutter boilerplate and integrate it a bit more with Clojure.
-
-[Learn more about it!](doc/flutter-helpers.md)
-
-# Going further with Flutter
-
-In the [samples directory](samples/) you'll find some ports of [Flutter recipes](https://docs.flutter.dev/cookbook).
+In the [samples directory](samples/) you'll find sample code either original or ports of [Flutter recipes](https://docs.flutter.dev/cookbook).
 
 ## How to run a sample project
 
@@ -65,14 +67,35 @@ Init the project:
 clj -M:cljd init
 ```
 
-Start a simulator or connect a device.
-
 Then launch the watcher:
 ```shell
 clj -M:cljd flutter
 ```
 
+You should get the sample running either in Chrome or as a desktop app.
+
+To specify your exact target you must run `flutter devices` which outputs something like:
+```shell
+3 connected devices:
+iPhone 6s (mobile) • D6707352-78D2-46BB-AB95-87355283FC82 • ios            •
+com.apple.CoreSimulator.SimRuntime.iOS-15-5 (simulator)
+macOS (desktop)    • macos                                • darwin-arm64   •
+macOS 12.4 21F79 darwin-arm
+Chrome (web)       • chrome                               • web-javascript •
+Google Chrome 103.0.5060.114
+```
+The second column is the id of the target (here `D6707352-78D2-46BB-AB95-87355283FC82`, `macos` or `chrome`) that you pass to the watcher:
+```shell
+clj -M:cljd flutter -d D6707352-78D2-46BB-AB95-87355283FC82
+```
+
 Enjoy! 🧃
+
+# `cljd.flutter.alpha`
+
+`cljd.flutter.alpha` is an utility namespace to remove Flutter boilerplate and integrate it a bit more with Clojure.
+
+[Learn more about it!](doc/flutter-helpers.md)
 
 # Thanks!
 
