@@ -9,7 +9,8 @@
 ; TODO create our own Key type which uses equiv and not ==
 
 (defmacro nest
-  "Nest forms (the first form being the root form, the 2nd its child, the 3rd its grand child...) adding the :child keyword before each nested form."
+  "Threading macro for nesting widgets.
+  Starting from the end each form is nested in the previous one as a .child named argument."
   [form & forms]
   (let [[form & forms] (reverse (cons form forms))]
     `(->> ~form ~@(for [form forms] (-> form (cond-> (symbol? form) list) (concat  ['.child]) (with-meta (meta form)))))))
