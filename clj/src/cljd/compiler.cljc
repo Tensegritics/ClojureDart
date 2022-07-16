@@ -1042,10 +1042,15 @@
     (propagate-hints form)))
 
 (defn resolve-static-member [sym]
-  (when-some [[_ alias t] (some->> sym namespace (re-matches #"(?:(.+)\.)?(.+)"))]
-    (when-some [type (resolve-type (symbol alias t) #{} nil)]
-      (let [[_ alias t] (re-matches #"(.+)\.(.+)" (name (:qname type)))]
-        [(with-meta (symbol (str "$lib:" alias) t) (meta sym)) (symbol (name sym))]))))
+  (or
+    (when-some [[_ alias t] (some->> sym namespace (re-matches #"(?:(.+)\.)?(.+)"))]
+      (when-some [type (resolve-type (symbol alias t) #{} nil)]
+        (let [[_ alias t] (re-matches #"(.+)\.(.+)" (name (:qname type)))]
+          [(with-meta (symbol (str "$lib:" alias) t) (meta sym)) (symbol (name sym))])))
+    (when-some [[_ t member] (some->> sym name (re-matches #"(?:(.+)\.)(.+)"))]
+      (when-some [type (resolve-type (symbol (namespace sym) t) #{} nil)]
+        (let [[_ alias t] (re-matches #"(.+)\.(.+)" (name (:qname type)))]
+          [(with-meta (symbol (str "$lib:" alias) t) (meta sym)) (symbol member)])))))
 
 (defn macroexpand-1 [env form]
   (->
