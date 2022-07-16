@@ -1,153 +1,153 @@
 (ns sample.fab
   "Faithful port of https://docs.flutter.dev/cookbook/effects/expandable-fab#interactive-example"
   (:require
-    ["package:flutter/material.dart" :as m]
-    ["dart:math" :as math]
-    [cljd.flutter.alpha :as f]))
+   ["package:flutter/material.dart" :as m]
+   ["dart:math" :as math]
+   [cljd.flutter.alpha :as f]))
 
 ;; https://docs.flutter.dev/cookbook/effects/expandable-fab#interactive-example
 
 (defn fake-item [is-big]
   (f/widget
-    (m/Container
-      :margin ^:const (m.EdgeInsets/symmetric :vertical 8.0 :horizontal 24.0)
-      :height (if is-big 128.0 36.0)
-      :decoration
-      (m/BoxDecoration
-        :borderRadius ^:const (m.BorderRadius/all (m.Radius/circular 8.0))
-        :color (.-shade300 m.Colors/grey)))))
+   (m/Container
+    .margin ^:const (m.EdgeInsets/symmetric .vertical 8.0 .horizontal 24.0)
+    .height (if is-big 128.0 36.0)
+    .decoration
+    (m/BoxDecoration
+     .borderRadius ^:const (m.BorderRadius/all (m.Radius/circular 8.0))
+     .color (.-shade300 m.Colors/-grey)))))
 
 (def action-titles ["Create Post" "Upload Photo" "Upload Video"])
 
 (defn show-action [ctx i]
   (m/showDialog
-    :context ctx
-    :builder (fn [ctx]
-               (m/AlertDialog
-                 :content (m/Text (action-titles i))
-                 :actions [(m/TextButton
-                             :onPressed #(-> ctx m.Navigator/of .pop)
-                             :child ^:const (m/Text "CLOSE"))]))))
+   .context ctx
+   .builder (fn [ctx]
+              (m/AlertDialog
+               .content (m/Text (action-titles i))
+               .actions [(m/TextButton
+                          .onPressed #(-> ctx m.Navigator/of .pop)
+                          .child ^:const (m/Text "CLOSE"))]))))
 
 (defn action-button [& {:keys [on-pressed icon]}]
   (f/widget
-    :inherit [m/Theme]
-    (m/Material
-      :shape ^:const (m/CircleBorder)
-      :clipBehavior m.Clip/antiAlias
-      :color (-> theme .-colorScheme .-secondary)
-      :elevation 4.0
-      :child (m/IconButton
-               :onPressed on-pressed
-               :icon icon
-               :color (-> theme .-colorScheme .-onSecondary)))))
+   :inherit [m/Theme]
+   (m/Material
+    .shape ^:const (m/CircleBorder)
+    .clipBehavior m.Clip/-antiAlias
+    .color (-> theme .-colorScheme .-secondary)
+    .elevation 4.0
+    .child (m/IconButton
+            .onPressed on-pressed
+            .icon icon
+            .color (-> theme .-colorScheme .-onSecondary)))))
 
 (defn expanding-action-button
   [& {:keys [direction-degrees max-distance ^#/(m/Animation double) progress child]}]
   (f/widget
-    (f/nest
-      (m/AnimatedBuilder
-        :animation progress
-        :builder (fn [ctx child]
-                   (let [offset (m.Offset/fromDirection
-                                  (* direction-degrees (/ math/pi 180.0))
-                                  (* (.value progress) max-distance))]
-                     (f/nest
-                       (m/Positioned
-                         :right (+ 4.0 (.dx offset))
-                         :bottom (+ 4.0 (.dy offset)))
-                       (m.Transform/rotate
-                         :angle (* (- 1.0 (.value progress))
-                                  math/pi 0.5))
-                       child))))
-      (m/FadeTransition :opacity progress)
-      child)))
+   (f/nest
+    (m/AnimatedBuilder
+     .animation progress
+     .builder (fn [ctx child]
+                (let [offset (m.Offset/fromDirection
+                              (* direction-degrees (/ math/pi 180.0))
+                              (* (.-value progress) max-distance))]
+                  (f/nest
+                   (m/Positioned
+                    .right (+ 4.0 (.-dx offset))
+                    .bottom (+ 4.0 (.-dy offset)))
+                   (m.Transform/rotate
+                    .angle (* (- 1.0 (.-value progress))
+                              math/pi 0.5))
+                   child))))
+    (m/FadeTransition .opacity progress)
+    child)))
 
 (defn expandable-fab [& {:keys [key init-open distance children]}]
   (f/widget
-    :key key
-    :state [open init-open]
-    :ticker tick
-    :inherit [m/Theme]
-    :with [controller (m/AnimationController
-                        :value (if init-open 1.0 0.0)
-                        :duration ^:const (dart:core/Duration :milliseconds 250)
-                        :vsync tick)
-           expand-animation (m/CurvedAnimation
-                              :curve m.Curves/fastOutSlowIn
-                              :reverseCurve m.Curves/easeOutQuad
-                              :parent controller)]
-    (let [toggle #(if (swap! open not)
-                    (.forward controller)
-                    (.reverse controller))
-          tap-to-close-fab
-          (f/nest
-            (m/SizedBox
-              :width 56.0
-              :height 56.0)
-            m/Center
-            (m/Material
-              :shape ^:const (m/CircleBorder)
-              :clipBehavior m.Clip/antiAlias
-              :elevation 4.0)
-            (m/InkWell :onTap toggle)
-            (m/Padding :padding ^:const (m.EdgeInsets/all 8.0))
-            (m/Icon m.Icons/close :color (.primaryColor theme)))
-          tap-to-open-fab
-          (f/nest
-            (m/IgnorePointer :ignoring (boolean @open))
-            (m/AnimatedContainer
-              :transformAlignment m.Alignment/center
-              :transform (m.Matrix4/diagonal3Values
-                           (if @open 0.7 1.0)
-                           (if @open 0.7 1.0)
-                           1.0)
-              :duration ^:const (dart:core/Duration :milliseconds 250)
-              :curve ^:const (m/Interval 0.0 0.5 :curve m.Curves/easeOut))
-            (m/AnimatedOpacity
-              :opacity (if @open 0.0 1.0)
-              :curve ^:const (m/Interval 0.25 1.0 :curve m.Curves/easeInOut)
-              :duration ^:const (dart:core/Duration :milliseconds 250))
-            (m/FloatingActionButton :onPressed toggle)
-            (m/Icon m.Icons/create))
-          step (/ 90.0 (dec (count children)))]
-      (f/nest
-        m.SizedBox/expand
-        (m/Stack
-          :alignment m.Alignment/bottomRight
-          :clipBehavior m.Clip/none
-          :children (-> [tap-to-close-fab]
-                      (into (map-indexed
-                              (fn [i child]
-                                (expanding-action-button
-                                  :direction-degrees (* i step)
-                                  :max-distance distance
-                                  :progress expand-animation
-                                  :child child)))
-                        children)
-                      (conj tap-to-open-fab)))))))
+   :key key
+   :state [open init-open]
+   :ticker tick
+   :inherit [m/Theme]
+   :with [controller (m/AnimationController
+                      .value (if init-open 1.0 0.0)
+                      .duration ^:const (dart:core/Duration .milliseconds 250)
+                      .vsync tick)
+          expand-animation (m/CurvedAnimation
+                            .curve m.Curves/-fastOutSlowIn
+                            .reverseCurve m.Curves/-easeOutQuad
+                            .parent controller)]
+   (let [toggle #(if (swap! open not)
+                   (.forward controller)
+                   (.reverse controller))
+         tap-to-close-fab
+         (f/nest
+          (m/SizedBox
+           .width 56.0
+           .height 56.0)
+          m/Center
+          (m/Material
+           .shape ^:const (m/CircleBorder)
+           .clipBehavior m.Clip/-antiAlias
+           .elevation 4.0)
+          (m/InkWell .onTap toggle)
+          (m/Padding .padding ^:const (m.EdgeInsets/all 8.0))
+          (m/Icon m.Icons/-close .color (.-primaryColor theme)))
+         tap-to-open-fab
+         (f/nest
+          (m/IgnorePointer .ignoring (boolean @open))
+          (m/AnimatedContainer
+           .transformAlignment m.Alignment/-center
+           .transform (m.Matrix4/diagonal3Values
+                       (if @open 0.7 1.0)
+                       (if @open 0.7 1.0)
+                       1.0)
+           .duration ^:const (dart:core/Duration .milliseconds 250)
+           .curve ^:const (m/Interval 0.0 0.5 .curve m.Curves/-easeOut))
+          (m/AnimatedOpacity
+           .opacity (if @open 0.0 1.0)
+           .curve ^:const (m/Interval 0.25 1.0 .curve m.Curves/-easeInOut)
+           .duration ^:const (dart:core/Duration .milliseconds 250))
+          (m/FloatingActionButton .onPressed toggle)
+          (m/Icon m.Icons/-create))
+         step (/ 90.0 (dec (count children)))]
+     (f/nest
+      m.SizedBox/expand
+      (m/Stack
+       .alignment m.Alignment/-bottomRight
+       .clipBehavior m.Clip/-none
+       .children (-> [tap-to-close-fab]
+                     (into (map-indexed
+                            (fn [i child]
+                              (expanding-action-button
+                               :direction-degrees (* i step)
+                               :max-distance distance
+                               :progress expand-animation
+                               :child child)))
+                           children)
+                     (conj tap-to-open-fab)))))))
 
 (defn example-expandable-fab []
   (f/widget
-    :context ctx
-    (m/Scaffold
-      :appBar (m/AppBar :title (m/Text "Expandable Fab"))
-      :body (m.ListView/builder
-              :padding (m.EdgeInsets/symmetric :vertical 8.0)
-              :itemCount 25
-              :itemBuilder (fn [ctx i] (fake-item (odd? i))))
-      :floatingActionButton
-      (expandable-fab
-        :distance 112.0
-        :children [(action-button :on-pressed #(show-action ctx 0)
-                     :icon ^:const (m/Icon m.Icons/format_size))
-                   (action-button :on-pressed #(show-action ctx 1)
-                     :icon ^:const (m/Icon m.Icons/insert_photo))
-                   (action-button :on-pressed #(show-action ctx 2)
-                     :icon ^:const (m/Icon m.Icons/videocam))]))))
+   :context ctx
+   (m/Scaffold
+    .appBar (m/AppBar .title (m/Text "Expandable Fab"))
+    .body (m.ListView/builder
+           .padding (m.EdgeInsets/symmetric .vertical 8.0)
+           .itemCount 25
+           .itemBuilder (fn [ctx i] (fake-item (odd? i))))
+    .floatingActionButton
+    (expandable-fab
+     :distance 112.0
+     :children [(action-button :on-pressed #(show-action ctx 0)
+                               :icon ^:const (m/Icon m.Icons/-format_size))
+                (action-button :on-pressed #(show-action ctx 1)
+                               :icon ^:const (m/Icon m.Icons/-insert_photo))
+                (action-button :on-pressed #(show-action ctx 2)
+                               :icon ^:const (m/Icon m.Icons/-videocam))]))))
 
 (defn main []
   (m/runApp
-    (m/MaterialApp
-      :home (example-expandable-fab)
-      :debugShowCheckedModeBanner false)))
+   (m/MaterialApp
+    .home (example-expandable-fab)
+    .debugShowCheckedModeBanner false)))

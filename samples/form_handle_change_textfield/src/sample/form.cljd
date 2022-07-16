@@ -6,19 +6,19 @@
 (defn my-custom-form-state [title]
   (f/widget
    :with [text-controller (m/TextEditingController)
-          :let [_ (.addListener text-controller 
-                                (fn [] (dart:core/print (str "Second text field: " (.text text-controller)))))]]
+          :let [_ (.addListener text-controller
+                                (fn [] (dart:core/print (str "Second text field: " (.-text text-controller)))))]]
    (m/Scaffold
-    :appBar (m/AppBar :title (m/Text title))
-    :body
-    (m/Padding. :padding ^:const (m.EdgeInsets/all 16.0)
-                :child (m/Column
-                        :children [(m/TextField :onChanged (fn [text] (dart:core/print (str "First text field: " text))))
-                                   (m/TextField :controller text-controller)])))))
+    .appBar (m/AppBar .title (m/Text title))
+    .body
+    (m/Padding. .padding ^:const (m.EdgeInsets/all 16.0)
+                .child (m/Column
+                        .children [(m/TextField .onChanged (fn [text] (dart:core/print (str "First text field: " text))))
+                                   (m/TextField .controller text-controller)])))))
 
 (defn main []
   (let [title "Retrieve text input"]
     (m/runApp
      (m/MaterialApp
-      :title title
-      :home (my-custom-form-state title)))))
+      .title title
+      .home (my-custom-form-state title)))))

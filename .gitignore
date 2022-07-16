@@ -10,3 +10,4 @@ lib/cljd-out/*
 test/cljd-out/*
 *.md-e
 .*
+tmp/

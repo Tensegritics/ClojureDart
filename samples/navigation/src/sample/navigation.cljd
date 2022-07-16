@@ -6,30 +6,31 @@
 
 (def second-route
   (f/widget
-    :inherit [m/Navigator]
-    (m/Scaffold
-      :appBar (m/AppBar :title (m/Text "Second Route"))
-      :body
-      (f/nest
-        m/Center
-        (m/ElevatedButton :onPressed #(.pop navigator))
-        (m/Text "Go back!")))))
+   :inherit [m/Navigator]
+   (m/Scaffold
+    .appBar (m/AppBar .title (m/Text "Second Route"))
+    .body
+    (f/nest
+     m/Center
+     (m/ElevatedButton .onPressed #(.pop navigator))
+     (m/Text "Go back!")))))
 
 (def first-route
   (f/widget
-    :inherit [m/Navigator]
-    (m/Scaffold
-      :appBar (m/AppBar :title (m/Text "First Route"))
-      :body
-      (f/nest
-        m/Center
-        (m/ElevatedButton :onPressed #(do
-                                        (.push navigator (#/(m/MaterialPageRoute Object) :builder (fn [_] second-route)))
-                                        nil))
-        (m/Text "Open route")))))
+   :inherit [m/Navigator]
+   (m/Scaffold
+    .appBar (m/AppBar .title (m/Text "First Route"))
+    .body
+    (f/nest
+     m/Center
+     (m/ElevatedButton
+      .onPressed #(do
+                    (.push navigator (#/(m/MaterialPageRoute Object) .builder (fn [_] second-route)))
+                    nil))
+     (m/Text "Open route")))))
 
 (defn main []
   (m/runApp
-    (m/MaterialApp
-      :title "Navigation Basics"
-      :home first-route)))
+   (m/MaterialApp
+    .title "Navigation Basics"
+    .home first-route)))

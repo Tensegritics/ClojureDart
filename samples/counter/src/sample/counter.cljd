@@ -6,26 +6,26 @@
 
 (defn main []
   (m/runApp
-    (m/MaterialApp
-      :title "Cljd Demo"
-      :theme (m/ThemeData :primarySwatch m.Colors/blue)
-      :home
-      (f/widget
-        :state [counter 0]
-        :inherit [m/Theme]
-        (m/Scaffold
-          :appBar (m/AppBar :title (m/Text "ClojureDart Home Page"))
-          :body
-          (f/nest
-            m/Center
-            (m/Column
-              :mainAxisAlignment m.MainAxisAlignment/center
-              :children
-              [(m/Text "You have pushed the button this many times:")
-               (m/Text (str @counter)
-                 :style (-> theme .textTheme .displayLarge))]))
-          :floatingActionButton
-          (m/FloatingActionButton
-            :onPressed #(swap! counter inc)
-            :tooltip "Increment"
-            :child (m/Icon m.Icons/add)))))))
+   (m/MaterialApp
+    .title "Cljd Demo"
+    .theme (m/ThemeData .primarySwatch m.Colors/-blue)
+    .home
+    (f/widget
+     :state [counter 0]
+     :inherit [m/Theme]
+     (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "ClojureDart Home Page"))
+      .body
+      (f/nest
+       m/Center
+       (m/Column
+        .mainAxisAlignment m.MainAxisAlignment/-center
+        .children
+        [(m/Text "You have pushed the button this many times:")
+         (m/Text (str @counter)
+                 .style (-> theme .-textTheme .-displayLarge))]))
+      .floatingActionButton
+      (m/FloatingActionButton
+       .onPressed #(swap! counter inc)
+       .tooltip "Increment"
+       .child (m/Icon m.Icons/-add)))))))
