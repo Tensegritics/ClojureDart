@@ -902,7 +902,7 @@
 (defn ^bool seq?
   {:inline (fn [x] `(satisfies? ISeq ~x))
    :inline-arities #{1}}
-  [x] (satisfies? ISeq x))
+  [x] (and (not (nil? x)) (satisfies? ISeq x)))
 
 (extend-type Null
   ISeqable
