@@ -2726,66 +2726,71 @@
           host-ns-directives (some #(when (= :host-ns (first %)) (next %)) ns-clauses)
           require-specs
           (->>
-            (concat
-              (map refer-clojure-to-require refer-clojures)
-              (for [[directive & specs]
-                    ns-clauses
-                    :let [f (case directive
-                              :require #(if (sequential? %) % [%])
-                              :import import-to-require
-                              :use use-to-require
-                              (:refer-clojure :host-ns) nil)]
-                    :when f
-                    spec specs]
-                (f spec)))
-            (map (fn [[lib & more :as spec]]
-                   (or (some-> (cljdize lib) (cons more))
-                     spec))))
+           (concat
+            (map refer-clojure-to-require refer-clojures)
+            (for [[directive & specs]
+                  ns-clauses
+                  :let [f (case directive
+                            :require #(if (sequential? %) % [%])
+                            :import import-to-require
+                            :use use-to-require
+                            (:refer-clojure :host-ns) nil)]
+                  :when f
+                  spec specs]
+              (f spec)))
+           (map (fn [[lib & more :as spec]]
+                  (or (some-> (cljdize lib) (cons more))
+                      spec))))
           ns-lib (ns-to-lib ns-sym)
           ns-map (-> ns-prototype
-                   (assoc :lib ns-lib)
-                   (assoc-in [:imports ns-lib] {:clj-alias ns-sym}))
+                     (assoc :lib ns-lib)
+                     (assoc-in [:imports ns-lib] {:clj-alias ns-sym}))
           ns-map
           (reduce #(%2 %1) ns-map
-            (for [[lib & {:keys [as refer rename]}] require-specs
-                  :let [_ (when (and (string? lib) (not (dart-libs-info lib)))
-                            (throw (Exception. (str "Can't find Dart lib: " lib))))
-                        clj-ns (when-not (string? lib) lib)
-                        dartlib (else->>
-                                  (if (string? lib) lib)
-                                  (if-some [{:keys [lib]} (@nses lib)] lib)
-                                  (if (= ns-sym lib) ns-lib)
-                                  (compile-namespace lib))
-                        dart-alias (global-lib-alias dartlib clj-ns)
-                        clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
-                        to-dart-sym (if clj-ns #(munge % {}) identity)]]
-              (fn [ns-map]
-                (-> ns-map
-                  (cond-> (nil? (get (:imports ns-map) dartlib))
-                    (assoc-in [:imports dartlib] {:clj-alias clj-alias}))
-                  (assoc-in [:clj-aliases clj-alias] dartlib)
-                  (update :mappings into
-                    (for [to refer :let [from (get rename to to)]]
-                      [from (with-meta (symbol clj-alias (name to))
-                              {:dart (nil? clj-ns)})]))))))
+                  (for [[lib & {:keys [as refer rename]}] require-specs
+                        :let [_ (when (and (string? lib) (not (dart-libs-info lib)))
+                                  (throw (Exception. (str "Can't find Dart lib: " lib))))
+                              clj-ns (when-not (string? lib) lib)
+                              dartlib (else->>
+                                       (if (string? lib) lib)
+                                       (if-some [{:keys [lib]} (@nses lib)] lib)
+                                       (if (= ns-sym lib) ns-lib)
+                                       (compile-namespace lib))
+                              dart-alias (global-lib-alias dartlib clj-ns)
+                              clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
+                              to-dart-sym (if clj-ns #(munge % {}) identity)]]
+                    (fn [ns-map]
+                      (-> ns-map
+                          (cond-> (nil? (get (:imports ns-map) dartlib))
+                            (assoc-in [:imports dartlib] {:clj-alias clj-alias}))
+                          (assoc-in [:clj-aliases clj-alias] dartlib)
+                          (update :mappings into
+                                  (let [source (if (string? lib)
+                                                 (comp (dart-libs-info lib) name)
+                                                 (@nses lib))]
+                                    (for [to refer :let [from (get rename to to)]]
+                                      (if-not (source to)
+                                        (throw (Exception. (str "Can't find " to " in " lib)))
+                                        [from (with-meta (symbol clj-alias (name to))
+                                                {:dart (nil? clj-ns)})]))))))))
           host-aliases (into #{}
-                         (for [[op & more] host-ns-directives
-                               :when (= :require op)
-                               lib more
-                               :when (sequential? lib)
-                               :let [[_ & {:keys [as]}] lib]
-                               :when as]
-                           as))
+                             (for [[op & more] host-ns-directives
+                                   :when (= :require op)
+                                   lib more
+                                   :when (sequential? lib)
+                                   :let [[_ & {:keys [as]}] lib]
+                                   :when as]
+                               as))
           host-ns-directives
           (concat
-            host-ns-directives
-            (for [[lib & {:keys [refer as] :as options}] require-specs
-                  :when (not (host-aliases as))
-                  :let [host-ns (some-> (get @nses lib) :host-ns ns-name)]
-                  :when (and host-ns (not= ns-sym lib))
-                  :let [options
-                        (assoc options :refer (filter (comp :macro-support :meta (@nses 'cljd.core)) refer))]]
-              (list :require (into [host-ns] cat options))))
+           host-ns-directives
+           (for [[lib & {:keys [refer as] :as options}] require-specs
+                 :when (not (host-aliases as))
+                 :let [host-ns (some-> (get @nses lib) :host-ns ns-name)]
+                 :when (and host-ns (not= ns-sym lib))
+                 :let [options
+                       (assoc options :refer (filter (comp :macro-support :meta (@nses 'cljd.core)) refer))]]
+             (list :require (into [host-ns] cat options))))
           ns-map (cond-> ns-map
                    *host-eval* (assoc :host-ns (create-host-ns ns-sym host-ns-directives)))]
       (global-lib-alias ns-lib ns-sym)
