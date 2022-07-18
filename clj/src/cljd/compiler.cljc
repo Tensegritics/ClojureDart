@@ -1620,20 +1620,22 @@
           (when-not (-> info meta :dart/mutable)
             (throw (ex-info (str "Cannot assign to non-mutable: " target) {:target target})))
           :def (when-not (= :field (:type info))
-                 (throw (ex-info (str "Cannot assign: " target) {:target target}))))
+                 (throw (ex-info (str "Cannot assign: " target) {:target target})))
+          :dart (when-not (and (= :field (:kind info)) (:setter info))
+                  (throw (ex-info (str "Cannot assign: " target) {:target target}))))
         (list 'dart/let
-          [[nil (list 'dart/set! dart-sym (emit expr env))]]
-          dart-sym))
+              [[nil (list 'dart/set! dart-sym (emit expr env))]]
+              dart-sym))
       (and (seq? target) (= '. (first target)))
       (let [[_ obj member] target
             [_ fld] (re-matches #"-?(.+)" (name member))
-       #_     (dart-member-lookup type! fld nil env)
+            #_(dart-member-lookup type! fld nil env)
             ; TODO actual field resolution + simple-cast
             [bindings [dart-obj dart-val]] (lift-args true (split-args [obj expr] nil env) env)]
         (list 'dart/let
-          (conj (vec bindings)
-            [nil (list 'dart/set! (list 'dart/.- dart-obj fld) dart-val)])
-          dart-val))
+              (conj (vec bindings)
+                    [nil (list 'dart/set! (list 'dart/.- dart-obj fld) dart-val)])
+              dart-val))
       :else
       (throw (ex-info (str "Unsupported target for assignment: " target) {:target target})))))
 
@@ -2771,8 +2773,7 @@
                                     (for [to refer :let [from (get rename to to)]]
                                       (if-not (source to)
                                         (throw (Exception. (str "Can't find " to " in " lib)))
-                                        [from (with-meta (symbol clj-alias (name to))
-                                                {:dart (nil? clj-ns)})]))))))))
+                                        [from (symbol clj-alias (name to))]))))))))
           host-aliases (into #{}
                              (for [[op & more] host-ns-directives
                                    :when (= :require op)
