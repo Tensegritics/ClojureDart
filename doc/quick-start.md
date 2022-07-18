@@ -27,7 +27,7 @@ cat << EOF > deps.edn
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDart.git"
          ; or  "https://github.com/tensegritics/ClojureDart.git"
-         :sha "f8677436f5e93d94019ca973bafa98bde1f589b5"}}}
+         :sha "062c3c54fc0945603539291f6394df869b659aa4"}}}
 EOF
 ```
 
