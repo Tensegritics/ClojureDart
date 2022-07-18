@@ -1054,46 +1054,46 @@
 
 (defn macroexpand-1 [env form]
   (->
-    (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
-      (let [f-name (name f)
-            [f-type f-v] (resolve-symbol f env)
-            macro-fn (case f-type
-                       :def (case (:type f-v) ; TODO rename :type into :kind
+   (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
+     (let [f-name (name f)
+           [f-type f-v] (resolve-symbol f env)
+           macro-fn (case f-type
+                      :def (case (:type f-v) ; TODO rename :type into :kind
+                             :class (fn [form _ & _] (with-meta (cons 'new form) (meta form)))
+                             (-> f-v :meta :macro-host-fn))
+                      :dart (case (:kind f-v)
                               :class (fn [form _ & _] (with-meta (cons 'new form) (meta form)))
-                              (-> f-v :meta :macro-host-fn))
-                       :dart (case (:kind f-v)
-                               :class (fn [form _ & _] (with-meta (cons 'new form) (meta form)))
-                               nil)
-                       nil)]
-        (cond
-          (env f) form
-          (or (= 'cljd.core/defprotocol f) (= 'defprotocol f)) (apply expand-defprotocol args)
-          (or (= 'cljd.core/extend-type f) (= 'extend-type f)) (apply expand-extend-type args)
-          (= '. f) form
-          macro-fn
-          (apply macro-fn form (assoc env :nses @nses) (next form))
-          (.endsWith f-name ".")
-          (with-meta
-            (list* 'new
-              (with-meta (symbol (namespace f) (subs f-name 0 (dec (count f-name)))) (meta f))
-              args)
-            (meta form))
-          (.startsWith f-name ".")
-          (with-meta
-            (list* '. (first args) (with-meta (symbol (subs f-name 1)) (meta f)) (next args))
-            (meta form))
-          :else
-          (if-some [[type member] (resolve-static-member f)]
-            (with-meta
-              (list* '. type member args)
-              (meta form))
-            form)))
-      (if-let [[type member] (and (symbol? form) (resolve-static-member form))]
-        (with-meta
-          (list '. type member)
-          (meta form))
-        form))
-    (propagate-hints form)))
+                              nil)
+                      nil)]
+       (cond
+         (env f) form
+         (or (= 'cljd.core/defprotocol f) (= 'defprotocol f)) (apply expand-defprotocol args)
+         (or (= 'cljd.core/extend-type f) (= 'extend-type f)) (apply expand-extend-type args)
+         (= '. f) form
+         macro-fn
+         (apply macro-fn form (assoc env :nses @nses) (next form))
+         (.endsWith f-name ".")
+         (with-meta
+           (list* 'new
+                  (with-meta (symbol (namespace f) (subs f-name 0 (dec (count f-name)))) (meta f))
+                  args)
+           (meta form))
+         (.startsWith f-name ".")
+         (with-meta
+           (list* '. (first args) (with-meta (symbol (subs f-name 1)) (meta f)) (next args))
+           (meta form))
+         :else
+         (if-some [[type member] (resolve-static-member f)]
+           (with-meta
+             (list* '. type member args)
+             (meta form))
+           form)))
+     (if-let [[type member] (and (symbol? form) (resolve-static-member form))]
+       (with-meta
+         (list '. type (str "-" member))
+         (meta form))
+       form))
+   (propagate-hints form)))
 
 (defn macroexpand [env form]
   (let [ex (macroexpand-1 env form)]
@@ -1586,7 +1586,7 @@
           [dart-args-bindings dart-args] (lift-args split-args+types env)
           prop (case (:kind member-info)
                  :field (do
-                          (when-not (or static prop)
+                          (when-not prop
                             (binding [*out* *err*]
                               (println "INFO:" member-name "is a property and should be prefixed by a dash to work even when the type of the object is dynamic:" (str "-" member-name) (source-info))))
                           true)
