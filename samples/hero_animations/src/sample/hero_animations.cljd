@@ -13,7 +13,7 @@
       .onTap #(.pop navigator))
      m/Center
      (m/Hero .tag "imageHero")
-     (m.Image/network "https://picsum.photos/250?image=9")))))
+     (m/Image.network "https://picsum.photos/250?image=9")))))
 
 (def main-screen
   (f/widget
@@ -27,7 +27,7 @@
                nil)
      .child (m/Hero
              .tag "imageHero"
-             .child (m.Image/network "https://picsum.photos/250?image=9"))))))
+             .child (m/Image.network "https://picsum.photos/250?image=9"))))))
 
 (defn main
   []

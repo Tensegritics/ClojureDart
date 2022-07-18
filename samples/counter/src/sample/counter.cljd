@@ -8,7 +8,7 @@
   (m/runApp
    (m/MaterialApp
     .title "Cljd Demo"
-    .theme (m/ThemeData .primarySwatch m.Colors/-blue)
+    .theme (m/ThemeData .primarySwatch m/Colors.blue)
     .home
     (f/widget
      :state [counter 0]
@@ -19,7 +19,7 @@
       (f/nest
        m/Center
        (m/Column
-        .mainAxisAlignment m.MainAxisAlignment/-center
+        .mainAxisAlignment m/MainAxisAlignment.center
         .children
         [(m/Text "You have pushed the button this many times:")
          (m/Text (str @counter)
@@ -28,4 +28,4 @@
       (m/FloatingActionButton
        .onPressed #(swap! counter inc)
        .tooltip "Increment"
-       .child (m/Icon m.Icons/-add)))))))
+       .child (m/Icon m/Icons.add)))))))

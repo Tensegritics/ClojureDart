@@ -18,14 +18,14 @@
    :context ctx
    :ticker tick
    :with [controller (m/AnimationController .vsync tick)]
-   :state [drag-alignment m.Alignment/-center]
+   :state [drag-alignment m/Alignment.center]
    (let [size (.-size media-query)
          run-animation
          (fn [^m/Offset px-per-s]
            (let [animation (.drive controller
                                    (m/AlignmentTween
                                     .begin @drag-alignment
-                                    .end m.Alignment/-center))
+                                    .end m/Alignment.center))
                  units-per-s-x (/ (.-dx px-per-s) (.-width size))
                  units-per-s-y (/ (.-dy px-per-s) (.-height size))
                  units-per-s (m/Offset units-per-s-x units-per-s-y)

@@ -11,8 +11,8 @@
    (m/Scaffold
     .appBar (m/AppBar .title (m/Text title))
     .body
-    (m/Padding. .padding ^:const (m.EdgeInsets/all 16.0)
-                .child (m/Column
+    (m/Padding .padding ^:const (m/EdgeInsets.all 16.0)
+               .child (m/Column
                         .children [(m/TextField .onChanged (fn [text] (dart:core/print (str "First text field: " text))))
                                    (m/TextField .controller text-controller)])))))
 

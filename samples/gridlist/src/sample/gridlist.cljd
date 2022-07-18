@@ -13,7 +13,7 @@
              .appBar (m/AppBar .title (m/Text title))
              .body (f/widget
                     :inherit [m/Theme]
-                    (m.GridView/count
+                    (m/GridView.count
                      .crossAxisCount 2
                      .children (map
                                 (fn [i] (m/Center .child (m/Text (str "Item " i) .style (-> theme .-textTheme .-headline3))))

@@ -6,12 +6,12 @@
 (defn data-table [& {:keys [cols rows]}]
   (f/widget
    (m/SingleChildScrollView
-    .scrollDirection m.Axis/-horizontal
+    .scrollDirection m/Axis.horizontal
     .child
     (m/DataTable
      .headingTextStyle (m/TextStyle
-                        .fontWeight m.FontWeight/-bold
-                        .color m.Colors/-blue)
+                        .fontWeight m/FontWeight.bold
+                        .color m/Colors.blue)
      ;; .columnSpacing 18.0
      ;; .sortColumnIndex 2
      ;; .sortAscending true

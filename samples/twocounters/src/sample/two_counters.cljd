@@ -14,7 +14,7 @@
     (f/nest
      m/Center
      (m/Row
-      .mainAxisAlignment m.MainAxisAlignment/-center
+      .mainAxisAlignment m/MainAxisAlignment.center
       .children
       (map (fn [k]
              nil
@@ -28,7 +28,7 @@
               :inherit [:counters]
               (dart:core/print (str "REBUILDING " k))
               (m/Column
-               .mainAxisAlignment m.MainAxisAlignment/-center
+               .mainAxisAlignment m/MainAxisAlignment.center
                .children
                [(m/Text (str k))
                 ; below we deref the submodel, thus creating only
@@ -47,7 +47,7 @@
   (m/runApp
    (m/MaterialApp
     .title "Cljd Demo"
-    .theme (m/ThemeData .primarySwatch m.Colors/-blue)
+    .theme (m/ThemeData .primarySwatch m/Colors.blue)
     .home
     (f/widget
       ; here we establish a dynamic binding for the name :counters

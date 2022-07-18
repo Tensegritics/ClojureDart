@@ -8,14 +8,14 @@
   (-> max rand-int .toDouble))
 
 (defn random-color []
-  (m.Color/fromRGBO (rand-int 256)
+  (m/Color.fromRGBO (rand-int 256)
                     (rand-int 256)
                     (rand-int 256)
                     1))
 
 (defn animated-container []
   (f/widget
-   :state [config {:width 50.0 :height 50.0 :color m.Colors/-green :border-radius (m.BorderRadius/circular 8.0)}]
+   :state [config {:width 50.0 :height 50.0 :color m/Colors.green :border-radius (m/BorderRadius.circular 8.0)}]
    (m/Scaffold
     .appBar (m/AppBar .title (m/Text "AnimatedContainer Demo"))
     .body
@@ -26,13 +26,13 @@
       .height (:height @config)
       .decoration (m/BoxDecoration .color (:color @config) .borderRadius (:border-radius @config))
       .duration ^:const (Duration .seconds 1)
-      .curve m.Curves/-fastOutSlowIn))
+      .curve m/Curves.fastOutSlowIn))
     .floatingActionButton
     (m/FloatingActionButton .onPressed #(swap! config assoc
                                                :width (random-to-double 300)
                                                :height (random-to-double 300)
                                                :color (random-color)
-                                               :border-radius (m.BorderRadius/circular (random-to-double 100)))
-                            .child (m/Icon. m.Icons/-play_arrow)))))
+                                               :border-radius (m/BorderRadius.circular (random-to-double 100)))
+                            .child (m/Icon. m/Icons.play_arrow)))))
 
 (defn main [] (m/runApp (m/MaterialApp .home (animated-container))))

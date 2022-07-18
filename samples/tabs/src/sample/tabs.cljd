@@ -19,11 +19,11 @@
         (m/AppBar
          .bottom
          (m/TabBar
-          .tabs [(m/Tab .icon (m/Icon. m.Icons/-directions_car)),
-                 (m/Tab .icon (m/Icon. m.Icons/-directions_transit)),
-                 (m/Tab .icon (m/Icon. m.Icons/-directions_bike))]))
+          .tabs [(m/Tab .icon (m/Icon. m/Icons.directions_car)),
+                 (m/Tab .icon (m/Icon. m/Icons.directions_transit)),
+                 (m/Tab .icon (m/Icon. m/Icons.directions_bike))]))
         .body
         (m/TabBarView
-         .children [(m/Tab .icon (m/Icon. m.Icons/-directions_car)),
-                    (m/Tab .icon (m/Icon. m.Icons/-directions_transit)),
-                    (m/Tab .icon (m/Icon. m.Icons/-directions_bike))])))))))
+         .children [(m/Tab .icon (m/Icon. m/Icons.directions_car)),
+                    (m/Tab .icon (m/Icon. m/Icons.directions_transit)),
+                    (m/Tab .icon (m/Icon. m/Icons.directions_bike))])))))))

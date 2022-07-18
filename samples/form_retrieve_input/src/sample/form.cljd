@@ -11,7 +11,7 @@
     .appBar (m/AppBar .title (m/Text title))
     .body
     (m/Padding. .padding
-                ^:const (m.EdgeInsets/all 16.0)
+                ^:const (m/EdgeInsets.all 16.0)
                 .child (m/TextField .controller text-controller))
     .floatingActionButton
     (m/FloatingActionButton
@@ -20,7 +20,7 @@
                    .context ctx
                    .builder (fn [_] (m/AlertDialog .content (m/Text (.-text text-controller))))) nil)
      .tooltip "Show me the value!"
-     .child (m/Icon m.Icons/-text_fields)))))
+     .child (m/Icon m/Icons.text_fields)))))
 
 (defn main []
   (let [title "Retrieve text input"]

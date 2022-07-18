@@ -54,15 +54,15 @@
           (swap! app-state assoc-in [:vertices dragged] new-pos))))
     .child
     (m/CustomPaint
-     .size (m/Size double/-infinity double/-infinity)
+     .size (m/Size double/infinity double/infinity)
      .painter
      (reify :extends m/CustomPainter
        (paint [this canvas size]
          (let [[^m/Offset o ^m/Offset a ^m/Offset b] (:vertices @app-state)
                c (.- (.+ b a) o)
                paint (doto (m/Paint)
-                       (-> .-color (set! m.Colors/-grey))
-                       (-> .-style (set! m.PaintingStyle/-fill)))]
+                       (-> .-color (set! m/Colors.grey))
+                       (-> .-style (set! m/PaintingStyle.fill)))]
            (doto canvas
              (.drawLine o a paint)
              (.drawLine o b paint)

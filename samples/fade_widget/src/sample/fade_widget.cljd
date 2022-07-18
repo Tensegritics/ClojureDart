@@ -14,11 +14,11 @@
      (m/AnimatedOpacity
       .opacity (cond (true? @visible) 1.0 :else 0.0)
       .duration ^:const (Duration .milliseconds 500)
-      .child (m/Container .width 200.0 .height 200.0 .color (m.Colors/-green))))
+      .child (m/Container .width 200.0 .height 200.0 .color (m/Colors.green))))
     .floatingActionButton
     (m/FloatingActionButton .onPressed (fn [] (swap! visible not))
                             .tooltip "Toggle Opacity"
-                            .child ^:const (m/Icon m.Icons/-flip)))))
+                            .child ^:const (m/Icon m/Icons.flip)))))
 
 (defn main []
   (let [title "Opacity Demo"]

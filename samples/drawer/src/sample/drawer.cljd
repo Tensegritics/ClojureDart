@@ -15,9 +15,9 @@
              ; space to fit everything.
              .child (m/ListView
                      ; Important: Remove any padding from the ListView.
-                     .padding m.EdgeInsets/-zero
+                     .padding m/EdgeInsets.zero
                      .children [(m/DrawerHeader
-                                 .decoration (m/BoxDecoration .color m.Colors/-blue)
+                                 .decoration (m/BoxDecoration .color m/Colors.blue)
                                  .child (m/Text "Drawer Header"))
                                 (m/ListTile
                                  .title (m/Text "Item 1")
