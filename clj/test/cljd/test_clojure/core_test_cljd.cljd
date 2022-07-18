@@ -497,3 +497,9 @@
 
 (deftest seq?-nil-is-false-CLJD137
   (is (= false (seq? nil))))
+
+(defrecord RecordWithMungedFields [to-test!])
+
+(deftest records-equiv-work-with-munged-fields-CLJD135
+  (is (= (->RecordWithMungedFields 42) (->RecordWithMungedFields 42)))
+  (is (not= (->RecordWithMungedFields 42) (->RecordWithMungedFields 33))))

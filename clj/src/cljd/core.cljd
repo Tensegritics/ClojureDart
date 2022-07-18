@@ -7058,8 +7058,8 @@
              (or (identical? ~this ~other)
                (and (dart/is? ~other ~name)
                  ~@(map (fn [field]
-                          `(= ~(list (symbol (str ".-" field)) this)
-                             ~(list (symbol (str ".-" field)) (with-meta other {:tag name})))) fields)
+                          `(= ~field (~(keyword field) ~other) ; TODO direct field access
+                             #_~(list (symbol (str ".-" field)) (with-meta other {:tag name})))) fields)
                  (= ~extmap
                    (.-extmap ~(with-meta other {:tag name})))))))
          'cljd.core/IMap
