@@ -2748,7 +2748,9 @@
           ns-map
           (reduce #(%2 %1) ns-map
             (for [[lib & {:keys [as refer rename]}] require-specs
-                  :let [clj-ns (when-not (string? lib) lib)
+                  :let [_ (when (and (string? lib) (not (dart-libs-info lib)))
+                            (throw (Exception. (str "Can't find Dart lib: " lib))))
+                        clj-ns (when-not (string? lib) lib)
                         dartlib (else->>
                                   (if (string? lib) lib)
                                   (if-some [{:keys [lib]} (@nses lib)] lib)
