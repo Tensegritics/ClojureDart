@@ -494,3 +494,6 @@
   (let [m {"color" "red"}
         m (. m #/(cast String String?))]
     (is (= true (dart/is? m #/(Map String String?))))))
+
+(deftest seq?-nil-is-false-CLJD137
+  (is (= false (seq? nil))))

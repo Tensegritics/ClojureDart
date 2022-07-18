@@ -906,11 +906,20 @@
 
 (extend-type Null
   ISeqable
-  (-seq [coll] nil)
+  (-seq [coll] nil))
+
+(extend-type fallback
   ISeq
-  (-first [coll] nil)
-  (-rest [coll] ())
-  (-next [coll] nil))
+  (-first [coll]
+    (when-not (nil? coll)
+      (throw (ArgumentError. (str "Don't know how to create ISeq from: " coll)))))
+  (-rest [coll]
+    (if-not (nil? coll)
+      (throw (ArgumentError. (str "Don't know how to create ISeq from: " coll)))
+      ()))
+  (-next [coll]
+    (when-not (nil? coll)
+      (throw (ArgumentError. (str "Don't know how to create ISeq from: " coll))))))
 
 (defn first
   "Returns the first item in the collection. Calls seq on its
