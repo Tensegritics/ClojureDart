@@ -1586,7 +1586,7 @@
           [dart-args-bindings dart-args] (lift-args split-args+types env)
           prop (case (:kind member-info)
                  :field (do
-                          (when-not prop
+                          (when-not (or prop static)
                             (binding [*out* *err*]
                               (println "INFO:" member-name "is a property and should be prefixed by a dash to work even when the type of the object is dynamic:" (str "-" member-name) (source-info))))
                           true)
