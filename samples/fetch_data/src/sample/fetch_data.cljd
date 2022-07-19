@@ -9,7 +9,6 @@
 (defn decode-album
   [raw-album]
   (let [json-album (convert/jsonDecode raw-album)]
-    (dart:core/print (get json-album "title"))
     {:user-id (get json-album "userId") :id (get json-album "id") :title (get json-album "title")}))
 
 
@@ -18,13 +17,13 @@
   (let [response (await 
                   (http/get
                    (dart:core.Uri/parse "https://jsonplaceholder.typicode.com/albums/1")))]
-     (cond (= (.statusCode response) 200) (decode-album (.body response)) :else {})))
+     (cond (= (.-statusCode response) 200) (decode-album (.-body response)) :else {})))
 
 (def my-app
   (f/widget
    :state [state {:future-album (fetch-album)}] 
    (m/MaterialApp
-    :title "Fetch Data Example"
+    .title "Fetch Data Example"
     :theme (m/ThemeData :primarySwatch m.Colors/blue)
     :home
     (m/Scaffold
