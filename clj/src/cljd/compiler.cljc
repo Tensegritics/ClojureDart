@@ -1514,7 +1514,8 @@
     (cond->> (with-meta (list* 'dart/new dart-type dart-args)
                {:dart/type dart-type
                 :dart/const (and (:const member-info)
-                                 (every? (comp :dart/const infer-type) dart-args))
+                              (every? (comp :dart/const infer-type)
+                                (remove keyword? dart-args)))
                 :dart/inferred true})
       (seq bindings) (list 'dart/let bindings))))
 
@@ -1608,7 +1609,8 @@
                         :else (:type member-info)))
           const (and (:const member-info)
                      (or prop
-                         (every? (comp :dart+const infer-type) dart-args)))
+                         (every? (comp :dart/const infer-type)
+                                 (remove keyword? dart-args))))
           expr (with-meta (list* op dart-obj name dart-args)
                  {:dart/type expr-type :dart/const const :dart/inferred true})
           bindings (concat dart-obj-bindings dart-args-bindings)]
