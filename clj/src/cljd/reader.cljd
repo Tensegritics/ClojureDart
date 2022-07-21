@@ -372,9 +372,9 @@
       (throw (FormatException. "Spliced form list in read-cond-splicing must implement dart:core/List")))
     (when-not (or (not splicing) (not *top-level-form*))
       (throw (FormatException. "Reader conditional splicing not allowed at the top level.")))
-    (let [discard1 (Object.)
-          discard (Object.)
-          hold (Object.)
+    (let [discard1 ^:unique (Object.)
+          discard ^:unique (Object.)
+          hold ^:unique (Object.)
           check-feature (fn [feature]
                           (when-not (keyword? feature)
                             (throw (FormatException. (str "Feature should be a keyword: " feature))))

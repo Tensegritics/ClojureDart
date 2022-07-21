@@ -314,8 +314,8 @@
     (is (= "abc" (str (f "abc"))))))
 
 (deftest named-const-constructors-GH53
-  (is (not (identical? (Iterable/empty) (Iterable/empty))))
-  (is (identical? ^:const (Iterable/empty) ^:const (Iterable/empty))))
+  (is (not (identical? ^:unique (Iterable/empty) (Iterable/empty))))
+  (is (identical? (Iterable/empty) (Iterable/empty))))
 
 (deftest parent-this-capture
   (let [x (reify Object

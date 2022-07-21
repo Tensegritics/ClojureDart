@@ -575,6 +575,7 @@
       (:getter m) (assoc :dart/getter true)
       (:setter m) (assoc :dart/setter true)
       (:const m) (assoc :dart/const true)
+      (:unique m) (assoc :dart/const false)
       (:dart m) (assoc :dart/fn-type :native)
       (:clj m) (assoc :dart/fn-type :ifn)
       type (assoc :dart/type type)
@@ -1512,6 +1513,8 @@
         [bindings dart-args] (lift-args split-args+types env)]
     (cond->> (with-meta (list* 'dart/new dart-type dart-args)
                {:dart/type dart-type
+                :dart/const (and (:const member-info)
+                                 (every? (comp :dart/const infer-type) dart-args))
                 :dart/inferred true})
       (seq bindings) (list 'dart/let bindings))))
 
@@ -1603,8 +1606,11 @@
                         (not prop) (:return-type member-info)
                         (= :method (:kind member-info)) nil ; TODO type delegate
                         :else (:type member-info)))
-          expr (cond-> (list* op dart-obj name dart-args)
-                 expr-type (vary-meta assoc :dart/type expr-type :dart/inferred true))
+          const (and (:const member-info)
+                     (or prop
+                         (every? (comp :dart+const infer-type) dart-args)))
+          expr (with-meta (list* op dart-obj name dart-args)
+                 {:dart/type expr-type :dart/const const :dart/inferred true})
           bindings (concat dart-obj-bindings dart-args-bindings)]
       (cond->> expr
         (seq bindings) (list 'dart/let bindings)))))
@@ -2900,7 +2906,7 @@
             :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
           {:dart/keys [const type]} (dart-meta x env)]
       (cond-> dart-x
-        const (vary-meta assoc :dart/const true)
+        (some? const) (vary-meta assoc :dart/const const)
         type (simple-cast type)))
     (catch Exception e
       (throw
@@ -3352,11 +3358,11 @@
     (->
      (cond
        (:dart/inferred m) m
-       (nil? x) {:dart/type dc-Null}
-       (boolean? x) {:dart/type dc-bool}
-       (string? x) {:dart/type dc-String}
-       (double? x) {:dart/type dc-double}
-       (integer? x) {:dart/type dc-int}
+       (nil? x) {:dart/type dc-Null :dart/const true}
+       (boolean? x) {:dart/type dc-bool :dart/const true}
+       (string? x) {:dart/type dc-String :dart/const true}
+       (double? x) {:dart/type dc-double :dart/const true}
+       (integer? x) {:dart/type dc-int :dart/const true}
        (and (symbol? x) (-> x meta :dart/type :canon-qname (= 'dc.Function)))
        {:dart/ret-type (-> x meta :dart/signature :return-type)}
        (seq? x)
