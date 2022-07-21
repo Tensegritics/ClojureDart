@@ -3376,12 +3376,7 @@
          (let [[_ a meth & bs :as all] x ; TODO use type-params
                {:dart/keys [fn-type ret-type]} (infer-type a)
                [methname type-params] (if (sequential? meth) [(name (first meth)) (second meth)] [meth nil])]
-           (if (= :ifn fn-type)
-             (when ret-type {:dart/type ret-type})
-             (case methname
-               ("!" "<" ">" "<=" ">=" "==" "!=" "&&" "^^" "||")
-               {:dart/type dc-bool}
-               nil)))
+           (when (and (= :ifn fn-type) ret-type) {:dart/type ret-type}))
          dart/as (let [[_ _ type] x]
                    {:dart/type type})
          (let [{:keys [dart/ret-type]} (infer-type (first x))]
