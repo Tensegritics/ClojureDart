@@ -98,7 +98,6 @@ class TopLevelVisitor extends ThrowingElementVisitor {
       ':lib': '"${libPathToPackageName(e.library.identifier)}"',
       ':private': e.isPrivate,
       ':internal': e.hasInternal,
-      ':const': e.unnamedConstructor?.isConst,
       ':type-parameters': e.typeParameters.map(emitTypeParameter),
       ':super': fnil(emitType,e.supertype,null),
       ':mixins': e.mixins.map(emitType),
@@ -118,6 +117,7 @@ class TopLevelVisitor extends ThrowingElementVisitor {
       classData["\"${c.displayName}\""]=
       M({':kind': ':constructor',
           ':named': !c.isDefaultConstructor,
+          ':const': c.isConst,
           ':return-type': emitType(c.returnType),
           ':parameters': c.parameters.map(emitParameter),
           ':type-parameters': c.typeParameters.map(emitTypeParameter)
@@ -127,6 +127,7 @@ class TopLevelVisitor extends ThrowingElementVisitor {
       classData["\"${f.displayName}\""]=
       M({':kind': ':field',
           ':static': f.isStatic,
+          ':const': f.isConst,
           ':getter': f.getter!=null,
           ':setter': f.setter!=null,
           ':type': emitType(f.type)
