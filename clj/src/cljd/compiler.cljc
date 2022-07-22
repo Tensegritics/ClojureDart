@@ -1825,7 +1825,7 @@
               base-arity (or min-fixed-arity base-vararg-arity)
               base-args (take base-arity call-args)
               opt-args (drop base-arity call-args)
-              default-value `^:const (cljd.core/Keyword. nil "missing" -1) ; wrong hash by design
+              default-value `(dart:core/pragma "cljd:missing-param")
               fixed-arities-expr
               (for [args+1 (next (reductions conj (vec base-args)
                                    (cond->> opt-args base-vararg-arity (take (- base-vararg-arity base-arity)))))
@@ -2525,15 +2525,18 @@
         dart-type (new-dart-type mclass-name type-params dart-fields parsed-class-specs env)
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (emit-class-specs class-name parsed-class-specs env)
+        dart-super-type (:extends class) ; should never
+        meth (-> class :super-ctor :method)
+        super-ctor-meth (cond-> (:element-name dart-super-type) meth (str "." meth))
+        super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)
+        _ (when (not super-ctor-info)
+            (binding [*out* *err*]
+              (println "DYNAMIC WARNING: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
         super-ctor-split-args+types
-        (when-some [dart-super-type (:extends class)]
-          (let [meth (-> class :super-ctor :method)
-                super-ctor-meth (cond-> (:element-name dart-super-type) meth (str "." meth))
-                super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)]
-            (when (not super-ctor-info)
-              (binding [*out* *err*]
-                (println "DYNAMIC WARNING: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
-            (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))))
+        (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))
+
+        const (and (:const super-ctor-info) (not-any? #(:dart/mutable (meta %)) dart-fields)) ; TODO it's weak we should test super args for const while assuming params to be const
+        dart-type (cond-> dart-type const (assoc-in [(name mclass-name) :const] true))
         class (-> class
                   (assoc :name dart-type
                          :ctor mclass-name
@@ -2548,7 +2551,7 @@
                                        (-> arg (ensure-dart-expr env) list)
                                        [name (-> arg (ensure-dart-expr env))])))
                                   super-ctor-split-args+types)))]
-    (swap! nses alter-def class-name assoc :dart/code (with-dart-str (write-class class)))
+    (swap! nses alter-def class-name assoc :dart/code (with-dart-str (write-class class)) :dart/type dart-type)
     (emit class-name env)))
 
 (defn emit-extend-type-protocol* [[_ class-name protocol-ns protocol-name extension-instance] env]
@@ -2865,11 +2868,11 @@
             (or (number? x) (boolean? x) (string? x)) x
             (instance? java.util.regex.Pattern x)
             (emit (list 'new 'dart:core/RegExp
-                    #_(list '. 'dart:core/RegExp 'escape (.pattern ^java.util.regex.Pattern x))
-                    (.pattern ^java.util.regex.Pattern x)
-                    #_#_#_'.& :unicode true) env)
+                        #_(list '. 'dart:core/RegExp 'escape (.pattern ^java.util.regex.Pattern x))
+                        (.pattern ^java.util.regex.Pattern x)
+                        #_#_#_'.& :unicode true) env)
             (keyword? x)
-            (emit (with-meta (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) {:const true}) env)
+            (emit (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) env)
             (nil? x) nil
             (and (seq? x) (seq x)) ; non-empty seqs only
             (let [emit (case (first x)
@@ -2906,15 +2909,22 @@
             (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
             (coll? x) (emit-coll x env)
             :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
-          {:dart/keys [const type]} (dart-meta x env)]
+          {:dart/keys [const type]} (dart-meta x env)
+          inferred-const (:dart/const (meta dart-x))]
+      (when (and const (not inferred-const))
+        (println "🤔 Unexpected ^:const, if it passes Dart compilation, please open a ClojureDart issue" (pr-str x) (source-info)))
+      (when (and (false? const) (not inferred-const))
+        (println "🤔 Useless ^:unique. If you disagree, please open a ClojureDart issue" (source-info)))
+      (when (and const inferred-const)
+        (println "INFO: Useless ^:const, please remove" (source-info)))
       (cond-> dart-x
         (some? const) (vary-meta assoc :dart/const const)
         type (simple-cast type)))
     (catch Exception e
       (throw
-        (if-some [stack (::emit-stack (ex-data e))]
-          (ex-info (ex-message e) (assoc (ex-data e) ::emit-stack (conj stack x)) (ex-cause e))
-          (ex-info (str "Error while compiling " (pr-str x)) {::emit-stack [x]} e))))))
+       (if-some [stack (::emit-stack (ex-data e))]
+         (ex-info (ex-message e) (assoc (ex-data e) ::emit-stack (conj stack x)) (ex-cause e))
+         (ex-info (str "Error while compiling " (pr-str x)) {::emit-stack [x]} e))))))
 
 (defn host-eval
   [x]
