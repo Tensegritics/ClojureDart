@@ -113,6 +113,11 @@
                     :lib "dart:core"
                     :canon-qname pseudo.super})
 
+(def cljd-ifn '{:kind :class
+                :qname lcoc_core.IFn$iface
+                :canon-qname lcoc_core.IFn$iface
+                :element-name "IFn$iface"})
+
 (declare global-lib-alias)
 
 (defn update-if
@@ -382,11 +387,7 @@
           (let [dart-alias (:dart-alias (libs lib))
                 qname (symbol (str dart-alias "." typename))]
             (case clj-sym
-              cljd.core/IFn$iface
-              '{:kind :class
-                :qname lcoc_core.IFn$iface
-                :canon-qname lcoc_core.IFn$iface
-                :element-name "IFn$iface"}
+              cljd.core/IFn$iface cljd-ifn
               nil)))))))
 
 (defn non-nullable [tag]
@@ -2099,7 +2100,15 @@
                                    (conj [dart-name (map #(if (deps %) nil %) ctor-call)]))]
                     [unset-env bindings wirings]))
           [unset-env bindings {}] ifns)]
-    (list 'dart/letrec bindings wirings (emit (list* 'let* [] body) env))))
+    (list 'dart/let
+          (vec
+            (concat
+             (for [[v] bindings] [:late v])
+             (for [[v e] bindings] [nil (list 'dart/set! v e)])
+             (for [[obj deps] wirings
+                   dep deps]
+               [nil (list 'dart/set! (list 'dart/.- obj dep) dep)])))
+          (emit (list* 'let* [] body) env))))
 
 (defn emit-method [class-name [mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
   ;; params destructuring will be added by a macro
@@ -3442,21 +3451,16 @@
       dart/let
       (let [[_ bindings expr] x]
         (or
-         (some (fn [[v e]] (write e (cond (nil? v) statement-locus
-                                          (and (seq? e) (= 'dart/fn (first e))) (named-fn-locus v)
-                                          :else (final-locus v))))
+         (some (fn [[v e]]
+                 (if (= :late v)
+                   (dart-print (declaration (final-locus e)))
+                   (write e
+                     (cond
+                       (nil? v) statement-locus
+                       (and (seq? e) (= 'dart/fn (first e))) (named-fn-locus v)
+                       :else (final-locus v)))))
                bindings)
          (write expr locus)))
-      dart/letrec
-      (let [[_ bindings wirings expr] x
-            loci+exprs (map (fn [[local expr]] [(final-locus local) expr]) bindings)]
-        (run! dart-print (keep (comp declaration first) loci+exprs))
-        (doseq [[locus expr] loci+exprs]
-          (write expr (declared locus)))
-        (doseq [[obj deps] wirings
-                dep deps]
-          (dart-print obj) (dart-print ".") (dart-print dep) (dart-print "=") (dart-print dep) (dart-print ";\n"))
-        (write expr locus))
       dart/try
       (let [[_ body catches final] x
             decl (declaration locus)

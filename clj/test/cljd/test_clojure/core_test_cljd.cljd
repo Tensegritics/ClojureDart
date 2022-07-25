@@ -503,3 +503,10 @@
 (deftest records-equiv-work-with-munged-fields-CLJD135
   (is (= (->RecordWithMungedFields 42) (->RecordWithMungedFields 42)))
   (is (not= (->RecordWithMungedFields 42) (->RecordWithMungedFields 33))))
+
+(deftest lifted-letfn-CLJD141
+  (is (= 2 (apply (letfn [(f [x] (inc x))] f) 1 nil)))
+  (is (= [:f :g :f :g]
+        (letfn [(g [n] (when (pos? n) (cons :g (f (dec n)))))
+                (f [n] (when (pos? n) (cons :f (g (dec n)))))]
+          ((identity f) 4)))))
