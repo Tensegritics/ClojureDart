@@ -69,24 +69,21 @@ First create a directory where clojure files live
 mkdir -p src/acme
 cat << EOF > src/acme/main.cljd
 (ns acme.main
-  ;; pure dart package are imported using string
-  (:require ["package:flutter/material.dart" :as material]
-            ["package:flutter/widgets.dart" :as widgets]
-            ["package:flutter/painting.dart" :as painting]))
+  (:require ["package:flutter/material.dart" :as m]))
 
 (defn main []
-  (material/runApp
-    (material/MaterialApp
-      :title "Welcome to Flutter"
-      :theme (material/ThemeData :primarySwatch material.Colors/pink)
-      :home (material/Scaffold
-              :appBar (material/AppBar
-                        :title (widgets/Text "Welcome to ClojureDart"))
-              :body (widgets/Center
-                      :child (widgets/Text "This text is Centered."
-                               :style (painting/TextStyle
-                                        :color material.Colors/red
-                                        :fontSize 32.0)))))))
+  (m/runApp
+    (m/MaterialApp
+      .title "Welcome to Flutter"
+      .theme (m/ThemeData .primarySwatch m.Colors/pink)
+      .home (m/Scaffold
+              .appBar (m/AppBar
+                        .title (m/Text "Welcome to ClojureDart"))
+              .body (m/Center
+                      .child (m/Text "This text is Centered."
+                               .style (m/TextStyle
+                                        .color m.Colors/red
+                                        .fontSize 32.0)))))))
 EOF
 ```
 ## 7. Start a simulator
