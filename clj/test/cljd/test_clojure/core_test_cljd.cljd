@@ -510,3 +510,7 @@
         (letfn [(g [n] (when (pos? n) (cons :g (f (dec n)))))
                 (f [n] (when (pos? n) (cons :f (g (dec n)))))]
           ((identity f) 4)))))
+
+(deftest toDoublePushedToLeaves-CLJD142
+  (is (= 0 (identity ^double (if (< 1 2) 0 0))))
+  (is (nil? (identity ^double? (if (< 1 2) nil 0)))))
