@@ -3418,7 +3418,7 @@
   (dotimes [_ (count (:casts locus))] (dart-print "(")))
 
 (defn print-post [locus]
-  (doseq [type (seq types)]
+  (doseq [type (:casts locus)]
     (if (= 'dc.double (:canon-qname type))
       (dart-print
         (if (:nullable type)
