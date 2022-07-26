@@ -1325,7 +1325,7 @@
      (= (:canon-qname expected-type) 'dc.double)
      (if (int? dart-expr)
        (double dart-expr)
-       (list 'dart/. (simple-cast dart-expr dc-num) 'toDouble))
+       (list 'dart/as dart-expr expected-type)) ; double is specially treated by write
      :else
      (list 'dart/as dart-expr expected-type))))
 
@@ -3020,7 +3020,7 @@
         (swap! nses assoc-in [current-ns :imports lib] {}))))
   (case qname
     nil (throw (ex-info "Invalid type representation" {:dart-type t}))
-    'dc.Function
+    dc.Function
     (if-some [ret (:return-type t)]
       (let [args (:parameters t)
             [fixed opts] (split-with (comp not :optional) args)]
@@ -3418,10 +3418,16 @@
   (dotimes [_ (count (:casts locus))] (dart-print "(")))
 
 (defn print-post [locus]
-  (doseq [type (:casts locus)]
-    (dart-print " as ")
-    (write-type type)
-    (dart-print ")"))
+  (doseq [type (seq types)]
+    (if (= 'dc.double (:canon-qname type))
+      (dart-print
+        (if (:nullable type)
+          " as dc.num?)?.toDouble()"
+          " as dc.num).toDouble()"))
+      (do
+        (dart-print " as ")
+        (write-type type)
+        (dart-print ")"))))
   (dart-print (:post locus)))
 
 (defn write
