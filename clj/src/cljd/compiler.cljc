@@ -3222,8 +3222,7 @@
 
   (when-not abstract
     (dart-newline)
-    (when (and (contains? #{nil 'dc.Object} (:canon-qname extends)) ;; TODO refine heuristic  with analyzer
-            (not-any? #(:dart/mutable (meta %)) fields))
+    (when (-> class-name (get (name ctor)) :const)
       (dart-print "const "))
     (dart-print (str (or ctor class-name) "("))
     (doseq [p ctor-params]

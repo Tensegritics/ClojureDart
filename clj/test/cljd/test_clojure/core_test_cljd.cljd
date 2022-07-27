@@ -514,3 +514,9 @@
 (deftest toDoublePushedToLeaves-CLJD142
   (is (= 0 (identity ^double (if (< 1 2) 0 0))))
   (is (nil? (identity ^double? (if (< 1 2) nil 0)))))
+
+(deftype Const1 [])
+(deftype Const2 [] :extends Const1)
+
+(deftest properly-infer-const-when-ancestor-is-not-Object
+  (is (some? ^:const (Const2))))
