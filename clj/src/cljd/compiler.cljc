@@ -1130,10 +1130,8 @@
 
 (defn- dart-binding [hint dart-expr env]
   (let [tmp (dart-local hint env)
-        {slot-type :dart/type :as tmp-meta} (merge (infer-type dart-expr) (meta tmp))]
-    ; it's not obvious but if the value is hinted and not the slot (through hint)
-    ; then slot-type will be the expression type and magicast will be a no-op.
-    [(with-meta tmp tmp-meta) (magicast dart-expr slot-type env)]))
+        dart-expr (magicast dart-expr (-> tmp meta :dart/type) env)]
+    [(with-meta tmp (infer-type dart-expr)) dart-expr]))
 
 (defn lift-safe? [expr]
   (or (not (coll? expr))
@@ -1184,7 +1182,7 @@
   (or (liftable x env)
       (cond
         (lift-safe? x) [nil x]
-        must-lift
+        (and must-lift (not (:dart/const (infer-type x))))
         (let [[tmp :as binding] (dart-binding hint x env)]
           [[binding] tmp])
         :else
@@ -3105,6 +3103,13 @@
       :decl (str "late final " (some-> vartype type-str (str " ")) varname ";\n")
       :fork (assignment-locus varname)})))
 
+(defn const-locus
+  ([varname] (const-locus (-> varname meta :dart/type) varname))
+  ([vartype varname]
+   (let [vartype (or vartype dc-dynamic)]
+     {:pre (str "const " (some-> vartype type-str (str " ")) varname "=")
+      :post ";\n"})))
+
 (def annotation-locus
   {:pre "@"
    :post "\n"})
@@ -3393,10 +3398,12 @@
            {:dart/type (reduce (fn [acc item]
                                  (if (= (:canon-qname (:dart/type acc)) 'dc.dynamic)
                                    (reduced acc)
-                                   (merge-types acc item))) (:dart/type (infer-type dart-expr)) (map #(:dart/type (infer-type (last %))) dart-catches-expr))})
+                                   (merge-types acc item))) (:dart/type (infer-type dart-expr)) (map #(:dart/type (infer-type (last %))) dart-catches-expr))
+            :dart/const false})
          dart/if
          (let [[_ _ dart-then dart-else] x]
-           {:dart/type (merge-types (:dart/type (infer-type dart-then)) (:dart/type (infer-type dart-else)))})
+           {:dart/type (merge-types (:dart/type (infer-type dart-then)) (:dart/type (infer-type dart-else)))
+            :dart/const false})
          dart/let (infer-type (last x))
          dart/.
          (let [[_ a meth & bs :as all] x ; TODO use type-params
@@ -3404,7 +3411,8 @@
                [methname type-params] (if (sequential? meth) [(name (first meth)) (second meth)] [meth nil])]
            (when (and (= :ifn fn-type) ret-type) {:dart/type ret-type}))
          dart/as (let [[_ _ type] x]
-                   {:dart/type type})
+                   {:dart/type type
+                    :dart/const false})
          (let [{:keys [dart/ret-type]} (infer-type (first x))]
            (when ret-type
              {:dart/type ret-type})))
@@ -3463,6 +3471,7 @@
                      (cond
                        (nil? v) statement-locus
                        (and (seq? e) (= 'dart/fn (first e))) (named-fn-locus v)
+                       (-> v meta :dart/const) (const-locus v)
                        :else (final-locus v)))))
                bindings)
          (write expr locus)))

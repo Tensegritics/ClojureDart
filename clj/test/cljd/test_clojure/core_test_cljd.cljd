@@ -519,4 +519,11 @@
 (deftype Const2 [] :extends Const1)
 
 (deftest properly-infer-const-when-ancestor-is-not-Object
-  (is (some? ^:const (Const2))))
+  (is (identical? (Const2) (Const2))))
+
+(deftype Const3 [x])
+
+(deftest const-locals-inference-CLJD145
+  (let [s "coucou"]
+    (is (identical? (Const3 s) (Const3 "coucou")))
+    (is (identical? (Const3 s) (Const3 s)))))
