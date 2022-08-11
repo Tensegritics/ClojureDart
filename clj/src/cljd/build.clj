@@ -403,6 +403,7 @@
           (do
             (del-tree (java.io.File. "lib/cljd-out"))
             (del-tree (java.io.File. "test/cljd-out"))
+            (del-tree (java.io.File. ".clojuredart"))
             (println "ClojureDart build state succesfully cleaned!")
             (case (some-> *deps* :cljd/opts :kind)
               :flutter (println "If problems persist, try" (bright "flutter clean"))
