@@ -91,15 +91,15 @@
              (str (red "Keep calm and fix bugs! ") "👑")
              (str (red "What doesn’t kill you, makes you stronger. ") "🤔")
              (str (red "You’re gonna need a bigger boat! ") "🦈")]))
-  (if-some [exprs (seq (::compiler/emit-stack (ex-data e)))]
-    (do
+  (if-some [[form & parents] (seq (::compiler/emit-stack (ex-data e)))]
+    (let [toplevel (last (take-while #(not (and (seq? %) (= 'ns (first %)))) parents))]
       (println (ex-message e))
       (println "⛔️" (title (ex-message (ex-cause e))))
-      (if (next exprs)
+      (if toplevel
         (do
-          (println (title "Faulty subform and/or expansion") (pr-str (first exprs)))
-          (println (title "While compiling") (pr-str (last exprs))))
-        (println (title "Faulty form") (pr-str (first exprs)))))
+          (println (title "Faulty subform and/or expansion") (pr-str form))
+          (println (title "While compiling") (pr-str toplevel)))
+        (println (title "Faulty form") (pr-str form))))
     (do
       (println "⛔️" (title (ex-message e)))
       (st/print-stack-trace e))))
