@@ -13,7 +13,67 @@ mobile and desktop apps.
 [Youtube](https://www.youtube.com/channel/UCCkvOkh6pXzYqkFKDgoyWRg)
 [Twitter](https://twitter.com/clojuredart)
 
-# Foreword
+# Your first app!
+
+Prerequisites: have Clojure and Flutter installed and on your path.
+
+Create a porject directory with its `deps.edn`
+``` shell
+mkdir hello
+cd hello
+cat << EOF > deps.edn
+{:paths ["src"] ; where your cljd files are
+ :deps {org.clojure/clojure {:mvn/version "1.10.1"}
+        tensegritics/clojuredart
+        {:git/url "https://github.com/tensegritics/ClojureDart.git"
+         :sha "3d0c9d6ec062ef373be28aefe5a88b270e094926"}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :cljd/opts {:kind :flutter
+             :main acme.main}}
+EOF
+```
+
+Initialize project:
+
+``` shell
+clj -M:cljd init
+```
+
+Add some source code:
+
+``` shell
+mkdir -p src/acme
+cat << EOF > src/acme/main.cljd
+(ns acme.main
+  (:require ["package:flutter/material.dart" :as m]))
+
+(defn main []
+  (m/runApp
+    (m/MaterialApp
+      .title "Welcome to Flutter"
+      .theme (m/ThemeData .primarySwatch m.Colors/pink)
+      .home (m/Scaffold
+              .appBar (m/AppBar
+                        .title (m/Text "Welcome to ClojureDart"))
+              .body (m/Center
+                      .child (m/Text "This text is Centered."
+                               .style (m/TextStyle
+                                        .color m.Colors/red
+                                        .fontSize 32.0)))))))
+EOF
+```
+
+Compile, watch and run:
+
+```
+clj -M:cljd flutter
+```
+
+In most environments this will spawn a desktop app.
+
+More details [there](doc/flutter-quickstart)
+
+# Maturity
 
 ClojureDart is a work-in-progress but it's good enough for the bravest Clojurists to put in in production. Learn more about [what's going on.](NEWS.md)
 
@@ -25,12 +85,14 @@ ClojureDart is not a revenue source for us, even if we build it for fun and hope
 
 Sponsorships to either of us are welcome. Sponsorship money allowed us to have an intern on the project writing samples and producing videos.
 
+Obviously you can contract us for assistance or development with ClojureDart.
+
 # Status
 
 Here be Dragons!
 
 Let's repeat it: ClojureDart is a work-in-progress. Some features may be outright missing or
-partially implemented or even bugged. In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart)) or open an issue.
+partially implemented or even bugged. In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart))) or open an issue.
 
 Most notable missing bits are:
 - no REPL yet
