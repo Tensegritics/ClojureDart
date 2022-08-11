@@ -6,11 +6,13 @@ cat > tmp/tests/deps.edn <<EOF
 {:paths ["src"] ; where your cljd files are
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
-        {:local/root "../../"}}}
+        {:local/root "../../"}}
+ :cljd/opts {:main cljd.run-tests
+             :kind :dart}}
 EOF
 
 cd tmp/tests
-clojure -M -m cljd.build init --dart cljd.run-tests
+clojure -M -m cljd.build init
 dart pub add -d test
 cat > src/cljd/run_tests.cljd <<EOF
 (ns ci.core
@@ -22,4 +24,4 @@ cat > src/cljd/run_tests.cljd <<EOF
     cljd.test-reader.reader-test))
 EOF
 clojure -M -m cljd.build compile cljd.test-clojure.core-test-cljd cljd.test-clojure.string cljd.test-clojure.core-test cljd.test-clojure.for cljd.test-reader.reader-test
-dart test
+dart test -p vm
