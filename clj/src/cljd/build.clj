@@ -15,7 +15,7 @@
             [clojure.java.io :as io]))
 
 (def ^:dynamic *ansi* false)
-(def ^:dynamic *config* {})
+(def ^:dynamic *deps*)
 
 (defn compile-core []
   (compiler/compile 'cljd.core))
@@ -142,37 +142,37 @@
       process)))
 
 (defn warm-up-libs-info! []
-  (let [bin (:bin *config*)
+  (let [bin (some-> *deps* :cljd/opts :kind name)
         user-dir (System/getProperty "user.dir")
         cljd-dir (-> user-dir (java.io.File. ".clojuredart") (doto .mkdirs))
         lib-info-edn (java.io.File. cljd-dir "libs-info.edn")
         dart-tools-json (-> user-dir (java.io.File. ".dart_tool") (java.io.File. "package_config.json"))]
     (when-not (and (.exists lib-info-edn) (.exists dart-tools-json)
-                (< (.lastModified dart-tools-json) (.lastModified lib-info-edn)))
+                   (< (.lastModified dart-tools-json) (.lastModified lib-info-edn)))
       (let [analyzer-dart (java.io.File. cljd-dir "analyzer.dart")]
         (with-open [out (java.io.FileOutputStream. analyzer-dart)]
           (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream "analyzer.dart") (.transferTo out)))
         (or
-          (and
-            (do
-              (newline)
-              (println (title "Adding dev dependencies"))
-              (exec bin "pub" "add" "-d" "analyzer:^3.3.1"))
-            (do
-              (newline)
-              (println (title "Upgrading dev dependencies"))
-              (exec bin "pub" "upgrade" "analyzer:^3.3.1")))
+         (and
           (do
             (newline)
-            (println (title "Fetching dependencies"))
-            (exec bin "pub" "get"))
+            (println (title "Adding dev dependencies"))
+            (exec bin "pub" "add" "-d" "analyzer:^3.3.1"))
           (do
             (newline)
-            (println (title "Dumping type information (it may take a while)"))
-            (when (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
-                    bin "pub" "run" (.getPath analyzer-dart))
-              (.delete lib-info-edn)
-              (System/exit 1))))))))
+            (println (title "Upgrading dev dependencies"))
+            (exec bin "pub" "upgrade" "analyzer:^3.3.1")))
+         (do
+           (newline)
+           (println (title "Fetching dependencies"))
+           (exec bin "pub" "get"))
+         (do
+           (newline)
+           (println (title "Dumping type information (it may take a while)"))
+           (when (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
+                       bin "pub" "run" (.getPath analyzer-dart))
+             (.delete lib-info-edn)
+             (System/exit 1))))))))
 
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
@@ -183,7 +183,7 @@
     (newline)
     (println (title "Compiling cljd.core to Dart"))
     (compile-core)
-    (let [dirs (into #{} (map #(java.io.File. %)) (:paths (:basis (deps/basis nil))))
+    (let [dirs (into #{} (map #(java.io.File. %)) (:paths *deps*))
           dirty-nses (volatile! #{})
           compile-nses
           (fn [nses]
@@ -239,10 +239,10 @@
             (finally
               (some-> p .destroy))))))))
 
-(defn init-project [opts main-ns bin-opts]
-  (let [deps-cljd-opts (:cljd/opts (:basis (deps/basis nil)))
-        bin (or (some-> deps-cljd-opts :kind name) (:target opts))
-        main-ns (or (:main deps-cljd-opts) main-ns
+(defn gen-entry-point []
+  (let [deps-cljd-opts (:cljd/opts *deps*)
+        bin (some-> deps-cljd-opts :kind name)
+        main-ns (or (:main deps-cljd-opts)
                   (throw (Exception. "A namespace must be specified in deps.edn under :cljd/opts :main or as argument to init.")))
         libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
         dir (java.io.File. (System/getProperty "user.dir"))
@@ -250,20 +250,36 @@
         project_name (str/replace project-name #"[- ]" "_")
         entry-point (case bin
                       "flutter" (java.io.File. libdir "main.dart")
-                      "dart"
-                      (java.io.File. "bin" (str project_name ".dart")))
+                      "dart" (java.io.File. "bin" (str project_name ".dart")))
         lib (compiler/relativize-lib (.getPath entry-point) (compiler/ns-to-lib main-ns))]
+    (spit entry-point (str "export " (compiler/with-dart-str (compiler/write-string-literal lib)) " show main;\n"))))
+
+(defn init-project [bin-opts]
+  (let [deps-cljd-opts (:cljd/opts *deps*)
+        bin (or (some-> deps-cljd-opts :kind name)
+              (throw (Exception. "A project kind (:dart or :flutter) must be specified in deps.edn under :cljd/opts :kind.")))
+        main-ns (or (:main deps-cljd-opts)
+                  (throw (Exception. "A namespace must be specified in deps.edn under :cljd/opts :main.")))
+        libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
+        dir (java.io.File. (System/getProperty "user.dir"))
+        project-name (.getName dir)
+        project_name (str/replace project-name #"[- ]" "_")]
     (println "Initializing" (bright project-name) "as a" (bright bin) "project!")
     (or
-      (case bin
-        "flutter"
-        (apply exec bin "create" "--project-name" project_name
-          (concat bin-opts [(System/getProperty "user.dir")]))
-        "dart"
-        (apply exec bin "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
-      (spit (java.io.File. "cljd.edn") (pr-str {:main main-ns :bin bin}))
-      (spit entry-point (str "export " (compiler/with-dart-str (compiler/write-string-literal lib)) " show main;\n"))
-      (println "👍" (green "All setup!") "Let's write some cljd in" main-ns))))
+     (case bin
+       "flutter"
+       (apply exec bin "create" "--project-name" project_name
+              (concat bin-opts [(System/getProperty "user.dir")]))
+       "dart"
+       (apply exec bin "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
+     (gen-entry-point)
+     (println "👍" (green "All setup!") "Let's write some cljd in" main-ns))))
+
+(defn del-tree [^java.io.File f]
+  (run! del-tree
+    (when-not (java.nio.file.Files/isSymbolicLink (.toPath f))
+      (.listFiles f)))
+  (.delete f))
 
 (defn exit [status msg]
   (println msg)
@@ -306,10 +322,11 @@
     (if (:help options)
       (list* options :help args)
       (if (some string? (keys commands))
-        (let [[command & args] args]
+        (if-some [[command & args] (seq args)]
           (if-some [subcommands (commands command)]
             (list* options command (parse-args subcommands args))
-            (throw (Exception. (str "Unknown command: " command)))))
+            (throw (Exception. (str "Unknown command: " command))))
+          (list options :help))
         (list* options args)))))
 
 (defn print-missing-config-warning [f-exists cmd]
@@ -343,7 +360,9 @@
 (def commands
   {:doc "This program compiles Clojuredart files to dart files."
    :options [help-spec]
-   "init" {:doc "Take the main namespace as argument. Set up the current clojure project as a ClojureDart/Flutter."
+   "init" {:doc "Set up the current clojure project as a ClojureDart/Flutter project according to :cljd/opts in deps.edn."
+           :options false
+           #_#_#_#_
            :options [help-spec
                      {:short "-f" :long "--flutter" :id :target :value "flutter"}
                      {:short "-d" :long "--dart" :id :target :value "dart"}
@@ -352,39 +371,39 @@
                       :doc "Path to the flutter or dart install."}]
            :defaults {:target "flutter"}}
    "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart."}
+   "clean" {:doc "When there's something wrong with compilation, erase all ClojureDart build artifacts.\nConsider running flutter clean too."}
    "watch" {:doc "Like compile but keep recompiling in response to file updates."}
    "flutter" {:options false
               :doc "Like watch but hot reload the application in the simulator or device. All options are passed to flutter run."}})
 
 (defn -main [& args]
-  (let [f (java.io.File. "cljd.edn")
-        f-exists (.exists f)
-        config (if f-exists
-                 (with-open [rdr (-> f io/reader java.io.PushbackReader.)]
-                   (edn/read rdr))
-                 {})]
-    (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
-              *config* config
-              compiler/*lib-path*
-              (str (.getPath (java.io.File. "lib")) "/")]
+  (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
+            compiler/*lib-path*
+            (str (.getPath (java.io.File. "lib")) "/")]
+    (binding [*deps* (:basis (deps/basis nil))]
       (let [[options cmd cmd-opts & args] (parse-args commands args)]
-        (print-missing-config-warning f-exists cmd)
         (case cmd
           :help (print-help commands)
-          "init"
-          (let [[args [_ & target-args]] (split-with (complement #{"--"}) args)]
-            (init-project cmd-opts (some-> (first args) symbol) target-args))
+          "init" (init-project args)
           ("compile" "watch")
           (compile-cli
-            :namespaces (or (seq (map symbol args))
-                          (some-> *config* :main list))
-            :watch (= cmd "watch"))
+           :namespaces (or (seq (map symbol args))
+                           (some-> *deps* :cljd/opts :main list))
+           :watch (= cmd "watch"))
           "flutter"
           (let [[args [dash & flutter-args]] (split-with #(not= "--" %) args)
                 flutter-args (if dash flutter-args args)
                 args (if dash args nil)]
             (compile-cli
-              :namespaces
-              (or (seq (map symbol args))
-                (some-> *config* :main list))
-              :flutter (vec flutter-args))))))))
+             :namespaces
+             (or (seq (map symbol args))
+                 (some-> *deps* :cljd/opts :main list))
+             :flutter (vec flutter-args)))
+          "clean"
+          (do
+            (del-tree (java.io.File. "lib/cljd-out"))
+            (del-tree (java.io.File. "test/cljd-out"))
+            (println "ClojureDart build state succesfully cleaned!")
+            (case (some-> *deps* :cljd/opts :kind)
+              :flutter (println "If problems persist, try" (bright "flutter clean"))
+              nil)))))))
