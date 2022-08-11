@@ -224,15 +224,53 @@
         (when flutter
           (println (title (str/join " " (into ["Lauching flutter run"] flutter)))))
         (let [p (some->> flutter
-                  (apply exec {:async true :in nil :env {"TERM" ""}} "flutter" "run"))]
+                  (apply exec {:async true :in nil :out nil :env {"TERM" ""}} "flutter" "run"))]
           (try
-            (let [flutter-stdin (some-> p .getOutputStream (java.io.OutputStreamWriter. "UTF-8"))]
-              (when flutter-stdin
+            (let [flutter-stdin (some-> p .getOutputStream (java.io.OutputStreamWriter. "UTF-8"))
+                  flutter-stdout (some-> p .getInputStream (java.io.InputStreamReader. "UTF-8") java.io.BufferedReader.)
+                  ansi *ansi*]
+              ; Unimplemented handling of missing static target
+              (when (and flutter-stdin flutter-stdout)
                 (doto (Thread. #(while true
                                   (let [s (read-line)]
-                                    (doto flutter-stdin
-                                      (.write (case s "" "R" s))
-                                      .flush))))
+                                    (locking flutter-stdin
+                                      (doto flutter-stdin
+                                        (.write (case s "" "R" s))
+                                        .flush)))))
+                  (.setDaemon true)
+                  .start)
+                (doto (Thread.
+                        #(binding [*ansi* ansi]
+                           (loop [state :idle]
+                             (when-some [line (.readLine flutter-stdout)]
+                               (when-not (= :reload-failed state)
+                                 (println line))
+                               (let [line (.trim line)]
+                                 (case state
+                                   :idle
+                                   (condp = line
+                                     "Performing hot reload..." (recur :reloading)
+                                     "Performing hot restart..." (recur :restarting)
+                                     (recur state))
+                                   :reloading
+                                   (condp = line
+                                     "Unimplemented handling of missing static target" (recur :reload-failed)
+                                     (recur state))
+                                   :reload-failed
+                                   (if (re-matches #"Reloaded .+ of .+ libraries in .+." line)
+                                     (do
+                                       (newline)
+                                       (println (bright "Hot reload failed, attempting hot restart!"))
+                                       (locking flutter-stdin
+                                         (doto flutter-stdin
+                                           (.write "R")
+                                           .flush))
+                                       (recur :restarting))
+                                     (recur state))
+                                   :restarting
+                                   (if (re-matches #"Restarted application .+" line)
+                                     (recur :idle)
+                                     (recur state))))))))
                   (.setDaemon true)
                   .start))
               (watch-dirs dirs (compile-files flutter-stdin)))
