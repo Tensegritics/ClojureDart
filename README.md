@@ -17,7 +17,7 @@ mobile and desktop apps.
 
 Prerequisites: have Clojure and Flutter installed and on your path.
 
-Create a porject directory with its `deps.edn`
+Create a project directory with its `deps.edn`
 ``` shell
 mkdir hello
 cd hello
