@@ -71,7 +71,7 @@ clj -M:cljd flutter
 
 In most environments this will spawn a desktop app.
 
-More details [there](doc/flutter-quickstart)
+More details [there](doc/flutter-quick-start.md)
 
 # Maturity
 
