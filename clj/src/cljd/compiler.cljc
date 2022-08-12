@@ -236,6 +236,11 @@
 
 (def ^:dynamic dart-libs-info)
 
+(defn analyzer-info
+  ([lib] (some-> (dart-libs-info lib) (select-keys [:private])))
+  ([lib element]
+   (-> lib dart-libs-info (get element))))
+
 (def ^:dynamic *hosted* false)
 (def ^:dynamic *host-eval* false)
 
@@ -386,7 +391,7 @@
       (if (and (nil? typens) (contains? type-vars (symbol typename)))
         {:kind :class :canon-qname clj-sym :qname clj-sym :element-name typename :is-param true})
       (when-some [lib (resolve-clj-alias typens)]
-        (or (-> dart-libs-info (get lib) (get typename) (dissoc :members))
+        (or (-> (analyzer-info lib typename) (dissoc :members))
           (let [dart-alias (:dart-alias (libs lib))
                 qname (symbol (str dart-alias "." typename))]
             (case clj-sym
@@ -763,7 +768,7 @@
   ([dart-type] (full-class-info (:lib dart-type) (:element-name dart-type)))
   ([lib element-name]
    (let [{:keys [libs current-ns] :as all-nses} @nses]
-     (when-some [ci (or (-> dart-libs-info (get lib) (get element-name))
+     (when-some [ci (or (analyzer-info lib element-name)
                     (some-> (libs lib)
                       :ns
                       (vector (symbol element-name))
@@ -1288,9 +1293,7 @@
             ; simple because types are not nullable and not unions
             (letfn [(assignable-type [value-type]
                       (let [{:keys [canon-qname interfaces mixins super type-parameters]}
-                            (or (-> dart-libs-info
-                                  (get (:lib value-type))
-                                  (get (:element-name value-type)))
+                            (or (analyzer-info (:lib value-type) (:element-name value-type))
                               ; TODO do we still need this fallback?
                               value-type)
                             type-args (:type-parameters value-type)
@@ -2807,7 +2810,7 @@
           ns-map
           (reduce #(%2 %1) ns-map
                   (for [[lib & {:keys [as refer rename]}] require-specs
-                        :let [_ (when (and (string? lib) (not (dart-libs-info lib)))
+                        :let [_ (when (and (string? lib) (nil? (analyzer-info lib)))
                                   (throw (Exception. (str "Can't find Dart lib: " lib))))
                               clj-ns (when-not (string? lib) lib)
                               dartlib (else->>
@@ -2825,7 +2828,7 @@
                           (assoc-in [:clj-aliases clj-alias] dartlib)
                           (update :mappings into
                                   (let [source (if (string? lib)
-                                                 (comp (dart-libs-info lib) name)
+                                                 #(analyzer-info lib (name %))
                                                  (@nses lib))]
                                     (for [to refer :let [from (get rename to to)]]
                                       (if-not (source to)
@@ -3342,7 +3345,7 @@
 
 (defn- common-roots [ga gb]
   (let [g (select-keys ga (keys gb))
-        g (transduce (keep (fn [[k v]] (when (:private (dart-libs-info (:lib (:type v)))) k))) dissoc g g)]
+        g (transduce (keep (fn [[k v]] (when (:private (analyzer-info (:lib (:type v)))) k))) dissoc g g)]
     (keys (transduce (mapcat :supers) dissoc g (vals g)))))
 
 (defn- merge-types [a b]
