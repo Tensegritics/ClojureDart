@@ -160,68 +160,71 @@
                             canon-qname
                             (-> (global-lib-alias lib nil) (str "." name) symbol))]
                 (assoc entity
-                  :qname qname
-                  :canon-qname canon-qname
-                  :lib lib
-                  :canon-lib canon-lib)))))
+                       :qname qname
+                       :canon-qname canon-qname
+                       :lib lib
+                       :canon-lib canon-lib)))))
         qualify-entity
         (fn qualify-entity [export-fn entity]
           (let [qualify-entity #(qualify-entity export-fn %)
                 assoc->qnames #(assoc->qnames export-fn %)]
             (case (:kind entity)
-              :class (->
-                       (assoc->qnames entity)
-                       (update-if :type-parameters #(into [] (map qualify-entity) %))
-                       (update-if :super qualify-entity)
-                       (update-if :bound qualify-entity)
-                       (update-if :interfaces #(into [] (map qualify-entity) %))
-                       (update-if :on #(into [] (map qualify-entity) %))
-                       (update-if :mixins #(into [] (map qualify-entity) %))
-                       (into (comp (filter #(string? (first %)))
-                               (map (fn [[n v]] [n (qualify-entity v)])))
-                         entity))
+              :class
+              (let [members (into {} (comp (filter #(string? (key %)))
+                                           (map (fn [[n v]] [n (qualify-entity v)])))
+                                  entity)
+                    entity (persistent! (reduce dissoc! (transient entity) (keys members)))]
+                (->
+                 (assoc->qnames entity)
+                 (assoc :members members)
+                 (update-if :type-parameters #(into [] (map qualify-entity) %))
+                 (update-if :super qualify-entity)
+                 (update-if :bound qualify-entity)
+                 (update-if :interfaces #(into [] (map qualify-entity) %))
+                 (update-if :on #(into [] (map qualify-entity) %))
+                 (update-if :mixins #(into [] (map qualify-entity) %))))
               :field (cond-> (update entity :type qualify-entity)
                        (:toplevel entity) assoc->qnames)
               :function (->
-                          (assoc->qnames entity)
-                          (update-if :return-type qualify-entity)
+                         (assoc->qnames entity)
+                         (update-if :return-type qualify-entity)
+                         (update-if :parameters #(into [] (map qualify-entity) %))
+                         (update-if :type-parameters #(into [] (map qualify-entity) %)))
+              :method (-> entity
+                          (update :return-type qualify-entity)
                           (update-if :parameters #(into [] (map qualify-entity) %))
                           (update-if :type-parameters #(into [] (map qualify-entity) %)))
-              :method (-> entity
-                        (update :return-type qualify-entity)
-                        (update-if :parameters #(into [] (map qualify-entity) %))
-                        (update-if :type-parameters #(into [] (map qualify-entity) %)))
               :constructor (-> entity
-                             (update-if :parameters #(into [] (map qualify-entity) %))
-                             (update-if :type-parameters #(into [] (map qualify-entity) %))
-                             (update :return-type qualify-entity))
+                               (update-if :parameters #(into [] (map qualify-entity) %))
+                               (update-if :type-parameters #(into [] (map qualify-entity) %))
+                               (update :return-type qualify-entity))
               (:named :positional) (update entity :type qualify-entity)
               ; type
               (recur export-fn (-> entity
-                                 (dissoc :type)
-                                 (assoc
-                                   :kind (case (:type entity) "Function" :function :class)
-                                   :element-name (:type entity)))))))]
+                                   (dissoc :type)
+                                   (assoc
+                                    :kind (case (:type entity) "Function" :function :class)
+                                    :element-name (:type entity)))))))]
     (-> (into {}
-          (map (fn [[lib content]]
-                 (let [{:keys [export-fn] :as libs} (inline-exports content lib #{lib})]
-                   [lib (into {}
-                          (map (fn [[name entity]]
-                                 [name
-                                  (cond-> entity
-                                    (string? name)
-                                    (->
-                                      (assoc
-                                        :element-name name
-                                        :lib lib
-                                        :toplevel true
-                                        :canon-lib (:lib entity))
-                                      (->> (qualify-entity export-fn))))]))
-                          libs)])))
-          dart-libs-info)
-      (assoc-in ["dart:core" "Never"] dc-Never)
-      (assoc-in ["dart:core" "dynamic"] dc-dynamic)
-      (assoc-in ["dart:_internal" :private] true))))
+              (map (fn [[lib content]]
+                     (let [{:keys [export-fn] :as libs} (inline-exports content lib #{lib})]
+                       [lib (into {}
+                                  (map (fn [[name entity]]
+                                         [name
+                                          (cond-> entity
+                                            (string? name)
+                                            (->
+                                             (assoc
+                                              :element-name name
+                                              :lib lib
+                                              :toplevel true
+                                              :canon-lib (:lib entity))
+                                             (->> (qualify-entity export-fn))))]))
+                                  libs)])))
+              dart-libs-info)
+        (assoc-in ["dart:core" "Never"] dc-Never)
+        (assoc-in ["dart:core" "dynamic"] dc-dynamic)
+        (assoc-in ["dart:_internal" :private] true))))
 
 (def ^:dynamic ^java.io.Writer *dart-out*)
 
@@ -383,7 +386,7 @@
       (if (and (nil? typens) (contains? type-vars (symbol typename)))
         {:kind :class :canon-qname clj-sym :qname clj-sym :element-name typename :is-param true})
       (when-some [lib (resolve-clj-alias typens)]
-        (or (-> dart-libs-info (get lib) (get typename))
+        (or (-> dart-libs-info (get lib) (get typename) (dissoc :members))
           (let [dart-alias (:dart-alias (libs lib))
                 qname (symbol (str dart-alias "." typename))]
             (case clj-sym
@@ -760,12 +763,13 @@
   ([dart-type] (full-class-info (:lib dart-type) (:element-name dart-type)))
   ([lib element-name]
    (let [{:keys [libs current-ns] :as all-nses} @nses]
-     (or (-> dart-libs-info (get lib) (get element-name))
-       (some-> (libs lib)
-         :ns
-         (vector (symbol element-name))
-         (some->> (get-in all-nses))
-         :dart/type)))))
+     (when-some [ci (or (-> dart-libs-info (get lib) (get element-name))
+                    (some-> (libs lib)
+                      :ns
+                      (vector (symbol element-name))
+                      (some->> (get-in all-nses))
+                      :dart/type))]
+       (merge (:members ci) (dissoc ci :members))))))
 
 (defn dart-member-lookup
   "member is a symbol or a string"
@@ -2371,48 +2375,50 @@
                     :lib lib
                     :canon-lib lib
                     :element-name (name mclass-name)
-                    :type-parameters (into [] (map #(emit-type % env)) clj-type-params)}]
-     (-> bare-type
-       (into
-         (map #(vector (name (:name %)) {:kind :field
-                                         :getter true
-                                         :type (:type %)}))
-         ctor-params)
-       (assoc (name mclass-name) {:kind :constructor
-                                  :return-type bare-type
-                                  :parameters ctor-params}
-         :super (:extends parsed-class-specs)
-         :kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
-         :interfaces (:implements parsed-class-specs)
-         :mixins (:with parsed-class-specs))
-       (into
-         (map (fn [[mname {:keys [fixed-params opt-kind opt-params]} body]]
-                (let [{:keys [type-params getter setter]} (meta mname)
-                      env (update env :type-vars (fnil into #{}) type-params)]
-                  [(name mname)
-                   (if (or getter setter)
-                     {:kind :field
-                      :getter getter
-                      :setter setter
-                      :type (:dart/type (dart-meta mname env) dc-dynamic)}
-                     {:kind :method
-                      :return-type (:dart/type (dart-meta mname env) dc-dynamic)
-                      :type-parameters (map #(emit-type % env) type-params)
-                      :parameters (concat
-                                    (map
-                                      (fn [p]
-                                        {:name p
-                                         :kind :positional
-                                         :type (:dart/type (dart-meta p env) dc-dynamic)})
-                                      (next fixed-params)) ; get rid of this
-                                    (map
-                                      (fn [[p]]
-                                        {:name p
-                                         :kind opt-kind
-                                         :optional true
-                                         :type (:dart/type (dart-meta p env) dc-dynamic)})
-                                      opt-params))})])))
-         (:methods parsed-class-specs))))))
+                    :type-parameters (into [] (map #(emit-type % env)) clj-type-params)}
+         members
+         (-> {}
+           (into
+             (map #(vector (name (:name %)) {:kind :field
+                                             :getter true
+                                             :type (:type %)}))
+             ctor-params)
+           (assoc (name mclass-name) {:kind :constructor
+                                      :return-type bare-type
+                                      :parameters ctor-params}
+             :super (:extends parsed-class-specs)
+             :kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
+             :interfaces (:implements parsed-class-specs)
+             :mixins (:with parsed-class-specs))
+           (into
+             (map (fn [[mname {:keys [fixed-params opt-kind opt-params]} body]]
+                    (let [{:keys [type-params getter setter]} (meta mname)
+                          env (update env :type-vars (fnil into #{}) type-params)]
+                      [(name mname)
+                       (if (or getter setter)
+                         {:kind :field
+                          :getter getter
+                          :setter setter
+                          :type (:dart/type (dart-meta mname env) dc-dynamic)}
+                         {:kind :method
+                          :return-type (:dart/type (dart-meta mname env) dc-dynamic)
+                          :type-parameters (map #(emit-type % env) type-params)
+                          :parameters (concat
+                                        (map
+                                          (fn [p]
+                                            {:name p
+                                             :kind :positional
+                                             :type (:dart/type (dart-meta p env) dc-dynamic)})
+                                          (next fixed-params)) ; get rid of this
+                                        (map
+                                          (fn [[p]]
+                                            {:name p
+                                             :kind opt-kind
+                                             :optional true
+                                             :type (:dart/type (dart-meta p env) dc-dynamic)})
+                                          opt-params))})])))
+             (:methods parsed-class-specs)))]
+     (assoc bare-type :members members))))
 
 (defn emit-reify* [[_ opts & specs] env]
   (let [[outer-clj-this outer-dart-this] (some (fn [[clj dart :as e]] (when (= 'this dart) e)) env)
@@ -2489,7 +2495,9 @@
         all-fields
         (cond->> closed-overs meta-field (cons meta-field))
         dart-type (let [const-meta-dart-type (new-dart-type mclass-name (:type-vars env) all-fields (when meta-field parsed-class-meta-specs) env)]
-                    (into (update dart-type :interfaces (fnil conj []) (:interfaces const-meta-dart-type)) (filter (comp string? first)) const-meta-dart-type))
+                    (-> dart-type
+                      (update :interfaces (fnil conj []) (:interfaces const-meta-dart-type))
+                      (update :members merge (:members const-meta-dart-type))))
         _ (swap! nses alter-def class-name assoc :dart/type dart-type)
         class (-> class
                   (assoc
@@ -2574,7 +2582,7 @@
         (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))
 
         const (and (:const super-ctor-info) (not-any? #(:dart/mutable (meta %)) dart-fields)) ; TODO it's weak we should test super args for const while assuming params to be const
-        dart-type (cond-> dart-type const (assoc-in [(name mclass-name) :const] true))
+        dart-type (cond-> dart-type const (assoc-in [:members (name mclass-name) :const] true))
         class (-> class
                   (assoc :name dart-type
                          :ctor mclass-name
@@ -3262,7 +3270,7 @@
 
   (when-not abstract
     (dart-newline)
-    (when (-> class-name (get (name ctor)) :const)
+    (when (-> class-name :members (get (name ctor)) :const) ; this :members is weird
       (dart-print "const "))
     (dart-print (str (or ctor class-name) "("))
     (doseq [p ctor-params]
