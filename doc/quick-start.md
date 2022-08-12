@@ -16,7 +16,7 @@ If you already have the `clj` command installed make sure to upgrade to at least
 
 ## 3. Create a new project
 
-First, create a Clojure project:
+First, create a Clojure project, you need to specify it's a pure Dart (not Flutter) project and where is the `main` function (here `quickstart.helloworld`):
 
 ```shell
 mkdir helloworld
@@ -27,14 +27,16 @@ cat << EOF > deps.edn
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDart.git"
          ; or  "https://github.com/tensegritics/ClojureDart.git"
-         :sha "91026596ca4405ec6a2c31af49d7481a084a6ebf"}}}
+         :sha "91026596ca4405ec6a2c31af49d7481a084a6ebf"}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :cljd/opts {:kind :dart
+             :main quickstart.helloworld}}
 EOF
 ```
 
-Then, you need to prepare this project to also be a Dart project, you have to specify the namespace with the `main` function (here `quickstart.helloworld`):
-
+Then, you need to prepare this project to also be a Dart project:
 ```shell
-clj -M -m cljd.build init --dart quickstart.helloworld
+clj -M:cljd init
 ```
 
 And add the main namespace:
@@ -57,13 +59,13 @@ interfere with [Dart's project layout](https://dart.dev/tools/pub/package-layout
 By default compilation starts from the main namespace (here `quickstart.helloworld`) and transitively compiles dependencies.
 
 ``` shell
-clj -M -m cljd.build compile
+clj -M:cljd compile
 ```
 
 The above command compiles the project only once and exits. When you are actively working on a piece of code we recommend you use `watch` instead of `compile`:
 
 ``` shell
-clj -M -m cljd.build watch
+clj -M:cljd watch
 ```
 
 ## 5. Run your program
