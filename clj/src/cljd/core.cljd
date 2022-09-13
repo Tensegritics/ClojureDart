@@ -9,7 +9,8 @@
 (ns cljd.core
   (:require ["dart:math" :as math]
             ["dart:collection" :as dart-coll]
-            ["dart:io" :as dart-io]))
+            ["dart:io" :as dart-io]
+            ["dart:async" :as dart-async]))
 
 (def ^:private sentinel (Object.))
 
@@ -7182,3 +7183,55 @@
       `(do
          (extend-type ~type ~protocol ~@impls)
          (extend-protocol ~protocol ~@types+impls)))))
+
+(defn ^Stream stream
+  "Coerces its last argument to a stream.
+  When a transducer is supplied, returns a stream of applications of
+  the transform to the input events.
+  When two transducers are supplied, the first one is applied to events,
+  and the second one is applied to [error nil-or-stack-trace] pairs.
+  The error-mode argument controls whether transformed errors produce errors
+  (:as-errors, the default) or events (:as-values) in the resulting stream.
+  In :as-errors mode, transformed values must be [error nil-or-stack-trace] too.
+  If any transform terminates, the stream is closed."
+  ([stream-or-coll]
+   (cond
+     (dart/is? stream-or-coll Stream) stream-or-coll
+     (dart/is? stream-or-coll Iterable) (Stream/fromIterable stream-or-coll)
+     :else (Stream/fromIterable (sequence stream-or-coll))))
+  ([xform stream-or-coll]
+   (stream xform identity :as-errors stream-or-coll))
+  ([xform error-xform stream-or-coll]
+   (stream xform error-xform :as-errors stream-or-coll))
+  ([xform error-xform error-mode stream-or-coll]
+   (Stream/eventTransformed
+    (stream stream-or-coll)
+    (fn [^dart-async/EventSink es]
+      (let [add-rf
+            (fn
+              ([] nil)
+              ([acc] nil)
+              ([acc x]
+               (.add es x)
+                ; it's important in case acc is reduced
+               acc))
+            rf (xform add-rf)
+            error-rf
+            (error-xform
+             (case error-mode
+               :as-values add-rf
+               :as-errors
+               (fn
+                 ([] nil)
+                 ([acc] nil)
+                 ([acc [e st]]
+                  (.addError es e st)
+                    ; it's important in case acc is reduced
+                  acc))))]
+        (reify dart-async/EventSink
+          (add [self x] (when (reduced? (rf nil x)) (.close self)))
+          (addError [self e ... st] (when (reduced? (error-rf nil [e st])) (.close self)))
+          (close [_]
+            (rf nil)
+            (error-rf nil)
+            (.close es))))))))
