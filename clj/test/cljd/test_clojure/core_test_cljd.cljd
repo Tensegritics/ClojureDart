@@ -527,3 +527,22 @@
   (let [s "coucou"]
     (is (identical? (Const3 s) (Const3 "coucou")))
     (is (identical? (Const3 s) (Const3 s)))))
+
+(deftest stream-xform-tests
+  (let [coll (range 10)
+        xform (comp (map inc) (filter odd?) (halt-when #(< 7 %)))
+        error-xform (map (fn [[er st]]
+                           [(ArgumentError "bordeaux is magic")
+                            (StackTrace/fromString "stacktrace")]))]
+    (is (dart/is? (stream coll) dart:core/Stream))
+    (is (= (into [] (-> (stream xform coll) .toList await)) [1 3 5 7]))
+    (is (= (into [] (-> (stream xform error-xform coll) .toList await)) [1 3 5 7]))
+    (is (thrown? ArgumentError (-> (stream xform error-xform (Stream/error :error)) .toList await)))
+    (is (thrown-with-msg?
+          ArgumentError
+          #"bordeaux is magic"
+          (-> (stream xform error-xform (Stream/error :error)) .toList await)))
+    (is (= (into [] (-> (stream xform (map first) :as-values (Stream/error :error)) .toList await))
+          [:error]))))
+
+;; (.fold (stream xform coll) [] (fn [acc item] (conj acc item)))
