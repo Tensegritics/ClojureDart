@@ -141,7 +141,7 @@
     (if (satisfies? cljd.core/IWithMeta obj)
       (with-meta obj meta)
       ;;TODO handle IReference with reset-meta
-      (throw (FormatException. "Metadata can only be applied to IMetas")))))
+      (throw (FormatException. "Metadata can only be applied to IWithMeta")))))
 
 (def ^RegExp STRING-CONTENT-REGEXP (RegExp. "(?:[^\"\\\\]|\\\\.)*"))
 (def ^RegExp STRING-ESC-REGEXP (RegExp. "\\\\(?:u([0-9a-fA-F]{0,4})|([0-7]{1,3})|(.))"))
