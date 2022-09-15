@@ -140,6 +140,13 @@
         (conj v [l r {}])))
     [] (partition 2 bindings)))
 
+(defmacro nest
+  "Threading macro for nesting widgets.
+  Starting from the end each form is nested in the previous one as a .child named argument."
+  [form & forms]
+  (let [[form & forms] (reverse (cons form forms))]
+    `(->> ~form ~@(for [form forms] (-> form (cond-> (symbol? form) list) (concat  ['.child]) (with-meta (meta form)))))))
+
 (defn- ^:macro-support camel-kebab [s]
   (str/replace s #"(^[A-Z])|[A-Z]" (fn [[s start]] (cond->> (str/lower-case s) (not start) (str "-")))))
 
@@ -152,7 +159,6 @@
         {refreshable-watches true
          non-refreshable-watches false}
         (group-by (fn [[_ _ opts]] (contains? opts :refresh-on)) watches)
-        state-sym `state#
         Nr (count refreshable-watches)
         N (count watches)
         ; slots has 3*N items
@@ -160,6 +166,7 @@
         ; then 2*N interleaved subscribable and subscription
         ; the order is refreshable first then non-refreshable
         slots `slots#
+        state-sym `state#
         keys-and-builders `keys-and-builders#
         new-kbs `new-kbs#
         old-kbs `old-kbs#
@@ -228,10 +235,10 @@
         {refreshable-resources true
          non-refreshable-resources false}
         (group-by (fn [[_ _ opts]] (contains? opts :refresh-on)) resources)
-        state-sym `state#
         Nr (count refreshable-resources)
         N (count resources)
         slots `slots#
+        state-sym `state#
         keys-and-builders `keys-and-builders#
         new-kbs `new-kbs#
         old-kbs `old-kbs#
@@ -300,26 +307,47 @@
                     shortcuts)
                   inherit)
         inherits-bindings
-        (into [] (mapcat
-                   (fn [[sym type-or-kw]]
-                     (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)]
-                       [sym
-                        (if (keyword? type-or-kw)
-                          `(get-state-of ~closest-context ~type-or-kw ~(vec args))
-                          (list*
-                            (symbol
-                              (if-some [ns (namespace type-or-kw)]
-                                (str ns "." (name type-or-kw))
-                                (name type-or-kw))
-                              "of")
-                            closest-context args))]))
-                   inherit))]
-    `(let ~inherits-bindings
+        (mapcat
+          (fn [[sym type-or-kw]]
+            (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)]
+              [sym
+               (if (keyword? type-or-kw)
+                 `(get-state-of ~closest-context ~type-or-kw ~(vec args))
+                 (list*
+                   (symbol
+                     (if-some [ns (namespace type-or-kw)]
+                       (str ns "." (name type-or-kw))
+                       (name type-or-kw))
+                     "of")
+                   closest-context args))]))
+          inherit)]
+    `(let [~@inherits-bindings]
        ~(expand-build-expr opts body))))
 
 (defn expand-bind [bind opts body]
   `(let [bindings# (atom ~(zipmap (keys bind) (for [v (vals bind)] `(ensure-model ~v))))]
      (cljd.flutter.alpha2/InheritedBindings. bindings# ~closest-context @bindings# ~(expand-build-expr opts body))))
+
+(defn expand-vsync [name opts body]
+  `(reify :extends widgets/StatefulWidget
+     :no-meta true
+     (~'createState [_#]
+      (reify :extends widgets/State
+        :no-meta true
+        (~'build [state# ~closest-context]
+         (let [~name state#]
+           ~(expand-build-expr opts body)))
+        ^:mixin widgets/TickerProviderStateMixin))))
+
+(defn expand-debug [expr opts body]
+  `(reify :extends widgets/StatelessWidget
+     :no-meta true
+     (~'build [_# ~closest-context] ~(expand-build-expr opts body))
+     (~'debugFillProperties [this# props-builder#]
+      (.debugFillProperties ^{:tag ~'super} this# props-builder#)
+      ;; TODO: make expand-debug great again, maybe use Navigable ?
+      (.add props-builder# (foundation.DiagnosticsNode/message (.toString  ~expr)))
+      nil)))
 
 (defn expand-build-expr [opts body]
   (if-some [[[opt v] & opts] (seq opts)]
@@ -330,18 +358,21 @@
       :resources (expand-resources v opts body)
       :get (expand-get-inherited v opts body)
       :context `(let [~v ~closest-context]
-                  ~(expand-build-expr opts body)))
-    `(do ~@body)))
+                  ~(expand-build-expr opts body))
+      :vsync (expand-vsync v opts body)
+      :debug (expand-debug v opts body))
+    `(nest ~@body)))
 
 (defmacro widget
   "Takes a body evaluating to widget preceded by inline options.
    X :key expr (MUST appear as the first option), the widget's key.
    X :let bindings
-   :bind
+   X :bind
+   X :vsync
    X :get (né :inherit)
    X :resources
    X :watch
-   :debug
+   X :debug
    X :context"
   [& body]
   (let [opts (take-while (comp keyword? first) (partition 2 body))
@@ -353,28 +384,13 @@
        :no-meta true
        (~'build [_# ~closest-context] ~(expand-build-expr opts body)))))
 
-(comment
-
-  (macroexpand-1
-    '(widget
-       :resources [text-controller (m/TextController)
-                   :dispose .cancel
-                   :refresh-on url
-                   focus (m/Focus)
-                   :refresh-on kikou]
-       (m/TextField .controller text-controller)))
-
-  (macroexpand-1
-    '(widget
-       :watch [text-controller (stream url)
-               :dispose .cancel
-               :refresh-on url]
-       (m/TextField .controller text-controller)))
-
-  (macroexpand-1
-    '(widget
-       :resources [controller (m/TextController)]
-       :bind {:app-state {:one 1}}
-       (m/TextField .controller controller)))
-
-  )
+(defmacro build
+  "Generates a so-called \"builder\" function, that is a widget-returning function which expects 1+ arguments, where the first argument is a BuildContext. (Such fns are expected for example as the .itemBuilder param to ListView/builder)
+  `argsvec` is the argument vector, without the BuildContext. If argsvec is empty it can be omitted.
+  After the `argsvec` comes a body, interpreted as per the `widget` macro."
+  [argsvec? & body]
+  (let [body (cond->> body (not (vector? argsvec?)) (cons argsvec?))
+        opts (take-while (comp keyword? first) (partition 2 body))
+        body (drop (* 2 (count opts)) body)]
+    `(fn [~closest-context ~@(when (vector? argsvec?) argsvec?)]
+       ~(expand-build-expr opts body))))
