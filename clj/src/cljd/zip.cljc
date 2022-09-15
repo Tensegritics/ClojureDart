@@ -12,11 +12,11 @@
 (ns ^{:doc "Functional hierarchical zipper, with navigation, editing,
   and enumeration.  See Huet"
        :author "Rich Hickey"}
-  clojure.zip
+  cljd.zip
   (:refer-clojure :exclude (replace remove next)))
 
 (defn zipper
-  "Creates a new zipper structure. 
+  "Creates a new zipper structure.
 
   branch? is a fn that, given a node, returns true if can have
   children, even if it currently doesn't.
@@ -29,8 +29,8 @@
   root is the root node."
   {:added "1.0"}
   [branch? children make-node root]
-    ^{:zip/branch? branch? :zip/children children :zip/make-node make-node}
-    [root nil])
+    (with-meta [root nil]
+               {:zip/branch? branch? :zip/children children :zip/make-node make-node}))
 
 (defn seq-zip
   "Returns a zipper for nested sequences, given a root sequence"
