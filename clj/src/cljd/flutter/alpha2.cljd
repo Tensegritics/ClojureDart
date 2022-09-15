@@ -26,13 +26,13 @@
     (f default)
     (let [sub (volatile! true)]
       (.then future
-             #(when @sub (f %))
-             .onError
-             (when on-error
-               (fn [e ... st]
-                 (when @sub
-                   (let [v (await (on-error default e st))]
-                     (when-not (identical? v default) (f v)))))))
+        #(when @sub (f %))
+        .onError
+        (when on-error
+          (fn [e ... st]
+            (when @sub
+              (let [v (await (on-error default e st))]
+                (when-not (identical? v default) (f v)))))))
       sub))
   (-unsubscribe [s sub]
     (vreset! sub false))
@@ -138,7 +138,7 @@
       (if (keyword? l)
         (conj (pop v) (update (peek v) 2 assoc l r))
         (conj v [l r {}])))
-          [] (partition 2 bindings)))
+    [] (partition 2 bindings)))
 
 (comment
   [x stream
@@ -177,10 +177,10 @@
              (doto ~slots
                (aset ~(+ N (* 2 i)) subscribable#)
                (aset ~(+ N (* 2 i) 1)
-                     (-subscribe subscribable#
-                                 (fn [x#]
-                                   (.setState ~state-sym (fn [] (aset ~slots ~i x#))))
-                                 ~sub-opts)))))
+                 (-subscribe subscribable#
+                   (fn [x#]
+                     (.setState ~state-sym (fn [] (aset ~slots ~i x#))))
+                   ~sub-opts)))))
         dispose1 (fn [i]
                    `(let [subscribable# (aget ~slots ~(+ N (* 2 i)))
                           sub# (aget ~slots ~(+ N (* 2 i) 1))]
@@ -188,44 +188,44 @@
     `(let [~keys-and-builders
            (doto (List/filled ~(* 2 Nr) nil)
              ~@(mapcat
-                (fn [[_ subscribable opts] i]
-                  `[(aset ~(* 2 i) ~(:refresh-on opts))
-                    (aset ~(inc (* 2 i)) (fn [] ~subscribable))])
-                refreshable-watches
-                (range)))]
+                 (fn [[_ subscribable opts] i]
+                   `[(aset ~(* 2 i) ~(:refresh-on opts))
+                     (aset ~(inc (* 2 i)) (fn [] ~subscribable))])
+                 refreshable-watches
+                 (range)))]
        (reify :extends widgets/StatefulWidget
          :no-meta true
          (~'createState [_#]
-           (let [~slots (List/filled ~(* 3 N) nil)]
-             (reify :extends widgets/State
-               :no-meta true
-               (~'initState [~state-sym]
-                 (.initState ~(vary-meta state-sym assoc :tag 'super))
+          (let [~slots (List/filled ~(* 3 N) nil)]
+            (reify :extends widgets/State
+              :no-meta true
+              (~'initState [~state-sym]
+               (.initState ~(vary-meta state-sym assoc :tag 'super))
+               ~@(map-indexed
+                   (fn [i [binding subscribable sub-opts]]
+                     (init1 i subscribable (dissoc sub-opts :refresh-on)))
+                   (concat refreshable-watches non-refreshable-watches))
+               nil)
+              (~'didUpdateWidget [~state-sym old-widget#]
+               (let [~new-kbs (-keys-and-builders (.-widget ~state-sym))
+                     ~old-kbs (-keys-and-builders old-widget#)]
                  ~@(map-indexed
-                    (fn [i [binding subscribable sub-opts]]
-                      (init1 i subscribable (dissoc sub-opts :refresh-on)))
-                    (concat refreshable-watches non-refreshable-watches))
-                 nil)
-               (~'didUpdateWidget [~state-sym old-widget#]
-                 (let [~new-kbs (-keys-and-builders (.-widget ~state-sym))
-                       ~old-kbs (-keys-and-builders old-widget#)]
-                   ~@(map-indexed
-                      (fn [i [_ _ sub-opts]]
-                        `(when-not (= (aget ~new-kbs ~(* 2 i))
-                                      (aget ~old-kbs ~(* 2 i)))
-                           ~(dispose1 i)
-                           ~(init1 i `((aget ~new-kbs ~(inc (* 2 i))))
-                              (dissoc sub-opts :refresh-on))))
-                      refreshable-watches)))
-               (~'dispose [~state-sym]
-                 ~@(map dispose1 (range N))
-                 (.dispose ~(vary-meta state-sym assoc :tag 'super)))
-               (~'build [~state-sym ~closest-context]
-                 (let [~@(mapcat
-                          (fn [[binding] i]
-                            [binding `(aget ~slots ~i)])
-                          watches (range))]
-                   ~(expand-build-expr opts body))))))
+                     (fn [i [_ _ sub-opts]]
+                       `(when-not (= (aget ~new-kbs ~(* 2 i))
+                                    (aget ~old-kbs ~(* 2 i)))
+                          ~(dispose1 i)
+                          ~(init1 i `((aget ~new-kbs ~(inc (* 2 i))))
+                             (dissoc sub-opts :refresh-on))))
+                     refreshable-watches)))
+              (~'dispose [~state-sym]
+               ~@(map dispose1 (range N))
+               (.dispose ~(vary-meta state-sym assoc :tag 'super)))
+              (~'build [~state-sym ~closest-context]
+               (let [~@(mapcat
+                         (fn [[binding] i]
+                           [binding `(aget ~slots ~i)])
+                         watches (range))]
+                 ~(expand-build-expr opts body))))))
          RefreshableBindings
          (-keys-and-builders [_#] ~keys-and-builders)))))
 
@@ -250,43 +250,43 @@
     `(let [~keys-and-builders
            (doto (List/filled ~(* 2 Nr) nil)
              ~@(mapcat
-                (fn [[_ resource opts] i]
-                  `[(aset ~(* 2 i) ~(:refresh-on opts))
-                    (aset ~(inc (* 2 i)) (fn [] ~resource))])
-                refreshable-resources
-                (range)))]
+                 (fn [[_ resource opts] i]
+                   `[(aset ~(* 2 i) ~(:refresh-on opts))
+                     (aset ~(inc (* 2 i)) (fn [] ~resource))])
+                 refreshable-resources
+                 (range)))]
        (reify :extends widgets/StatefulWidget
          :no-meta true
          (~'createState [_#]
-           (let [~slots (List/filled ~N nil)]
-             (reify :extends widgets/State
-               :no-meta true
-               (~'initState [~state-sym]
-                 (.initState ~(vary-meta state-sym assoc :tag 'super))
+          (let [~slots (List/filled ~N nil)]
+            (reify :extends widgets/State
+              :no-meta true
+              (~'initState [~state-sym]
+               (.initState ~(vary-meta state-sym assoc :tag 'super))
+               ~@(map-indexed
+                   (fn [i [binding resource sub-opts]]
+                     (init1 i resource))
+                   (concat refreshable-resources non-refreshable-resources))
+               nil)
+              (~'didUpdateWidget [~state-sym old-widget#]
+               (let [~new-kbs (-keys-and-builders (.-widget ~state-sym))
+                     ~old-kbs (-keys-and-builders old-widget#)]
                  ~@(map-indexed
-                    (fn [i [binding resource sub-opts]]
-                      (init1 i resource))
-                    (concat refreshable-resources non-refreshable-resources))
-                 nil)
-               (~'didUpdateWidget [~state-sym old-widget#]
-                 (let [~new-kbs (-keys-and-builders (.-widget ~state-sym))
-                       ~old-kbs (-keys-and-builders old-widget#)]
-                   ~@(map-indexed
-                      (fn [i [_ _ res-opts]]
-                        `(when-not (= (aget ~new-kbs ~(* 2 i))
-                                      (aget ~old-kbs ~(* 2 i)))
-                           ~(dispose1 i res-opts)
-                           ~(init1 i `((aget ~new-kbs ~(inc (* 2 i)))))))
-                      refreshable-resources)))
-               (~'dispose [~state-sym]
-                 ~@(map-indexed dispose1 (concat refreshable-resources non-refreshable-resources))
-                 (.dispose ~(vary-meta state-sym assoc :tag 'super)))
-               (~'build [~state-sym ~closest-context]
-                 (let [~@(mapcat
-                          (fn [[binding] i]
-                            [binding `(aget ~slots ~i)])
-                          resources (range))]
-                   ~(expand-build-expr opts body))))))
+                     (fn [i [_ _ res-opts]]
+                       `(when-not (= (aget ~new-kbs ~(* 2 i))
+                                    (aget ~old-kbs ~(* 2 i)))
+                          ~(dispose1 i res-opts)
+                          ~(init1 i `((aget ~new-kbs ~(inc (* 2 i)))))))
+                     refreshable-resources)))
+              (~'dispose [~state-sym]
+               ~@(map-indexed dispose1 (concat refreshable-resources non-refreshable-resources))
+               (.dispose ~(vary-meta state-sym assoc :tag 'super)))
+              (~'build [~state-sym ~closest-context]
+               (let [~@(mapcat
+                         (fn [[binding] i]
+                           [binding `(aget ~slots ~i)])
+                         resources (range))]
+                 ~(expand-build-expr opts body))))))
          RefreshableBindings
          (-keys-and-builders [_#] ~keys-and-builders)))))
 
@@ -348,6 +348,6 @@
         has-key (= :key (ffirst opts))
         [[_ key-expr] & opts] (cond->> opts (not has-key) (cons nil))]
     `(reify :extends (widgets/StatelessWidget
-                       .key ~(when has-key `(foundation/ValueKey. ~key-expr)))
+                         .key ~(when has-key `(foundation/ValueKey. ~key-expr)))
        :no-meta true
        (~'build [_# ~closest-context] ~(expand-build-expr opts body)))))
