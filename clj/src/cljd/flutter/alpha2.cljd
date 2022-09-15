@@ -140,14 +140,6 @@
         (conj v [l r {}])))
     [] (partition 2 bindings)))
 
-(comment
-  [x stream
-   :default "nothing yet"
-   y (atom ...)]
-  ; parse-bindings-with-options ->
-  [[x stream {:default "nothing yet"}]
-   [y (atom ...) {}]])
-
 (defn- ^:macro-support camel-kebab [s]
   (str/replace s #"(^[A-Z])|[A-Z]" (fn [[s start]] (cond->> (str/lower-case s) (not start) (str "-")))))
 
@@ -207,6 +199,7 @@
                    (concat refreshable-watches non-refreshable-watches))
                nil)
               (~'didUpdateWidget [~state-sym old-widget#]
+               (.didUpdateWidget ~(vary-meta state-sym assoc :tag 'super) old-widget#)
                (let [~new-kbs (-keys-and-builders (.-widget ~state-sym))
                      ~old-kbs (-keys-and-builders old-widget#)]
                  ~@(map-indexed
@@ -216,7 +209,8 @@
                           ~(dispose1 i)
                           ~(init1 i `((aget ~new-kbs ~(inc (* 2 i))))
                              (dissoc sub-opts :refresh-on))))
-                     refreshable-watches)))
+                     refreshable-watches))
+               nil)
               (~'dispose [~state-sym]
                ~@(map dispose1 (range N))
                (.dispose ~(vary-meta state-sym assoc :tag 'super)))
@@ -269,15 +263,17 @@
                    (concat refreshable-resources non-refreshable-resources))
                nil)
               (~'didUpdateWidget [~state-sym old-widget#]
+               (.didUpdateWidget ~(vary-meta state-sym assoc :tag 'super) old-widget#)
                (let [~new-kbs (-keys-and-builders (.-widget ~state-sym))
                      ~old-kbs (-keys-and-builders old-widget#)]
                  ~@(map-indexed
-                     (fn [i [_ _ res-opts]]
+                     (fn [i res]
                        `(when-not (= (aget ~new-kbs ~(* 2 i))
                                     (aget ~old-kbs ~(* 2 i)))
-                          ~(dispose1 i res-opts)
+                          ~(dispose1 i res)
                           ~(init1 i `((aget ~new-kbs ~(inc (* 2 i)))))))
-                     refreshable-resources)))
+                     refreshable-resources))
+               nil)
               (~'dispose [~state-sym]
                ~@(map-indexed dispose1 (concat refreshable-resources non-refreshable-resources))
                (.dispose ~(vary-meta state-sym assoc :tag 'super)))
@@ -304,28 +300,33 @@
                     shortcuts)
                   inherit)
         inherits-bindings
-        (mapcat
-          (fn [[sym type-or-kw]]
-            (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)]
-              [sym
-               (if (keyword? type-or-kw)
-                 `(get-state-of ~closest-context ~type-or-kw ~(vec args))
-                 (list*
-                   (symbol
-                     (if-some [ns (namespace type-or-kw)]
-                       (str ns "." (name type-or-kw))
-                       (name type-or-kw))
-                     "of")
-                   closest-context args))]))
-          inherit)]
+        (into [] (mapcat
+                   (fn [[sym type-or-kw]]
+                     (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)]
+                       [sym
+                        (if (keyword? type-or-kw)
+                          `(get-state-of ~closest-context ~type-or-kw ~(vec args))
+                          (list*
+                            (symbol
+                              (if-some [ns (namespace type-or-kw)]
+                                (str ns "." (name type-or-kw))
+                                (name type-or-kw))
+                              "of")
+                            closest-context args))]))
+                   inherit))]
     `(let ~inherits-bindings
        ~(expand-build-expr opts body))))
+
+(defn expand-bind [bind opts body]
+  `(let [bindings# (atom ~(zipmap (keys bind) (for [v (vals bind)] `(ensure-model ~v))))]
+     (cljd.flutter.alpha2/InheritedBindings. bindings# ~closest-context @bindings# ~(expand-build-expr opts body))))
 
 (defn expand-build-expr [opts body]
   (if-some [[[opt v] & opts] (seq opts)]
     (case opt
       :let `(let ~v ~(expand-build-expr opts body))
       :watch (expand-watch v opts body)
+      :bind (expand-bind v opts body)
       :resources (expand-resources v opts body)
       :get (expand-get-inherited v opts body)
       :context `(let [~v ~closest-context]
@@ -351,3 +352,29 @@
                          .key ~(when has-key `(foundation/ValueKey. ~key-expr)))
        :no-meta true
        (~'build [_# ~closest-context] ~(expand-build-expr opts body)))))
+
+(comment
+
+  (macroexpand-1
+    '(widget
+       :resources [text-controller (m/TextController)
+                   :dispose .cancel
+                   :refresh-on url
+                   focus (m/Focus)
+                   :refresh-on kikou]
+       (m/TextField .controller text-controller)))
+
+  (macroexpand-1
+    '(widget
+       :watch [text-controller (stream url)
+               :dispose .cancel
+               :refresh-on url]
+       (m/TextField .controller text-controller)))
+
+  (macroexpand-1
+    '(widget
+       :resources [controller (m/TextController)]
+       :bind {:app-state {:one 1}}
+       (m/TextField .controller controller)))
+
+  )
