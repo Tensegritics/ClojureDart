@@ -2,30 +2,31 @@
   "The perennial counter demo."
   (:require
    ["package:flutter/material.dart" :as m]
-   [cljd.flutter.alpha :as f]))
+   [cljd.flutter.alpha2 :as f]))
 
 (defn main []
-  (m/runApp
-   (m/MaterialApp
-    .title "Cljd Demo"
-    .theme (m/ThemeData .primarySwatch m/Colors.blue)
-    .home
-    (f/widget
-     :state [counter 0]
-     :inherit [m/Theme]
-     (m/Scaffold
-      .appBar (m/AppBar .title (m/Text "ClojureDart Home Page"))
-      .body
-      (f/nest
-       m/Center
-       (m/Column
-        .mainAxisAlignment m/MainAxisAlignment.center
-        .children
-        [(m/Text "You have pushed the button this many times:")
-         (m/Text (str @counter)
-                 .style (-> theme .-textTheme .-displayLarge))]))
-      .floatingActionButton
-      (m/FloatingActionButton
-       .onPressed #(swap! counter inc)
-       .tooltip "Increment"
-       .child (m/Icon m/Icons.add)))))))
+  (let [counter (atom 0)]
+    (m/runApp
+      (m/MaterialApp
+        .title "Cljd Demo"
+        .theme (m/ThemeData .primarySwatch m/Colors.blue)
+        .home
+        (m/Scaffold
+          .appBar (m/AppBar .title (m/Text "ClojureDart Home Page"))
+          .body
+          (f/nest
+            m/Center
+            (m/Column
+              .mainAxisAlignment m/MainAxisAlignment.center
+              .children
+              [(m/Text "You have pushed the button this many times:")
+               (f/widget
+                 :watch [N counter]
+                 :get [m/Theme]
+                 (m/Text (str N) .style (-> theme .-textTheme .-displayLarge)))]))
+          .floatingActionButton
+          (f/nest
+            (m/FloatingActionButton
+              .onPressed #(swap! counter inc)
+              .tooltip "Increment")
+            (m/Icon m/Icons.add)))))))

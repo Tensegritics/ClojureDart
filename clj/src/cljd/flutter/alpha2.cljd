@@ -14,14 +14,38 @@
      Returns a subscription.")
   (-unsubscribe [x sub] "Cancels the provided subscription."))
 
-(extend-protocol Subscribable
-  Stream
-  (-subscribe [s f {:keys [default] :as opts}]
+(extend-type cljd.core/Atom
+  Subscribable
+  (-subscribe [a f _]
+    (let [cb (fn [_ _ _ new-state] (f new-state))]
+      (f @a)
+      (add-watch a cb cb)
+      cb))
+  (-unsubscribe [a cb]
+    (remove-watch a cb)))
+
+(extend-type String
+  Subscribable
+  (-subscribe [a f {:keys [default]}])
+  (-unsubscribe [a cb]))
+
+
+#_(extend-protocol Subscribable
+  cljd.core/Atom
+  (-subscribe [a f _]
+    (let [cb (fn [_ _ _ new-state] (f new-state))]
+      (f @a)
+      (add-watch a cb cb)
+      cb))
+  (-unsubscribe [a cb]
+    (remove-watch a cb))
+  #_Stream
+  #_(-subscribe [s f {:keys [default] :as opts}]
     (f default)
     (.listen s .cancelOnError true))
-  (-unsubscribe [s sub]
+  #_(-unsubscribe [s sub]
     (.cancel ^dart:async/StreamSubscription sub))
-  Future
+  #_#_#_Future
   (-subscribe [future f {:keys [default :future/on-error] :as opts}]
     (f default)
     (let [sub (volatile! true)]
@@ -38,15 +62,15 @@
     (vreset! sub false))
   ; TODO & check if we handle partial order on protocols dispatch
   foundation/ValueListenable
-  (-subscribe [vl f]
+  (-subscribe [vl f _]
     (f (.-value vl))
     (doto #(f (.-value vl))
       (->> (.addListener vl))))
   (-unsubscribe [vl listener]
     (.removeListener vl listener))
   foundation/Listenable
-  (-subscribe [l f {:keys [default] :or {default true}}]
-    (f default)
+  (-subscribe [l f {:keys [default] #_#_:or {default true}}]
+    #_#_(f default)
     (doto #(f true)
       (->> (.addListener l))))
   (-unsubscribe [l listener]
@@ -130,7 +154,7 @@
           (recur (.-pctx ib))))
       (throw (Exception (str "No inherited state for id" id))))))
 
-(defn- parse-bindings-with-options
+(defn- ^:macro-support parse-bindings-with-options
   "Returns a collection of [binding expr options-map]."
   [bindings]
   (reduce
@@ -150,11 +174,11 @@
 (defn- ^:macro-support camel-kebab [s]
   (str/replace s #"(^[A-Z])|[A-Z]" (fn [[s start]] (cond->> (str/lower-case s) (not start) (str "-")))))
 
-(def ^:private closest-context `context#)
+(def ^:private ^:macro-support closest-context `context#)
 
-(declare expand-build-expr)
+(def ^:macro-support expand-build-expr nil)
 
-(defn expand-watch [v opts body]
+(defn ^:macro-support expand-watch [v opts body]
   (let [watches (parse-bindings-with-options v)
         {refreshable-watches true
          non-refreshable-watches false}
@@ -227,10 +251,10 @@
                            [binding `(aget ~slots ~i)])
                          watches (range))]
                  ~(expand-build-expr opts body))))))
-         RefreshableBindings
-         (-keys-and-builders [_#] ~keys-and-builders)))))
+         cljd.flutter.alpha2/RefreshableBindings
+         (~'-keys-and-builders [_#] ~keys-and-builders)))))
 
-(defn expand-resources [v opts body]
+(defn ^:macro-support expand-resources [v opts body]
   (let [resources (parse-bindings-with-options v)
         {refreshable-resources true
          non-refreshable-resources false}
@@ -290,10 +314,10 @@
                            [binding `(aget ~slots ~i)])
                          resources (range))]
                  ~(expand-build-expr opts body))))))
-         RefreshableBindings
-         (-keys-and-builders [_#] ~keys-and-builders)))))
+         cljd.flutter.alpha2/RefreshableBindings
+         (~'-keys-and-builders [_#] ~keys-and-builders)))))
 
-(defn expand-get-inherited [v opts body]
+(defn ^:macro-support expand-get-inherited [v opts body]
   (let [inherit (if (vector? v) {:of v} v)
         inherit (if-some [shortcuts (:of inherit)]
                   (into (dissoc inherit :of)
@@ -324,11 +348,11 @@
     `(let [~@inherits-bindings]
        ~(expand-build-expr opts body))))
 
-(defn expand-bind [bind opts body]
+(defn ^:macro-support expand-bind [bind opts body]
   `(let [bindings# (atom ~(zipmap (keys bind) (for [v (vals bind)] `(ensure-model ~v))))]
      (cljd.flutter.alpha2/InheritedBindings. bindings# ~closest-context @bindings# ~(expand-build-expr opts body))))
 
-(defn expand-vsync [name opts body]
+(defn ^:macro-support expand-vsync [name opts body]
   `(reify :extends widgets/StatefulWidget
      :no-meta true
      (~'createState [_#]
@@ -339,17 +363,17 @@
            ~(expand-build-expr opts body)))
         ^:mixin widgets/TickerProviderStateMixin))))
 
-(defn expand-debug [expr opts body]
+(defn ^:macro-support expand-debug [expr opts body]
   `(reify :extends widgets/StatelessWidget
      :no-meta true
      (~'build [_# ~closest-context] ~(expand-build-expr opts body))
      (~'debugFillProperties [this# props-builder#]
       (.debugFillProperties ^{:tag ~'super} this# props-builder#)
       ;; TODO: make expand-debug great again, maybe use Navigable ?
-      (.add props-builder# (foundation.DiagnosticsNode/message (.toString  ~expr)))
+      (.add props-builder# (foundation/DiagnosticsNode.message (.toString  ~expr)))
       nil)))
 
-(defn expand-build-expr [opts body]
+(defn ^:macro-support expand-build-expr [opts body]
   (if-some [[[opt v] & opts] (seq opts)]
     (case opt
       :let `(let ~v ~(expand-build-expr opts body))

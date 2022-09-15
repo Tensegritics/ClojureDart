@@ -2224,7 +2224,8 @@
                                         :macro-host-fn macro-host-fn}))))]
         (when bootstrap-def
           (binding [*ns* host-ns]
-            (ns-unmap *ns* sym) ; get rid of warnings
+            (when-not (identical? (-> sym resolve meta :ns) *ns*)
+              (ns-unmap *ns* sym)) ; get rid of warnings
             (eval bootstrap-def)))
         (assoc-in nses [the-ns sym] (assoc m :meta (merge msym (:meta m)))))
       *hosted* ; second pass
