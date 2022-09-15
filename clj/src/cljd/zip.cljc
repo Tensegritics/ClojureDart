@@ -64,7 +64,7 @@
 (defn node
   "Returns the node at loc"
   {:added "1.0"}
-  [loc] (loc 0))
+  [loc] (first loc))
 
 (defn branch?
   "Returns true if the node at loc is a branch"
@@ -91,19 +91,19 @@
   "Returns a seq of nodes leading to this loc"
   {:added "1.0"}
   [loc]
-    (:pnodes (loc 1)))
+    (:pnodes (second loc)))
 
 (defn lefts
   "Returns a seq of the left siblings of this loc"
   {:added "1.0"}
   [loc]
-    (seq (:l (loc 1))))
+    (seq (:l (second loc))))
 
 (defn rights
   "Returns a seq of the right siblings of this loc"
   {:added "1.0"}
   [loc]
-    (:r (loc 1)))
+    (:r (second loc)))
 
 
 (defn down
@@ -139,7 +139,7 @@
  changes."
   {:added "1.0"}
   [loc]
-    (if (= :end (loc 1))
+    (if (= :end (second loc))
       (node loc)
       (let [p (up loc)]
         (if p
@@ -233,7 +233,7 @@
   at the end, stays there."
   {:added "1.0"}
   [loc]
-    (if (= :end (loc 1))
+    (if (= :end (second loc))
       loc
       (or 
        (and (branch? loc) (down loc))
@@ -259,7 +259,7 @@
   "Returns true if loc represents the end of a depth-first walk"
   {:added "1.0"}
   [loc]
-    (= :end (loc 1)))
+    (= :end (second loc)))
 
 (defn remove
   "Removes the node at loc, returning the loc that would have preceded
