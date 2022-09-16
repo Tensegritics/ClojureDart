@@ -435,7 +435,7 @@
   [& names] `(do ~@(map #(list 'def % nil) names)))
 
 (defn ^bool satisfies?
-  {:inline (fn [protocol x] `(.satisfies ~protocol ~x))
+  {:inline (fn [protocol x] `(.satisfies ~(vary-meta protocol assoc :tag `IProtocol) ~x))
    :inline-arities #{2}}
   [^IProtocol protocol x]
   (.satisfies protocol x))

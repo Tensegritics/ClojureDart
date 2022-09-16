@@ -241,7 +241,7 @@
                (.dispose ~(vary-meta state-sym assoc :tag 'super)))
               (~'build [~state-sym ~closest-context]
                (let [~@(mapcat
-                         (fn [[binding] i]
+                         (fn [[binding subscribable] i]
                            [binding `(aget ~slots ~i)])
                          watches (range))]
                  ~(expand-build-expr opts body))))))
@@ -265,7 +265,7 @@
           `(let [resource# ~expr]
              (aset ~slots ~i resource#)))
         dispose1 (fn [i [_ resource res-opts]]
-                   `(-> (aget ~slots ~i) ~(:dispose res-opts '.dispose)))]
+                   `(-> (aget ~slots ~i) (dart/type-like ~resource) ~(:dispose res-opts '.dispose)))]
     `(let [~keys-and-builders
            (doto (List/filled ~(* 2 Nr) nil)
              ~@(mapcat
@@ -304,8 +304,8 @@
                (.dispose ~(vary-meta state-sym assoc :tag 'super)))
               (~'build [~state-sym ~closest-context]
                (let [~@(mapcat
-                         (fn [[binding] i]
-                           [binding `(aget ~slots ~i)])
+                         (fn [[binding resource] i]
+                           [binding `(dart/type-like (aget ~slots ~i) ~resource)])
                          resources (range))]
                  ~(expand-build-expr opts body))))))
          cljd.flutter.alpha2/RefreshableBindings

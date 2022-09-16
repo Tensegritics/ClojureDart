@@ -2867,6 +2867,9 @@
         {:dart/type (no-future ret-type)
          :dart/inferred true}))))
 
+(defn emit-dart-type-like [[_ x like] env]
+  (simple-cast (emit x env) (:dart/type (infer-type (emit like env)))))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
@@ -2892,6 +2895,7 @@
                          dart/is? emit-dart-is ;; local inference done
                          dart/await emit-dart-await
                          dart/assert emit-dart-assert
+                         dart/type-like emit-dart-type-like
                          throw emit-throw
                          new emit-new ;; local inference done
                          ns emit-ns
