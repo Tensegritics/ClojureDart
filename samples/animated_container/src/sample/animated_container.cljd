@@ -29,11 +29,12 @@
         .duration (Duration .seconds 1)
         .curve m/Curves.fastOutSlowIn)))
      .floatingActionButton
-     (m/FloatingActionButton .onPressed #(swap! config assoc
-                                                :width (random-to-double 300)
-                                                :height (random-to-double 300)
-                                                :color (random-color)
-                                                :border-radius (m/BorderRadius.circular (random-to-double 100)))
-                             .child (m/Icon. m/Icons.play_arrow)))))
+     (m/FloatingActionButton .onPressed
+       #(swap! config assoc
+          :width (random-to-double 300)
+          :height (random-to-double 300)
+          :color (random-color)
+          :border-radius (m/BorderRadius.circular (random-to-double 100)))
+       .child (m/Icon. m/Icons.play_arrow)))))
 
 (defn main [] (m/runApp (m/MaterialApp .home (animated-container))))

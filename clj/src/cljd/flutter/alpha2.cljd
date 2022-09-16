@@ -373,7 +373,7 @@
       :let `(let ~v ~(expand-build-expr opts body))
       :watch (expand-watch v opts body)
       :bind (expand-bind v opts body)
-      :resources (expand-resources v opts body)
+      :managed (expand-resources v opts body)
       :get (expand-get-inherited v opts body)
       :context `(let [~v ~closest-context]
                   ~(expand-build-expr opts body))

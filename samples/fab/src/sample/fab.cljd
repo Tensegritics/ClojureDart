@@ -62,14 +62,15 @@
   (f/widget
    :let [open-state (atom false)]
    :vsync vsync
-   :resources [controller (m/AnimationController
-                           .value 0.0
-                           .duration (dart:core/Duration .milliseconds 250)
-                           .vsync vsync)]
-   :resources [expand-animation (m/CurvedAnimation
-                                  .curve m/Curves.fastOutSlowIn
-                                  .reverseCurve m/Curves.easeOutQuad
-                                  .parent controller)]
+   :managed [controller (m/AnimationController
+                          .value 0.0
+                          .duration (dart:core/Duration .milliseconds 250)
+                          .vsync vsync)]
+   ; TODO alpha2: fix visibility
+   :managed [expand-animation (m/CurvedAnimation
+                                .curve m/Curves.fastOutSlowIn
+                                .reverseCurve m/Curves.easeOutQuad
+                                .parent controller)]
    :let [toggle #(if (swap! open-state not)
                    (.forward controller)
                    (.reverse controller))
