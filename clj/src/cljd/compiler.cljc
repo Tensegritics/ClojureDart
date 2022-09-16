@@ -1049,10 +1049,11 @@
       (when-some [type (resolve-type (symbol alias t) #{} nil)]
         (let [[_ alias t] (re-matches #"(.+)\.(.+)" (name (:qname type)))]
           [(with-meta (symbol (str "$lib:" alias) t) (meta sym)) (symbol (name sym))])))
-    (when-some [[_ t member] (some->> sym name (re-matches #"(?:(.+)\.)(.+)"))]
+    (when-some [[_ t members] (some->> sym name (re-matches #"(?:([^.]+)\.)(.+)"))]
       (when-some [type (resolve-type (symbol (namespace sym) t) #{} nil)]
         (let [[_ alias t] (re-matches #"(.+)\.(.+)" (name (:qname type)))]
-          [(with-meta (symbol (str "$lib:" alias) t) (meta sym)) (symbol member)])))))
+          (into [(with-meta (symbol (str "$lib:" alias) t) (meta sym))]
+                (map symbol) (str/split members #"[.]")))))))
 
 (defn macroexpand-1 [env form]
   (->
@@ -1085,14 +1086,16 @@
            (list* '. (first args) (with-meta (symbol (subs f-name 1)) (meta f)) (next args))
            (meta form))
          :else
-         (if-some [[type member] (resolve-static-member f)]
+         (if-some [[type :as r] (resolve-static-member f)]
            (with-meta
-             (list* '. type member args)
+             (list* '.
+               (reduce #(list '. %1 (str "-" %2)) type (next (pop r)))
+               (peek r) args)
              (meta form))
            form)))
-     (if-let [[type member] (and (symbol? form) (resolve-static-member form))]
+     (if-let [[type & members] (and (symbol? form) (resolve-static-member form))]
        (with-meta
-         (list '. type (str "-" member))
+         (reduce #(list '. %1 (str "-" %2)) type members)
          (meta form))
        form))
    (propagate-hints form)))

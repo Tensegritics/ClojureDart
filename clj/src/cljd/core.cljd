@@ -259,73 +259,82 @@
                          (if (seq bs)
                            (let [firstb (first bs)]
                              (cond
-                              (= firstb '&) (recur (pb ret (second bs) gseq)
-                                                   n
-                                                   (nnext bs)
-                                                   true)
-                              (= firstb :as) (pb ret (second bs) gvec)
-                              :else (if seen-rest?
-                                      (throw (new Exception "Unsupported binding form, only :as can follow & parameter"))
-                                      (recur (pb (if has-rest
-                                                   (conj ret
-                                                         gfirst `(first ~gseq)
-                                                         gseq `(next ~gseq))
-                                                   ret)
-                                                 firstb
-                                                 (if has-rest
-                                                   gfirst
-                                                   (list `nth gvec n nil)))
-                                             (inc n)
-                                             (next bs)
-                                             seen-rest?))))
+                               (= firstb '&) (recur (pb ret (second bs) gseq)
+                                                    n
+                                                    (nnext bs)
+                                                    true)
+                               (= firstb :as) (pb ret (second bs) gvec)
+                               :else (if seen-rest?
+                                       (throw (new Exception "Unsupported binding form, only :as can follow & parameter"))
+                                       (recur (pb (if has-rest
+                                                    (conj ret
+                                                          gfirst `(first ~gseq)
+                                                          gseq `(next ~gseq))
+                                                    ret)
+                                                  firstb
+                                                  (if has-rest
+                                                    gfirst
+                                                    (list `nth gvec n nil)))
+                                              (inc n)
+                                              (next bs)
+                                              seen-rest?))))
                            ret))))
                    pmap
                    (fn [bvec b v]
-                     (let [gmap (gensym "map__")
-                           defaults (:or b)]
-                       (loop [ret (-> bvec (conj gmap) (conj v)
-                                      (conj gmap) (conj `(if (seq? ~gmap) (-map-lit (seq ~gmap)) ~gmap))
-                                      ((fn [ret]
-                                         (if (:as b)
-                                           (conj ret (:as b) gmap)
-                                           ret))))
+                     (let [gmap (or (:as b) (gensym "map__"))
+                           defaults (:or b)
+                           obj-mode
+                           (some (fn [[k v]]
+                                   (or (and (keyword? k) (= "flds" (name k)))
+                                     (and (simple-symbol? v)
+                                       (.startsWith (name v) ".-")))) b)]
+                       (loop [ret (cond-> (-> bvec (conj gmap) (conj v))
+                                    (not obj-mode)
+                                    (->
+                                      (conj gmap)
+                                      (conj `(if (seq? ~gmap) (-map-lit (seq ~gmap)) ~gmap))))
                               bes (let [transforms
-                                          (reduce
-                                            (fn [transforms mk]
-                                              (if (keyword? mk)
-                                                (let [mkns (namespace mk)
-                                                      mkn (name mk)]
-                                                  (cond (= mkn "keys") (assoc transforms mk #(keyword (or mkns (namespace %)) (name %)))
-                                                        (= mkn "syms") (assoc transforms mk #(list `quote (symbol (or mkns (namespace %)) (name %))))
-                                                        (= mkn "strs") (assoc transforms mk str)
-                                                        :else transforms))
-                                                transforms))
-                                            {}
-                                            (keys b))]
+                                        (reduce
+                                         (fn [transforms mk]
+                                           (if (keyword? mk)
+                                             (let [mkns (namespace mk)
+                                                   mkn (name mk)]
+                                               (cond (= mkn "keys") (assoc transforms mk #(keyword (or mkns (namespace %)) (name %)))
+                                                     (= mkn "syms") (assoc transforms mk #(list `quote (symbol (or mkns (namespace %)) (name %))))
+                                                     (= mkn "strs") (assoc transforms mk str)
+                                                     (= mkn "flds") (assoc transforms mk #(symbol (str ".-" (name %))))
+                                                     :else transforms))
+                                             transforms))
+                                         {}
+                                         (keys b))]
                                     (reduce
-                                        (fn [bes entry]
-                                          (reduce #(assoc %1 %2 ((val entry) %2))
-                                                   (dissoc bes (key entry))
-                                                   ((key entry) bes)))
-                                        (dissoc b :as :or)
-                                        transforms))]
+                                     (fn [bes entry]
+                                       (reduce #(assoc %1 %2 ((val entry) %2))
+                                               (dissoc bes (key entry))
+                                               ((key entry) bes)))
+                                     (dissoc b :as :or)
+                                     transforms))]
                          (if (seq bes)
                            (let [bb (key (first bes))
                                  bk (val (first bes))
                                  local (if (ident? bb) (with-meta (symbol nil (name bb)) (meta bb)) bb)
-                                 bv (if (contains? defaults local)
+                                 bv (cond
+                                      (and (simple-symbol? bk)
+                                        (.startsWith (name bk) ".-")) ; field
+                                      (list bk gmap)
+                                      (contains? defaults local)
                                       (list `get gmap bk (defaults local))
-                                      (list `get gmap bk))]
+                                      :else (list `get gmap bk))]
                              (recur (if (ident? bb)
                                       (-> ret (conj local bv))
                                       (pb ret bb bv))
                                     (next bes)))
                            ret))))]
                (cond
-                (symbol? b) (-> bvec (conj b) (conj v))
-                (vector? b) (pvec bvec b v)
-                (map? b) (pmap bvec b v)
-                :else (throw (new Exception (str "Unsupported binding form: " b))))))
+                 (symbol? b) (-> bvec (conj b) (conj v))
+                 (vector? b) (pvec bvec b v)
+                 (map? b) (pmap bvec b v)
+                 :else (throw (new Exception (str "Unsupported binding form: " b))))))
         process-entry (fn [bvec b] (pb bvec (first b) (second b)))]
     (if (every? symbol? (map first bents))
       bindings
@@ -7186,6 +7195,7 @@
 
 (defn ^Stream stream
   "Coerces its last argument to a stream.
+  Currently streams, iterables, seqables and atoms can be coerced to streams.
   When a transducer is supplied, returns a stream of applications of
   the transform to the input events.
   When two transducers are supplied, the first one is applied to events,
@@ -7194,18 +7204,23 @@
   (:as-errors, the default) or events (:as-values) in the resulting stream.
   In :as-errors mode, transformed values must be [error nil-or-stack-trace] too.
   If any transform terminates, the stream is closed."
-  ([stream-or-coll]
-   (cond
-     (dart/is? stream-or-coll Stream) stream-or-coll
-     (dart/is? stream-or-coll Iterable) (Stream/fromIterable stream-or-coll)
-     :else (Stream/fromIterable (sequence stream-or-coll))))
-  ([xform stream-or-coll]
-   (stream xform identity :as-errors stream-or-coll))
-  ([xform error-xform stream-or-coll]
-   (stream xform error-xform :as-errors stream-or-coll))
-  ([xform error-xform error-mode stream-or-coll]
+  ([x]
+   (cond ; TODO: introduce Streamable protocol
+     (dart/is? x Stream) x
+     (dart/is? x Iterable) (Stream/fromIterable x)
+     (satisfies? x IWatchable)
+     (let [ctrl (dart-async/StreamController.broadcast)
+           cb (fn [k r o n] (.add ctrl n))]
+       (add-watch x cb cb)
+       (.-stream ctrl))
+     :else (Stream/fromIterable (sequence x))))
+  ([xform x]
+   (stream xform identity :as-errors x))
+  ([xform error-xform x]
+   (stream xform error-xform :as-errors x))
+  ([xform error-xform error-mode x]
    (Stream/eventTransformed
-    (stream stream-or-coll)
+    (stream x)
     (fn [^dart-async/EventSink es]
       (let [add-rf
             (fn

@@ -1,6 +1,7 @@
 (ns cljd.flutter.alpha2
   (:require ["package:flutter/widgets.dart" :as widgets]
             ["package:flutter/foundation.dart" :as foundation]
+            ["dart:async" :as dart:async]
             [cljd.string :as str])
   (:host-ns
    (:require [clojure.string :as str])))
@@ -14,23 +15,7 @@
      Returns a subscription.")
   (-unsubscribe [x sub] "Cancels the provided subscription."))
 
-(extend-type cljd.core/Atom
-  Subscribable
-  (-subscribe [a f _]
-    (let [cb (fn [_ _ _ new-state] (f new-state))]
-      (f @a)
-      (add-watch a cb cb)
-      cb))
-  (-unsubscribe [a cb]
-    (remove-watch a cb)))
-
-(extend-type String
-  Subscribable
-  (-subscribe [a f {:keys [default]}])
-  (-unsubscribe [a cb]))
-
-
-#_(extend-protocol Subscribable
+(extend-protocol Subscribable
   cljd.core/Atom
   (-subscribe [a f _]
     (let [cb (fn [_ _ _ new-state] (f new-state))]
@@ -39,16 +24,18 @@
       cb))
   (-unsubscribe [a cb]
     (remove-watch a cb))
-  #_Stream
-  #_(-subscribe [s f {:keys [default] :as opts}]
-    (f default)
-    (.listen s .cancelOnError true))
-  #_(-unsubscribe [s sub]
+  Stream
+  (-subscribe [s f opts]
+    (let [{:keys [default]} opts]
+      (f default))
+    (.listen s (fn [x] (f x) nil) .cancelOnError true))
+  (-unsubscribe [s sub]
     (.cancel ^dart:async/StreamSubscription sub))
-  #_#_#_Future
-  (-subscribe [future f {:keys [default :future/on-error] :as opts}]
-    (f default)
-    (let [sub (volatile! true)]
+  Future
+  (-subscribe [future f opts]
+    (let [sub (volatile! true)
+          {:keys [default :future/on-error]} opts]
+      (f default)
       (.then future
         #(when @sub (f %))
         .onError
@@ -69,10 +56,11 @@
   (-unsubscribe [vl listener]
     (.removeListener vl listener))
   foundation/Listenable
-  (-subscribe [l f {:keys [default] #_#_:or {default true}}]
-    #_#_(f default)
-    (doto #(f true)
-      (->> (.addListener l))))
+  (-subscribe [l f opts]
+    (let [{:keys [default] :or {default true}} opts]
+      (f default)
+      (doto #(f true)
+        (->> (.addListener l)))))
   (-unsubscribe [l listener]
     (.removeListener l listener)))
 
@@ -156,13 +144,18 @@
 
 (defn- ^:macro-support parse-bindings-with-options
   "Returns a collection of [binding expr options-map]."
-  [bindings]
-  (reduce
-    (fn [v [l r]]
-      (if (keyword? l)
-        (conj (pop v) (update (peek v) 2 assoc l r))
-        (conj v [l r {}])))
-    [] (partition 2 bindings)))
+  [bindings supported-option?]
+  (let [triples
+        (reduce
+         (fn [v [l r]]
+           (cond
+             (not (keyword? l))
+             (conj v [l r {}])
+             (supported-option? l)
+             (conj (pop v) (update (peek v) 2 assoc l r))
+             :else (throw (Exception. (str "Unsupported option: " l)))))
+         [] (partition 2 bindings))]
+    triples))
 
 (defmacro nest
   "Threading macro for nesting widgets.
@@ -179,7 +172,8 @@
 (def ^:macro-support expand-build-expr nil)
 
 (defn ^:macro-support expand-watch [v opts body]
-  (let [watches (parse-bindings-with-options v)
+  (let [watches (parse-bindings-with-options v
+                  #(or (qualified-keyword? %) (#{:default :refresh-on})))
         {refreshable-watches true
          non-refreshable-watches false}
         (group-by (fn [[_ _ opts]] (contains? opts :refresh-on)) watches)
@@ -255,7 +249,7 @@
          (~'-keys-and-builders [_#] ~keys-and-builders)))))
 
 (defn ^:macro-support expand-resources [v opts body]
-  (let [resources (parse-bindings-with-options v)
+  (let [resources (parse-bindings-with-options v #{:dispose :refresh-on})
         {refreshable-resources true
          non-refreshable-resources false}
         (group-by (fn [[_ _ opts]] (contains? opts :refresh-on)) resources)
