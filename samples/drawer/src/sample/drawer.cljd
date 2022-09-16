@@ -6,7 +6,7 @@
 (defn my-home-page [title]
   (m/Scaffold
    .appBar (m/AppBar .title (m/Text title))
-   .body (m/Center .child (m/Text "My Page!"))
+   .body (f/nest m/Center (m/Text "My Page!"))
    .drawer
    (f/widget
     :get [m/Navigator]
@@ -20,7 +20,7 @@
       .children
       [(f/nest
          (m/DrawerHeader .decoration (m/BoxDecoration .color m/Colors.blue))
-         .child (m/Text "Drawer Header"))
+         (m/Text "Drawer Header"))
        (m/ListTile
          .title (m/Text "Item 1")
          .onTap
