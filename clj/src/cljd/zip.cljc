@@ -12,7 +12,7 @@
 (ns ^{:doc "Functional hierarchical zipper, with navigation, editing,
   and enumeration.  See Huet"
        :author "Rich Hickey"}
-  clojure.zip
+  cljd.zip
   (:refer-clojure :exclude (replace remove next)))
 
 (defn zipper
