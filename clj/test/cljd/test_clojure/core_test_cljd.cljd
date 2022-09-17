@@ -546,3 +546,14 @@
           [:error]))))
 
 ;; (.fold (stream xform coll) [] (fn [acc item] (conj acc item)))
+
+(deftest meta-on-colls-not-generated-CLJD151
+  (is (= (meta '^{x (inc 1)} [1]) '{x (inc 1)}))
+  (is (= ((fn [] (meta '^{x (inc 1)} [1]))) '{x (inc 1)}))
+  (is (= (meta ^{:a (inc 1)} [1]) {:a 2}))
+  (is (= ((fn [] (meta ^{:a (inc 1)} [1]))) {:a 2}))
+
+  (is (= (meta '^{x (inc 1)} []) '{x (inc 1)}))
+  (is (= ((fn [] (meta '^{x (inc 1)} []))) '{x (inc 1)}))
+  (is (= (meta ^{:a (inc 1)} []) {:a 2}))
+  (is (= ((fn [] (meta ^{:a (inc 1)} []))) {:a 2})))

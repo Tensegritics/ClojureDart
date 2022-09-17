@@ -1483,7 +1483,12 @@
 (defn emit-coll
   ([coll env] (emit-coll emit coll env))
   ([maybe-quoted-emit coll env]
-   (if (seq coll)
+   (cond
+     (seq (meta coll))
+     (with-lifted [data (maybe-quoted-emit (with-meta coll nil) env)] env
+       (with-lifted [metadata (maybe-quoted-emit (meta coll) env)] env
+         (list (emit 'cljd.core/with-meta env) data metadata)))
+     (seq coll)
      (let [items (into [] (if (map? coll) cat identity) coll)
            fn-sym (cond
                     (map? coll) 'cljd.core/-map-lit
@@ -1493,6 +1498,7 @@
                     :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll}))) ]
        (with-lifted [fixed-list (emit-dart-literal maybe-quoted-emit (with-meta (vec items) {:fixed true}) env)] env
          (list (emit fn-sym env) fixed-list)))
+     :empty-coll
      (emit
        (cond
          (map? coll) 'cljd.core/-EMPTY-MAP
