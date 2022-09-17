@@ -1,30 +1,32 @@
 (ns sample.form
   "Faithful port of https://docs.flutter.dev/cookbook/forms/retrieve-input"
   (:require ["package:flutter/material.dart" :as m]
-            [cljd.flutter.alpha :as f]))
+            [cljd.flutter.alpha2 :as f]))
 
 (defn my-custom-form-state [title]
   (f/widget
-   :context ctx
-   :with [text-controller (m/TextEditingController)]
-   (m/Scaffold
-    .appBar (m/AppBar .title (m/Text title))
-    .body
-    (m/Padding. .padding
-                ^:const (m/EdgeInsets.all 16.0)
-                .child (m/TextField .controller text-controller))
-    .floatingActionButton
-    (m/FloatingActionButton
-     .onPressed (fn []
-                  (m/showDialog
-                   .context ctx
-                   .builder (fn [_] (m/AlertDialog .content (m/Text (.-text text-controller))))) nil)
-     .tooltip "Show me the value!"
-     .child (m/Icon m/Icons.text_fields)))))
+    :context ctx
+    :managed [tc (m/TextEditingController)]
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text title))
+      .body
+      (m/Padding. .padding (m/EdgeInsets.all 16.0)
+        .child (m/TextField .controller tc))
+      .floatingActionButton
+      (m/FloatingActionButton
+        .onPressed (fn []
+                     (m/showDialog
+                       .context ctx
+                       .builder
+                       (f/build
+                         :let [{:flds [text]} tc]
+                         (m/AlertDialog .content (m/Text text)))) nil)
+        .tooltip "Show me the value!"
+        .child (m/Icon m/Icons.text_fields)))))
 
 (defn main []
   (let [title "Retrieve text input"]
     (m/runApp
-     (m/MaterialApp
-      .title title
-      .home (my-custom-form-state title)))))
+      (m/MaterialApp
+        .title title
+        .home (my-custom-form-state title)))))
