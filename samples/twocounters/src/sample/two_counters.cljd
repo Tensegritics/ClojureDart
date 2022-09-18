@@ -3,7 +3,7 @@
    ["package:flutter/material.dart" :as m]
    [cljd.flutter.alpha2 :as f]))
 
-;; this sample demos how to use :bind/:inherit and :nested-in
+;; this sample demos how to use :bind/:get
 
 (def home
   (m/Scaffold
