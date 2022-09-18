@@ -343,7 +343,9 @@
        ~(expand-build-expr opts body))))
 
 (defn ^:macro-support expand-bind [bind opts body]
-  `(let [bindings# (atom ~(zipmap (keys bind) (for [v (vals bind)] `(ensure-model ~v))))]
+  `(widget
+     :let [bindings# (atom ~(zipmap (keys bind) (for [v (vals bind)] `(ensure-model ~v))))]
+     :watch [_ bindings#]
      (cljd.flutter.alpha2/InheritedBindings. bindings# ~closest-context @bindings# ~(expand-build-expr opts body))))
 
 (defn ^:macro-support expand-vsync [name opts body]
