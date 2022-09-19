@@ -15,7 +15,7 @@
   (:require [cljd.string :as s])
   (:use [cljd.test :only [deftest is testing are]]))
 
-#_(deftest test-metadata
+(deftest test-metadata
   (testing "Testing metadata"
     (is (= {"x" "y"} (meta ^{"x" "y"} [])))))
 
