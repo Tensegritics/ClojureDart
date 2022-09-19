@@ -1,0 +1,66 @@
+;   Copyright (c) Rich Hickey. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+; Author: Frantisek Sodomka
+
+
+(ns cljd.test-clojure.clojure-zip
+  (:use [clojure.test :only [deftest are]])
+  (:require [clojure.zip :as zip :refer
+             [down up right left node root next replace remove edit
+              insert-right append-child end?]])
+  (:refer-clojure :exclude (next replace remove)))
+
+(def data '[[a * b] + [c * d]])
+(def dz (zip/vector-zip data))
+
+(deftest as-in-rich-comment
+  (are [x y] (= x y)
+    data        (node dz)
+    '[a * b]    (node (-> dz down))
+    '+          (node (-> dz down right))
+    '[c * d]    (node (-> dz down right right))
+    'c          (node (-> dz down right right down))
+    '*          (node (-> dz down right right down right))
+    '[[a * b] + [c / d]]    (-> dz down right right down right (replace '/) root)
+    '[["a" * b] / [c * d]]  (-> dz next next (edit str) next next next (replace '/) root)
+    '[[a * b] + [c *]]      (-> dz next next next next next next next next next remove root)
+    '[[a * b] + [c * e]]    (-> dz next next next next next next next next next remove (insert-right 'e) root)
+    '[[a * b] + [c * e]]    (-> dz next next next next next next next next next remove up (append-child 'e) root)
+
+    true (end? (-> dz next next next next next next next next next remove next))
+    '[[c * d]] (-> dz next remove next remove root)
+    '[[a / b] + [c / d]] (loop [loc dz]
+                           (if (end? loc)
+                             (root loc)
+                             (recur (next (if (= '* (node loc))
+                                            (replace loc '/)
+                                            loc)))))
+    '[[a b] + [c d]] (loop [loc dz]
+                       (if (end? loc)
+                         (root loc)
+                         (recur (next (if (= '* (node loc))
+                                        (remove loc)
+                                        loc)))))))
+
+; seq-zip
+; xml-zip
+;
+; branch?
+; children
+; make-node
+; path
+; lefts
+; rights
+; rightmost
+; left
+; leftmost
+;
+; insert-left
+; insert-child
+; prev
