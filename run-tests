@@ -22,7 +22,8 @@ cat > src/cljd/run_tests.cljd <<EOF
     cljd.test-clojure.core-test
     cljd.test-clojure.for
     cljd.test-clojure.clojure-zip
+    cljd.test-clojure.clojure-walk
     cljd.test-reader.reader-test))
 EOF
-clojure -M -m cljd.build compile cljd.test-clojure.core-test-cljd cljd.test-clojure.string cljd.test-clojure.core-test cljd.test-clojure.for cljd.test-clojure.clojure-zip cljd.test-reader.reader-test
+clojure -M -m cljd.build compile cljd.test-clojure.core-test-cljd cljd.test-clojure.string cljd.test-clojure.core-test cljd.test-clojure.for cljd.test-clojure.clojure-zip cljd.test-clojure.clojure-walk cljd.test-reader.reader-test
 dart test -p vm
