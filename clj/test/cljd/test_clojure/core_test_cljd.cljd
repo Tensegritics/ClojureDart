@@ -557,3 +557,41 @@
   (is (= ((fn [] (meta '^{x (inc 1)} []))) '{x (inc 1)}))
   (is (= (meta ^{:a (inc 1)} []) {:a 2}))
   (is (= ((fn [] (meta ^{:a (inc 1)} []))) {:a 2})))
+
+(defprotocol IDestructuringProto
+  (-destructured [a b]))
+
+(defprotocol IDestructuringProto2
+  (-destructured2 [a b]))
+
+(defprotocol IDestructuringProto3
+  (-destructured3 [a b]))
+
+(defprotocol INotDestructuringProto
+  (-not-destructured [a b]))
+
+(definterface INotDestructuringInterfaceWithOpts
+  (^num notdestructured [one ... ^int? two]))
+
+(deftype DestructuringProto []
+  INotDestructuringInterfaceWithOpts
+  (^num notdestructured [this {:keys [a b]} ... ^num? two] (+ two a b))
+  IDestructuringProto
+  (-destructured [_ {:keys [a b c]}] [a b c]))
+
+(extend-type DestructuringProto
+  IDestructuringProto2
+  (-destructured2 [_ {:strs [a b c]}] [a b c])
+  INotDestructuringProto
+  (-not-destructured [a b] b))
+
+(extend-protocol IDestructuringProto3
+  DestructuringProto
+  (-destructured3 [_ {:syms [a b c]}] [a b c]))
+
+(deftest destructuring-for-deftype
+  (is (= 6 (.notdestructured (DestructuringProto.) {:a 1 :b 2 :c 3} 3)))
+  (is (= [1 2 3] (-destructured (DestructuringProto.) {:a 1 :b 2 :c 3})))
+  (is (= [1 2 3] (-destructured2 (DestructuringProto.) {"a" 1 "b" 2 "c" 3})))
+  (is (= [1 2 3] (-destructured3 (DestructuringProto.) '{a 1 b 2 c 3})))
+  (is (= {:a 1 :b 2 :c 3} (-not-destructured (DestructuringProto.) {:a 1 :b 2 :c 3}))))

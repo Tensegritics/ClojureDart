@@ -25,15 +25,18 @@
       (loop [params params
              new-params (with-meta [] (meta params))
              lets []]
-        (if params
-          (if (symbol? (first params))
-            (recur (next params) (conj new-params (first params)) lets)
-            (let [gparam (gensym "p__")]
-              (recur (next params) (conj new-params gparam)
-                (-> lets (conj (first params)) (conj gparam)))))
+        (cond
+          (not params)
           `(~new-params
             (let ~lets
-              ~@body)))))))
+              ~@body))
+          (not (symbol? (first params)))
+          (let [gparam (gensym "p__")]
+            (recur (next params) (conj new-params gparam)
+              (-> lets (conj (first params)) (conj gparam))))
+          (contains? '#{... .&} (first params))
+          `([~@(concat new-params params)] (let ~lets ~@body))
+          :else (recur (next params) (conj new-params (first params)) lets))))))
 
 (def ^{:macro true
        :doc
@@ -368,6 +371,12 @@
 (defmacro deftype [& args]
   (let [[class-name fields & args] args
         [opts specs] (roll-leading-opts args)
+        specs (map (fn [form]
+                     (if (symbol? form)
+                       form
+                       (let [[n p & body] form]
+                         (cons n (maybe-destructured p body)))))
+                specs)
         deftype-form (list* 'deftype* class-name fields opts specs)]
     (if (or (:type-only opts) (:abstract (meta class-name)))
       deftype-form
