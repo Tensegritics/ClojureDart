@@ -11,48 +11,44 @@
 ;; The invariants between the value of this field, the controller and
 ;; the gesture detector was implicit.
 ;; I preferred to create a new listener at each PanEnd which closes over the animation.
-
 (defn draggable-card [& {:keys [child]}]
   (f/widget
-    :vsync tick
-    :get {{{:flds [width height]} .-size} m/MediaQuery}
-    :managed [controller (m/AnimationController .vsync tick)]
-    :let [drag-alignment (atom m/Alignment.center)]
-    :watch [da drag-alignment]
-    :let [run-animation
-          (fn [^m/Offset px-per-s]
-            (let [animation (.drive controller
-                              (m/AlignmentTween
-                                .begin da
-                                .end m/Alignment.center))
-                  units-per-s-x (/ (.-dx px-per-s) width)
-                  units-per-s-y (/ (.-dy px-per-s) height)
-                  units-per-s (m/Offset units-per-s-x units-per-s-y)
-                  unit-velocity (.-distance units-per-s)
-                  spring (p/SpringDescription
-                           .mass 30
-                           .stiffness 1
-                           .damping 1)
-                  simulation (p/SpringSimulation spring 0 1 (- unit-velocity))]
-              (doto controller
-                .clearListeners
-                (.addListener #(reset! drag-alignment (.-value animation)))
-                (.animateWith simulation))))]
-    (m/GestureDetector
-      .onPanDown (fn [details] (.stop controller) nil)
-      .onPanUpdate (fn [{{:flds [dx dy]} .-delta :as ^m/DragUpdateDetails details}]
-                     (swap! drag-alignment
-                       #(.+ (m/Alignment
-                              (/ dx (/ width 2))
-                              (/ dy (/ height 2)))
-                          %))
-                     nil)
-      .onPanEnd (fn [{{px-per-s .-pixelsPerSecond} .-velocity :as ^m/DragEndDetails details}]
-                  (run-animation px-per-s)
-                  nil))
-    (m/Align .alignment da)
-    m/Card
-    child))
+   :get [m/MediaQuery]
+   :vsync vsync
+   :managed [animator (m/AnimationController .vsync vsync)]
+   :let [state (atom {:alignment m/Alignment.center})]
+   :watch [{:keys [alignment animation]} state
+           animated-alignment animation :refresh-on animation]
+   :let [{:flds [width height]} (.-size media-query)
+         run-animation
+         (fn [^m/Offset {:flds [dx dy]}]
+           (let [unit-velocity (.-distance (m/Offset (/ dx width) (/ dy height)))
+                 spring (p/SpringDescription .mass 30 .stiffness 1 .damping 1)
+                 simulation (p/SpringSimulation spring 0 1 (- unit-velocity))]
+             (swap! state assoc :animation
+               (.drive animator
+                 (m/AlignmentTween
+                   .begin alignment
+                   .end m/Alignment.center)))
+             (.animateWith animator simulation)))]
+   (m/GestureDetector
+     .onPanDown (fn [_]
+                  (.stop animator)
+                  (when animated-alignment
+                    (swap! state assoc :animation nil :alignment animated-alignment))
+                  nil)
+     .onPanUpdate (fn [^m/DragUpdateDetails {{:flds [dx dy]} .-localPosition}]
+                    (swap! state assoc :alignment
+                      (m/Alignment
+                        (- (* 2 (/ dx width)) 1)
+                        (- (* 2 (/ dy height)) 1)))
+                    nil)
+     .onPanEnd (fn [^m/DragEndDetails details]
+                 (run-animation (-> details .-velocity .-pixelsPerSecond))
+                 nil))
+   (m/Align .alignment (or animated-alignment alignment))
+   m/Card
+   child))
 
 (def physics-card-demo
   (m/Scaffold

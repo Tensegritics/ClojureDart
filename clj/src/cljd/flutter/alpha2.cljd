@@ -12,10 +12,14 @@
      opts is a map of keyword-keyed options
      (keyword must be namespaced except for default)
      f! is a side-effecting function of one argument.
-     Returns a subscription.")
+     Returns a subscription.
+     MUST call f! during subscription.")
   (-unsubscribe [x sub] "Cancels the provided subscription."))
 
 (extend-protocol Subscribable
+  Null
+  (-subscribe [n _ _] nil)
+  (-unsubscribe [n _] nil)
   cljd.core/Atom
   (-subscribe [a f _]
     (let [cb (fn [_ _ _ new-state] (f new-state))]
@@ -57,16 +61,17 @@
     (.removeListener vl listener))
   foundation/Listenable
   (-subscribe [l f opts]
-    (let [{:keys [default] :or {default true}} opts]
-      (f default)
-      (doto #(f true)
-        (->> (.addListener l)))))
+    (f true)
+    (doto #(f true)
+      (->> (.addListener l))))
   (-unsubscribe [l listener]
     (.removeListener l listener)))
 
 (defprotocol RefreshableBindings
-  (-keys-and-builders [widget]
-    "Returns a dart list of interleaved refreh keys and builders (thunks)"))
+  (-build [_ state ctx])
+  (-update-state [_ state])
+  (-init-state [_ state])
+  (-dispose-state [_ state]))
 
 (defprotocol IModel
   (-state [v args swp! trck!] "Returns a mutable view of this binding in this context.")
@@ -142,20 +147,16 @@
           (recur (.-pctx ib))))
       (throw (Exception (str "No inherited state for id" id))))))
 
-(defn- ^:macro-support parse-bindings-with-options
-  "Returns a collection of [binding expr options-map]."
-  [bindings supported-option?]
-  (let [triples
-        (reduce
-         (fn [v [l r]]
-           (cond
-             (not (keyword? l))
-             (conj v [l r {}])
-             (supported-option? l)
-             (conj (pop v) (update (peek v) 2 assoc l r))
-             :else (throw (Exception. (str "Unsupported option: " l)))))
-         [] (partition 2 bindings))]
-    triples))
+(defn- ^:macro-support collect-options
+  "Returns [options-map & more]."
+  [exprs supported-option?]
+  (let [opts (take-while (comp keyword? first) (partition 2 exprs))
+        exprs (drop (* 2 (count opts)) exprs)
+        opts (into {} (map vec) opts)]
+    (doseq [k (keys opts)]
+      (when-not (supported-option? k)
+        (throw (Exception. (str "Unsupported option: " k)))))
+    (cons opts exprs)))
 
 (defmacro nest
   "Threading macro for nesting widgets.
@@ -167,151 +168,106 @@
 (defn- ^:macro-support camel-kebab [s]
   (str/replace s #"(^[A-Z])|[A-Z]" (fn [[s start]] (cond->> (str/lower-case s) (not start) (str "-")))))
 
-(def ^:private ^:macro-support closest-context `context#)
+(def ^:private ^:macro-support closest-context `^widgets/BuildContext context#)
 
-(def ^:macro-support expand-build-expr nil)
+(deftype WatchState
+         [^:mutable k ^:mutable subscribable
+          ^:mutable subscription ^:mutable latest]
+  :extends widgets/State
+  (initState [state]
+    (.initState ^super state)
+    (-init-state (.-widget state) state)
+    nil)
+  (didUpdateWidget [state old-widget]
+    (.didUpdateWidget ^super state old-widget)
+    (-update-state (.-widget state) state)
+    nil)
+  (dispose [state]
+    (-dispose-state (.-widget state) state)
+    (.dispose ^super state))
+  (build [state ctx]
+    (-build (.-widget state) state ctx))
+  cljd.core/IFn
+  (-invoke [state x] (set! latest x) (.setState state (fn []))))
 
-(defn ^:macro-support expand-watch [v opts body]
-  (let [watches (parse-bindings-with-options v
-                  #(or (qualified-keyword? %) (#{:default :refresh-on})))
-        {refreshable-watches true
-         non-refreshable-watches false}
-        (group-by (fn [[_ _ opts]] (contains? opts :refresh-on)) watches)
-        Nr (count refreshable-watches)
-        N (count watches)
-        ; slots has 3*N items
-        ; first N current vals
-        ; then 2*N interleaved subscribable and subscription
-        ; the order is refreshable first then non-refreshable
-        slots `slots#
-        state-sym `state#
-        keys-and-builders `keys-and-builders#
-        new-kbs `new-kbs#
-        old-kbs `old-kbs#
-        init1
-        (fn [i expr sub-opts]
-          `(let [subscribable# ~expr]
-             (doto ~slots
-               (aset ~(+ N (* 2 i)) subscribable#)
-               (aset ~(+ N (* 2 i) 1)
-                 (-subscribe subscribable#
-                   (fn [x#]
-                     (.setState ~state-sym (fn [] (aset ~slots ~i x#))))
-                   ~sub-opts)))))
-        dispose1 (fn [i]
-                   `(let [subscribable# (aget ~slots ~(+ N (* 2 i)))
-                          sub# (aget ~slots ~(+ N (* 2 i) 1))]
-                      (-unsubscribe subscribable# sub#)))]
-    `(let [~keys-and-builders
-           (doto (List/filled ~(* 2 Nr) nil)
-             ~@(mapcat
-                 (fn [[_ subscribable opts] i]
-                   `[(aset ~(* 2 i) ~(:refresh-on opts))
-                     (aset ~(inc (* 2 i)) (fn [] ~subscribable))])
-                 refreshable-watches
-                 (range)))]
-       (reify :extends widgets/StatefulWidget
-         :no-meta true
-         (~'createState [_#]
-          (let [~slots (List/filled ~(* 3 N) nil)]
-            (reify :extends widgets/State
-              :no-meta true
-              (~'initState [~state-sym]
-               (.initState ~(vary-meta state-sym assoc :tag 'super))
-               ~@(map-indexed
-                   (fn [i [binding subscribable sub-opts]]
-                     (init1 i subscribable (dissoc sub-opts :refresh-on)))
-                   (concat refreshable-watches non-refreshable-watches))
-               nil)
-              (~'didUpdateWidget [~state-sym old-widget#]
-               (.didUpdateWidget ~(vary-meta state-sym assoc :tag 'super) old-widget#)
-               (let [~new-kbs (-keys-and-builders (.-widget ~state-sym))
-                     ~old-kbs (-keys-and-builders old-widget#)]
-                 ~@(map-indexed
-                     (fn [i [_ _ sub-opts]]
-                       `(when-not (= (aget ~new-kbs ~(* 2 i))
-                                    (aget ~old-kbs ~(* 2 i)))
-                          ~(dispose1 i)
-                          ~(init1 i `((aget ~new-kbs ~(inc (* 2 i))))
-                             (dissoc sub-opts :refresh-on))))
-                     refreshable-watches))
-               nil)
-              (~'dispose [~state-sym]
-               ~@(map dispose1 (range N))
-               (.dispose ~(vary-meta state-sym assoc :tag 'super)))
-              (~'build [~state-sym ~closest-context]
-               (let [~@(mapcat
-                         (fn [[binding subscribable] i]
-                           [binding `(aget ~slots ~i)])
-                         watches (range))]
-                 ~(expand-build-expr opts body))))))
-         cljd.flutter.alpha2/RefreshableBindings
-         (~'-keys-and-builders [_#] ~keys-and-builders)))))
+(defn ^:macro-support expand-watch
+  [binding expr {:keys [refresh-on] :as opts} body]
+  (let [opts (dissoc opts :refresh-on :>)]
+    `(reify :extends widgets/StatefulWidget
+       :no-meta true
+       (~'createState [_#] (WatchState nil nil nil nil))
+       cljd.flutter.alpha2/RefreshableBindings
+       (~'-init-state [_# state#]
+         (let [state# ^WatchState state#
+               subscribable# ~expr]
+           (set! (.-k state#) ~refresh-on)
+           (set! (.-subscribable state#) subscribable#)
+           (set! (.-subscription state#) (-subscribe subscribable# state# ~opts))))
+       (~'-dispose-state [_# state#]
+         (let [state# ^WatchState state#]
+           (-unsubscribe (.-subscribable state#) (.-subscription state#))
+           (set! (.-k state#) nil)
+           (set! (.-subscribable state#) nil)
+           (set! (.-subscription state#) nil)
+           (set! (.-latest state#) nil)))
+       (~'-build [_# state# ctx#]
+         (let [~binding (.-latest ^WatchState state#)
+               ~closest-context ctx#]
+           (-widget-cont ~@body)))
+       (~'-update-state [_# state#]
+         (let [state# ^WatchState state#
+               k# ~refresh-on]
+           (when-not (= k# (.-k state#))
+             (-unsubscribe (.-subscribable state#) (.-subscription state#))
+             (let [subscribable# ~expr]
+               (set! (.-k state#) k#)
+               (set! (.-subscribable state#) subscribable#)
+               (set! (.-subscription state#) (-subscribe subscribable# state# ~opts)))))))))
 
-(defn ^:macro-support expand-resources [v opts body]
-  (let [resources (parse-bindings-with-options v #{:dispose :refresh-on})
-        {refreshable-resources true
-         non-refreshable-resources false}
-        (group-by (fn [[_ _ opts]] (contains? opts :refresh-on)) resources)
-        Nr (count refreshable-resources)
-        N (count resources)
-        slots `slots#
-        state-sym `state#
-        keys-and-builders `keys-and-builders#
-        new-kbs `new-kbs#
-        old-kbs `old-kbs#
-        init1
-        (fn [i expr]
-          `(let [resource# ~expr]
-             (aset ~slots ~i resource#)))
-        dispose1 (fn [i [_ resource res-opts]]
-                   `(-> (aget ~slots ~i) (dart/type-like ~resource) ~(:dispose res-opts '.dispose)))]
-    `(let [~keys-and-builders
-           (doto (List/filled ~(* 2 Nr) nil)
-             ~@(mapcat
-                 (fn [[_ resource opts] i]
-                   `[(aset ~(* 2 i) ~(:refresh-on opts))
-                     (aset ~(inc (* 2 i)) (fn [] ~resource))])
-                 refreshable-resources
-                 (range)))]
-       (reify :extends widgets/StatefulWidget
-         :no-meta true
-         (~'createState [_#]
-          (let [~slots (List/filled ~N nil)]
-            (reify :extends widgets/State
-              :no-meta true
-              (~'initState [~state-sym]
-               (.initState ~(vary-meta state-sym assoc :tag 'super))
-               ~@(map-indexed
-                   (fn [i [binding resource sub-opts]]
-                     (init1 i resource))
-                   (concat refreshable-resources non-refreshable-resources))
-               nil)
-              (~'didUpdateWidget [~state-sym old-widget#]
-               (.didUpdateWidget ~(vary-meta state-sym assoc :tag 'super) old-widget#)
-               (let [~new-kbs (-keys-and-builders (.-widget ~state-sym))
-                     ~old-kbs (-keys-and-builders old-widget#)]
-                 ~@(map-indexed
-                     (fn [i res]
-                       `(when-not (= (aget ~new-kbs ~(* 2 i))
-                                    (aget ~old-kbs ~(* 2 i)))
-                          ~(dispose1 i res)
-                          ~(init1 i `((aget ~new-kbs ~(inc (* 2 i)))))))
-                     refreshable-resources))
-               nil)
-              (~'dispose [~state-sym]
-               ~@(map-indexed dispose1 (concat refreshable-resources non-refreshable-resources))
-               (.dispose ~(vary-meta state-sym assoc :tag 'super)))
-              (~'build [~state-sym ~closest-context]
-               (let [~@(mapcat
-                         (fn [[binding resource] i]
-                           [binding `(dart/type-like (aget ~slots ~i) ~resource)])
-                         resources (range))]
-                 ~(expand-build-expr opts body))))))
-         cljd.flutter.alpha2/RefreshableBindings
-         (~'-keys-and-builders [_#] ~keys-and-builders)))))
+(deftype ResourceState [^:mutable k ^:mutable resource]
+  :extends widgets/State
+  (initState [state]
+    (.initState ^super state)
+    (-init-state (.-widget state) state)
+    nil)
+  (didUpdateWidget [state old-widget]
+    (.didUpdateWidget ^super state old-widget)
+    (-update-state (.-widget state) state)
+    nil)
+  (dispose [state]
+    (-dispose-state (.-widget state) state)
+    (.dispose ^super state))
+  (build [state ctx]
+    (-build (.-widget state) state ctx)))
 
-(defn ^:macro-support expand-get-inherited [v opts body]
+(defn ^:macro-support expand-resource
+  [binding expr {:keys [refresh-on dispose] :as opts
+                 :or {dispose '.dispose}} body]
+  `(reify :extends widgets/StatefulWidget
+     :no-meta true
+     (~'createState [_#] (ResourceState nil nil))
+     cljd.flutter.alpha2/RefreshableBindings
+     (~'-init-state [_# state#]
+       (let [state# ^ResourceState state#]
+         (set! (.-k state#) ~refresh-on)
+         (set! (.-resource state#) ~expr)))
+     (~'-dispose-state [_# ^ResourceState state#]
+       (let [state# ^ResourceState state#]
+         (set! (.-k state#) nil)
+         (-> (dart/type-like (.-resource state#) ~expr) ~dispose)
+         (set! (.-resource state#) nil)))
+     (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
+       (let [~binding (dart/type-like (.-resource ^ResourceState state#) ~expr)]
+         (-widget-cont ~@body)))
+     (~'-update-state [_# state#]
+      (let [state# ^ResourceState state#
+            k# ~refresh-on]
+        (when-not (= k# (.-k state#))
+          (-> (dart/type-like (.-resource state#) ~expr) ~dispose)
+          (set! (.-k state#) k#)
+          (set! (.-resource state#) ~expr))))))
+
+(defn ^:macro-support expand-get-inherited [v body]
   (let [inherit (if (vector? v) {:of v} v)
         inherit (if-some [shortcuts (:of inherit)]
                   (into (dissoc inherit :of)
@@ -340,15 +296,16 @@
                    closest-context args))]))
           inherit)]
     `(let [~@inherits-bindings]
-       ~(expand-build-expr opts body))))
+       (-widget-cont ~@body))))
 
-(defn ^:macro-support expand-bind [bind opts body]
-  `(widget
+(defn ^:macro-support expand-bind [bind body]
+  `(-widget-cont
      :let [bindings# (atom ~(zipmap (keys bind) (for [v (vals bind)] `(ensure-model ~v))))]
-     :watch [_ bindings#]
-     (cljd.flutter.alpha2/InheritedBindings. bindings# ~closest-context @bindings# ~(expand-build-expr opts body))))
+     :watch [current# bindings#]
+     (cljd.flutter.alpha2/InheritedBindings. bindings# ~closest-context current#
+       (-widget-cont ~@body))))
 
-(defn ^:macro-support expand-vsync [name opts body]
+(defn ^:macro-support expand-vsync [name body]
   `(reify :extends widgets/StatefulWidget
      :no-meta true
      (~'createState [_#]
@@ -356,32 +313,18 @@
         :no-meta true
         (~'build [state# ~closest-context]
          (let [~name state#]
-           ~(expand-build-expr opts body)))
+           (-widget-cont ~@body)))
         ^:mixin widgets/TickerProviderStateMixin))))
 
-(defn ^:macro-support expand-debug [expr opts body]
+(defn ^:macro-support expand-debug [expr body]
   `(reify :extends widgets/StatelessWidget
      :no-meta true
-     (~'build [_# ~closest-context] ~(expand-build-expr opts body))
+     (~'build [_# ~closest-context] (-widget-cont ~@body))
      (~'debugFillProperties [this# props-builder#]
       (.debugFillProperties ^{:tag ~'super} this# props-builder#)
       ;; TODO: make expand-debug great again, maybe use Navigable ?
       (.add props-builder# (foundation/DiagnosticsNode.message (.toString  ~expr)))
       nil)))
-
-(defn ^:macro-support expand-build-expr [opts body]
-  (if-some [[[opt v] & opts] (seq opts)]
-    (case opt
-      :let `(let ~v ~(expand-build-expr opts body))
-      :watch (expand-watch v opts body)
-      :bind (expand-bind v opts body)
-      :managed (expand-resources v opts body)
-      :get (expand-get-inherited v opts body)
-      :context `(let [~v ~closest-context]
-                  ~(expand-build-expr opts body))
-      :vsync (expand-vsync v opts body)
-      :debug (expand-debug v opts body))
-    `(nest ~@body)))
 
 (defmacro widget
   "Takes a body evaluating to widget preceded by inline options.
@@ -394,23 +337,55 @@
    X :watch
    X :debug
    X :context"
+
   [& body]
-  (let [opts (take-while (comp keyword? first) (partition 2 body))
-        body (drop (* 2 (count opts)) body)
-        has-key (= :key (ffirst opts))
-        [[_ key-expr] & opts] (cond->> opts (not has-key) (cons nil))]
+  (let [[has-key k & body] (if (= :key (first body)) body (list* nil nil body))]
     `(reify :extends (widgets/StatelessWidget
-                         .key ~(when has-key `(foundation/ValueKey. ~key-expr)))
+                       .key ~(cond-> k has-key (list `foundation/ValueKey)))
        :no-meta true
-       (~'build [_# ~closest-context] ~(expand-build-expr opts body)))))
+       (~'build [_# ~closest-context]
+         (-widget-cont ~@body)))))
+
+(defmacro -widget-cont
+  [& body]
+  (if (keyword? (first body))
+    (let [k (first body)
+          v (second body)
+          body (nnext body)]
+      (case k
+        :key `(reify :extends (widgets/StatelessWidget
+                                  .key (foundation/ValueKey ~v))
+                :no-meta true
+                (~'build [_# ~closest-context]
+                  (-widget-cont ~@body)))
+        :let `(let ~v (-widget-cont ~@body))
+        :watch
+        (if-some [[binding expr & more] (seq v)]
+          (let [[opts & more] (collect-options more
+                                #(or (qualified-keyword? %)
+                                   (#{:default :refresh-on :>} %)))]
+            (expand-watch binding expr opts
+              (list* :watch more body)))
+          `(-widget-cont ~@body))
+        :managed
+        (if-some [[binding expr & more] (seq v)]
+          (let [[opts & more] (collect-options more  #{:dispose :refresh-on})]
+            (expand-resource binding expr opts
+              (list* :managed more body)))
+          `(-widget-cont ~@body))
+        :bind (expand-bind v body)
+        :get (expand-get-inherited v  body)
+        :context `(let [~v ~closest-context]
+                    (-widget-cont ~@body))
+        :debug (expand-debug v body)
+        :vsync (expand-vsync v body)))
+    `(nest ~@body)))
 
 (defmacro build
   "Generates a so-called \"builder\" function, that is a widget-returning function which expects 1+ arguments, where the first argument is a BuildContext. (Such fns are expected for example as the .itemBuilder param to ListView/builder)
   `argsvec` is the argument vector, without the BuildContext. If argsvec is empty it can be omitted.
   After the `argsvec` comes a body, interpreted as per the `widget` macro."
   [argsvec? & body]
-  (let [body (cond->> body (not (vector? argsvec?)) (cons argsvec?))
-        opts (take-while (comp keyword? first) (partition 2 body))
-        body (drop (* 2 (count opts)) body)]
-    `(fn [~closest-context ~@(when (vector? argsvec?) argsvec?)]
-       ~(expand-build-expr opts body))))
+  (if (vector? argsvec?)
+    `(fn [~closest-context ~@argsvec?] (-widget-cont ~@body))
+    `(fn [~closest-context] (-widget-cont ~argsvec? ~@body))))
