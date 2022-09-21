@@ -192,17 +192,27 @@
 
 (defn ^:macro-support expand-watch
   [binding expr {:keys [refresh-on] :as opts} body]
-  (let [opts (dissoc opts :refresh-on :>)]
+  (let [accessor (:> opts)
+        opts (dissoc opts :refresh-on :>)
+        state `state#
+        subscribable `subscribable#
+        subscribe-call
+        `(-subscribe ~subscribable
+           ~(if accessor
+              `(fn [_#]
+                 (~state (-> ~subscribable ~accessor)))
+              state)
+           ~opts)]
     `(reify :extends widgets/StatefulWidget
        :no-meta true
        (~'createState [_#] (WatchState nil nil nil nil))
        cljd.flutter.alpha2/RefreshableBindings
        (~'-init-state [_# state#]
-         (let [state# ^WatchState state#
-               subscribable# ~expr]
-           (set! (.-k state#) ~refresh-on)
-           (set! (.-subscribable state#) subscribable#)
-           (set! (.-subscription state#) (-subscribe subscribable# state# ~opts))))
+         (let [~state ^WatchState state#
+               ~subscribable ~expr]
+           (set! (.-k ~state) ~refresh-on)
+           (set! (.-subscribable ~state) ~subscribable)
+           (set! (.-subscription ~state) ~subscribe-call)))
        (~'-dispose-state [_# state#]
          (let [state# ^WatchState state#]
            (-unsubscribe (.-subscribable state#) (.-subscription state#))
@@ -215,14 +225,14 @@
                ~closest-context ctx#]
            (-widget-cont ~@body)))
        (~'-update-state [_# state#]
-         (let [state# ^WatchState state#
+         (let [~state ^WatchState state#
                k# ~refresh-on]
-           (when-not (= k# (.-k state#))
-             (-unsubscribe (.-subscribable state#) (.-subscription state#))
-             (let [subscribable# ~expr]
-               (set! (.-k state#) k#)
-               (set! (.-subscribable state#) subscribable#)
-               (set! (.-subscription state#) (-subscribe subscribable# state# ~opts)))))))))
+           (when-not (= k# (.-k ~state))
+             (-unsubscribe (.-subscribable ~state) (.-subscription ~state))
+             (let [~subscribable ~expr]
+               (set! (.-k ~state) k#)
+               (set! (.-subscribable ~state) ~subscribable)
+               (set! (.-subscription ~state) ~subscribe-call))))))))
 
 (deftype ResourceState [^:mutable k ^:mutable resource]
   :extends widgets/State
@@ -341,7 +351,7 @@
   [& body]
   (let [[has-key k & body] (if (= :key (first body)) body (list* nil nil body))]
     `(reify :extends (widgets/StatelessWidget
-                       .key ~(cond-> k has-key (list `foundation/ValueKey)))
+                       .key ~(when has-key `(foundation/ValueKey ~k)))
        :no-meta true
        (~'build [_# ~closest-context]
          (-widget-cont ~@body)))))
