@@ -1,20 +1,22 @@
 (ns sample.form
   "Faithful port of https://docs.flutter.dev/cookbook/forms/text-field-changes"
   (:require ["package:flutter/material.dart" :as m]
-            [cljd.flutter.alpha :as f]))
+            [cljd.flutter.alpha2 :as f]))
 
 (defn my-custom-form-state [title]
-  (f/widget
-   :with [text-controller (m/TextEditingController)
-          :let [_ (.addListener text-controller
-                                (fn [] (dart:core/print (str "Second text field: " (.-text text-controller)))))]]
-   (m/Scaffold
+  (m/Scaffold
     .appBar (m/AppBar .title (m/Text title))
     .body
-    (m/Padding .padding ^:const (m/EdgeInsets.all 16.0)
-               .child (m/Column
-                        .children [(m/TextField .onChanged (fn [text] (dart:core/print (str "First text field: " text))))
-                                   (m/TextField .controller text-controller)])))))
+    (f/widget
+      :managed [text-controller (m/TextEditingController)]
+      :watch [{second-input-text .-text} text-controller]
+      ; contrived example as one shouldn't do side effects here
+      ; but at least it shows that one can :watch a controller
+      :let [_ (dart:core/print (str "Second text field: " second-input-text))]
+      (m/Padding .padding (m/EdgeInsets.all 16.0) )
+      (m/Column
+        .children [(m/TextField .onChanged (fn [text] (dart:core/print (str "First text field: " text))))
+                   (m/TextField .controller text-controller)]))))
 
 (defn main []
   (let [title "Retrieve text input"]

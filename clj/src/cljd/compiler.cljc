@@ -1049,10 +1049,11 @@
       (when-some [type (resolve-type (symbol alias t) #{} nil)]
         (let [[_ alias t] (re-matches #"(.+)\.(.+)" (name (:qname type)))]
           [(with-meta (symbol (str "$lib:" alias) t) (meta sym)) (symbol (name sym))])))
-    (when-some [[_ t member] (some->> sym name (re-matches #"(?:(.+)\.)(.+)"))]
+    (when-some [[_ t members] (some->> sym name (re-matches #"(?:([^.]+)\.)(.+)"))]
       (when-some [type (resolve-type (symbol (namespace sym) t) #{} nil)]
         (let [[_ alias t] (re-matches #"(.+)\.(.+)" (name (:qname type)))]
-          [(with-meta (symbol (str "$lib:" alias) t) (meta sym)) (symbol member)])))))
+          (into [(with-meta (symbol (str "$lib:" alias) t) (meta sym))]
+                (map symbol) (str/split members #"[.]")))))))
 
 (defn macroexpand-1 [env form]
   (->
@@ -1085,14 +1086,16 @@
            (list* '. (first args) (with-meta (symbol (subs f-name 1)) (meta f)) (next args))
            (meta form))
          :else
-         (if-some [[type member] (resolve-static-member f)]
+         (if-some [[type :as r] (resolve-static-member f)]
            (with-meta
-             (list* '. type member args)
+             (list* '.
+               (reduce #(list '. %1 (str "-" %2)) type (next (pop r)))
+               (peek r) args)
              (meta form))
            form)))
-     (if-let [[type member] (and (symbol? form) (resolve-static-member form))]
+     (if-let [[type & members] (and (symbol? form) (resolve-static-member form))]
        (with-meta
-         (list '. type (str "-" member))
+         (reduce #(list '. %1 (str "-" %2)) type members)
          (meta form))
        form))
    (propagate-hints form)))
@@ -2230,7 +2233,8 @@
                                         :macro-host-fn macro-host-fn}))))]
         (when bootstrap-def
           (binding [*ns* host-ns]
-            (ns-unmap *ns* sym) ; get rid of warnings
+            (when-not (identical? (-> sym resolve meta :ns) *ns*)
+              (ns-unmap *ns* sym)) ; get rid of warnings
             (eval bootstrap-def)))
         (assoc-in nses [the-ns sym] (assoc m :meta (merge msym (:meta m)))))
       *hosted* ; second pass
@@ -2869,6 +2873,9 @@
         {:dart/type (no-future ret-type)
          :dart/inferred true}))))
 
+(defn emit-dart-type-like [[_ x like] env]
+  (simple-cast (emit x env) (:dart/type (infer-type (emit like env)))))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
@@ -2894,6 +2901,7 @@
                          dart/is? emit-dart-is ;; local inference done
                          dart/await emit-dart-await
                          dart/assert emit-dart-assert
+                         dart/type-like emit-dart-type-like
                          throw emit-throw
                          new emit-new ;; local inference done
                          ns emit-ns

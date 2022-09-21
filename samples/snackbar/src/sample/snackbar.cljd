@@ -2,7 +2,7 @@
   "Faithful port of https://docs.flutter.dev/cookbook/design/snackbars"
   (:require
    ["package:flutter/material.dart" :as m]
-   [cljd.flutter.alpha :as f]))
+   [cljd.flutter.alpha2 :as f]))
 
 (def snackbar
   (m/SnackBar
@@ -12,14 +12,13 @@
 
 (def snackbar-demo
   (f/widget
-   :inherit [m/ScaffoldMessenger]
-   (m/Center
-    .child
-    (m/ElevatedButton
+   :get [m/ScaffoldMessenger]
+   m/Center
+   (m/ElevatedButton
      .onPressed (fn []
                   (.showSnackBar scaffold-messenger snackbar)
-                  nil)
-     .child (m/Text "Show text")))))
+                  nil))
+   (m/Text "Show text")))
 
 (defn main []
   (let [title "Snackbar Demo"]

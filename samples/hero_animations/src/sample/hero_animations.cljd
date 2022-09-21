@@ -1,33 +1,30 @@
 (ns sample.hero-animations
   "Faithful port of https://docs.flutter.dev/cookbook/navigation/hero-animations"
   (:require ["package:flutter/material.dart" :as m]
-            [cljd.flutter.alpha :as f]))
+            [cljd.flutter.alpha2 :as f]))
 
 (def detail-screen
-  (f/widget
-   :inherit [m/Navigator]
-   (m/Scaffold
+  (m/Scaffold
     .body
-    (f/nest
-     (m/GestureDetector
-      .onTap #(.pop navigator))
-     m/Center
-     (m/Hero .tag "imageHero")
-     (m/Image.network "https://picsum.photos/250?image=9")))))
+    (f/widget
+      :get [m/Navigator]
+      (m/GestureDetector .onTap #(.pop navigator))
+      m/Center
+      (m/Hero .tag "imageHero")
+      (m/Image.network "https://picsum.photos/250?image=9"))))
 
 (def main-screen
-  (f/widget
-   :inherit [m/Navigator]
-   (m/Scaffold
+  (m/Scaffold
     .appBar (m/AppBar .title (m/Text "Main Screen"))
     .body
-    (m/GestureDetector
-     .onTap #(do
-               (.push navigator (#/(m/MaterialPageRoute Object) .builder (fn [_] detail-screen)))
-               nil)
-     .child (m/Hero
-             .tag "imageHero"
-             .child (m/Image.network "https://picsum.photos/250?image=9"))))))
+    (f/widget :get [m/Navigator]
+      (m/GestureDetector
+        .onTap (fn []
+                 (.push navigator (#/(m/MaterialPageRoute Object)
+                                    .builder (f/build detail-screen)))
+                 nil))
+      (m/Hero .tag "imageHero")
+      (m/Image.network "https://picsum.photos/250?image=9"))))
 
 (defn main
   []

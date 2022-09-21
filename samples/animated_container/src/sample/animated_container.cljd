@@ -2,7 +2,7 @@
   "Faithful port of https://docs.flutter.dev/cookbook/animation/animated-container"
   (:require
    ["package:flutter/material.dart" :as m]
-   [cljd.flutter.alpha :as f]))
+   [cljd.flutter.alpha2 :as f]))
 
 (defn random-to-double [max]
   (-> max rand-int .toDouble))
@@ -14,25 +14,27 @@
                     1))
 
 (defn animated-container []
-  (f/widget
-   :state [config {:width 50.0 :height 50.0 :color m/Colors.green :border-radius (m/BorderRadius.circular 8.0)}]
-   (m/Scaffold
-    .appBar (m/AppBar .title (m/Text "AnimatedContainer Demo"))
-    .body
-    (m/Center
-     .child
-     (m/AnimatedContainer
-      .width (:width @config)
-      .height (:height @config)
-      .decoration (m/BoxDecoration .color (:color @config) .borderRadius (:border-radius @config))
-      .duration ^:const (Duration .seconds 1)
-      .curve m/Curves.fastOutSlowIn))
-    .floatingActionButton
-    (m/FloatingActionButton .onPressed #(swap! config assoc
-                                               :width (random-to-double 300)
-                                               :height (random-to-double 300)
-                                               :color (random-color)
-                                               :border-radius (m/BorderRadius.circular (random-to-double 100)))
-                            .child (m/Icon. m/Icons.play_arrow)))))
+  (let [config (atom {:width 50.0 :height 50.0 :color m/Colors.green :border-radius (m/BorderRadius.circular 8.0)})]
+    (m/Scaffold
+     .appBar (m/AppBar .title (m/Text "AnimatedContainer Demo"))
+     .body
+     (m/Center
+      .child
+      (f/widget
+       :watch [{:keys [width height color border-radius]} config]
+       (m/AnimatedContainer
+        .width width
+        .height height
+        .decoration (m/BoxDecoration .color color .borderRadius border-radius)
+        .duration (Duration .seconds 1)
+        .curve m/Curves.fastOutSlowIn)))
+     .floatingActionButton
+     (m/FloatingActionButton .onPressed
+       #(swap! config assoc
+          :width (random-to-double 300)
+          :height (random-to-double 300)
+          :color (random-color)
+          :border-radius (m/BorderRadius.circular (random-to-double 100)))
+       .child (m/Icon. m/Icons.play_arrow)))))
 
 (defn main [] (m/runApp (m/MaterialApp .home (animated-container))))
