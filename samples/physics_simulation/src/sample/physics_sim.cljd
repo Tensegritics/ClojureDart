@@ -1,16 +1,10 @@
 (ns sample.physics-sim
-  "Faithful port of https://docs.flutter.dev/cookbook/animation/physics-simulation#interactive-example"
+  "Port of https://docs.flutter.dev/cookbook/animation/physics-simulation#interactive-example"
   (:require
    ["package:flutter/material.dart" :as m]
    ["package:flutter/physics.dart" :as p]
    [cljd.flutter.alpha2 :as f]))
 
-;; cgrand's notes: still a relative straight port, however I chose to differ from
-;; the Dart code for the handling of the _animation field.
-;; Dart code uses a single listener which has a ref to a late mutable field.
-;; The invariants between the value of this field, the controller and
-;; the gesture detector was implicit.
-;; I preferred to create a new listener at each PanEnd which closes over the animation.
 (defn draggable-card [& {:keys [child]}]
   (f/widget
    :get [m/MediaQuery]
@@ -27,9 +21,7 @@
                  simulation (p/SpringSimulation spring 0 1 (- unit-velocity))]
              (swap! state assoc :animation
                (.drive animator
-                 (m/AlignmentTween
-                   .begin alignment
-                   .end m/Alignment.center)))
+                 (m/AlignmentTween .begin alignment .end m/Alignment.center)))
              (.animateWith animator simulation)))]
    (m/GestureDetector
      .onPanDown (fn [_]
@@ -39,9 +31,7 @@
                   nil)
      .onPanUpdate (fn [^m/DragUpdateDetails {{:flds [dx dy]} .-localPosition}]
                     (swap! state assoc :alignment
-                      (m/Alignment
-                        (- (* 2 (/ dx width)) 1)
-                        (- (* 2 (/ dy height)) 1)))
+                      (m/Alignment (- (* 2 (/ dx width)) 1) (- (* 2 (/ dy height)) 1)))
                     nil)
      .onPanEnd (fn [^m/DragEndDetails details]
                  (run-animation (-> details .-velocity .-pixelsPerSecond))
