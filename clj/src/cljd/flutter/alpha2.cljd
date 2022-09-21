@@ -18,7 +18,7 @@
 
 (extend-protocol Subscribable
   Null
-  (-subscribe [n _ _] nil)
+  (-subscribe [n f! opts] (f! (:default opts)) nil)
   (-unsubscribe [n _] nil)
   cljd.core/Atom
   (-subscribe [a f _]
