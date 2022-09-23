@@ -12,7 +12,7 @@
    :managed [animator (m/AnimationController .vsync vsync)]
    :let [state (atom {:alignment m/Alignment.center})]
    :watch [{:keys [alignment animation]} state
-           animated-alignment animation :refresh-on animation]
+           animated-alignment animation]
    :let [{:flds [width height]} (.-size media-query)
          run-animation
          (fn [^m/Offset {:flds [dx dy]}]

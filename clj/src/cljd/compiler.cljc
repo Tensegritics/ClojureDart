@@ -1055,6 +1055,8 @@
           (into [(with-meta (symbol (str "$lib:" alias) t) (meta sym))]
                 (map symbol) (str/split members #"[.]")))))))
 
+(declare cljd-closed-overs)
+
 (defn macroexpand-1 [env form]
   (->
    (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
@@ -1074,7 +1076,9 @@
          (or (= 'cljd.core/extend-type f) (= 'extend-type f)) (apply expand-extend-type args)
          (= '. f) form
          macro-fn
-         (apply macro-fn form (assoc env :nses @nses) (next form))
+         (apply macro-fn form (assoc env :nses @nses
+                                :closed-overs #(cljd-closed-overs % env))
+           (next form))
          (.endsWith f-name ".")
          (with-meta
            (list* 'new
@@ -1950,6 +1954,10 @@
   [emitted env] ; TODO now that env may have expressions (dart/as ..) as values we certainly have subtle bugs
   (let [dart-locals (into #{} (map #(cond-> % (seq? %) second)) (vals env))]
     (into #{} (comp (filter symbol?) (keep dart-locals)) (tree-seq sequential? seq emitted))))
+
+(defn cljd-closed-overs [expr env]
+  (let [dart-locals (closed-overs (emit expr env) env)]
+    (into #{} (keep (fn [[k v]] (when (dart-locals v) k))) env)))
 
 (defn- emit-dart-fn [async fn-name [params & body] env]
   (let [ret-type (some-> (or (:tag (meta fn-name)) (:tag (meta params))) (emit-type env))
