@@ -67,7 +67,7 @@
   (-unsubscribe [l listener]
     (.removeListener l listener)))
 
-(defprotocol RefreshableBindings
+(defprotocol StateLifecycle
   (-build [_ state ctx])
   (-update-state [_ state])
   (-init-state [_ state])
@@ -162,8 +162,7 @@
   "Threading macro for nesting widgets.
   Starting from the end each form is nested in the previous one as a .child named argument."
   [form & forms]
-  (let [[form & forms] (reverse (cons form forms))]
-    `(->> ~form ~@(for [form forms] (-> form (cond-> (symbol? form) list) (concat  ['.child]) (with-meta (meta form)))))))
+  `(f/widget ~form ~@forms))
 
 (defn- ^:macro-support camel-kebab [s]
   (str/replace s #"(^[A-Z])|[A-Z]" (fn [[s start]] (cond->> (str/lower-case s) (not start) (str "-")))))
@@ -191,22 +190,24 @@
   (-invoke [state x] (set! latest x) (.setState state (fn []))))
 
 (defn ^:macro-support expand-watch
-  [binding expr {:keys [refresh-on] :as opts} body]
+  [env binding expr {:keys [refresh-on dispose] :as opts} forms]
   (let [accessor (:> opts)
-        opts (dissoc opts :refresh-on :>)
+        dispose (if (true? dispose) '.dispose dispose)
+        opts (dissoc opts :refresh-on :> :dispose)
         state `state#
         subscribable `subscribable#
         subscribe-call
         `(-subscribe ~subscribable
-           ~(if accessor
-              `(fn [_#]
-                 (~state (-> ~subscribable ~accessor)))
-              state)
-           ~opts)]
-    `(reify :extends widgets/StatefulWidget
+                     ~(if accessor
+                        `(fn [_#]
+                           (~state (-> ~subscribable ~accessor)))
+                        state)
+                     ~opts)]
+    `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (WatchState nil nil nil nil))
-       cljd.flutter.alpha2/RefreshableBindings
+       ~@(:debug env)
+       cljd.flutter.alpha2/StateLifecycle
        (~'-init-state [_# state#]
          (let [~state ^WatchState state#
                ~subscribable ~expr]
@@ -215,7 +216,9 @@
            (set! (.-subscription ~state) ~subscribe-call)))
        (~'-dispose-state [_# state#]
          (let [state# ^WatchState state#]
-           (-unsubscribe (.-subscribable state#) (.-subscription state#))
+           (doto (.-subscribable state#)
+             (-unsubscribe (.-subscription state#))
+             ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
            (set! (.-k state#) nil)
            (set! (.-subscribable state#) nil)
            (set! (.-subscription state#) nil)
@@ -223,12 +226,15 @@
        (~'-build [_# state# ctx#]
          (let [~binding (.-latest ^WatchState state#)
                ~closest-context ctx#]
-           (-widget-cont ~@body)))
+           (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true))
+             ~@forms)))
        (~'-update-state [_# state#]
          (let [~state ^WatchState state#
                k# ~refresh-on]
            (when-not (= k# (.-k ~state))
-             (-unsubscribe (.-subscribable ~state) (.-subscription ~state))
+             (doto (.-subscribable ~state)
+               (-unsubscribe (.-subscription ~state))
+               ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
              (let [~subscribable ~expr]
                (set! (.-k ~state) k#)
                (set! (.-subscribable ~state) ~subscribable)
@@ -251,12 +257,13 @@
     (-build (.-widget state) state ctx)))
 
 (defn ^:macro-support expand-resource
-  [binding expr {:keys [refresh-on dispose] :as opts
-                 :or {dispose '.dispose}} body]
-  `(reify :extends widgets/StatefulWidget
+  [env binding expr {:keys [refresh-on dispose]
+                     :or {dispose '.dispose}} forms]
+  `(reify :extends (widgets/StatefulWidget .key ~(:key env))
      :no-meta true
      (~'createState [_#] (ResourceState nil nil))
-     cljd.flutter.alpha2/RefreshableBindings
+     ~@(:debug env)
+     cljd.flutter.alpha2/StateLifecycle
      (~'-init-state [_# state#]
        (let [state# ^ResourceState state#]
          (set! (.-k state#) ~refresh-on)
@@ -268,128 +275,147 @@
          (set! (.-resource state#) nil)))
      (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
        (let [~binding (dart/type-like (.-resource ^ResourceState state#) ~expr)]
-         (-widget-cont ~@body)))
+         (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true))
+           ~@forms)))
      (~'-update-state [_# state#]
-      (let [state# ^ResourceState state#
-            k# ~refresh-on]
-        (when-not (= k# (.-k state#))
-          (-> (dart/type-like (.-resource state#) ~expr) ~dispose)
-          (set! (.-k state#) k#)
-          (set! (.-resource state#) ~expr))))))
+       (let [state# ^ResourceState state#
+             k# ~refresh-on]
+         (when-not (= k# (.-k state#))
+           (-> (dart/type-like (.-resource state#) ~expr) ~dispose)
+           (set! (.-k state#) k#)
+           (set! (.-resource state#) ~expr))))))
 
-(defn ^:macro-support expand-get-inherited [v body]
-  (let [inherit (if (vector? v) {:of v} v)
-        inherit (if-some [shortcuts (:of inherit)]
-                  (into (dissoc inherit :of)
-                    (map (fn [type-or-kw]
-                           (let [hint (cond-> type-or-kw (seq? type-or-kw) first)]
-                             [(symbol
-                                (if (keyword? hint)
-                                  (name hint)
-                                  (camel-kebab (re-find #"[^.]+$" (name hint)))))
-                              type-or-kw])))
-                    shortcuts)
-                  inherit)
-        inherits-bindings
-        (mapcat
-          (fn [[sym type-or-kw]]
-            (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)]
-              [sym
-               (if (keyword? type-or-kw)
-                 `(get-state-of ~closest-context ~type-or-kw ~(vec args))
-                 (list*
-                   (symbol
-                     (if-some [ns (namespace type-or-kw)]
-                       (str ns "." (name type-or-kw))
-                       (name type-or-kw))
-                     "of")
-                   closest-context args))]))
-          inherit)]
-    `(let [~@inherits-bindings]
-       (-widget-cont ~@body))))
+(defn ^:macro-support expand-get-inherited [env v forms]
+  (if-not (:closest-ctx env)
+    `(-widget-cont ~env :context ~closest-context :get ~v ~@forms)
+    (let [inherit (if (vector? v) {:of v} v)
+          inherit (if-some [shortcuts (:of inherit)]
+                    (into (dissoc inherit :of)
+                      (map (fn [type-or-kw]
+                             (let [hint (cond-> type-or-kw (seq? type-or-kw) first)]
+                               [(symbol
+                                  (if (keyword? hint)
+                                    (name hint)
+                                    (camel-kebab (re-find #"[^.]+$" (name hint)))))
+                                type-or-kw])))
+                      shortcuts)
+                    inherit)
+          inherits-bindings
+          (mapcat
+            (fn [[sym type-or-kw]]
+              (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)]
+                [sym
+                 (if (keyword? type-or-kw)
+                   `(get-state-of ~closest-context ~type-or-kw ~(vec args))
+                   (list*
+                     (symbol
+                       (if-some [ns (namespace type-or-kw)]
+                         (str ns "." (name type-or-kw))
+                         (name type-or-kw))
+                       "of")
+                     closest-context args))]))
+            inherit)]
+      `(let [~@inherits-bindings] (-widget-cont ~env ~@forms)))))
 
-(defn ^:macro-support expand-bind [bind body]
-  `(-widget-cont
+(defn ^:macro-support expand-bind [env bind forms]
+  `(-widget-cont ~env
      :let [bindings# (atom ~(zipmap (keys bind) (for [v (vals bind)] `(ensure-model ~v))))]
-     :watch [current# bindings#]
+     :watch [current# bindings#] ; this introduces context
      (cljd.flutter.alpha2/InheritedBindings. bindings# ~closest-context current#
-       (-widget-cont ~@body))))
+       (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true)) ~@forms))))
 
-(defn ^:macro-support expand-vsync [name body]
-  `(reify :extends widgets/StatefulWidget
+(defn ^:macro-support expand-vsync [env name forms]
+  `(reify :extends (widgets/StatefulWidget .key (:env key))
      :no-meta true
      (~'createState [_#]
-      (reify :extends widgets/State
-        :no-meta true
-        (~'build [state# ~closest-context]
-         (let [~name state#]
-           (-widget-cont ~@body)))
-        ^:mixin widgets/TickerProviderStateMixin))))
+       (reify :extends widgets/State
+         :no-meta true
+         (~'build [state# ~closest-context]
+           (let [~name state#]
+             (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true)) ~@forms)))
+         ^:mixin widgets/TickerProviderStateMixin))
+     ~@(:debug env)))
 
-(defn ^:macro-support expand-debug [expr body]
-  `(reify :extends widgets/StatelessWidget
-     :no-meta true
-     (~'build [_# ~closest-context] (-widget-cont ~@body))
-     (~'debugFillProperties [this# props-builder#]
-      (.debugFillProperties ^{:tag ~'super} this# props-builder#)
-      ;; TODO: make expand-debug great again, maybe use Navigable ?
-      (.add props-builder# (foundation/DiagnosticsNode.message (.toString  ~expr)))
-      nil)))
+(defn ^:macro-support expand-debug [env expr forms]
+  (let [thunk-sym (gensym 'debug)
+        debug-methods
+        [`(~'debugFillProperties [this# props-builder#]
+           (.debugFillProperties ^{:tag ~'super} this# props-builder#)
+           ;; TODO: make expand-debug great again, maybe use Navigable ?
+           (.add props-builder# (foundation/DiagnosticsNode.message (.toString this# #_(~thunk-sym))))
+           nil)]]
+    ; to protect against locals shadowing between the :debug directive and its
+    ; implementation in a widget we create a thunk
+    `(let [~thunk-sym (fn [] ~expr)]
+       (-widget-cont ~(assoc env :debug debug-methods) ~@forms))))
 
 (defmacro widget
-  "Takes a body evaluating to widget preceded by inline options.
+  "Returns a widget.
+
+  Takes a body evaluating to widget preceded by inline options.
    X :key expr (MUST appear as the first option), the widget's key.
    X :let bindings
    X :bind
    X :vsync
    X :get (né :inherit)
-   X :resources
+   X :managed
    X :watch
    X :debug
    X :context"
 
   [& body]
-  (let [[has-key k & body] (if (= :key (first body)) body (list* nil nil body))]
-    `(reify :extends (widgets/StatelessWidget
-                       .key ~(when has-key `(foundation/ValueKey ~k)))
-       :no-meta true
-       (~'build [_# ~closest-context]
-         (-widget-cont ~@body)))))
+  `(-widget-cont {} ~@body))
+
+(defn- ^:macro-support stateless-flush [env forms]
+  `(reify :extends (widgets/StatelessWidget .key ~(:key env))
+     :no-meta true
+     (~'build [_# ~closest-context]
+      (-widget-cont ~(-> env (dissoc :key :debug)
+                       (assoc :closest-ctx true)) ~@forms))
+     ~@(:debug env)))
+
+(defn- ^:macro-support expand-directive [env k v form & more-forms]
+  (let [ksym `k#
+        forms (cons form more-forms)]
+    (case k
+      :key `(let [~ksym (foundation/ValueKey ~v)]
+              `(-widget-cont ~(assoc env :key ksym) ~@forms))
+      :let `(let ~v (-widget-cont ~env ~@forms))
+      :watch
+      (if-some [[binding expr & more] (seq v)]
+        (let [[opts & more] (collect-options more
+                                             #(or (qualified-keyword? %)
+                                                  (#{:default :refresh-on :dispose :>} %)))]
+          (expand-watch env binding expr opts (list* :watch more forms)))
+        `(-widget-cont ~env ~@forms))
+      :managed
+      (if-some [[binding expr & more] (seq v)]
+        (let [[opts & more] (collect-options more  #{:dispose :refresh-on})]
+          (expand-resource env binding expr opts (list* :managed more forms)))
+        `(-widget-cont ~env ~@forms))
+      :bind (expand-bind env v forms)
+      :get (expand-get-inherited env v forms)
+      :context
+      (if (:closest-ctx env)
+        `(let [~v ~closest-context] (-widget-cont ~env ~@forms))
+        (stateless-flush env (list* :context v forms)))
+      #_#_:debug (expand-debug env v forms)
+      :vsync (expand-vsync env v forms))))
 
 (defmacro -widget-cont
-  [& body]
-  (if (keyword? (first body))
-    (let [k (first body)
-          v (second body)
-          body (nnext body)]
-      (case k
-        :key `(reify :extends (widgets/StatelessWidget
-                                  .key (foundation/ValueKey ~v))
-                :no-meta true
-                (~'build [_# ~closest-context]
-                  (-widget-cont ~@body)))
-        :let `(let ~v (-widget-cont ~@body))
-        :watch
-        (if-some [[binding expr & more] (seq v)]
-          (let [[opts & more] (collect-options more
-                                #(or (qualified-keyword? %)
-                                   (#{:default :refresh-on :>} %)))]
-            (expand-watch binding expr opts
-              (list* :watch more body)))
-          `(-widget-cont ~@body))
-        :managed
-        (if-some [[binding expr & more] (seq v)]
-          (let [[opts & more] (collect-options more  #{:dispose :refresh-on})]
-            (expand-resource binding expr opts
-              (list* :managed more body)))
-          `(-widget-cont ~@body))
-        :bind (expand-bind v body)
-        :get (expand-get-inherited v  body)
-        :context `(let [~v ~closest-context]
-                    (-widget-cont ~@body))
-        :debug (expand-debug v body)
-        :vsync (expand-vsync v body)))
-    `(nest ~@body)))
+  [env form & more-forms]
+  (cond
+    (keyword? form) (apply expand-directive env form more-forms)
+    (some env [:key :debug])
+    (stateless-flush env (cons form more-forms))
+    (nil? more-forms) form
+    (symbol? form)
+    (-> `(~form .child (-widget-cont ~(dissoc env :closest-ctx) ~@more-forms))
+      (with-meta (meta form)))
+    (seq? form)
+    (-> `(~@form .child (-widget-cont ~(dissoc env :closest-ctx) ~@more-forms))
+      (with-meta (meta form)))
+    :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms}))))
 
 (defmacro build
   "Generates a so-called \"builder\" function, that is a widget-returning function which expects 1+ arguments, where the first argument is a BuildContext. (Such fns are expected for example as the .itemBuilder param to ListView/builder)
@@ -397,5 +423,5 @@
   After the `argsvec` comes a body, interpreted as per the `widget` macro."
   [argsvec? & body]
   (if (vector? argsvec?)
-    `(fn [~closest-context ~@argsvec?] (-widget-cont ~@body))
-    `(fn [~closest-context] (-widget-cont ~argsvec? ~@body))))
+    `(fn [~closest-context ~@argsvec?] (-widget-cont {:closest-ctx true} ~@body))
+    `(fn [~closest-context] (-widget-cont {:closest-ctx true} ~argsvec? ~@body))))
