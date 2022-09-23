@@ -415,11 +415,18 @@
     (stateless-flush env (cons form more-forms))
     (nil? more-forms) form
     (symbol? form)
-    (-> `(~form .child (-widget-cont ~(dissoc env :closest-ctx) ~@more-forms))
-      (with-meta (meta form)))
+    `(-widget-cont ~env ~(with-meta (list form) (meta form)) ~@more-forms)
     (seq? form)
-    (-> `(~@form .child (-widget-cont ~(dissoc env :closest-ctx) ~@more-forms))
-      (with-meta (meta form)))
+    (let [[maybe-prop & more-forms] more-forms
+          prop (when (and more-forms (simple-symbol? maybe-prop)
+                       (.startsWith (name maybe-prop) "."))
+                 maybe-prop)
+          env (dissoc env :closest-ctx)]
+      (-> (if prop
+            `(~@form ~prop (-widget-cont ~env ~@more-forms))
+            `(~@form .child (-widget-cont ~env ~maybe-prop ~@more-forms)))
+          (with-meta (meta form))))
+
     :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms}))))
 
 (defmacro build
