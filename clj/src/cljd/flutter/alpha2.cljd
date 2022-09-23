@@ -158,12 +158,6 @@
         (throw (Exception. (str "Unsupported option: " k)))))
     (cons opts exprs)))
 
-(defmacro nest
-  "Threading macro for nesting widgets.
-  Starting from the end each form is nested in the previous one as a .child named argument."
-  [form & forms]
-  `(f/widget ~form ~@forms))
-
 (defn- ^:macro-support camel-kebab [s]
   (str/replace s #"(^[A-Z])|[A-Z]" (fn [[s start]] (cond->> (str/lower-case s) (not start) (str "-")))))
 
