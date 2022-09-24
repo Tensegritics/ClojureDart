@@ -5,24 +5,24 @@
 
 (defn my-home-page [title]
   (let [visible-state (atom true)]
-    (m/Scaffold
-     .appBar (m/AppBar .title (m/Text title))
-     .body
-     (f/widget
-      :watch [visible visible-state]
+    (f/widget
+      (m/Scaffold
+        .appBar (m/AppBar .title (m/Text title))
+        .floatingActionButton
+        (m/FloatingActionButton .onPressed (fn [] (swap! visible-state not))
+          .tooltip "Toggle Opacity"
+          .child (m/Icon m/Icons.flip)))
+      .body
       m/Center
+      :watch [visible visible-state]
       (m/AnimatedOpacity
-       .opacity (if visible 1.0 0.0)
-       .duration (Duration .milliseconds 500))
-      (m/Container .width 200.0 .height 200.0 .color m/Colors.green))
-     .floatingActionButton
-     (m/FloatingActionButton .onPressed (fn [] (swap! visible-state not))
-                             .tooltip "Toggle Opacity"
-                             .child (m/Icon m/Icons.flip)))))
+        .opacity (if visible 1.0 0.0)
+        .duration (Duration .milliseconds 500))
+      (m/Container .width 200.0 .height 200.0 .color m/Colors.green))))
 
 (defn main []
   (let [title "Opacity Demo"]
     (m/runApp
-     (m/MaterialApp
-      .title title
-      .home (my-home-page title)))))
+      (m/MaterialApp
+        .title title
+        .home (my-home-page title)))))

@@ -31,32 +31,28 @@
 
 (defn action-button [& {:keys [on-pressed icon]}]
   (f/widget
-   :get {{{:flds [secondary onSecondary]} .-colorScheme} m/Theme}
-   (m/Material
-    .shape (m/CircleBorder)
-    .clipBehavior m/Clip.antiAlias
-    .color secondary
-    .elevation 4.0)
-   (m/IconButton
-     .onPressed on-pressed
-     .icon icon
-     .color onSecondary)))
+    :get {{{:flds [secondary onSecondary]} .-colorScheme} m/Theme}
+    (m/Material
+      .shape (m/CircleBorder)
+      .clipBehavior m/Clip.antiAlias
+      .color secondary
+      .elevation 4.0)
+    (m/IconButton
+      .onPressed on-pressed
+      .icon icon
+      .color onSecondary)))
 
 (defn expanding-action-button
   [& {:keys [direction-degrees max-distance ^#/(m/Animation double) progress child]}]
-  (f/nest
-   (m/AnimatedBuilder
-    .animation progress
-    .builder (f/build [child]
-               :let [v (.-value progress)
-                     {:flds [dx dy]} (m/Offset.fromDirection
-                                       (* direction-degrees (/ math/pi 180.0))
-                                       (* v max-distance))]
-               (m/Positioned .right (+ 4.0 dx) .bottom (+ 4.0 dy))
-               (m/Transform.rotate .angle (* (- 1.0 v) math/pi 0.5))
-               child))
-   (m/FadeTransition .opacity progress)
-   child))
+  (f/widget
+    :watch [v progress]
+    :let [{:flds [dx dy]} (m/Offset.fromDirection
+                            (* direction-degrees (/ math/pi 180.0))
+                            (* v max-distance))]
+    (m/Positioned .right (+ 4.0 dx) .bottom (+ 4.0 dy))
+    (m/Transform.rotate .angle (* (- 1.0 v) math/pi 0.5))
+    (m/Opacity .opacity v)
+    child))
 
 (defn expandable-fab [& {:keys [distance children]}]
   (f/widget
@@ -65,9 +61,8 @@
    :managed [controller (m/AnimationController
                           .value 0.0
                           .duration (dart:core/Duration .milliseconds 250)
-                          .vsync vsync)]
-   ; TODO alpha2: fix visibility
-   :managed [expand-animation (m/CurvedAnimation
+                          .vsync vsync)
+             expand-animation (m/CurvedAnimation
                                 .curve m/Curves.fastOutSlowIn
                                 .reverseCurve m/Curves.easeOutQuad
                                 .parent controller)]
@@ -76,7 +71,6 @@
                    (.reverse controller))
          tap-to-close-fab
          (f/widget
-           :get {{:flds [primaryColor]} m/Theme}
            (m/SizedBox
              .width 56.0
              .height 56.0)
@@ -87,17 +81,16 @@
              .elevation 4.0)
            (m/InkWell .onTap toggle)
            (m/Padding .padding (m/EdgeInsets.all 8.0))
+           :get {{:flds [primaryColor]} m/Theme}
            (m/Icon m/Icons.close .color primaryColor))
          tap-to-open-fab
          (f/widget
            :watch [is-open open-state]
            (m/IgnorePointer .ignoring is-open)
+           :let [scaling (if is-open 0.7 1.0)]
            (m/AnimatedContainer
              .transformAlignment m/Alignment.center
-             .transform (m.Matrix4/diagonal3Values
-                          (if is-open 0.7 1.0)
-                          (if is-open 0.7 1.0)
-                          1.0)
+             .transform (m.Matrix4/diagonal3Values scaling scaling 1.0)
              .duration (dart:core/Duration .milliseconds 250)
            .curve (m/Interval 0.0 0.5 .curve m/Curves.easeOut))
            (m/AnimatedOpacity
@@ -111,16 +104,16 @@
    (m/Stack
     .alignment m/Alignment.bottomRight
     .clipBehavior m/Clip.none
-    .children (-> [tap-to-close-fab]
-                  (into (map-indexed
-                         (fn [i child]
-                           (expanding-action-button
-                            :direction-degrees (* i step)
-                            :max-distance distance
-                            :progress expand-animation
-                            :child child)))
-                        children)
-                  (conj tap-to-open-fab)))))
+    .children (concat [tap-to-close-fab]
+                (map-indexed
+                  (fn [i child]
+                    (expanding-action-button
+                      :direction-degrees (* i step)
+                      :max-distance distance
+                      :progress expand-animation
+                      :child child))
+                  children)
+                [tap-to-open-fab]))))
 
 (defn example-expandable-fab []
   (f/widget
