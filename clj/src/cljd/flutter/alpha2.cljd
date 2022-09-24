@@ -209,7 +209,6 @@
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (WatchState nil nil nil nil))
-       ~@(:debug env)
        cljd.flutter.alpha2/StateLifecycle
        (~'-init-state [_# state#]
          (let [~state ^WatchState state#
@@ -229,7 +228,7 @@
        (~'-build [_# state# ctx#]
          (let [~binding (.-latest ^WatchState state#)
                ~closest-context ctx#]
-           (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true))
+           (-widget-cont ~(assoc env :key nil :closest-ctx true)
              ~@forms)))
        (~'-update-state [_# state#]
          (let [~state ^WatchState state#
@@ -269,7 +268,6 @@
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (WatchState nil nil nil nil))
-       ~@(:debug env)
        cljd.flutter.alpha2/StateLifecycle
        (~'-init-state [_# state#]
          (let [~state ^WatchState state#
@@ -287,7 +285,7 @@
            (set! (.-subscription state#) nil)))
        (~'-build [_# state# ctx#]
          (let [~closest-context ctx#]
-           (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true))
+           (-widget-cont ~(assoc env :key nil :closest-ctx true)
                          ~@forms)))
        (~'-update-state [_# state#]
          (let [~state ^WatchState state#
@@ -324,7 +322,6 @@
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (ResourceState nil nil))
-       ~@(:debug env)
        cljd.flutter.alpha2/StateLifecycle
        (~'-init-state [_# state#]
          (let [state# ^ResourceState state#]
@@ -337,7 +334,7 @@
            (set! (.-resource state#) nil)))
        (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
          (let [~binding (dart/type-like (.-resource ^ResourceState state#) ~expr)]
-           (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true))
+           (-widget-cont ~(assoc env :key nil :closest-ctx true)
                          ~@forms)))
        (~'-update-state [_# state#]
          (let [state# ^ResourceState state#
@@ -384,7 +381,7 @@
      :let [bindings# (atom ~(zipmap (keys bind) (for [v (vals bind)] `(ensure-model ~v))))]
      :watch [current# bindings#] ; this introduces context
      (cljd.flutter.alpha2/InheritedBindings. bindings# ~closest-context current#
-       (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true)) ~@forms))))
+       (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
 
 (defn ^:macro-support expand-vsync [env name forms]
   `(reify :extends (widgets/StatefulWidget .key (:env key))
@@ -394,22 +391,21 @@
          :no-meta true
          (~'build [state# ~closest-context]
            (let [~name state#]
-             (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true)) ~@forms)))
-         ^:mixin widgets/TickerProviderStateMixin))
-     ~@(:debug env)))
+             (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))
+         ^:mixin widgets/TickerProviderStateMixin))))
 
-(defn ^:macro-support expand-debug [env expr forms]
-  (let [thunk-sym (gensym 'debug)
-        debug-methods
-        [`(~'debugFillProperties [this# props-builder#]
-           (.debugFillProperties ^{:tag ~'super} this# props-builder#)
-           ;; TODO: make expand-debug great again, maybe use Navigable ?
-           (.add props-builder# (foundation/DiagnosticsNode.message (.toString this# #_(~thunk-sym))))
-           nil)]]
-    ; to protect against locals shadowing between the :debug directive and its
-    ; implementation in a widget we create a thunk
-    `(let [~thunk-sym (fn [] ~expr)]
-       (-widget-cont ~(assoc env :debug debug-methods) ~@forms))))
+(deftype SpyWidget [k child f]
+  :extends (widgets/StatelessWidget .key k)
+  (build [_ _] child)
+  (debugFillProperties [this props-builder]
+   (.debugFillProperties ^super this props-builder)
+   (f props-builder)
+   nil))
+
+(defn ^:macro-support expand-spy [env expr forms]
+  `(SpyWidget ~(:key env) (-widget-cont ~(assoc env :key nil) ~@forms)
+     (fn [^foundation/DiagnosticPropertiesBuilder props-builder#]
+       (.add props-builder# (foundation/DiagnosticsNode.message (.toString ~expr))))))
 
 (defmacro widget
   "Returns a widget.
@@ -432,9 +428,7 @@
   `(reify :extends (widgets/StatelessWidget .key ~(:key env))
      :no-meta true
      (~'build [_# ~closest-context]
-      (-widget-cont ~(-> env (dissoc :key :debug)
-                       (assoc :closest-ctx true)) ~@forms))
-     ~@(:debug env)))
+      (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
 
 (defn- ^:macro-support expand-directive [&env env k v form & more-forms]
   (let [ksym `k#
@@ -469,7 +463,7 @@
       (if (:closest-ctx env)
         `(let [~v ~closest-context] (-widget-cont ~env ~@forms))
         (stateless-flush env (list* :context v forms)))
-      #_#_:debug (expand-debug env v forms)
+      :spy (expand-spy env v forms)
       :vsync (expand-vsync env v forms))))
 
 (defmacro -widget-cont
@@ -491,7 +485,6 @@
             `(~@form ~prop (-widget-cont ~env ~@more-forms))
             `(~@form .child (-widget-cont ~env ~maybe-prop ~@more-forms)))
           (with-meta (meta form))))
-
     :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms}))))
 
 (defmacro build
