@@ -10,7 +10,7 @@
   (-subscribe [x f! opts]
     "Subscribe to updates on x.
      opts is a map of keyword-keyed options
-     (keyword must be namespaced except for default)
+     (keywords must be namespaced except for :default)
      f! is a side-effecting function of one argument.
      Returns a subscription.
      MUST call f! during subscription.")
@@ -30,8 +30,7 @@
     (remove-watch a cb))
   Stream
   (-subscribe [s f opts]
-    (let [{:keys [default]} opts]
-      (f default))
+    (f (:default opts))
     (.listen s (fn [x] (f x) nil) .cancelOnError true))
   (-unsubscribe [s sub]
     (.cancel ^dart:async/StreamSubscription sub))
@@ -244,6 +243,64 @@
                (set! (.-subscribable ~state) ~subscribable)
                (set! (.-subscription ~state) ~subscribe-call))))))))
 
+(defn ^:macro-support expand-bg-watcher
+  [&env env binding expr {:keys [dispose] :as opts} body forms]
+  (let [accessor (:> opts)
+        dispose (if (true? dispose) '.dispose dispose)
+        refresh-on (refresh-on-expr opts &env expr)
+        opts (dissoc opts :refresh-on :> :dispose)
+        state `state#
+        subscribable `subscribable#
+        subscribe-call
+        `(-subscribe ~subscribable
+                     ~(if accessor
+                        `(fn [_#]
+                           (let [x# (-> ~subscribable ~accessor)]
+                             (when-not (identical? x# ~state)
+                               (let [~binding x#]
+                                 ~@body
+                                 nil))))
+                        `(fn [x#]
+                           (when-not (identical? x# ~state)
+                             (let [~binding x#]
+                               ~@body
+                               nil))))
+                     ~(assoc opts :default state))]
+    `(reify :extends (widgets/StatefulWidget .key ~(:key env))
+       :no-meta true
+       (~'createState [_#] (WatchState nil nil nil nil))
+       ~@(:debug env)
+       cljd.flutter.alpha2/StateLifecycle
+       (~'-init-state [_# state#]
+         (let [~state ^WatchState state#
+               ~subscribable ~expr]
+           (set! (.-k ~state) ~refresh-on)
+           (set! (.-subscribable ~state) ~subscribable)
+           (dart:async/scheduleMicrotask (fn [] (set! (.-subscription ~state) ~subscribe-call)))))
+       (~'-dispose-state [_# state#]
+         (let [state# ^WatchState state#]
+           (doto (.-subscribable state#)
+             (-unsubscribe (.-subscription state#))
+             ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
+           (set! (.-k state#) nil)
+           (set! (.-subscribable state#) nil)
+           (set! (.-subscription state#) nil)))
+       (~'-build [_# state# ctx#]
+         (let [~closest-context ctx#]
+           (-widget-cont ~(-> env (dissoc :key :debug) (assoc :closest-ctx true))
+                         ~@forms)))
+       (~'-update-state [_# state#]
+         (let [~state ^WatchState state#
+               k# ~refresh-on]
+           (when-not (= k# (.-k ~state))
+             (doto (.-subscribable ~state)
+               (-unsubscribe (.-subscription ~state))
+               ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
+             (let [~subscribable ~expr]
+               (set! (.-k ~state) k#)
+               (set! (.-subscribable ~state) ~subscribable)
+               (dart:async/scheduleMicrotask (fn [] (set! (.-subscription ~state) ~subscribe-call))))))))))
+
 (deftype ResourceState [^:mutable k ^:mutable resource]
   :extends widgets/State
   (initState [state]
@@ -398,6 +455,14 @@
         (let [[opts & more] (collect-options more  #{:dispose :refresh-on})]
           (expand-resource &env env binding expr opts (list* :managed more forms)))
         `(-widget-cont ~env ~@forms))
+      :bg-watcher
+      (let [[[binding expr & more] & body] (seq v)
+            [opts & more] (collect-options more
+                            #(or (qualified-keyword? %)
+                               (#{:refresh-on :dispose :>} %)))]
+        (when more
+          (throw (Exception. "Extra forms found after options.")))
+        (expand-bg-watcher &env env binding expr opts body forms))
       :bind (expand-bind env v forms)
       :get (expand-get-inherited env v forms)
       :context

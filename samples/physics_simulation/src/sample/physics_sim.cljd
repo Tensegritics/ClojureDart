@@ -11,8 +11,9 @@
    :vsync vsync
    :managed [animator (m/AnimationController .vsync vsync)]
    :let [state (atom {:alignment m/Alignment.center})]
-   :watch [{:keys [alignment animation]} state
-           animated-alignment animation]
+   :watch [{:keys [alignment animation]} state]
+   :bg-watcher ([animated-alignment animation]
+                (swap! state assoc :alignment animated-alignment))
    :let [{:flds [width height]} (.-size media-query)
          run-animation
          (fn [^m/Offset {:flds [dx dy]}]
@@ -26,8 +27,8 @@
    (m/GestureDetector
      .onPanDown (fn [_]
                   (.stop animator)
-                  (when animated-alignment
-                    (swap! state assoc :animation nil :alignment animated-alignment))
+                  (when animation
+                    (swap! state dissoc :animation))
                   nil)
      .onPanUpdate (fn [^m/DragUpdateDetails {{:flds [dx dy]} .-localPosition}]
                     (swap! state assoc :alignment
@@ -36,7 +37,7 @@
      .onPanEnd (fn [^m/DragEndDetails details]
                  (run-animation (-> details .-velocity .-pixelsPerSecond))
                  nil))
-   (m/Align .alignment (or animated-alignment alignment))
+   (m/Align .alignment alignment)
    m/Card
    child))
 
