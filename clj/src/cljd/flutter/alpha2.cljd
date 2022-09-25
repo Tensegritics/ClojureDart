@@ -409,17 +409,85 @@
 
 (defmacro widget
   "Returns a widget.
+   The body is made of forms, dotted parameter names and directives.
+   A directive is a keyword followed by a form.
+   The following directives are supported:
+   :key, :let, :get, :bind, :vsync, :managed, :watch, :bg-watcher, :spy and :context.
+   Forms and directives are threaded (a bit like with ->>) to nest them.
+   The outermost form comes first.
+   For example:
+   (widget m/Center ...) expands to (m/Center .child (widget ...))
+   (widget (m/Center .widthFactor 1.1)  ...) expands
+   to (m/Center .widthFactor 1.1 .child (widget ...))
 
-  Takes a body evaluating to widget preceded by inline options.
-   X :key expr (MUST appear as the first option), the widget's key.
-   X :let bindings
-   X :bind
-   X :vsync
-   X :get (né :inherit)
-   X :managed
-   X :watch
-   X :debug
-   X :context"
+   .child threading is the default may you can opt to choose another param name:
+   (widget (m/Scaffold .appBar (m/AppBar)) .body ...) expands
+   to (m/Scaffold .appBar (m/AppBar) .body (widget ...))
+
+   Directives:
+   :key k -- use k (a regular value, nil even!) as the key for this widget.
+     It's important to put a key on widgets when they can be reordered and/or the
+     siblings count is not set.
+   :let [bindings] -- just a regular let, all bindings are visible to the next
+     forms.
+   :get [SomeClass1 ... SomeClass2]
+     -- shortcut for :get {:of [SomeClass1 ... SomeClass2]}
+   :get {a AClass b :some/name :of [AnotherClass]} -- introduces a, b and
+     another-class (kebab-cased version of AnotherClass) in the local scope for
+     next forms. a and b may be destructuring forms.
+     They are bound to:
+     - for classes (eg AClass and AnotherClass) to the value returned by
+       their static .of method.
+       For example :get [m/Theme] binds theme to (m/Theme.of ctx).
+     - for keywords to the value set by the closest matching :bind directive in
+       the widget's ancestors.
+     Last, when .of expects more arguments (eg Localizations) then you can pass
+     these argument by by using (ClassName a b c) instead of just ClassName.
+   :bind {:some/name value} -- makes value available to :get {x :some/name} on
+     all descendants.
+   :vsync name -- bind name to a TicketProvider suitable for animation.
+   :managed [bindings] -- evaluate bindings as per let but with a twist.
+     The twist is that each \"binding expr\" pair can be followed by options pairs \":keyword expr\".
+     Under :managed each value is going to be managed (that is its lifecycle will
+     be tied to the widget) and will be disposed in due time by a call to
+     its .dispose method.
+     Supported options are :refresh-on and :dispose.
+     - :dispose form -- specify another method to use (eg .close or .cancel)
+       to properly dispose the managed resource. If arguments are required for this
+       method or function you may provide a list like (.meth a b) and it will
+       expand to (.meth resource a b).
+     - :refresh-on expr -- the managed resource will be cycled (disposed and
+       recreated) each time expr evaluates to a new value.
+       Default behavior is to refresh-on on all locals (free variables) used by
+       found in expr.
+       Use `:refresh-on :never` to avoid refreshing (or any other constant
+       instead of :never).
+   :watch [bindings] -- for each \"binding expr\" pair, subscribe to expr and
+     use binding to bind each value received under the subscription. Each change
+     triggers a rebuild.
+     Any object to which the Subscribable protocol has been extended can be watched.
+     Out of the box it means: atoms, Streams, Futures, Listenables,
+     ValueListenable and... nil.
+     These bindings can take options (in the same way as :managed bindings do).
+     Supported options are  :refresh-on, :dispose and :>
+     - :refresh-on expr -- see :managed
+     - :dispose form -- if the object under watch also needs to be managed use
+       this option. Works like :dispose for :managed except for \":dispose true\"
+       which is a shortcut for \":dispose .dispose\".
+     - :> form -- this one is meant to be used with Listenable instances because
+       they don't produce values, just a change notification. So if this option
+       is not used you only get trues from the subscription.
+       When this option is set then values are produced by evaluating
+       (-> subscribable form).
+   :bg-watcher ([binding expr & options] body) -- creates a background watcher on
+     expr (which must be subscribable, see :watch). Same options as :watch are
+     supported.
+     Main differences from :watch are:
+     - does not trigger rebuilds
+     - bindings are only visible in the body of the watcher, not to the rest of
+       the widget.
+   :spy expr -- make expr's value available into Flutter DevTools.
+   :context name -- bind name to the current BuildContext."
 
   [& body]
   `(-widget-cont {} ~@body))
@@ -467,6 +535,7 @@
       :vsync (expand-vsync env v forms))))
 
 (defmacro -widget-cont
+  "PRIVATE DONT USE"
   [env form & more-forms]
   (cond
     (keyword? form) (apply expand-directive &env env form more-forms)
