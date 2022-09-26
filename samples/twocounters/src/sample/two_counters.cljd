@@ -6,43 +6,43 @@
 ;; this sample demos how to use :bind/:get
 
 (def home
-  (m/Scaffold
-    .appBar (m/AppBar .title (m/Text "ClojureDart Home Page"))
-    .body
-    (f/nest
-      m/Center
-      (m/Row
-        .mainAxisAlignment m/MainAxisAlignment.center
-        .children
-        (map (fn [k]
-               (f/nest
-                 m/Expanded
-                 (m/Column
-                   .mainAxisAlignment m/MainAxisAlignment.center
-                   .children
-                   [(m/Text (str k))
-                    ; below we deref the submodel, thus creating only
-                    ; a dependency on this subpart of the model.
-                    ; Try replacing by (get @counters k) and you'll see
-                    ; the widget being rebuilt on any change to the model
-                    (f/widget
-                      :get {{{style .-displayLarge} .-textTheme} m/Theme
-                            :of [:counters]}
-                      (m/Text (str @(get counters k)) .style style))
-                    (f/widget
-                      :get [:counters]
-                      (m/ElevatedButton .onPressed #(swap! counters update k inc))
-                      (m/Text "+"))])))
-          [:left :right])))))
+  (f/widget
+   (m/Scaffold
+    .appBar (m/AppBar .title (m/Text "ClojureDart Home Page")))
+   .body
+   m/Center
+   (m/Row .mainAxisAlignment m/MainAxisAlignment.center)
+   .children
+   (for [k [:left :right]]
+     (f/widget
+      m/Expanded
+      (m/Column
+       .mainAxisAlignment m/MainAxisAlignment.center
+       .children
+       [(m/Text (str k))
+          ; below we deref the submodel, thus creating only
+          ; a dependency on this subpart of the model.
+          ; Try replacing by (get @counters k) and you'll see
+          ; the widget being rebuilt on any change to the model
+        (f/widget
+         :get {{{style .-displayLarge} .-textTheme} m/Theme
+               :of [:counters]}
+         :watch [n (f/sub counters k)]
+         :let [_ (dart:core/print (str "build text " k))]
+         (m/Text (str n) .style style))
+        (f/widget
+         :get [:counters]
+         :let [_ (dart:core/print "build +")]
+         (m/ElevatedButton .onPressed #(swap! counters update k inc))
+         (m/Text "+"))])))))
 
 (defn main []
   (m/runApp
-   (m/MaterialApp
-    .title "Cljd Demo"
-    .theme (m/ThemeData .primarySwatch m/Colors.blue)
+   (f/widget
+    (m/MaterialApp
+     .title "Cljd Demo"
+     .theme (m/ThemeData .primarySwatch m/Colors.blue))
     .home
-    (f/widget
-      ; here we establish a dynamic binding for the name :counters
-      ; to the associative model {:left 0 :right 0}
-     :bind {:counters {:left 10 :right 80}}
-     home))))
+    ; here we establish a dynamic binding for the name :counters
+    :bind {:counters (atom {:left 0 :right 0})}
+    home)))
