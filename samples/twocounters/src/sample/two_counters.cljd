@@ -20,13 +20,9 @@
        .mainAxisAlignment m/MainAxisAlignment.center
        .children
        [(m/Text (str k))
-          ; below we deref the submodel, thus creating only
-          ; a dependency on this subpart of the model.
-          ; Try replacing by (get @counters k) and you'll see
-          ; the widget being rebuilt on any change to the model
         (f/widget
          :get {{{style .-displayLarge} .-textTheme} m/Theme
-               :of [:counters]}
+               :value-of [:counters]}
          :watch [n (f/sub counters k)]
          :let [_ (dart:core/print (str "build text " k))]
          (m/Text (str n) .style style))
