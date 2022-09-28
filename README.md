@@ -26,7 +26,7 @@ cat << EOF > deps.edn
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart
         {:git/url "https://github.com/tensegritics/ClojureDart.git"
-         :sha "e7aa30cf29a467289dd1c0f55c59ce5c01194c6e"}}
+         :sha "c7e6bd44db6baf714da70bb3f26b70d5578334f9"}}
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
  :cljd/opts {:kind :flutter
              :main acme.main}}
