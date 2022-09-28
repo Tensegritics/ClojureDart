@@ -1412,7 +1412,7 @@
          bindings (cond-> bindings must-lift butlast)]
      [bindings dart-args])))
 
-(def ^:dynamic *threshold* 10)
+(def ^:dynamic *threshold* 19)
 
 (defn emit-fn-call [[f & args] env]
   ;; TO BE CONTINUED
