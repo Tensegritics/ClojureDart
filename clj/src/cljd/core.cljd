@@ -1677,6 +1677,10 @@
     (get coll kw))
   (-invoke [kw coll not-found]
     (get coll kw not-found))
+  (-apply [kw more]
+    (case (bounded-count 3 more)
+      1 (get (first more) kw)
+      2 (get (first more) kw (second more))))
   IHash
   (-hash [this] _hash)
   INamed
@@ -1763,6 +1767,10 @@
     (get coll s))
   (-invoke [s coll not-found]
     (get coll s not-found))
+  (-apply [s more]
+    (case (bounded-count 3 more)
+      1 (get (first more) s)
+      2 (get (first more) s (second more))))
   IEquiv
   (-equiv [this other]
     (and (dart/is? other Symbol)

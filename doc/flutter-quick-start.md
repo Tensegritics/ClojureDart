@@ -21,30 +21,9 @@ Creates a directory for the project with the following deps.edn:
 ``` shell
 mkdir hello
 cd hello
-```
-
-If your GitHub account is [configured for SSH access](https://docs.github.com/en/github/authenticating-to-github/connecting-to-github-with-ssh/adding-a-new-ssh-key-to-your-github-account):
-
-``` shell
 cat << EOF > deps.edn
 {:paths ["src"] ; where your cljd files are
- :deps {org.clojure/clojure {:mvn/version "1.10.1"}
-        tensegritics/clojuredart
-        {:git/url "git@github.com:tensegritics/ClojureDart.git"
-         :sha "05166cc2c2dbd68b2f372cdd16e166dcc2a45102"}}
- :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
- :cljd/opts {:kind :flutter
-             :main acme.main}}
-EOF
-```
-
-Otherwise using HTTPS authentication:
-
-``` shell
-cat << EOF > deps.edn
-{:paths ["src"] ; where your cljd files are
- :deps {org.clojure/clojure {:mvn/version "1.10.1"}
-        tensegritics/clojuredart
+ :deps {tensegritics/clojuredart
         {:git/url "https://github.com/tensegritics/ClojureDart.git"
          :sha "05166cc2c2dbd68b2f372cdd16e166dcc2a45102"}}
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
@@ -75,7 +54,7 @@ cat << EOF > src/acme/main.cljd
   (m/runApp
     (m/MaterialApp
       .title "Welcome to Flutter"
-      .theme (m/ThemeData .primarySwatch m.Colors/pink)
+      .theme (m/ThemeData .primarySwatch m/Colors.pink)
       .home (m/Scaffold
               .appBar (m/AppBar
                         .title (m/Text "Welcome to ClojureDart"))

@@ -72,79 +72,37 @@
   (-init-state [_ state])
   (-dispose-state [_ state]))
 
-(defprotocol IModel
-  (-state [v args swp! trck!] "Returns a mutable view of this binding in this context.")
-  (-updated? [v prev-v q])
-  (-update [v f]))
+(defn sub
+  "Returns a subscribable view on another subscribable.
+   Values are the result of (apply f v args) for all values v yielded by the
+   upstream subscribable.
+   This subscribable generates events only when the resulting value changes."
+  [s f & args]
+  (reify
+    Subscribable
+    (-subscribe [self f! opts]
+      (let [v (volatile! nil)]
+        (vreset! v v)
+        (-subscribe s
+          (fn [x]
+            (let [x (apply f x args)]
+              (when (not= x @v)
+                (vreset! v x)
+                (f! x))))
+          opts)))
+    (-unsubscribe [self sub]
+      (-unsubscribe s sub))))
 
-(deftype AssociativeState [v path swp! trck!]
-  cljd.core/IDeref
-  (-deref [_]
-    (trck! path)
-    v)
-  cljd.core/ISwap
-  (-swap! [o f]
-    (swp! (if (seq path) #(update-in % path f) f)))
-  (-swap! [o f a]
-    (swp! (if (seq path) #(update-in % path f a) #(f % a))))
-  (-swap! [o f a b]
-    (swp! (if (seq path) #(update-in % path f a b) #(f % a b))))
-  (-swap! [o f a b xs]
-    (swp! (if (seq path) #(apply update-in % path f a b xs) #(apply f % a b xs))))
-  cljd.core/IReset
-  (-reset! [o v']
-    (swp! (if (seq path) #(assoc-in % path v') (constantly v'))))
-  cljd.core/ILookup
-  (-lookup [o k]
-    (AssociativeState. (-lookup v k) (conj path k) swp! trck!))
-  (-lookup [o k not-found]
-    (AssociativeState. (-lookup v k not-found) (conj path k) swp! trck!))
-  (-contains-key? [o k]
-    (trck! (conj path k))
-    (contains? v k)))
-
-(deftype AssociativeModel [v]
-  IModel
-  (-state [model args swp! trck!]
-    (AssociativeState. (get-in v args) args swp! trck!))
-  (-updated? [model prev-model ks] (not= (get-in v ks) (get-in (.-v ^AssociativeModel prev-model) ks)))
-  (-update [_ f] (AssociativeModel. (f v))))
-
-(defn ensure-model [x]
-  (if (satisfies? IModel x) x (AssociativeModel. x)))
-
-(deftype StaticModel [v]
-  IModel
-  (-state [model args swp! trck!] (trck! args) (get-in v args))
-  (-updated? [model prev-model ks] (not= (get-in v ks) (get-in (.-v ^StaticModel prev-model) ks))))
-
-(defn static
-  "Returns a value model (not derefable, not updatable)."
-  [v]
-  (StaticModel. v))
-
-(deftype InheritedBindings [state pctx snapshot child]
-  :extends (widgets/InheritedModel. .child child)
-  (isSupportedAspect [this name]
-    (contains? snapshot name))
+(deftype InheritedBindings [bindings child]
+  :extends (widgets/InheritedModel .child child)
+  (isSupportedAspect [this name] true)
   (updateShouldNotify [this prev-this]
-    (not= snapshot (.-snapshot ^InheritedBindings prev-this)))
+    (not= bindings (.-bindings ^InheritedBindings prev-this)))
   (updateShouldNotifyDependent [this prev-this aspects]
-    (let [prev-snapshot (.-snapshot ^InheritedBindings prev-this)]
+    (let [prev-bindings (.-bindings ^InheritedBindings prev-this)]
       (boolean
-        (some (fn [[name q]]
-                (-updated? (snapshot name) (prev-snapshot name) q)) aspects)))))
-
-(defn get-state-of [^widgets/BuildContext ctx id args]
-  (loop [^widgets/BuildContext ctx' ctx]
-    (if-some [elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx')]
-      (let [ib ^InheritedBindings (.-widget elt)]
-        (if (.isSupportedAspect ib id)
-          (-state (get (.-snapshot ib) id) args
-            #(swap! (.-state ib) update id -update %)
-            #(.dependOnInheritedElement ctx elt .aspect [id %]))
-          (recur (.-pctx ib))))
-      (throw (Exception (str "No inherited state for id" id))))))
+        (some (fn [k] (not= (prev-bindings k) (bindings k)))
+          (first aspects))))))
 
 (defn- ^:macro-support collect-options
   "Returns [options-map & more]."
@@ -347,40 +305,60 @@
 (defn ^:macro-support expand-get-inherited [env v forms]
   (if-not (:closest-ctx env)
     `(-widget-cont ~env :context ~closest-context :get ~v ~@forms)
-    (let [inherit (if (vector? v) {:of v} v)
-          inherit (if-some [shortcuts (:of inherit)]
-                    (into (dissoc inherit :of)
-                      (map (fn [type-or-kw]
-                             (let [hint (cond-> type-or-kw (seq? type-or-kw) first)]
-                               [(symbol
-                                  (if (keyword? hint)
-                                    (name hint)
-                                    (camel-kebab (re-find #"[^.]+$" (name hint)))))
-                                type-or-kw])))
-                      shortcuts)
+    (let [inherit (if (vector? v) {:value-of v} v)
+          inherit (if-some [shortcuts (:value-of inherit)]
+                    (into (dissoc inherit :value-of)
+                          (map (fn [type-or-kw]
+                                 (let [hint (cond-> type-or-kw (seq? type-or-kw) first)]
+                                   [(symbol
+                                     (if (keyword? hint)
+                                       (name hint)
+                                       (camel-kebab (re-find #"[^.]+$" (name hint)))))
+                                    type-or-kw])))
+                          shortcuts)
                     inherit)
-          inherits-bindings
-          (mapcat
-            (fn [[sym type-or-kw]]
-              (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)]
-                [sym
-                 (if (keyword? type-or-kw)
-                   `(get-state-of ~closest-context ~type-or-kw ~(vec args))
-                   (list*
-                     (symbol
-                       (if-some [ns (namespace type-or-kw)]
-                         (str ns "." (name type-or-kw))
-                         (name type-or-kw))
-                       "of")
-                     closest-context args))]))
-            inherit)]
-      `(let [~@inherits-bindings] (-widget-cont ~env ~@forms)))))
+          inherit (into inherit
+                        (keep (fn [[k v]] (when-not (seq? v) [k (list v)])))
+                        inherit)
+          bindings-sym `bindings#
+          {inherited-widgets false
+           inherited-bindings true}
+          (group-by (fn [[sym [type-or-kw]]] (keyword? type-or-kw)) inherit)]
+      `(let [~@(mapcat (fn [[sym [type-or-kw & args]]]
+                         [sym
+                          (list*
+                            (symbol
+                              (namespace type-or-kw)
+                              (str (name type-or-kw) ".of"))
+                            closest-context args)])
+                 inherited-widgets)]
+         (->> (-widget-cont ~env ~@forms)
+           ~@(when (seq inherited-bindings)
+               [`(let [inherited-elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ~closest-context)
+                       ~bindings-sym (some-> inherited-elt#
+                                       ^InheritedBindings (.-widget)
+                                       .-bindings)
+                       ~@(mapcat
+                           (fn [[sym [type-or-kw & args]]]
+                             [sym
+                              `(->
+                                 (get ~bindings-sym ~type-or-kw)
+                                 ~(or (seq args) `do))])
+                           inherited-bindings)]
+                   (.dependOnInheritedElement ~closest-context
+                     inherited-elt#
+                     .aspect ~(into [] (map (fn [[sym [type-or-kw]]] type-or-kw)) inherited-bindings)))]))))))
 
-(defn ^:macro-support expand-bind [env bind forms]
+(defn ^:macro-support expand-bind [env bindings-map forms]
   `(-widget-cont ~env
-     :let [bindings# (atom ~(zipmap (keys bind) (for [v (vals bind)] `(ensure-model ~v))))]
-     :watch [current# bindings#] ; this introduces context
-     (cljd.flutter.alpha2/InheritedBindings. bindings# ~closest-context current#
+     :context ctx#
+     :let [bindings# ~bindings-map
+           elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx#)         prev-bindings# (some-> elt# ^InheritedBindings (.-widget) .-bindings)
+           non-shadowed-keys#
+           (remove (fn [k#] (contains? bindings# k#)) (keys prev-bindings#))
+           _ (when (seq non-shadowed-keys#)
+               (.dependOnInheritedElement ctx# elt# .aspect non-shadowed-keys#))]
+     (cljd.flutter.alpha2/InheritedBindings. (merge prev-bindings# bindings#)
        (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
 
 (defn ^:macro-support expand-vsync [env name forms]
@@ -409,18 +387,83 @@
 
 (defmacro widget
   "Returns a widget.
-
-  Takes a body evaluating to widget preceded by inline options.
-   X :key expr (MUST appear as the first option), the widget's key.
-   X :let bindings
-   X :bind
-   X :vsync
-   X :get (né :inherit)
-   X :managed
-   X :watch
-   X :debug
-   X :context"
-
+   The body is made of forms, dotted parameter names and directives.
+   A directive is a keyword followed by a form.
+   The following directives are supported:
+   :key, :let, :get, :bind, :vsync, :managed, :watch, :bg-watcher, :spy and :context.
+   Forms and directives are threaded (a bit like with ->>) to nest them.
+   The outermost form comes first.
+   For example:
+   (widget m/Center ...) expands to (m/Center .child (widget ...))
+   (widget (m/Center .widthFactor 1.1)  ...) expands
+   to (m/Center .widthFactor 1.1 .child (widget ...))
+   .child threading is the default may you can opt to choose another param name:
+   (widget (m/Scaffold .appBar (m/AppBar)) .body ...) expands
+   to (m/Scaffold .appBar (m/AppBar) .body (widget ...))
+   Directives:
+   :key k -- use k (a regular value, nil even!) as the key for this widget.
+     It's important to put a key on widgets when they can be reordered and/or the
+     siblings count is not set.
+   :let [bindings] -- just a regular let, all bindings are visible to the next
+     forms.
+   :get [SomeClass1 ... SomeClass2]
+     -- shortcut for :get {:value-of [SomeClass1 ... SomeClass2]}
+   :get {a AClass b :some/name :value-of [AnotherClass]} -- introduces a, b and
+     another-class (kebab-cased version of AnotherClass) in the local scope for
+     next forms. a and b may be destructuring forms.
+     They are bound to:
+     - for classes (eg AClass and AnotherClass) to the value returned by
+       their static .of method.
+       For example :get [m/Theme] binds theme to (m/Theme.of ctx).
+     - for keywords to the value set by the closest matching :bind directive in
+       the widget's ancestors.
+     Last, when .of expects more arguments (eg Localizations) then you can pass
+     these argument by by using (ClassName a b c) instead of just ClassName.
+   :bind {:some/name value} -- makes value available to :get {x :some/name} on
+     all descendants.
+   :vsync name -- bind name to a TicketProvider suitable for animation.
+   :managed [bindings] -- evaluate bindings as per let but with a twist.
+     The twist is that each \"binding expr\" pair can be followed by options pairs \":keyword expr\".
+     Under :managed each value is going to be managed (that is its lifecycle will
+     be tied to the widget) and will be disposed in due time by a call to
+     its .dispose method.
+     Supported options are :refresh-on and :dispose.
+     - :dispose form -- specify another method to use (eg .close or .cancel)
+       to properly dispose the managed resource. If arguments are required for this
+       method or function you may provide a list like (.meth a b) and it will
+       expand to (.meth resource a b).
+     - :refresh-on expr -- the managed resource will be cycled (disposed and
+       recreated) each time expr evaluates to a new value.
+       Default behavior is to refresh-on on all locals (free variables) used by
+       found in expr.
+       Use `:refresh-on :never` to avoid refreshing (or any other constant
+       instead of :never).
+   :watch [bindings] -- for each \"binding expr\" pair, subscribe to expr and
+     use binding to bind each value received under the subscription. Each change
+     triggers a rebuild.
+     Any object to which the Subscribable protocol has been extended can be watched.
+     Out of the box it means: atoms, Streams, Futures, Listenables,
+     ValueListenable and... nil.
+     These bindings can take options (in the same way as :managed bindings do).
+     Supported options are  :refresh-on, :dispose and :>
+     - :refresh-on expr -- see :managed
+     - :dispose form -- if the object under watch also needs to be managed use
+       this option. Works like :dispose for :managed except for \":dispose true\"
+       which is a shortcut for \":dispose .dispose\".
+     - :> form -- this one is meant to be used with Listenable instances because
+       they don't produce values, just a change notification. So if this option
+       is not used you only get trues from the subscription.
+       When this option is set then values are produced by evaluating
+       (-> subscribable form).
+   :bg-watcher ([binding expr & options] body) -- creates a background watcher on
+     expr (which must be subscribable, see :watch). Same options as :watch are
+     supported.
+     Main differences from :watch are:
+     - does not trigger rebuilds
+     - bindings are only visible in the body of the watcher, not to the rest of
+       the widget.
+   :spy expr -- make expr's value available into Flutter DevTools.
+   :context name -- bind name to the current BuildContext."
   [& body]
   `(-widget-cont {} ~@body))
 
@@ -467,6 +510,7 @@
       :vsync (expand-vsync env v forms))))
 
 (defmacro -widget-cont
+  "PRIVATE DONT USE"
   [env form & more-forms]
   (cond
     (keyword? form) (apply expand-directive &env env form more-forms)
