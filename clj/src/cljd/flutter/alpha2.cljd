@@ -317,28 +317,37 @@
                                     type-or-kw])))
                           shortcuts)
                     inherit)
-          inherited-bindings
-          (mapcat
-           (fn [[sym type-or-kw]]
-             (let [[type-or-kw & args] (cond-> type-or-kw (not (seq? type-or-kw)) list)]
-               [sym
-                (if (keyword? type-or-kw)
-                  (let [expr
-                        `(some->
-                          (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ~closest-context)
-                          ^InheritedBindings (.-widget)
-                          .-bindings
-                          (get ~type-or-kw))]
-                    (if (seq args)
-                      `(-> ~expr ~args)
-                      expr))
-                  (list*
-                   (symbol
-                    (namespace type-or-kw)
-                    (str (name type-or-kw) ".of"))
-                   closest-context args))]))
-           inherit)]
-      `(let [~@inherited-bindings] (-widget-cont ~env ~@forms)))))
+          inherit (into inherit
+                        (keep (fn [[k v]] (when-not (seq? v) [k (list v)])))
+                        inherit)
+          bindings-sym `bindings#
+          {inherited-widgets false
+           inherited-bindings true}
+          (group-by (fn [[sym [type-or-kw]]] (keyword? type-or-kw)) inherit)]
+      `(let [~@(mapcat (fn [[sym [type-or-kw & args]]]
+                         [sym
+                          (list*
+                            (symbol
+                              (namespace type-or-kw)
+                              (str (name type-or-kw) ".of"))
+                            closest-context args)])
+                 inherited-widgets)]
+         (->> (-widget-cont ~env ~@forms)
+           ~@(when (seq inherited-bindings)
+               [`(let [inherited-elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ~closest-context)
+                       ~bindings-sym (some-> inherited-elt#
+                                       ^InheritedBindings (.-widget)
+                                       .-bindings)
+                       ~@(mapcat
+                           (fn [[sym [type-or-kw & args]]]
+                             [sym
+                              `(->
+                                 (get ~bindings-sym ~type-or-kw)
+                                 ~(or (seq args) `do))])
+                           inherited-bindings)]
+                   (.dependOnInheritedElement ~closest-context
+                     inherited-elt#
+                     .aspect ~(into [] (map (fn [[sym [type-or-kw]]] type-or-kw)) inherited-bindings)))]))))))
 
 (defn ^:macro-support expand-bind [env bindings-map forms]
   `(-widget-cont ~env
