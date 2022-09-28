@@ -362,7 +362,7 @@
        (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
 
 (defn ^:macro-support expand-vsync [env name forms]
-  `(reify :extends (widgets/StatefulWidget .key (:env key))
+  `(reify :extends (widgets/StatefulWidget .key ~(:env key))
      :no-meta true
      (~'createState [_#]
        (reify :extends widgets/State
@@ -478,7 +478,7 @@
         forms (cons form more-forms)]
     (case k
       :key `(let [~ksym (foundation/ValueKey ~v)]
-              `(-widget-cont ~(assoc env :key ksym) ~@forms))
+              (-widget-cont ~(assoc env :key ksym) ~@forms))
       :let `(let ~v (-widget-cont ~env ~@forms))
       :watch
       (if-some [[binding expr & more] (seq v)]
@@ -514,7 +514,7 @@
   [env form & more-forms]
   (cond
     (keyword? form) (apply expand-directive &env env form more-forms)
-    (some env [:key :debug])
+    (:key env)
     (stateless-flush env (cons form more-forms))
     (nil? more-forms) form
     (symbol? form)
