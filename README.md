@@ -23,8 +23,7 @@ mkdir hello
 cd hello
 cat << EOF > deps.edn
 {:paths ["src"] ; where your cljd files are
- :deps {org.clojure/clojure {:mvn/version "1.10.1"}
-        tensegritics/clojuredart
+ :deps {tensegritics/clojuredart
         {:git/url "https://github.com/tensegritics/ClojureDart.git"
          :sha "c7e6bd44db6baf714da70bb3f26b70d5578334f9"}}
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
