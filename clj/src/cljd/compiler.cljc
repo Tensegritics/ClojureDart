@@ -3096,10 +3096,6 @@
    :post ";\n"
    :exit true})
 
-(def number-locus
-  {:pre "("
-   :post ")"})
-
 (def expr-locus
   {:pre ""
    :post ""})
@@ -3741,8 +3737,10 @@
             (cond
               (= :class (:kind obj))
               (write-type obj)
-              (number? obj)
-              (write obj number-locus)
+              (and (number? obj) (neg? obj))
+              (do (dart-print "(")
+                  (write obj expr-locus)
+                  (dart-print ")"))
               :else
               (write obj (assoc expr-locus :this-position true)))
             (dart-print (str "." meth))
