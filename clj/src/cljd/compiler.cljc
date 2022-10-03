@@ -3096,6 +3096,10 @@
    :post ";\n"
    :exit true})
 
+(def number-locus
+  {:pre "("
+   :post ")"})
+
 (def expr-locus
   {:pre ""
    :post ""})
@@ -3734,8 +3738,12 @@
             (assert is-plain-method (str "not a plain method: " meth))
             (when (:dart/const (meta x)) ; should only be on constructors, see #53
               (dart-print "const "))
-            (if (= :class (:kind obj))
+            (cond
+              (= :class (:kind obj))
               (write-type obj)
+              (number? obj)
+              (write obj number-locus)
+              :else
               (write obj (assoc expr-locus :this-position true)))
             (dart-print (str "." meth))
             (write-types type-params "<" ">")
