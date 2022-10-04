@@ -2350,6 +2350,13 @@
   ([^num x ^num y & more]
    (reduce / (/ x y) more)))
 
+(defn ^num abs
+  {:doc "Returns the absolute value of a."
+   :inline-arities #{1}
+   :inline (fn [a] `(.abs ~a))}
+  [^num a]
+  (.abs a))
+
 ;; TODO type hint
 (defn rem
   {:inline (fn [num div] `(.num:remainder ~num ~div))

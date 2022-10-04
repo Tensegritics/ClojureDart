@@ -595,3 +595,17 @@
   (is (= [1 2 3] (-destructured2 (DestructuringProto.) {"a" 1 "b" 2 "c" 3})))
   (is (= [1 2 3] (-destructured3 (DestructuringProto.) '{a 1 b 2 c 3})))
   (is (= {:a 1 :b 2 :c 3} (-not-destructured (DestructuringProto.) {:a 1 :b 2 :c 3}))))
+
+(deftest test-abs
+  (are [in ex] (= ex (abs in))
+    -1 1
+    1 1
+    #_#_Long/MIN_VALUE Long/MIN_VALUE ;; special case!
+    -1.0 1.0
+    -0.0 0.0
+    #_#_##-Inf ##Inf
+    #_#_##Inf ##Inf
+    -123.456M 123.456M
+    -123N 123N
+    -1/5 1/5)
+  #_(is (NaN? (abs ##NaN))))
