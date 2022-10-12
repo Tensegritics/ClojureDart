@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -e
+
 rm -rf tmp/tests
 mkdir -p tmp/tests/src/cljd
 cat > tmp/tests/deps.edn <<EOF
@@ -13,7 +15,7 @@ EOF
 
 cd tmp/tests
 clojure -M -m cljd.build init
-dart pub add -d test
+dart pub add -d test || true
 cat > src/cljd/run_tests.cljd <<EOF
 (ns ci.core
   (:require
