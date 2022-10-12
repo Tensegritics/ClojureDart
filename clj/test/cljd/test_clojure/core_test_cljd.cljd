@@ -395,6 +395,7 @@
 
 (deftest nullable-function-bug
   (let [x (NullableFunctionBug.)]
+    (fn [] "aa" nil)
     (is (= "Heeyyy" (.text x nil)))
     (is (= "hooo" (.text x (fn [] "dd" nil))))))
 
@@ -609,3 +610,8 @@
     -123N 123N
     -1/5 1/5)
   #_(is (NaN? (abs ##NaN))))
+
+(deftest closed-over-consts-in-reify
+  (let [s "name"
+        f (fn ([] (Symbol s)) ([_] nil))]
+    (is (identical? (Symbol s) (f)))))

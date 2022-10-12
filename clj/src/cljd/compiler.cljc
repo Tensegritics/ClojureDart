@@ -495,9 +495,10 @@
    - for :def it's what's is in nses,
    - for :dart it's the aliased dart symbol."
   [sym env]
-  (if-some [v (env sym)]
-    [:local v]
-    (resolve-non-local-symbol sym (:type-vars env))))
+  (let [v (env sym env)] ; because v can be nil for consts
+    (if-not (identical? v env)
+      [:local v]
+      (resolve-non-local-symbol sym (:type-vars env)))))
 
 (defn dart-alias-for-ns [ns]
   (let [{:keys [current-ns] :as nses} @nses
@@ -1662,10 +1663,11 @@
 (defn emit-let* [[_ bindings & body] env]
   (let [[dart-bindings env]
         (reduce
-          (fn [[dart-bindings env] [k v]]
-            (let [[tmp :as binding] (dart-binding k (emit v env) env)]
-             [(conj dart-bindings binding)
-              (assoc env k tmp)]))
+         (fn [[dart-bindings env] [k v]]
+           (let [[tmp dart-expr :as binding] (dart-binding k (emit v env) env)]
+             (if (:dart/const (meta tmp))
+               [dart-bindings (assoc env k dart-expr)]
+               [(conj dart-bindings binding) (assoc env k tmp)])))
          [[] env] (partition 2 bindings))
         dart-bindings
         (into dart-bindings (for [x (butlast body)] [nil (emit x env)]))]
@@ -1951,8 +1953,19 @@
 
 (defn closed-overs
   "Returns the set of dart locals (values of the env) referenced in the emitted code."
-  [emitted env] ; TODO now that env may have expressions (dart/as ..) as values we certainly have subtle bugs
-  (let [dart-locals (into #{} (map #(cond-> % (seq? %) second)) (vals env))]
+  [emitted env]
+  (let [dart-locals
+        (into #{}
+          (keep
+            (fn [[k dart-expr]]
+              (cond
+                (not (symbol? k)) nil
+                (symbol? dart-expr) dart-expr
+                (and (seq? dart-expr) (= 'dart/as (first dart-expr)))
+                (recur [k (second dart-expr)])
+                (:dart/const (infer-type dart-expr)) nil
+                :else (throw (ex-info (str "Unexpected dart value in environment for key " k ": " (pr-str dart-expr)) {:dart-expr dart-expr})))))
+          env)]
     (into #{} (comp (filter symbol?) (keep dart-locals)) (tree-seq sequential? seq emitted))))
 
 (defn cljd-closed-overs [expr env]
@@ -4090,7 +4103,7 @@
   (binding [*dart-out* *out*
             dart-libs-info li]
     (write
-      (emit-test '(Uri. :queryParameters {"a" 1}) {})
+      (emit-test '(fn [] "dd" nil) {})
       return-locus))
 
   (write
