@@ -9,7 +9,8 @@
 (ns cljd.compiler
   (:refer-clojure :exclude [macroexpand macroexpand-1 munge compile])
   (:require [clojure.string :as str]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.edn :as edn]))
 
 (def dc-void {:kind :class
               :element-name        "void"
@@ -132,7 +133,7 @@
           java.io.File.
           clojure.java.io/reader
           clojure.lang.LineNumberingPushbackReader.
-          clojure.edn/read)
+          edn/read)
         inline-exports
         (fn export [{exports :exports :as v} source-lib past-exports]
           (let [v (into v (keep (fn [{:keys [lib shown hidden]}]
@@ -234,12 +235,44 @@
        ~@body)
      (.toString w#)))
 
-(def ^:dynamic dart-libs-info)
+;; analyzer-info is a fn to query info about types and libs
+;;
+;; [lib element] returns a full map
 
-(defn analyzer-info
-  ([lib] (some-> (dart-libs-info lib) (select-keys [:private])))
-  ([lib element]
-   (-> lib dart-libs-info (get element))))
+(declare
+  ^{:dynamic true
+    :doc "dynamically bound fn to retrieve types and libs information
+  [lib] returns nil if no such lib or a map with an optional
+  :private key mapped to true when the lib is private.
+  [lib element] returns a full map TBD."}
+  analyzer-info)
+
+(defn mk-dead-analyzer-info [dart-libs-info]
+  (fn
+    ([lib] (some-> (dart-libs-info lib) (select-keys [:private])))
+    ([lib element]
+     (-> lib dart-libs-info (get element)))))
+
+(defn mk-live-analyzer-info
+  [^Process p]
+  (let [stdin (java.io.OutputStreamWriter. (.getOutputStream p) "UTF-8")
+        stdout (clojure.lang.LineNumberingPushbackReader.
+                (java.io.InputStreamReader. (.getInputStream p) "UTF-8"))
+        cache (atom {})]
+    (fn [& args]
+      (let [c @cache
+            r (c args c)]
+        (if-not (identical? r c)
+          r
+          (do
+            (.write stdin (str (count args)))
+            (doseq [arg args]
+              (doto stdin (.write " ") (.write ^String arg)))
+            (doto stdin (.write "\n") .flush)
+            (let [r (edn/read stdout)]
+              (swap! cache assoc args r)
+              r)))))))
+
 
 (def ^:dynamic *hosted* false)
 (def ^:dynamic *host-eval* false)
@@ -774,6 +807,7 @@
                       (vector (symbol element-name))
                       (some->> (get-in all-nses))
                       :dart/type))]
+       ; TODO: finish refectoring, here we splice :members back in class info
        (merge (:members ci) (dissoc ci :members))))))
 
 (defn dart-member-lookup
@@ -4019,149 +4053,149 @@
 
 (comment
 
-  (def li (load-libs-info))
-  (binding [dart-libs-info li]
+  (def li (mk-dead-analyzer-info (load-libs-info)))
+  (binding [analyzer-info li]
     (do
       (time
         (binding [*hosted* true
-                  dart-libs-info li]
+                  analyzer-info li]
           (compile 'cljd.core)))
       ;; XOXO
       (time
-        (binding [dart-libs-info li]
+        (binding [analyzer-info li]
           (compile 'cljd.string)))
 
       #_(time
         (binding [*hosted* false
-                  dart-libs-info li]
+                  analyzer-info li]
           (compile 'cljd.multi)))
 
       (time
-        (binding [dart-libs-info li]
+        (binding [analyzer-info li]
           (compile 'cljd.walk)))
 
       (time
-        (binding [dart-libs-info li
+        (binding [analyzer-info li
                   *hosted* true]
           (compile 'cljd.template)))
 
       (time
-        (binding [dart-libs-info li
+        (binding [analyzer-info li
                   *hosted* true]
           (compile 'cljd.test)))
 
       (time
-        (binding [dart-libs-info li
+        (binding [analyzer-info li
                   *hosted* true]
           (compile 'cljd.test-clojure.for)))
 
       (time
         (binding [*hosted* false
-                  dart-libs-info li]
+                  analyzer-info li]
           (compile 'cljd.test-clojure.core-test)))
 
       (time
         (binding [*hosted* false
-                  dart-libs-info li]
+                  analyzer-info li]
           (compile 'cljd.test-clojure.core-test-cljd)))
 
       (time
-        (binding [dart-libs-info li
+        (binding [analyzer-info li
                   *hosted* true]
           (compile 'cljd.test-clojure.string)))
 
       (time
         (binding [*hosted* true
-                  dart-libs-info li]
+                  analyzer-info li]
           (compile 'cljd.reader)))
 
       (time
         (binding [*hosted* false
-                  dart-libs-info li]
+                  analyzer-info li]
           (compile 'cljd.test-reader.reader-test)))))
 
   (binding [*locals-gen* {}
-            dart-libs-info li]
+            analyzer-info li]
     (write (emit
              '(deftype Foo [x]
                   (bar [this])) {}) return-locus)
   )
 
   (binding [*locals-gen* {}
-            dart-libs-info li]
+            analyzer-info li]
     (write (emit
              '(->Foo 14) {}) return-locus)
     )
 
   (binding [*locals-gen* {}
-            dart-libs-info li]
+            analyzer-info li]
     (write (emit
              '(Foo 14) {}) return-locus)
     )
 
   (binding [*locals-gen* {}
-            dart-libs-info li]
+            analyzer-info li]
     (write (emit ;-fn-call
              '(map 14) {}) return-locus)
     )
 
   (binding [*locals-gen* {}
-            dart-libs-info li]
+            analyzer-info li]
     (keys (infer-type (emit ;-fn-call
                                      'Foo {})))
     )
 
   (binding [*dart-out* *out*
-            dart-libs-info li]
+            analyzer-info li]
     (write
       (emit-test '(fn [] "dd" nil) {})
       return-locus))
 
   (write
-    (binding [dart-libs-info li]
+    (binding [analyzer-info li]
       (emit-test '(deftype X [] (meuh [_]
                                   (.+ 1 1))) {}))
     return-locus)
 
   (write
-    (binding [dart-libs-info li]
+    (binding [analyzer-info li]
       (emit-test '(let [cnt ^int (if (odd? 3) 1 nil)]) {}))
     return-locus)
 
 
   (write
-    (binding [dart-libs-info li]
+    (binding [analyzer-info li]
       (emit-test '(fn [x] (loop [i x] (recur (inc i)))) {}))
     return-locus)
 
   (binding [*host-eval* true]
     (write
-      (binding [dart-libs-info li]
+      (binding [analyzer-info li]
         (emit-test '(defmacro ddd [name [& fields] & b] 2) {}))
       return-locus))
 
   (binding [*host-eval* true]
     (write
-      (binding [dart-libs-info li]
+      (binding [analyzer-info li]
         (emit-test '(let [re #"a" m (.matchAsPrefix re "abc")]
                       (.group m 0)) {}))
       return-locus))
 
   (write
-    (binding [dart-libs-info li]
+    (binding [analyzer-info li]
       (emit-test '(.replaceAllMapped "abc" #"." assoc) {}))
     return-locus)
 
   (write
-    (binding [dart-libs-info li]
+    (binding [analyzer-info li]
       (emit-test '(dart:core/Symbol (.toString ^Object x)) '{x x}))
     return-locus)
 
 
-  (binding [dart-libs-info li]
+  (binding [analyzer-info li]
     (meta (emit-test 'dart:core/print {})))
 
-  (binding [dart-libs-info li]
+  (binding [analyzer-info li]
     (resolve-symbol 'dart:core/print {}))
 
   (write
@@ -4170,54 +4204,54 @@
     return-locus)
 
   (write
-    (binding [dart-libs-info li]
+    (binding [analyzer-info li]
       (emit-test '(== y 0) '{x x y y}))
     return-locus)
 
   (write
-    (binding [dart-libs-info li]
+    (binding [analyzer-info li]
       (emit-test '(let [x 0] (inc (u32-bit-count x))) '{}))
     return-locus)
 
     (write
-      (binding [dart-libs-info li]
+      (binding [analyzer-info li]
         (emit-test '(let [x ^num (u32-bit-count 0)] x) '{}))
       return-locus)
 
     (write
-      (binding [dart-libs-info li]
+      (binding [analyzer-info li]
         (emit-test '(let [^List? x nil] (.add x 2)) '{}))
       return-locus)
 
     (write
-      (binding [dart-libs-info li]
+      (binding [analyzer-info li]
         (emit-test '(. List filled 4 nil) '{}))
       return-locus)
 
-    (binding [dart-libs-info li]
+    (binding [analyzer-info li]
       (:type (emit-type 'List {})))
 
     (write
-      (binding [dart-libs-info li]
+      (binding [analyzer-info li]
         (emit '(.substring ^String x 2) '{x X}))
       return-locus)
 
-    (binding [dart-libs-info li
+    (binding [analyzer-info li
               *locals-gen* {}]
       (infer-type (emit '(let [n (VectorNode. nil (List/empty))] (.-arr n)) {})))
 
-    (binding [dart-libs-info li
+    (binding [analyzer-info li
               *locals-gen* {}]
       (keys (infer-type (emit '(let [n (VectorNode. nil (List/empty))] n) {}))))
 
-    (binding [dart-libs-info li
+    (binding [analyzer-info li
               *locals-gen* {}]
       (infer-type (emit '(let [n (VectorNode. nil (List/empty))] (.-arr n)) {})))
 
-    (binding [dart-libs-info li]
+    (binding [analyzer-info li]
       (magicast 'xoxo dc-String (assoc dc-String :nullable true) {}))
 
-  (write-type (binding [dart-libs-info li]
+  (write-type (binding [analyzer-info li]
                 (emit-test (dart-type-params-reader '(String -> void)) {})))
 
   (get-in li ["dart:core" "print" :parameters 0 :type])

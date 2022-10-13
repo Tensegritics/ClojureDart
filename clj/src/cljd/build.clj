@@ -179,7 +179,7 @@
   (println (title "Warming up `.clojuredart/libs-info.edn`") "(helps us emit better code)")
   (warm-up-libs-info!)
   (binding [compiler/*hosted* true
-            compiler/dart-libs-info (compiler/load-libs-info)]
+            compiler/analyzer-info (compiler/mk-dead-analyzer-info (compiler/load-libs-info))]
     (newline)
     (println (title "Compiling cljd.core to Dart"))
     (compile-core)
