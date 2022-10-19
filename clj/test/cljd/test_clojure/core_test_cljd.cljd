@@ -664,3 +664,17 @@
 
 (deftest extend-type-multiple-ns
   (is (= (with-out-str (prn (ExtendTypeWorkingOnMultipleNs)) "ohoh"))))
+
+(deftest treap
+  (let [m (cljd.core/HashRankedWideTreapMap nil (cljd.core/TreapNode. 0 #dart ^:fixed [])
+            0 compare -1)
+        m100 (into m (map (juxt str identity)) (range 100))
+        dump (fn dump [^cljd.core/TreapNode n rank]
+               (if (zero? rank)
+                 (vec (.-arr n))
+                 (into [] (map-indexed (fn [i x] (if (even? i) (dump x (dec rank)) x))) (.-arr n))))]
+    (prn (dump (.-root m100) (.-top_rank m100)))
+    (is (= 1 (-> m (assoc "k" 1) (get "k"))))
+    (is (nil? (-> m (assoc "k" 1) (get "j"))))
+    (is (= 42 (-> m (assoc "k" 1) (get "j" 42))))
+    (is (every? #(= (m100 (str %)) %) (range 100)))))
