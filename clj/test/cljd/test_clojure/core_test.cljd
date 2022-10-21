@@ -633,8 +633,7 @@
     (let [x (fn [] "overwritten")]
       (is (= "original" (y))))))
 
-;; TODO
-#_(deftest test-459
+(deftest test-459
   (is (= (reduce-kv conj [] (sorted-map :foo 1 :bar 2))
         [:bar 2 :foo 1])))
 
@@ -1338,8 +1337,7 @@
     (is (= :fail (check-if-throws #(subvec '(:foo) 0 1))))
     (is (= :fail (check-if-throws #(subvec #{:foo} 0 1))))))
 
-;; TODO
-#_(deftest test-cljs-2075
+(deftest test-cljs-2075
   (testing "PersistentTreeMap kv-reduce should honor reduced"
     (let [sm (sorted-map 1 1, 2 2, 3 3, 4 4, 5 5, 6 6, 7 7)]
       (is (= [1 2 3 4] (reduce-kv (fn [m k v] (if (= 5 k) (reduced m) (conj m k))) [] sm))))))
@@ -1350,9 +1348,9 @@
   (testing "Records and maps should not be equal"
     (let [#_#_am (array-map :a 1 :b 2)
           hm (hash-map :a 1 :b 2)
-          #_#_sm (sorted-map :a 1 :b 2)
+          sm (sorted-map :a 1 :b 2)
           r (->CLJS2079 1 2)]
-      #_(is (= am hm sm))
+      (is (= #_am hm sm))
 
       #_#_(is (not= r am))
       (is (not= am r))
@@ -1360,7 +1358,7 @@
       (is (not= r hm))
       (is (not= hm r))
 
-      #_#_(is (not= r sm))
+      (is (not= r sm))
       (is (not= sm r)))))
 
 (deftype MapWithNoIKVReduce [backing-map]

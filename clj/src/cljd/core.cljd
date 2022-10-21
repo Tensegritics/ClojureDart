@@ -7586,6 +7586,30 @@
 
 (def ^:private -empty-treap-node (TreapNode 0 #dart ^:fixed []))
 
+;; Sorted maps in ClojureDart use a novel history-independent randomized search tree.
+;; It draws inspiration from Zip Trees and B+Trees.
+;; From Zip Trees it borrows the idea of a max-treap with hash-based geometrically distributed
+;; rank function.
+;; From B+Trees  it borrows wider fan-out and the idea of storing values only in teh leaves for
+;; faster iteration.
+;; Where Zip Trees use a binary tree and have a geometric rank distribution with a 2 ratio,
+;; HashRankedWideTreapMap use trees of variable fan out (16 on average) and thus the rank
+;; distribution ratio is also 16 (considering 4 bits of hash at a time).
+;; It follows there are only 9 possible ranks (0 to 8). Ties are numerous but are dealt simply
+;; by storing all ties in a sorted array in nodes. Thus the dangling "tie chains" of
+;; zip trees are avoided.
+;; Nodes ranks are not stored, only the root node rank ("top rank") is stored, node ranks are
+;; computed implicitly from the top rank and a node's depth.
+;; inner nodes arrays have an odd length and are laid out in an interleaved manner:
+;; [child0 k1 child1 k2 ... childN-1 kN childN] where k1 < k2 < .. < kN and for all
+;; leaves arrays have an even length and are laid out like this:
+;; [k0 v0 .. kN vN] where k0 < k1 < .. kN
+;; Given childM, any key k appearing in descendants of childM or childM itself
+;; kM <= k < kM+1 when k appears in a leaf
+;; kM < k < kM+1 when k appear in an inner node
+;; There exist a leaf (descendant of childM or childM itself) such that its first key
+;; is kM.
+
 (deftype #/(HashRankedWideTreapMap K V)
          [meta ^TreapNode root ^int top-rank cmp ^:mutable ^int __hash]
   :type-only true
