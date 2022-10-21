@@ -1995,7 +1995,7 @@
 (deftype Atom [^:mutable state
                ^:mutable meta
                ^:mutable validator
-               ^:mutable ^PersistentHashMap watches]
+               ^:mutable watches]
   :type-only true
   IAtom
   IEquiv
@@ -4950,15 +4950,19 @@
   (-kv-reduce [coll f init]
     (if (zero? (.-cnt ^BitmapNode (.-root coll)))
       init
-      (loop [s (-seq coll)
-             acc init]
-        (if (nil? s)
-          acc
-          (let [^PersistentMapEntry me (-first s)
-                acc (f acc (-key me) (-val me))]
-            (if (reduced? acc)
-              (-deref acc)
-              (recur (-next s) acc)))))))
+      (let [it (BitmapIterator. root 0 0 0 1
+                 (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
+                 (.filled #/(List BitmapNode) 7 root)
+                 nil)]
+        (loop [acc init]
+          (if (not (.moveNext it))
+            acc
+            (let [idx (.-idx it)
+                  arr (-> it .-node .-arr)
+                  acc (f acc (aget arr (- idx 2)) (aget arr (dec idx)))]
+              (if (reduced? acc)
+                (unreduced acc)
+                (recur acc))))))))
   IFn
   (-invoke [coll k]
     (-lookup coll k))
@@ -7408,16 +7412,13 @@
           (if-some [^TreapNode child (aget arr i)]
             (.tnode_lookup child k not-found (dec rank) cmp)
             not-found)))))
-  (^TreapNode tnode_assoc_leftmost [node ^int rank k v grow]
-    (assert (= (zero? rank) (even? (alength arr))))
-    ; going down the leftmost path of right branch below the split for k
-    (if (zero? rank)
-      (if grow
-        (TreapNode (inc cnt) (new-array [:insert k v] [:copy arr 0])) ; ok: 2 + even = even
-        (TreapNode cnt (new-array [:insert k v] [:copy arr 2]))) ; ok: 2 + (even-2) = even
-      (TreapNode (cond-> cnt grow inc)
-        (new-array [:insert (.tnode_assoc_leftmost ^TreapNode (aget arr 0) (dec rank) k v grow)] [:copy arr 1])))) ; ok: 1 + (odd - 1) = odd
-  (^TreapNode tnode_zip_until_k [rnode ^TreapNode lnode ^int rank ^int krank k v]
+  (^TreapNode tnode_set_leftmost [node ^int rank k v]
+   (assert (= (zero? rank) (even? (alength arr))))
+   (TreapNode cnt
+     (if (zero? rank)
+       (new-array [:insert k v] [:copy arr 2]); ok: 2+(even-2)=even
+       (new-array [:insert (.tnode_set_leftmost ^TreapNode (aget arr 0) (dec rank) k v)] [:copy arr 1])))) ; ok: 1 + (odd-1)=odd
+  (^TreapNode tnode_partial_zip [rnode ^TreapNode lnode ^int rank ^int krank k v]
     (assert (= (zero? rank) (even? (alength arr))))
     ; partially rezipping a higher split since the new equal k is of lesser rank
     (assert (<= krank rank))
@@ -7430,13 +7431,25 @@
               ln-1 (dec (alength larr))]
           (new-array
             [:copy larr 0 ln-1]
-            [:insert (.tnode_zip_until_k ^TreapNode (aget arr 0) (aget larr ln-1) (dec rank) krank k v)]
+            [:insert (.tnode_partial_zip ^TreapNode (aget arr 0) (aget larr ln-1) (dec rank) krank k v)]
             [:copy arr 1])) ; ok: (odd-1) + 1 + (odd-1) = odd
         :else
         (new-array
           [:copy (.-arr lnode) 0]
-          [:insert k (.tnode_assoc_leftmost ^TreapNode (aget arr 0) rank k v false)]
-          [:copy arr 1])))) ; ok: odd + 2 + (odd-1) = even
+          [:insert k (.tnode_set_leftmost ^TreapNode (aget arr 0) (dec rank) k v)]
+          [:copy arr 1])))) ; ok: odd + 2 + (odd-1) = odd
+  (^TreapNode tnode_zip [rnode ^TreapNode lnode ^int rank]
+    (assert (= (zero? rank) (even? (alength arr))))
+    ; fully rezipping for dissoc
+    (TreapNode (dec cnt)
+      (if (zero? rank)
+        (new-array [:copy (.-arr lnode) 0]  [:copy arr 2]) ; ok: even + (even-2) =even
+        (let [larr (.-arr lnode)
+              ln-1 (dec (alength larr))]
+          (new-array
+            [:copy larr 0 ln-1]
+            [:insert (.tnode_zip ^TreapNode (aget arr 0) (aget larr ln-1) (dec rank))]
+            [:copy arr 1])))))  ; ok: (odd-1) + 1 + (odd-1) = odd
   (^int tnode_split [node ^int rank k v ^List lparr ^int li ^List rparr ^int ri cmp]
     (assert (= (zero? rank) (even? (alength arr))))
     ; returns 0 on update, 1 on insert
@@ -7456,7 +7469,7 @@
             1)))
       (let [i (.tnode_branch_search node k cmp)]
         (if (odd? i)
-          ; equal key of lesser rank: remove it
+          ; found an equal key of lesser rank: remove it and reuse its split
           (let [lcnt (loop [j 0 n 0]
                        (if (< j i)
                          (recur (+ j 2) (+ n (.-cnt ^TreapNode (aget arr j))))
@@ -7466,7 +7479,7 @@
             (aset lparr li (TreapNode lcnt (new-array [:copy arr 0 i]))) ; ok: odd
             (aset rparr ri (TreapNode rcnt
                              (new-array
-                               [:insert (.tnode_assoc_leftmost knode (dec rank) k v false)]
+                               [:insert (.tnode_set_leftmost knode (dec rank) k v)]
                                [:copy arr (+ 2 i)]))) ; ok: 1 + (odd - (2+odd)) = odd
             0)
           (let [larr (new-array [:copy arr 0 (inc i)]) ; ok: 1 + even = odd
@@ -7482,8 +7495,25 @@
             (aset rparr ri (TreapNode rcnt rarr))
             cnt-inc)))))
   (^TreapNode tnode_without [node ^int rank ^int krank k cmp]
-   :TODO
-   node)
+   (assert (= (zero? rank) (even? (alength arr))))
+   (assert (<= krank rank))
+   (if (zero? rank)
+     (let [i (.tnode_leaf_search node k cmp)]
+       (if (even? i)
+         (TreapNode (dec cnt) (new-array [:copy arr 0 i] [:copy arr (+ 2 i)])) ; ok: even  + (even-2-even) = even
+         node))
+     (let [i (.tnode_branch_search node k cmp)]
+       (if (odd? i)
+         (TreapNode (dec cnt)
+           (new-array
+             [:copy arr 0 (dec i)]
+             [:insert (.tnode_zip ^TreapNode (aget arr (dec i)) (aget arr (inc i)) (dec rank))]
+             [:copy arr (+ 2 i)])) ; ok: (odd-1) + 1 + (odd-2-odd) = odd
+         (let [child (aget arr i)
+               child' (.tnode_without ^TreapNode child (dec rank) krank k cmp)]
+           (if (identical? child child')
+             node
+             (TreapNode (dec cnt) (new-array [:copy arr 0 i] [:insert child'] [:copy arr (inc i)])))))))) ; ok: even + 1 + odd - (1+even)=1
   (^TreapNode tnode_assoc [node ^int rank ^int krank k v cmp]
     (assert (= (zero? rank) (even? (alength arr))))
     (assert (<= krank rank))
@@ -7497,7 +7527,9 @@
       (let [i (.tnode_branch_search node k cmp)]
         (if (odd? i)
           ; there's an equal key at the same rank: the split is ok
-          (TreapNode cnt (new-array [:copy arr 0 i] [:insert k (.tnode_assoc_leftmost ^TreapNode (aget arr (+ 2 i)) (dec rank) k v false)] [:copy arr (+ 2 i)])) ; ok: odd + 2 + (odd - (2 + odd))
+          (TreapNode cnt (new-array [:copy arr 0 i]
+                           [:insert k (.tnode_set_leftmost ^TreapNode (aget arr (inc i)) (dec rank) k v)]
+                           [:copy arr (+ 2 i)])) ; ok: odd + 2 + (odd - (2 + odd)) = odd
           ; no equal key, split the incumbent node!
           (let [arr' (new-array [:copy arr 0 i] [:insert nil k nil] [:copy arr (inc i)]) ; ok: even + 3 + (odd - (even + 1)) = odd
                 inc-cnt (.tnode_split ^TreapNode (aget arr i) (dec rank) k v arr' i arr' (+ 2 i) cmp)]
@@ -7512,17 +7544,47 @@
             (TreapNode cnt
               (new-array
                 [:copy arr 0 (dec i)]
-                [:insert (.tnode_zip_until_k rnode lnode rank krank k v)]
+                [:insert (.tnode_partial_zip rnode lnode (dec rank) krank k v)]
                 [:copy arr (+ 2 i)]))) ; ok: (odd - 1) + 1 + (odd - (odd +2)) = odd
           (let [^TreapNode child (aget arr i)
                 child' (.tnode_assoc child (dec rank) krank k v cmp)]
             (TreapNode (+ (- cnt (.-cnt child)) (.-cnt child')) (new-array [:copy arr 0 i] [:insert child'] [:copy arr (inc i)])))))))) ; ok: even + 1 + (odd - (1 + even)) = odd
 
-(def ^:private ^#/(List TreapNode) -empty-treap-branch
-  (let [nodes (.filled #/(List TreapNode) 9 (TreapNode 0 #dart ^:fixed []))]
-    (dotimes [i 8]
-      (aset nodes (inc i) (TreapNode 0 #dart ^:fixed [(aget nodes i)])))
-    nodes))
+
+(deftype #/(TreapIterator E)
+  [^:mutable ^TreapNode node
+   ^:mutable ^int idx
+   ^:mutable ^int rank
+   ^#/(List int) idxs
+   ^#/(List TreapNode) nodes
+   ^:dart mk-value]
+  :type-only true
+  #/(Iterator E)
+  (current [iter]
+    (let [arr (.-arr node)]
+      (mk-value (aget arr (- idx 2)) (aget arr (dec idx)))))
+  (moveNext [iter]
+    (cond
+      (< idx (alength (.-arr node)))
+      (if (zero? rank)
+        (do (set! idx (+ 2 idx)) true)
+        (let [rank-1 (dec rank)
+              child (aget (.-arr node) idx)]
+          (aset nodes rank-1 node)
+          (aset idxs rank-1 (+ 2 idx))
+          (set! node child)
+          (set! idx 0)
+          (set! rank rank-1)
+          (recur)))
+      (< rank (alength idxs))
+      (do
+        (set! node (aget nodes rank))
+        (set! idx (aget idxs rank))
+        (set! rank (inc rank))
+        (recur))
+      :else false)))
+
+(def ^:private -empty-treap-node (TreapNode 0 #dart ^:fixed []))
 
 (deftype #/(HashRankedWideTreapMap K V)
          [meta ^TreapNode root ^int top-rank cmp ^:mutable ^int __hash]
@@ -7530,13 +7592,12 @@
   ^:mixin EqualsEquivMixin
   ^:mixin #/(dart-coll/MapMixin K V)
   (entries [coll]
-    (throw (Exception. "TODO"))
-    #_(reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
+    (reify ^:mixin #/(dart-coll/IterableMixin (MapEntry K V))
       (iterator [_]
-        (BitmapIterator. root 0 0 0 1
-                         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-                         (.filled #/(List BitmapNode) 7 root)
-                         #(new #/(PersistentMapEntry K V) %1 %2 -1)))))
+        (TreapIterator. root 0 top-rank
+          (.filled #/(List int) top-rank 0)
+          (.filled #/(List TreapNode) top-rank root)
+          #(new #/(PersistentMapEntry K V) %1 %2 -1)))))
   ("[]" [coll k]
     (-lookup coll k nil))
   ("[]=" [coll key val]
@@ -7546,27 +7607,19 @@
   (clear [coll]
     (throw (UnsupportedError. "clear not supported on PersistentHashMap")))
   (keys [coll]
-    (throw (Exception. "TODO"))
-    #_(reify ^:mixin #/(dart-coll/IterableMixin K)
+    (reify ^:mixin #/(dart-coll/IterableMixin K)
       (iterator [_]
-        (BitmapIterator. root 0 0 0 1
-                         (if (zero? (bit-and h 0xF)) ; fast path for most frequent case
-                           (let [v (inc (bit-and-not (dec h) h))]
-                             (cond-> 1
-                               (zero? (bit-and v 0x000FFFF0)) (+ 4)
-                               (zero? (bit-and v 0x0FF00FF0)) (+ 2)
-                               (zero? (bit-and v 0xF0F0F0F0)) (+ 1)))
-                           0)
-                         (.filled #/(List BitmapNode) 7 root)
-                         (fn [k _] k)))))
+        (TreapIterator. root 0 top-rank
+          (.filled #/(List int) top-rank 0)
+          (.filled #/(List TreapNode) top-rank root)
+          (fn [k _] k)))))
   (values [coll]
-    (throw (Exception. "TODO"))
-    #_(reify ^:mixin #/(dart-coll/IterableMixin V)
+    (reify ^:mixin #/(dart-coll/IterableMixin V)
       (iterator [_]
-        (BitmapIterator. root 0 0 0 1
-                         (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
-                         (.filled #/(List BitmapNode) 7 root)
-                         (fn [_ v] v)))))
+        (TreapIterator. root 0 top-rank
+          (.filled #/(List int) top-rank 0)
+          (.filled #/(List TreapNode) top-rank root)
+          (fn [_ v] v)))))
   (^#/(HashRankedWideTreapMap RK RV) #/(cast RK RV) [coll]
     (new #/(HashRankedWideTreapMap RK RV) meta root top-rank cmp __hash))
   ^:mixin ToStringMixin
@@ -7600,7 +7653,7 @@
               (recur (-assoc ret (-nth e 0) (-nth e 1)) (-next s))
               (throw (ArgumentError. "conj on a map takes map entries or seqables of map entries"))))))))
   IEmptyableCollection
-  (-empty [coll] (#/(HashRankedWideTreapMap K V) meta (aget -empty-treap-branch 0) 0 cmp -1))
+  (-empty [coll] (#/(HashRankedWideTreapMap K V) meta -empty-treap-node 0 cmp -1))
   IEquiv
   (-equiv [coll other] (-equiv-map coll other))
   IHash
@@ -7622,25 +7675,28 @@
       (new #/(PersistentMapEntry K V) k v -1)))
   IMap
   (-dissoc [coll k]
-    (throw (Exception. "TODO"))
-    #_(let [new-root (.inode_without root 0 (hash k) k)]
+    (let [new-root (.tnode_without root top-rank (hashrank k) k cmp)]
       (if (identical? new-root root)
         coll
-        (PersistentHashMap. meta ^BitmapNode new-root -1)))) ; FIX for failed inference
+        (loop [^TreapNode root new-root top-rank top-rank]
+          (if (= 1 (alength (.-arr root)))
+            (recur (aget (.-arr root) 0) (dec top-rank))
+            (#/(HashRankedWideTreapMap K V) meta root top-rank cmp -1))))))
   IKVReduce
   (-kv-reduce [coll f init]
-    (throw (Exception. "TODO"))
-    #_(if (zero? (.-cnt ^BitmapNode (.-root coll)))
-      init
-      (loop [s (-seq coll)
-             acc init]
-        (if (nil? s)
-          acc
-          (let [^PersistentMapEntry me (-first s)
-                acc (f acc (-key me) (-val me))]
-            (if (reduced? acc)
-              (-deref acc)
-              (recur (-next s) acc)))))))
+    (let [it (TreapIterator. root 0 top-rank
+               (.filled #/(List int) top-rank 0)
+               (.filled #/(List TreapNode) top-rank root)
+               nil)]
+        (loop [acc init]
+          (if (not (.moveNext it))
+            acc
+            (let [idx (.-idx it)
+                  arr (-> it .-node .-arr)
+                  acc (f acc (aget arr (- idx 2)) (aget arr (dec idx)))]
+              (if (reduced? acc)
+                (unreduced acc)
+                (recur acc)))))))
   IFn
   (-invoke [coll k]
     (-lookup coll k))
@@ -7653,3 +7709,23 @@
           net-size (u32x2-bit-count bitmap-hi bitmap-lo)
           gross-size (bit-and -8 (+ 7 net-size))]
       (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil))))))
+
+(defn sorted-map-by
+  "keyval => key val
+  Returns a new sorted map with supplied mappings, using the supplied
+  comparator.  If any keys are equal, they are handled as if by
+  repeated uses of assoc."
+  ([comparator & keyvals]
+   (loop [m (HashRankedWideTreapMap nil -empty-treap-node 0 comparator -1) kvs (seq keyvals)]
+     (if-some [[k & vkvs] kvs]
+       (if-some [[v & kvs] vkvs]
+         (recur (assoc m k v) kvs)
+         (throw (Exception (str "No value supplied for key:" (pr-str k)))))
+       m))))
+
+(defn sorted-map
+  "keyval => key val
+  Returns a new sorted map with supplied mappings.  If any keys are
+  equal, they are handled as if by repeated uses of assoc."
+  ([& keyvals]
+   (apply sorted-map-by compare keyvals)))
