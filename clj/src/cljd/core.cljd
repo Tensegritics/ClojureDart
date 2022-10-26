@@ -7285,8 +7285,7 @@
   (with-meta
     (persistent!
      (reduce-kv (fn [acc k v] (assoc! acc k (f v)))
-                (transient {})
-                #_(if (instance? clojure.lang.IEditableCollection m)
+                (if (satisfies? IEditableCollection m)
                   (transient m)
                   (transient {}))
                 m))
