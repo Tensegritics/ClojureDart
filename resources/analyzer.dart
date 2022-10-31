@@ -92,13 +92,17 @@ Map<String, dynamic> emitType(LibraryElement rootLib, DartType t) {
       ":element-name": "\"Never\""
     };
   }
-  if (t is TypeParameterType) return emitTypeParameter(rootLib, t.element2);
-
+  if (t is TypeParameterType) {
+    var res = emitTypeParameter(rootLib, t.element2);
+    res[":nullable"] =
+        t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question;
+    return res;
+  }
   var name = t.getDisplayString(withNullability: false);
   final i = name.indexOf("<");
   if (i >= 0) name = name.substring(0, i);
   //if (!isParam || lib != null) addLibIdentifierIfNotContains(libsToDo, lib as String);
-  var canonLib = (lib == null ? null : "\"${lib}\"");
+  var canonLib = lib == null ? null : "\"${lib}\"";
   var exportingLib = canonLib == null
       ? null
       : (t.element2 == null
