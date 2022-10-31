@@ -355,30 +355,12 @@ Future<String> retrieveElement(OverlayResourceProvider resourceProvider,
   final String filePath = pathContext
       .normalize("${pathContext.current}${sep}lib${sep}cljdfuzzysearch.dart");
   resourceProvider.setOverlay(filePath,
-      content:
-          "import '${lib}' as libalias;\nlate libalias.${element} classalias;\nvar topvaralias = libalias.${element};",
+      content: "import '${lib}' as libalias;\n",
       modificationStamp: DateTime.now().millisecondsSinceEpoch);
   var context = coll.contextFor(filePath);
   context.changeFile(filePath);
   await context.applyPendingFileChanges();
   var session = context.currentSession;
-  var errors = await session.getErrors(filePath);
-  var analysisErrors = (errors as ErrorsResult).errors;
-  late String type;
-  if (analysisErrors.isEmpty) {
-    type = "classalias";
-  } else if (analysisErrors.first.errorCode.uniqueName ==
-      "CompileTimeErrorCode.NOT_A_TYPE") {
-    type = "topvaralias";
-  } else {
-    // @TODO: report smth here
-    //analysisErrors.forEach(
-    //(element) => print(element.errorCode.uniqueName),
-    //);
-    //print("NOT KNOWN ERROR");
-    // @TODO: should definitively log smth here.
-    return "nil";
-  }
   var result =
       await session.getLibraryByUri(pathContext.toUri(filePath).toString());
   if (result is LibraryElementResult) {
