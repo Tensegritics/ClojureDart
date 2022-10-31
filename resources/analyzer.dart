@@ -1,266 +1,417 @@
 import 'dart:io';
 import 'dart:convert';
+import 'dart:async';
 import 'package:analyzer/dart/analysis/analysis_context_collection.dart';
 import 'package:analyzer/dart/analysis/results.dart';
-import 'package:analyzer/error/error.dart';
 import 'package:analyzer/file_system/physical_file_system.dart';
 import 'package:analyzer/file_system/overlay_file_system.dart';
 import 'package:analyzer/dart/element/visitor.dart';
 import 'package:analyzer/dart/element/element.dart';
 import 'package:analyzer/dart/element/type.dart';
 import 'package:analyzer/dart/element/nullability_suffix.dart';
-
-final Set<String> libsToDo = {"dart:developer", "dart:mirrors", "dart:ffi", "dart:io", "dart:isolate", "dart:async", "dart:collection", "dart:convert", "dart:math", "dart:typed_data", "dart:html", "dart:indexed_db", "dart:js", "dart:js_util", "dart:svg", "dart:web_audio", "dart:web_gl"};
-
-final Set<String> libsDone = {};
-
-final Map<String, String> packages = {};
-
-String libPathToPackageName(String path) {
-  if (packages[path] != null) return packages[path] as String;
-  for (final pname in packages.keys) {
-    if (path.startsWith(pname)) {
-      String pack = packages[pname] as String;
-      String result = path.replaceRange(0, pname.length, pack);
-      packages[path] = result;
-      return result;
-    }
-  }
-  return path;
-}
+import 'package:path/path.dart';
 
 bool isPublic(Element e) => e.isPublic;
 
-R fnil<R,E>(R f(E e), E? x, R fallback) => x != null ? f(x) : fallback;
+R fnil<R, E>(R f(E e), E? x, R fallback) => x != null ? f(x) : fallback;
 
-String M(Map<String,dynamic> m) {
+String M(Map<String, dynamic> m) {
   final sb = StringBuffer("{");
   var first = true;
   m.forEach((k, v) {
-      if (v == null || v == false || v is Iterable && v.isEmpty) return;
-      if (first) first=false; else sb.write("\n");
-      sb..write(k)..write(" ");
-      if (v is Iterable) {
-        sb..write("[")
-        ..writeAll(v, " ")
-        ..write("]");
-        return;
-      }
-      sb.write(v);
+    if (v == null || v == false || v is Iterable && v.isEmpty) return;
+    if (first)
+      first = false;
+    else
+      sb.write("\n");
+    sb
+      ..write(k)
+      ..write(" ");
+    if (v is Iterable) {
+      sb.write("[");
+      v.forEach((e) => sb
+        ..write(M(e))
+        ..write(" "));
+      sb.write("]");
+      return;
+    }
+    if (v is Map) {
+      sb.write(M(v.cast<String, dynamic>()));
+      return;
+    }
+    sb.write(v);
   });
   sb.write("}");
   return sb.toString();
 }
 
-String emitType(DartType t) {
-  final lib = t.element?.library?.identifier;
-  if (lib != null) libsToDo.add(lib);
+Map<String, dynamic> emitType(LibraryElement rootLib, DartType t) {
+  final lib = t.element2?.library?.identifier;
   if (t is FunctionType) {
-    return M({':type': "\"Function\"",
-        ':nullable': t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question,
-        ':return-type': emitType(t.returnType),
-        ':parameters': t.parameters.map(emitParameter),
-        ':type-parameters': t.typeFormals.map(emitTypeParameter)});
+    return {
+      ':element-name': "\"Function\"",
+      ":kind": ":function",
+      ":qname": "dc.Function",
+      ":canon-qname": "dc.Function",
+      ":canon-lib": "\"dart:core\"",
+      ":lib": "\"dart:core\"",
+      ':nullable':
+          t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question,
+      ':return-type': emitType(rootLib, t.returnType),
+      ':parameters': t.parameters.map((e) => emitParameter(rootLib, e)),
+      ':type-parameters':
+          t.typeFormals.map((e) => emitTypeParameter(rootLib, e))
+    };
   }
-  var name = t.displayName;
+  if (t is DynamicType) {
+    return {
+      ":kind": ":class",
+      ":qname": "dc.dynamic",
+      ":canon-qname": "dc.dynamic",
+      ":canon-lib": "\"dart:core\"",
+      ":lib": "\"dart:core\"",
+      ":element-name": "\"dynamic\"",
+      ":type-parameters": []
+    };
+  }
+  if (t is VoidType) {
+    return {
+      ":kind": ":class",
+      ":qname": "void",
+      ":canon-qname": "void",
+      ":element-name": "\"void\""
+    };
+  }
+  if (t is NeverType) {
+    return {
+      ":kind": ":class",
+      ":qname": "dc.Never",
+      ":canon-qname": "dc.Never",
+      ":canon-lib": "\"dart:core\"",
+      ":lib": "\"dart:core\"",
+      ":element-name": "\"Never\""
+    };
+  }
+  if (t is TypeParameterType) return emitTypeParameter(rootLib, t.element2);
+
+  var name = t.getDisplayString(withNullability: false);
   final i = name.indexOf("<");
   if (i >= 0) name = name.substring(0, i);
-  final isParam = t is TypeParameterType;
   //if (!isParam || lib != null) addLibIdentifierIfNotContains(libsToDo, lib as String);
-  return M({':type': "\"${name}\"",
-      ':nullable': t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question,
-      ':is-param': isParam,
-      ':lib': (isParam || lib == null ? null : "\"${libPathToPackageName(lib)}\""),
-      ':type-parameters': t is ParameterizedType ? t.typeArguments.map(emitType) : null
-  });
+  var canonLib = (lib == null ? null : "\"${lib}\"");
+  var exportingLib = canonLib == null
+      ? null
+      : (t.element2 == null
+          ? null
+          : (t.element2!.library == null
+              ? null
+              : (isExported(rootLib, t.element2!.library!)
+                  ? "\"${rootLib.identifier}\""
+                  : canonLib)));
+  exportingLib = exportingLib ?? canonLib;
+  return {
+    ':kind': ':class',
+    ':element-name': "\"${name}\"",
+    ':nullable':
+        t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question,
+    ':canon-lib': canonLib,
+    ':lib': exportingLib,
+    ':canon-qname-placeholder': canonLib == null ? null : true,
+    ':type-parameters': t is ParameterizedType
+        ? t.typeArguments.map(((e) => (emitType(rootLib, e))))
+        : null
+  };
 }
 
-String emitTypeParameter(TypeParameterElement tp) =>
-M({':type': "\"${tp.displayName}\"",
-    ':is-param': true,
-    ':bound': fnil(emitType,tp.bound,null)});
+Map<String, dynamic> emitTypeParameter(
+    LibraryElement rootLib, TypeParameterElement tp) {
+  var f = (t) => emitType(rootLib, t);
+  return {
+    ":kind": ":class",
+    ":element-name": "\"${tp.displayName}\"",
+    ":qname": "${tp.displayName}",
+    ":canon-qname": "${tp.displayName}",
+    ":is-param": true,
+    ":bound": fnil(f, tp.bound, null)
+  };
+}
 
-String emitParameter(ParameterElement p) {
+Map<String, dynamic> emitParameter(LibraryElement rootLib, ParameterElement p) {
   final name = p.displayName;
-  return M({":name": name.isEmpty ? null : name, ":kind": p.isNamed ? ':named' : ':positional', ':type': emitType(p.type), ':optional': p.isOptional});
+  return {
+    ":name": name.isEmpty ? null : name,
+    ":kind": p.isNamed ? ':named' : ':positional',
+    ':type': emitType(rootLib, p.type),
+    ':optional': p.isOptional
+  };
 }
 
-class TopLevelVisitor extends ThrowingElementVisitor {
-  void visitImportElement(ImportElement e) {
-    print(e.displayName);
-    throw "coucou";
-  }
+bool isExported(LibraryElement rootLib, LibraryElement l) =>
+    rootLib.exportedLibraries.contains(l);
 
-  void visitClassElement(ClassElement e) {
-    print("\"${e.displayName}\"");
-    Map<String,dynamic> classData =
-    {':kind': ':class',
-      ':lib': '"${libPathToPackageName(e.library.identifier)}"',
+class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
+  final LibraryElement rootLib;
+  TopLevelVisitor(this.rootLib);
+
+  //void visitImportElement(ImportElement e) {
+//    print(e.displayName);
+  //  throw "coucou";
+//  }
+
+  Map<String, dynamic> _visitInterfaceElement(InterfaceElement e) {
+    var f = (t) => emitType(rootLib, t);
+    Map<String, dynamic> classData = {
+      ':kind': ':class',
+      ':canon-qname-placeholder': true,
+      ':canon-lib': '"${e.library.identifier}"',
+      ':lib': isExported(rootLib, e.library)
+          ? '"${rootLib.identifier}"'
+          : '"${e.library.identifier}"',
       ':private': e.isPrivate,
       ':internal': e.hasInternal,
-      ':type-parameters': e.typeParameters.map(emitTypeParameter),
-      ':super': fnil(emitType,e.supertype,null),
-      ':mixins': e.mixins.map(emitType),
-      ':interfaces': e.interfaces.map(emitType),
-      ':on': e.superclassConstraints.map(emitType)};
-    for(final m in e.methods.where(isPublic)) {
+      ':type-parameters':
+          e.typeParameters.map((e) => emitTypeParameter(rootLib, e)),
+      ':super': fnil(f, e.supertype, null),
+      ':mixins': e.mixins.map(((e) => (emitType(rootLib, e)))),
+      ':interfaces': e.interfaces.map(((e) => (emitType(rootLib, e)))),
+    };
+    if (e is MixinElement)
+      classData[':on'] =
+          e.superclassConstraints.map(((e) => (emitType(rootLib, e))));
+    for (final m in e.methods.where(isPublic)) {
       final name = m.displayName;
-      classData["\"${name == '-' && m.parameters.isEmpty ? 'unary-' : name}\""]=
-      M({':kind': ':method', ':operator': m.isOperator,
-          ':static': m.isStatic,
-          ':return-type': emitType(m.returnType),
-          ':parameters': m.parameters.map(emitParameter),
-          ':type-parameters': m.typeParameters.map(emitTypeParameter)
-      });
+      classData[
+          "\"${name == '-' && m.parameters.isEmpty ? 'unary-' : name}\""] = {
+        ':kind': ':method',
+        ':operator': m.isOperator,
+        ':static': m.isStatic,
+        ':return-type': emitType(rootLib, m.returnType),
+        ':parameters': m.parameters.map((e) => emitParameter(rootLib, e)),
+        ':type-parameters':
+            m.typeParameters.map((e) => emitTypeParameter(rootLib, e))
+      };
     }
-    for(final c in e.constructors.where(isPublic)) {
-      classData["\"${c.displayName}\""]=
-      M({':kind': ':constructor',
-          ':named': !c.isDefaultConstructor,
-          ':const': c.isConst,
-          ':return-type': emitType(c.returnType),
-          ':parameters': c.parameters.map(emitParameter),
-          ':type-parameters': c.typeParameters.map(emitTypeParameter)
-      });
+    for (final c in e.constructors.where(isPublic)) {
+      classData["\"${c.displayName}\""] = {
+        ':kind': ':constructor',
+        ':named': !c.isDefaultConstructor,
+        ':const': c.isConst,
+        ':return-type': emitType(rootLib, c.returnType),
+        ':parameters': c.parameters.map((e) => emitParameter(rootLib, e)),
+        ':type-parameters':
+            c.typeParameters.map((e) => emitTypeParameter(rootLib, e))
+      };
     }
-    for(final f in e.fields.where(isPublic)) {
-      classData["\"${f.displayName}\""]=
-      M({':kind': ':field',
-          ':static': f.isStatic,
-          ':const': f.isConst,
-          ':getter': f.getter!=null,
-          ':setter': f.setter!=null,
-          ':type': emitType(f.type)
-      });
+    for (final f in e.fields.where(isPublic)) {
+      classData["\"${f.displayName}\""] = {
+        ':kind': ':field',
+        ':static': f.isStatic,
+        ':const': f.isConst,
+        ':getter': f.getter != null,
+        ':setter': f.setter != null,
+        ':type': emitType(rootLib, f.type)
+      };
     }
-    print(M(classData));
+    return classData;
   }
-  void visitPropertyAccessorElement(PropertyAccessorElement e) {
-    print("; getter/setter ${e.displayName}");
-  }
-  void visitTopLevelVariableElement(TopLevelVariableElement e) {
-    print("\"${e.displayName}\"");
-    print(M({':kind': ':field',
-             ':const': e.isConst,
-             ':getter': e.getter!=null,
-             ':setter': e.setter!=null,
-             ':type': emitType(e.type)
-    }));
-  }
-  void visitTypeAliasElement(TypeAliasElement e) {
-    print("; typedef ${e.displayName}");
-  }
-  void visitFunctionElement(FunctionElement e) {
-    print("\"${e.displayName}\"");
-    Map<String,dynamic> classData =
-    {':kind': ':function',
-      ':lib': '"${libPathToPackageName(e.library.identifier)}"',
-      ':parameters': e.parameters.map(emitParameter),
-      ':return-type': emitType(e.returnType),
-      ':type-parameters': e.typeParameters.map(emitTypeParameter)};
-    print(M(classData));
-  }
-  void visitExtensionElement(ExtensionElement e) {
-    print("; extension ${e.displayName}");
-  }
-}
 
-Future<void> analyzePaths (session, List<String> paths) async {
-  for (final p in paths) {
-    final libraryElementResult = await session.getLibraryByUri(p);
-    if (!libsDone.add(p)) continue;
-    if (libraryElementResult is LibraryElementResult) {
-      final libraryElement = (libraryElementResult as LibraryElementResult).element;
-      final packageName = libPathToPackageName(libraryElement.identifier);
-      if (packageName != p) {
-        libsToDo.add(packageName);
-        continue;
-      }
-      print("\"$p\" {"); // open 1
-      for (final top in libraryElement.topLevelElements) {
-        if (top.isPublic) top.accept(TopLevelVisitor());
-      }
-      var exs = libraryElement.exports;
-      if (exs.isNotEmpty) {
-        print(":exports [");
-        for (final ex in libraryElement.exports) {
-          if (ex.exportedLibrary != null) {
-            var n = ex.exportedLibrary?.identifier as String;
-            libsToDo.add(n);
-            for (final comb in ex.combinators) {
-              if (comb is ShowElementCombinator) {
-                print(M({":lib": "\"${libPathToPackageName(n)}\"", ':shown': comb.shownNames.map((name) => "\"${name}\"").toList()}));
-              }
-              if (comb is HideElementCombinator) {
-                print(M({":lib": "\"${libPathToPackageName(n)}\"", ':hidden': comb.hiddenNames.map((name) => "\"${name}\"").toList()}));
-              }
-            }
-            if (ex.combinators.isEmpty) {
-              print(M({":lib": "\"${n}\""}));
-            }
-          }
-        }
-        print("]");
-      }
-      print(":private ${libraryElement.isPrivate}");
-      print(":internal ${libraryElement.hasInternal}");
-      print("}"); // close 1
-    }
+  Map<String, dynamic> visitClassElement(ClassElement e) {
+    return this._visitInterfaceElement(e);
   }
+
+  Map<String, dynamic> visitPropertyAccessorElement(PropertyAccessorElement e) {
+    return {
+      ':kind': ':field',
+      ':canon-qname-placeholder': true,
+      ':canon-lib': '"${e.library.identifier}"',
+      ':lib': isExported(rootLib, e.variable.library)
+          ? '"${rootLib.identifier}"'
+          : '"${e.variable.library.identifier}"',
+      ':const': e.variable.isConst,
+      ':getter': e.variable.getter != null,
+      ':setter': e.variable.setter != null,
+      ':type': emitType(rootLib, e.variable.type)
+    };
+  }
+
+  Map<String, dynamic> visitTopLevelVariableElement(TopLevelVariableElement e) {
+    return {
+      ':kind': ':field',
+      ':canon-qname-placeholder': true,
+      ':canon-lib': '"${e.library.identifier}"',
+      ':lib': isExported(rootLib, e.library)
+          ? '"${rootLib.identifier}"'
+          : '"${e.library.identifier}"',
+      ':const': e.isConst,
+      ':getter': e.getter != null,
+      ':setter': e.setter != null,
+      ':type': emitType(rootLib, e.type)
+    };
+  }
+
+  Map<String, dynamic> visitMixinElement(MixinElement e) {
+    return this._visitInterfaceElement(e);
+  }
+
+  Map<String, dynamic> visitEnumElement(EnumElement e) {
+    return this._visitInterfaceElement(e);
+  }
+
+  // void visitTypeAliasElement(TypeAliasElement e) {
+  //   print("; typedef ${e.displayName}");
+  // }
+
+  Map<String, dynamic> visitFunctionElement(FunctionElement e) {
+    return {
+      ':kind': ':function',
+      ':canon-qname-placeholder': true,
+      ':canon-lib': '"${e.library.identifier}"',
+      ':lib': isExported(rootLib, e.library)
+          ? '"${rootLib.identifier}"'
+          : '"${e.library.identifier}"',
+      ':parameters': e.parameters.map((e) => emitParameter(rootLib, e)),
+      ':return-type': emitType(rootLib, e.returnType),
+      ':type-parameters':
+          e.typeParameters.map((e) => emitTypeParameter(rootLib, e))
+    };
+  }
+
+  // void visitExtensionElement(ExtensionElement e) {
+  //   print("; extension ${e.displayName}");
+  // }
 }
 
 void main(args) async {
-  final resourceProvider = OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
-  var ctx = resourceProvider.pathContext;
+  final resourceProvider =
+      OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
+  var pathContext = resourceProvider.pathContext;
+  final String sep = pathContext.separator;
   late Directory dir;
-  if (args.isEmpty) dir = Directory.current;
-  else dir = Directory(args.first);
+  if (args.isEmpty)
+    dir = Directory.current;
+  else
+    dir = Directory(args.first);
   Uri projectDirectoryUri = dir.uri;
-  final collection = AnalysisContextCollection(
-    includedPaths: [ctx.normalize(projectDirectoryUri.path)],
-    resourceProvider: resourceProvider
-  );
-  final includedDependenciesPaths = <String>[];
-  for (final context in collection.contexts) {
-    final currentSession = context.currentSession;
-    var packageFileJsonString = context.contextRoot.packagesFile?.readAsStringSync();
-    // TODO throw when package file does not exist
-    if (packageFileJsonString != null) {
-      var jsonContent = json.decode(packageFileJsonString);
-      for (final jc in jsonContent["packages"]) {
-        var rootUri = jc["rootUri"];
-        if (jc.containsKey("packageUri")) {
-          rootUri = ctx.join(rootUri, jc["packageUri"]);
-        }
-        packages[rootUri] = 'package:' + jc["name"] + '/';
-        String normalizedPath = ctx.normalize(ctx.fromUri(rootUri));
-        if (!ctx.isRelative(normalizedPath)) {
-          includedDependenciesPaths.add(normalizedPath);
-        } else {
-          stderr.write("WARNING: could not analyze '" + jc["name"] + "' package \n");
-          // TODO: better message on consequences
-        }
-      };
+
+  final coll = AnalysisContextCollection(
+      includedPaths: [
+        pathContext.normalize(projectDirectoryUri.path)
+      ],
+      excludedPaths: [
+        "${pathContext.normalize(projectDirectoryUri.path)}${sep}lib${sep}cljd-out",
+        "${pathContext.normalize(projectDirectoryUri.path)}${sep}lib${sep}cljd-out${sep}analyzer_pure_lib.dart"
+      ],
+      resourceProvider: resourceProvider,
+      sdkPath: dirname(dirname(Platform.resolvedExecutable)));
+  // (-> io/Platform.resolvedExecutable path/dirname path/dirname)
+  final server = CljdAnalyzerStdinServer();
+  await doesLibraryExist(resourceProvider, coll, "dart:core");
+  await doesLibraryExist(resourceProvider, coll, "dart:async");
+  do {
+    late final Map<String, dynamic> m;
+    m = (await (server.receive()));
+    if (m["element"] == null) {
+      var res = await doesLibraryExist(resourceProvider, coll, m["lib"]!);
+      if (res) {
+        print(true);
+      } else {
+        print("nil");
+      }
+      continue;
+    } else {
+      var elem = await retrieveElement(
+          resourceProvider, coll, m["lib"]!, m["element"]!);
+      print(elem);
+    }
+    continue;
+  } while (true);
+}
+
+class CljdAnalyzerStdinServer {
+  late StreamSubscription<List<int>> _sub;
+  late Completer<Map<String, dynamic>> _compl;
+  CljdAnalyzerStdinServer() {
+    this._sub = stdin.listen((List<int> bytes) {
+      _compl.complete(json.decode(utf8.decode(bytes)));
+      this._sub.pause();
+    });
+    this._sub.pause();
+  }
+  Future<Map<String, dynamic>> receive() {
+    this._compl = new Completer<Map<String, dynamic>>();
+    this._sub.resume();
+    return this._compl.future;
+  }
+}
+
+Future<String> retrieveElement(OverlayResourceProvider resourceProvider,
+    AnalysisContextCollection coll, String lib, String element) async {
+  var pathContext = resourceProvider.pathContext;
+  final String sep = pathContext.separator;
+  final String filePath = pathContext
+      .normalize("${pathContext.current}${sep}lib${sep}cljdfuzzysearch.dart");
+  resourceProvider.setOverlay(filePath,
+      content:
+          "import '${lib}' as libalias;\nlate libalias.${element} classalias;\nvar topvaralias = libalias.${element};",
+      modificationStamp: DateTime.now().millisecondsSinceEpoch);
+  var context = coll.contextFor(filePath);
+  context.changeFile(filePath);
+  await context.applyPendingFileChanges();
+  var session = context.currentSession;
+  var errors = await session.getErrors(filePath);
+  var analysisErrors = (errors as ErrorsResult).errors;
+  late String type;
+  if (analysisErrors.isEmpty) {
+    type = "classalias";
+  } else if (analysisErrors.first.errorCode.uniqueName ==
+      "CompileTimeErrorCode.NOT_A_TYPE") {
+    type = "topvaralias";
+  } else {
+    // @TODO: report smth here
+    //analysisErrors.forEach(
+    //(element) => print(element.errorCode.uniqueName),
+    //);
+    //print("NOT KNOWN ERROR");
+    // @TODO: should definitively log smth here.
+    return "nil";
+  }
+  var result =
+      await session.getLibraryByUri(pathContext.toUri(filePath).toString());
+  if (result is LibraryElementResult) {
+    var rootLib = result.element.importedLibraries.first;
+    var e = rootLib.exportNamespace.get(element);
+    if (e != null) {
+      var res = e.accept(TopLevelVisitor(rootLib));
+      if (res != null) {
+        res[":element-name"] = "\"${element}\"";
+        res[":toplevel"] = true;
+        res[":canon-qname-placeholder"] = true;
+        return M(res);
+      }
     }
   }
-  // NOTE : deps analysis
-  final collectionDeps = AnalysisContextCollection(
-    includedPaths: includedDependenciesPaths as List<String>,
-    resourceProvider: resourceProvider
-  );
-  print("{"); // open 2
-  for (final context in collectionDeps.contexts) {
-    final currentSession = context.currentSession;
-    var files = context.contextRoot.analyzedFiles().map((n) => ctx.toUri(n).toString()).toList();
-    files.removeWhere((p) => ctx.extension(p) != '.dart');
-    await analyzePaths(currentSession, files);
+  return "nil";
+}
+
+Future<bool> doesLibraryExist(OverlayResourceProvider resourceProvider,
+    AnalysisContextCollection coll, String lib) async {
+  var pathContext = resourceProvider.pathContext;
+  final String sep = pathContext.separator;
+  final String filePath = pathContext
+      .normalize("${pathContext.current}${sep}lib${sep}cljdfuzzysearch.dart");
+  resourceProvider.setOverlay(filePath,
+      content: "import ${lib} as fuzzyalias;\n",
+      modificationStamp: DateTime.now().millisecondsSinceEpoch);
+  var context = coll.contextFor(filePath);
+  context.changeFile(filePath);
+  await context.applyPendingFileChanges();
+  var session = context.currentSession;
+  var errors = await session.getErrors(filePath);
+  var analysisErrors = (errors as ErrorsResult).errors;
+  if (analysisErrors.isEmpty ||
+      (analysisErrors.first.errorCode.uniqueName ==
+          "CompileTimeErrorCode.URI_DOES_NOT_EXIST")) {
+    return false;
   }
-  /// Only necessary for dart:* libs
-  do {
-    var libs = libsToDo.difference(libsDone);
-    libsToDo..clear()..addAll(libs);
-    await analyzePaths(collection.contexts.first.currentSession, libsToDo.toList());
-  }
-  while(libsToDo.isNotEmpty);
-  print("}"); // close 2
+  return true;
 }

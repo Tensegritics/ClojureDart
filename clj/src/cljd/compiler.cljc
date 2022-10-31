@@ -257,21 +257,63 @@
   [^Process p]
   (let [stdin (java.io.OutputStreamWriter. (.getOutputStream p) "UTF-8")
         stdout (clojure.lang.LineNumberingPushbackReader.
-                (java.io.InputStreamReader. (.getInputStream p) "UTF-8"))
-        cache (atom {})]
-    (fn [& args]
-      (let [c @cache
-            r (c args c)]
-        (if-not (identical? r c)
-          r
-          (do
-            (.write stdin (str (count args)))
-            (doseq [arg args]
-              (doto stdin (.write " ") (.write ^String arg)))
-            (doto stdin (.write "\n") .flush)
-            (let [r (edn/read stdout)]
-              (swap! cache assoc args r)
-              r)))))))
+                 (java.io.InputStreamReader. (.getInputStream p) "UTF-8"))
+        cache (atom (-> {}
+                      (assoc-in ["dart:core" "Never"] dc-Never)
+                      (assoc-in ["dart:core" "dynamic"] dc-dynamic)
+                      (assoc-in ["dart:_internal" :private] true)))
+        qname (fn qname [m]
+                (->> (cond-> m
+                       (:canon-qname-placeholder m)
+                       (-> (assoc
+                             :canon-qname (-> (global-lib-alias (:canon-lib m) nil) (str "." (:element-name m)) symbol)
+                             :qname (-> (global-lib-alias (:lib m) nil) (str "." (:element-name m)) symbol))
+                         (dissoc :canon-qname-placeholder)))
+                  (into {} (map (fn [[k v]]
+                                  (cond
+                                    (map? v) [k (qname v)]
+                                    (vector? v) [k (into [] (map qname) v)]
+                                    :else [k v]))))))]
+    #_(fn [& args]
+        (let [c @cache
+              r (c args c)]
+          (if-not (identical? r c)
+            r
+            (do
+              (.write stdin (str (count args)))
+              (doseq [arg args]
+                (doto stdin (.write " ") (.write ^String arg)))
+              (doto stdin (.write "\n") .flush)
+              (let [r (edn/read stdout)]
+                (swap! cache assoc args r)
+                r)))))
+    (fn
+      ([lib]
+       (let [c @cache
+             ;; c as sentinel
+             r (get c lib c)]
+         (if-not (identical? r c)
+           r
+           (do (doto stdin
+                 (.write (str "{\"lib\":\"" lib  "\"}\n"))
+                 .flush)
+               ;; nil means lib does not exist
+               (when-some [r (edn/read stdout)]
+                 (swap! cache assoc lib {})
+                 true)))))
+      ([lib element]
+       (let [c @cache
+             ;; c as sentinel
+             r (get-in c [lib element] c)]
+         (if-not (identical? r c)
+           r
+           (do (doto stdin
+                 (.write (str "{\"lib\":\"" lib  "\",\"element\":\"" element  "\"}\n"))
+                 .flush)
+               ;; nil means lib does not exist
+               (when-some [r (some-> (edn/read stdout) qname)]
+                 (swap! cache assoc-in [lib element] r)
+                 r))))))))
 
 
 (def ^:dynamic *hosted* false)
