@@ -323,9 +323,12 @@ void main(args) async {
       }
       continue;
     } else {
-      var elem = await retrieveElement(
-          resourceProvider, coll, m["lib"]!, m["element"]!);
-      print(elem);
+      var elem = await retrieveElement(resourceProvider, coll,
+          projectDirectoryUri, m["lib"]!, m["element"]!);
+      if (elem != null)
+        print(M(elem));
+      else
+        print("null");
     }
     continue;
   } while (true);
@@ -348,12 +351,17 @@ class CljdAnalyzerStdinServer {
   }
 }
 
-Future<String> retrieveElement(OverlayResourceProvider resourceProvider,
-    AnalysisContextCollection coll, String lib, String element) async {
+Future<Map<String, dynamic>?> retrieveElement(
+    OverlayResourceProvider resourceProvider,
+    AnalysisContextCollection coll,
+    Uri projectDirectoryUri,
+    String lib,
+    String element,
+    [bool reload = true]) async {
   var pathContext = resourceProvider.pathContext;
   final String sep = pathContext.separator;
-  final String filePath = pathContext
-      .normalize("${pathContext.current}${sep}lib${sep}cljdfuzzysearch.dart");
+  final String filePath = pathContext.normalize(
+      "${projectDirectoryUri.path}${sep}lib${sep}cljdfuzzysearch.dart");
   resourceProvider.setOverlay(filePath,
       content: "import '${lib}' as libalias;\n",
       modificationStamp: DateTime.now().millisecondsSinceEpoch);
@@ -365,6 +373,18 @@ Future<String> retrieveElement(OverlayResourceProvider resourceProvider,
       await session.getLibraryByUri(pathContext.toUri(filePath).toString());
   if (result is LibraryElementResult) {
     var rootLib = result.element.importedLibraries.first;
+    // when rootLib is a local file under .../lib/myfile.dart , reload it everytime
+    if (reload &
+        isWithin(pathContext.normalize(projectDirectoryUri.path),
+            pathContext.normalize(rootLib.librarySource.toString()))) {
+      rootLib.session.analysisContext
+          .changeFile(pathContext.normalize(rootLib.librarySource.toString()));
+      await rootLib.session.analysisContext.applyPendingFileChanges();
+      var res = await retrieveElement(
+          resourceProvider, coll, projectDirectoryUri, lib, element, false);
+      if (res != null) res[":local-lib"] = true;
+      return res;
+    }
     var e = rootLib.exportNamespace.get(element);
     if (e != null) {
       var res = e.accept(TopLevelVisitor(rootLib));
@@ -372,11 +392,11 @@ Future<String> retrieveElement(OverlayResourceProvider resourceProvider,
         res[":element-name"] = "\"${element}\"";
         res[":toplevel"] = true;
         res[":canon-qname-placeholder"] = true;
-        return M(res);
+        return res;
       }
     }
   }
-  return "nil";
+  return null;
 }
 
 Future<bool> doesLibraryExist(OverlayResourceProvider resourceProvider,

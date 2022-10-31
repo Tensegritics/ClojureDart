@@ -312,8 +312,11 @@
                  .flush)
                ;; nil means lib does not exist
                (when-some [r (some-> (edn/read stdout) qname)]
-                 (swap! cache assoc-in [lib element] r)
-                 r))))))))
+                 (if (:local-lib r)
+                   ;; We *don't* cache local-lib
+                   (dissoc r :local-lib)
+                   (do (swap! cache assoc-in [lib element] r)
+                       r))))))))))
 
 
 (def ^:dynamic *hosted* false)
