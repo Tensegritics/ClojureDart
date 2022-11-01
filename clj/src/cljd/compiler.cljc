@@ -289,34 +289,36 @@
                 r)))))
     (fn
       ([lib]
-       (let [c @cache
-             ;; c as sentinel
-             r (get c lib c)]
-         (if-not (identical? r c)
-           r
-           (do (doto stdin
-                 (.write (str "{\"lib\":\"" lib  "\"}\n"))
-                 .flush)
-               ;; nil means lib does not exist
-               (when-some [r (edn/read stdout)]
-                 (swap! cache assoc lib {})
-                 true)))))
+       (when (some-> lib (str/starts-with? "lib/cljd-out") not)
+         (let [c @cache
+               ;; c as sentinel
+               r (get c lib c)]
+           (if-not (identical? r c)
+             r
+             (do (doto stdin
+                   (.write (str "{\"lib\":\"" lib  "\"}\n"))
+                   .flush)
+                 ;; nil means lib does not exist
+                 (when-some [r (edn/read stdout)]
+                   (swap! cache assoc lib {})
+                   true))))))
       ([lib element]
-       (let [c @cache
-             ;; c as sentinel
-             r (get-in c [lib element] c)]
-         (if-not (identical? r c)
-           r
-           (do (doto stdin
-                 (.write (str "{\"lib\":\"" lib  "\",\"element\":\"" element  "\"}\n"))
-                 .flush)
-               ;; nil means lib does not exist
-               (when-some [r (some-> (edn/read stdout) qname)]
-                 (if (:local-lib r)
-                   ;; We *don't* cache local-lib
-                   (dissoc r :local-lib)
-                   (do (swap! cache assoc-in [lib element] r)
-                       r))))))))))
+       (when (some-> lib (str/starts-with? "lib/cljd-out") not)
+         (let [c @cache
+               ;; c as sentinel
+               r (get-in c [lib element] c)]
+           (if-not (identical? r c)
+             r
+             (do (doto stdin
+                   (.write (str "{\"lib\":\"" lib  "\",\"element\":\"" element  "\"}\n"))
+                   .flush)
+                 ;; nil means lib does not exist
+                 (when-some [r (some-> (edn/read stdout) qname)]
+                   (if (:local-lib r)
+                     ;; We *don't* cache local-lib
+                     (dissoc r :local-lib)
+                     (do (swap! cache assoc-in [lib element] r)
+                         r)))))))))))
 
 
 (def ^:dynamic *hosted* false)
