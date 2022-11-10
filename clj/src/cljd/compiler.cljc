@@ -295,9 +295,7 @@
                r (get c lib c)]
            (if-not (identical? r c)
              r
-             (do (doto stdin
-                   (.write (str "{\"lib\":\"" lib  "\"}\n"))
-                   .flush)
+             (do (doto stdin (.write "lib ") (.write lib) (.write "\n") .flush)
                  ;; nil means lib does not exist
                  (when-some [r (edn/read stdout)]
                    (swap! cache assoc lib {})
@@ -309,10 +307,9 @@
                r (get-in c [lib element] c)]
            (if-not (identical? r c)
              r
-             (do (doto stdin
-                   (.write (str "{\"lib\":\"" lib  "\",\"element\":\"" element  "\"}\n"))
-                   .flush)
-                 ;; nil means lib does not exist
+             (when (and lib element) ; how does nil happen?
+               (doto stdin (.write "elt ") (.write lib) (.write " ") (.write element) (.write "\n") .flush)
+               ;; nil means elt does not exist
                  (when-some [r (some-> (edn/read stdout) qname)]
                    (if (:local-lib r)
                      ;; We *don't* cache local-lib

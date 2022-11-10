@@ -300,46 +300,28 @@ void main(args) async {
       resourceProvider: resourceProvider,
       sdkPath: dirname(dirname(Platform.resolvedExecutable)));
   // (-> io/Platform.resolvedExecutable path/dirname path/dirname)
-  final server = CljdAnalyzerStdinServer();
   await doesLibraryExist(resourceProvider, coll, "dart:core");
   await doesLibraryExist(resourceProvider, coll, "dart:async");
-  do {
-    late final Map<String, dynamic> m;
-    m = (await (server.receive()));
-    if (m["element"] == null) {
-      var res = await doesLibraryExist(resourceProvider, coll, m["lib"]!);
+  await for (final line in stdin.transform(utf8.decoder).transform(const LineSplitter())) {
+    final tokens = line.split(" ");
+    switch(tokens[0]) {
+      case "lib":
+      var res = await doesLibraryExist(resourceProvider, coll, tokens[1]!);
       if (res) {
         print(true);
       } else {
         print("nil");
       }
-      continue;
-    } else {
+      break;
+      case "elt":
       var elem = await retrieveElement(resourceProvider, coll,
-          projectDirectoryUri, m["lib"]!, m["element"]!);
+          projectDirectoryUri, tokens[1]!, tokens[2]!);
       if (elem != null)
         print(M(elem));
       else
         print("nil");
+      break;
     }
-    continue;
-  } while (true);
-}
-
-class CljdAnalyzerStdinServer {
-  late StreamSubscription<List<int>> _sub;
-  late Completer<Map<String, dynamic>> _compl;
-  CljdAnalyzerStdinServer() {
-    this._sub = stdin.listen((List<int> bytes) {
-      _compl.complete(json.decode(utf8.decode(bytes)));
-      this._sub.pause();
-    });
-    this._sub.pause();
-  }
-  Future<Map<String, dynamic>> receive() {
-    this._compl = new Completer<Map<String, dynamic>>();
-    this._sub.resume();
-    return this._compl.future;
   }
 }
 
