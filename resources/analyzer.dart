@@ -168,9 +168,7 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
       ':kind': ':class',
       ':canon-qname-placeholder': true,
       ':canon-lib': '"${e.library.identifier}"',
-      ':lib': isExported(rootLib, e.library)
-          ? '"${rootLib.identifier}"'
-          : '"${e.library.identifier}"',
+      ':lib': '"${rootLib.identifier}"',
       ':private': e.isPrivate,
       ':internal': e.hasInternal,
       ':type-parameters':
@@ -228,9 +226,7 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
       ':kind': ':field',
       ':canon-qname-placeholder': true,
       ':canon-lib': '"${e.library.identifier}"',
-      ':lib': isExported(rootLib, e.variable.library)
-          ? '"${rootLib.identifier}"'
-          : '"${e.variable.library.identifier}"',
+      ':lib': '"${rootLib.identifier}"',
       ':const': e.variable.isConst,
       ':getter': e.variable.getter != null,
       ':setter': e.variable.setter != null,
@@ -243,9 +239,7 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
       ':kind': ':field',
       ':canon-qname-placeholder': true,
       ':canon-lib': '"${e.library.identifier}"',
-      ':lib': isExported(rootLib, e.library)
-          ? '"${rootLib.identifier}"'
-          : '"${e.library.identifier}"',
+      ':lib': '"${rootLib.identifier}"',
       ':const': e.isConst,
       ':getter': e.getter != null,
       ':setter': e.setter != null,
@@ -270,9 +264,7 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
       ':kind': ':function',
       ':canon-qname-placeholder': true,
       ':canon-lib': '"${e.library.identifier}"',
-      ':lib': isExported(rootLib, e.library)
-          ? '"${rootLib.identifier}"'
-          : '"${e.library.identifier}"',
+      ':lib': '"${rootLib.identifier}"',
       ':parameters': e.parameters.map((e) => emitParameter(rootLib, e)),
       ':return-type': emitType(rootLib, e.returnType),
       ':type-parameters':
