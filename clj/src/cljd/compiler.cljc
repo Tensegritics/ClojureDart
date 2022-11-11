@@ -845,12 +845,9 @@
   ([dart-type] (full-class-info (:lib dart-type) (:element-name dart-type)))
   ([lib element-name]
    (let [{:keys [libs current-ns] :as all-nses} @nses]
-     (when-some [ci (or (analyzer-info lib element-name)
-                    (some-> (libs lib)
-                      :ns
-                      (vector (symbol element-name))
-                      (some->> (get-in all-nses))
-                      :dart/type))]
+     (when-some [ci (or
+                      (some-> (get all-nses (-> lib libs :ns)) (get (symbol element-name)) :dart/type)
+                      (analyzer-info lib element-name))]
        ; TODO: finish refectoring, here we splice :members back in class info
        (merge (:members ci) (dissoc ci :members))))))
 
