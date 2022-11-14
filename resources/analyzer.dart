@@ -282,45 +282,37 @@ void main(args) async {
       OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
   var pathContext = resourceProvider.pathContext;
   final String sep = pathContext.separator;
-  late Directory dir;
-  if (args.isEmpty)
-    dir = Directory.current;
-  else
-    dir = Directory(args.first);
-  Uri projectDirectoryUri = dir.uri;
-
   final coll = AnalysisContextCollection(
       includedPaths: [
-        pathContext.normalize(projectDirectoryUri.path)
+        pathContext.normalize(pathContext.current)
       ],
       excludedPaths: [
-        "${pathContext.normalize(projectDirectoryUri.path)}${sep}lib${sep}cljd-out",
-        "${pathContext.normalize(projectDirectoryUri.path)}${sep}lib${sep}cljd-out${sep}analyzer_pure_lib.dart"
+        pathContext.normalize("${pathContext.current}${sep}cljd-out")
       ],
       resourceProvider: resourceProvider,
       sdkPath: dirname(dirname(Platform.resolvedExecutable)));
-  // (-> io/Platform.resolvedExecutable path/dirname path/dirname)
   await doesLibraryExist(resourceProvider, coll, "dart:core");
   await doesLibraryExist(resourceProvider, coll, "dart:async");
-  await for (final line in stdin.transform(utf8.decoder).transform(const LineSplitter())) {
+  await for (final line
+      in stdin.transform(utf8.decoder).transform(const LineSplitter())) {
     final tokens = line.split(" ");
-    switch(tokens[0]) {
+    switch (tokens[0]) {
       case "lib":
-      var res = await doesLibraryExist(resourceProvider, coll, tokens[1]!);
-      if (res) {
-        print(true);
-      } else {
-        print("nil");
-      }
-      break;
+        var res = await doesLibraryExist(resourceProvider, coll, tokens[1]!);
+        if (res) {
+          print(true);
+        } else {
+          print("nil");
+        }
+        break;
       case "elt":
-      var elem = await retrieveElement(resourceProvider, coll,
-          projectDirectoryUri, tokens[1]!, tokens[2]!);
-      if (elem != null)
-        print(M(elem));
-      else
-        print("nil");
-      break;
+        var elem = await retrieveElement(
+            resourceProvider, coll, tokens[1]!, tokens[2]!);
+        if (elem != null)
+          print(M(elem));
+        else
+          print("nil");
+        break;
     }
   }
 }
@@ -328,14 +320,13 @@ void main(args) async {
 Future<Map<String, dynamic>?> retrieveElement(
     OverlayResourceProvider resourceProvider,
     AnalysisContextCollection coll,
-    Uri projectDirectoryUri,
     String lib,
     String element,
     [bool reload = true]) async {
   var pathContext = resourceProvider.pathContext;
   final String sep = pathContext.separator;
-  final String filePath = pathContext.normalize(
-      "${projectDirectoryUri.path}${sep}lib${sep}cljdfuzzysearch.dart");
+  final String filePath = pathContext
+      .normalize("${pathContext.current}${sep}lib${sep}cljdfuzzysearch.dart");
   resourceProvider.setOverlay(filePath,
       content: "import '${lib}' as libalias;\n",
       modificationStamp: DateTime.now().millisecondsSinceEpoch);
@@ -349,13 +340,13 @@ Future<Map<String, dynamic>?> retrieveElement(
     var rootLib = result.element.importedLibraries.first;
     // when rootLib is a local file under .../lib/myfile.dart , reload it everytime
     if (reload &
-        isWithin(pathContext.normalize(projectDirectoryUri.path),
+        isWithin(pathContext.normalize(pathContext.current),
             pathContext.normalize(rootLib.librarySource.toString()))) {
       rootLib.session.analysisContext
           .changeFile(pathContext.normalize(rootLib.librarySource.toString()));
       await rootLib.session.analysisContext.applyPendingFileChanges();
-      var res = await retrieveElement(
-          resourceProvider, coll, projectDirectoryUri, lib, element, false);
+      var res =
+          await retrieveElement(resourceProvider, coll, lib, element, false);
       if (res != null) res[":local-lib"] = true;
       return res;
     }
@@ -380,7 +371,7 @@ Future<bool> doesLibraryExist(OverlayResourceProvider resourceProvider,
   final String filePath = pathContext
       .normalize("${pathContext.current}${sep}lib${sep}cljdfuzzysearch.dart");
   resourceProvider.setOverlay(filePath,
-      content: "import ${lib} as fuzzyalias;\n",
+      content: "import '${lib}' as fuzzyalias;\n",
       modificationStamp: DateTime.now().millisecondsSinceEpoch);
   var context = coll.contextFor(filePath);
   context.changeFile(filePath);
@@ -388,7 +379,7 @@ Future<bool> doesLibraryExist(OverlayResourceProvider resourceProvider,
   var session = context.currentSession;
   var errors = await session.getErrors(filePath);
   var analysisErrors = (errors as ErrorsResult).errors;
-  if (analysisErrors.isEmpty ||
+  if (analysisErrors.isNotEmpty &&
       (analysisErrors.first.errorCode.uniqueName ==
           "CompileTimeErrorCode.URI_DOES_NOT_EXIST")) {
     return false;

@@ -183,10 +183,10 @@
         cljd-dir (-> user-dir (java.io.File. ".clojuredart") (doto .mkdirs))
         analyzer-dart (java.io.File. cljd-dir "analyzer.dart")]
     (binding [compiler/*hosted* true
-              compiler/analyzer-info #_(compiler/mk-dead-analyzer-info (compiler/load-libs-info))
-              (compiler/mk-live-analyzer-info (doto (exec {:async true :in nil :out nil}
-                                                      (some-> *deps* :cljd/opts :kind name)
-                                                      "pub" "run" (.getPath analyzer-dart)) prn))]
+              compiler/analyzer-info
+              (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil}
+                                                (some-> *deps* :cljd/opts :kind name)
+                                                "pub" "run" (.getPath analyzer-dart)))]
 
       (newline)
       (println (title "Compiling cljd.core to Dart"))
