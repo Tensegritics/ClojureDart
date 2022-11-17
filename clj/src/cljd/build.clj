@@ -149,7 +149,7 @@
   (.delete f))
 
 (defn ensure-cljd-analyzer! []
-  (let [cljd-sha (get-in *deps* ['tensegritics/clojuredart :git/sha])
+  (let [cljd-sha (get-in *deps* ['tensegritics/clojuredart :sha])
         parent-dir
         (if cljd-sha
           (-> (System/getProperty "user.home") (java.io.File. ".clojuredart") (java.io.File. "cache") (java.io.File. cljd-sha) (doto .mkdirs))
