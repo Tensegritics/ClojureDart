@@ -108,7 +108,7 @@
   (.format (java.text.SimpleDateFormat. "@HH:mm" java.util.Locale/FRENCH) (java.util.Date.)))
 
 (defn exec [& args]
-  (let [{:keys [async in err out env] :as opts
+  (let [{:keys [async in err out env dir] :as opts
          :or {env {}
               in java.lang.ProcessBuilder$Redirect/INHERIT
               err java.lang.ProcessBuilder$Redirect/INHERIT
@@ -120,7 +120,8 @@
              (cond->
                  in (.redirectInput in)
                  err (.redirectError err)
-                 out (.redirectOutput out)))
+                 out (.redirectOutput out)
+                 dir (.directory (io/file dir))))
         os-is-windows (.startsWith (System/getProperty "os.name") "Windows")
         PATH (if os-is-windows "Path" "PATH")
         path (-> pb .environment (get PATH))
@@ -141,52 +142,37 @@
         (when-not (zero? exit-code) exit-code))
       process)))
 
-(defn warm-up-libs-info! []
-  (let [bin (some-> *deps* :cljd/opts :kind name)
-        user-dir (System/getProperty "user.dir")
-        cljd-dir (-> user-dir (java.io.File. ".clojuredart") (doto .mkdirs))
-        lib-info-edn (java.io.File. cljd-dir "libs-info.edn")
-        dart-tools-json (-> user-dir (java.io.File. ".dart_tool") (java.io.File. "package_config.json"))]
-    (when-not (and (.exists lib-info-edn) (.exists dart-tools-json)
-                   (< (.lastModified dart-tools-json) (.lastModified lib-info-edn)))
-      (let [analyzer-dart (java.io.File. cljd-dir "analyzer.dart")]
-        (with-open [out (java.io.FileOutputStream. analyzer-dart)]
-          (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream "analyzer.dart") (.transferTo out)))
-        (or
-         (and
-          (do
-            (newline)
-            (println (title "Adding dev dependencies"))
-            (exec bin "pub" "add" "-d" "analyzer:^5.1.0"))
-          (do
-            (newline)
-            (println (title "Upgrading dev dependencies"))
-            (exec bin "pub" "upgrade" "analyzer:^5.1.0")))
-         (do
-           (newline)
-           (println (title "Fetching dependencies"))
-           (exec bin "pub" "get"))
-         #_(System/exit 1)
-         #_(do
-           (newline)
-           (println (title "Dumping type information (it may take a while)"))
-           (when (exec {:out (java.lang.ProcessBuilder$Redirect/to lib-info-edn)}
-                       bin "pub" "run" (.getPath analyzer-dart))
-             (.delete lib-info-edn)
-             (System/exit 1))))))))
+(defn del-tree [^java.io.File f]
+  (run! del-tree
+    (when-not (java.nio.file.Files/isSymbolicLink (.toPath f))
+      (.listFiles f)))
+  (.delete f))
+
+(defn ensure-cljd-analyzer! []
+  (let [cljd-sha (get-in *deps* ['tensegritics/clojuredart :git/sha])
+        parent-dir
+        (if cljd-sha
+          (-> (System/getProperty "user.home") (java.io.File. ".clojuredart") (java.io.File. "cache") (java.io.File. cljd-sha) (doto .mkdirs))
+          (-> (System/getProperty "user.dir") (java.io.File. ".clojuredart") (java.io.File. "cache") (doto .mkdirs)))
+        analyzer-dir (java.io.File. parent-dir "cljd_helper")
+        analyzer-dart (-> analyzer-dir (java.io.File. "bin") (java.io.File. "analyzer.dart"))]
+    (when-not cljd-sha (del-tree analyzer-dir))
+    (when-not (.exists analyzer-dart)
+      (exec {:dir parent-dir} "dart" "create" "-t" "console" "cljd_helper")
+      (exec {:dir analyzer-dir} "dart" "pub" "add" "analyzer:5.1.0")
+      (with-open [out (java.io.FileOutputStream. analyzer-dart)]
+        (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream "analyzer.dart") (.transferTo out))))
+    (.getPath analyzer-dart)))
 
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
-  (println (title "Warming up `.clojuredart/libs-info.edn`") "(helps us emit better code)")
-  (warm-up-libs-info!)
   (let [user-dir (System/getProperty "user.dir")
-        cljd-dir (-> user-dir (java.io.File. ".clojuredart") (doto .mkdirs))
-        analyzer-dart (java.io.File. cljd-dir "analyzer.dart")]
+        analyzer-dart (ensure-cljd-analyzer!)]
     (binding [compiler/*hosted* true
               compiler/analyzer-info
               (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil}
                                                 (some-> *deps* :cljd/opts :kind name)
-                                                "pub" "run" (.getPath analyzer-dart)))]
+                                                "pub" "run" analyzer-dart))]
 
       (newline)
       (println (title "Compiling cljd.core to Dart"))
@@ -306,10 +292,10 @@
               (throw (Exception. "A project kind (:dart or :flutter) must be specified in deps.edn under :cljd/opts :kind.")))
         main-ns (or (:main deps-cljd-opts)
                   (throw (Exception. "A namespace must be specified in deps.edn under :cljd/opts :main.")))
-        libdir (doto (java.io.File. compiler/*lib-path*) .mkdirs)
         dir (java.io.File. (System/getProperty "user.dir"))
         project-name (.getName dir)
         project_name (str/replace project-name #"[- ]" "_")]
+    (doto (java.io.File. compiler/*lib-path*) .mkdirs)
     (println "Initializing" (bright project-name) "as a" (bright bin) "project!")
     (or
      (case bin
@@ -320,12 +306,6 @@
        (apply exec bin "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
      (gen-entry-point)
      (println "👍" (green "All setup!") "Let's write some cljd in" main-ns))))
-
-(defn del-tree [^java.io.File f]
-  (run! del-tree
-    (when-not (java.nio.file.Files/isSymbolicLink (.toPath f))
-      (.listFiles f)))
-  (.delete f))
 
 (defn exit [status msg]
   (println msg)
