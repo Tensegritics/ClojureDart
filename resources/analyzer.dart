@@ -308,7 +308,7 @@ void main(args) async {
     final tokens = line.split(" ");
     switch (tokens[0]) {
       case "lib":
-        var res = await doesLibraryExist(resourceProvider, coll, tokens[1]!);
+        var res = await doesLibraryExist(resourceProvider, coll, tokens[1]);
         if (res) {
           print(true);
         } else {
@@ -316,8 +316,8 @@ void main(args) async {
         }
         break;
       case "elt":
-        var elem = await retrieveElement(
-            resourceProvider, coll, tokens[1]!, tokens[2]!);
+        var elem =
+            await retrieveElement(resourceProvider, coll, tokens[1], tokens[2]);
         if (elem != null)
           print(M(elem));
         else
