@@ -150,28 +150,18 @@
 
 (defn ensure-cljd-analyzer! []
   (let [cljd-sha (get-in *deps* [:libs 'tensegritics/clojuredart :git/sha])
-        parent-dir
-        (if cljd-sha
-          (-> (System/getProperty "user.dir") (java.io.File. ".clojuredart") (java.io.File. "cache") (java.io.File. cljd-sha))
-          (-> (System/getProperty "user.dir") (java.io.File. ".clojuredart") (java.io.File. "cache")))
-        _ (when-not cljd-sha (del-tree parent-dir))
-        parent-dir (doto parent-dir .mkdirs)
+        parent-dir (-> (System/getProperty "user.dir") (java.io.File. ".clojuredart") (java.io.File. "cache")
+                     (java.io.File. (or cljd-sha "dev")))
+        parent-dir (doto parent-dir (cond-> (not cljd-sha) del-tree) .mkdirs)
         analyzer-dir (doto (java.io.File. parent-dir "cljd_helper") .mkdirs)
         analyzer-dart (-> analyzer-dir (java.io.File. "bin") (doto .mkdirs) (java.io.File. "analyzer.dart"))
         pubspec-yaml (-> analyzer-dir (java.io.File. "pubspec.yaml"))]
     (when-not (.exists pubspec-yaml)
-      (if-some [pubspec-str (some-> (exec {:async true :out nil} (some-> *deps* :cljd/opts :kind name) "--version")
-                              .getInputStream
-                              (java.io.InputStreamReader. "UTF-8")
-                              java.io.BufferedReader.
-                              slurp
-                              (->> (re-find #"(?:Dart.*?(\d\.[\d\.a-z\-]+))"))
-                              second
-                              (->> (str "name: cljd_helper\n\nenvironment:\n  sdk: '>="))
-                              (str " <3.0.0'\n"))]
-        (with-open [out (java.io.FileOutputStream. pubspec-yaml)]
-          (.transferTo (java.io.ByteArrayInputStream. (.getBytes pubspec-str java.nio.charset.StandardCharsets/UTF_8)) out))
-        (throw (ex-info "ASK CHRISTOPHE TO WRITE PROPER ENGLISH" {}))))
+      (with-open [out (java.io.FileOutputStream. pubspec-yaml)]
+        (-> "name: cljd_helper\n\nenvironment:\n  sdk: '>=2.17.0 <3.0.0'\n"
+          (.getBytes java.nio.charset.StandardCharsets/UTF_8)
+          java.io.ByteArrayInputStream.
+          (.transferTo out))))
     (when-not (.exists analyzer-dart)
       (exec {:dir analyzer-dir} (some-> *deps* :cljd/opts :kind name) "pub" "add" "analyzer:5.1.0")
       (with-open [out (java.io.FileOutputStream. analyzer-dart)]
