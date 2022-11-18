@@ -172,6 +172,7 @@
   [& {:keys [watch namespaces flutter] :or {watch false}}]
   (let [user-dir (System/getProperty "user.dir")
         analyzer-dir (ensure-cljd-analyzer!)]
+    (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind name) "pub" "get")
     (binding [compiler/*hosted* true
               compiler/analyzer-info
               (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil :dir analyzer-dir}
