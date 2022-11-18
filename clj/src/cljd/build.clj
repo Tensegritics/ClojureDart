@@ -152,28 +152,41 @@
   (let [cljd-sha (get-in *deps* [:libs 'tensegritics/clojuredart :git/sha])
         parent-dir
         (if cljd-sha
-          (-> (System/getProperty "user.home") (java.io.File. ".clojuredart") (java.io.File. "cache") (java.io.File. cljd-sha) (doto .mkdirs))
-          (-> (System/getProperty "user.dir") (java.io.File. ".clojuredart") (java.io.File. "cache") (doto .mkdirs)))
-        analyzer-dir (java.io.File. parent-dir "cljd_helper")
-        analyzer-dart (-> analyzer-dir (java.io.File. "bin") (java.io.File. "analyzer.dart"))]
-    (when-not cljd-sha (del-tree analyzer-dir))
+          (-> (System/getProperty "user.dir") (java.io.File. ".clojuredart") (java.io.File. "cache") (java.io.File. cljd-sha))
+          (-> (System/getProperty "user.dir") (java.io.File. ".clojuredart") (java.io.File. "cache")))
+        _ (when-not cljd-sha (del-tree parent-dir))
+        parent-dir (doto parent-dir .mkdirs)
+        analyzer-dir (doto (java.io.File. parent-dir "cljd_helper") .mkdirs)
+        analyzer-dart (-> analyzer-dir (java.io.File. "bin") (doto .mkdirs) (java.io.File. "analyzer.dart"))
+        pubspec-yaml (-> analyzer-dir (java.io.File. "pubspec.yaml"))]
+    (when-not (.exists pubspec-yaml)
+      (if-some [pubspec-str (some-> (exec {:async true :out nil} (some-> *deps* :cljd/opts :kind name) "--version")
+                              .getInputStream
+                              (java.io.InputStreamReader. "UTF-8")
+                              java.io.BufferedReader.
+                              slurp
+                              (->> (re-find #"(?:Dart.*?(\d\.[\d\.a-z\-]+))"))
+                              second
+                              (->> (str "name: cljd_helper\n\nenvironment:\n  sdk: '>="))
+                              (str " <3.0.0'\n"))]
+        (with-open [out (java.io.FileOutputStream. pubspec-yaml)]
+          (.transferTo (java.io.ByteArrayInputStream. (.getBytes pubspec-str java.nio.charset.StandardCharsets/UTF_8)) out))
+        (throw (ex-info "ASK CHRISTOPHE TO WRITE PROPER ENGLISH" {}))))
     (when-not (.exists analyzer-dart)
-      (exec {:dir parent-dir} "dart" "create" "-t" "console" "cljd_helper")
-      (exec {:dir analyzer-dir} "dart" "pub" "add" "analyzer:5.1.0")
+      (exec {:dir analyzer-dir} (some-> *deps* :cljd/opts :kind name) "pub" "add" "analyzer:5.1.0")
       (with-open [out (java.io.FileOutputStream. analyzer-dart)]
         (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream "analyzer.dart") (.transferTo out))))
-    (.getPath analyzer-dart)))
+    (.getPath analyzer-dir)))
 
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
   (let [user-dir (System/getProperty "user.dir")
-        analyzer-dart (ensure-cljd-analyzer!)]
+        analyzer-dir (ensure-cljd-analyzer!)]
     (binding [compiler/*hosted* true
               compiler/analyzer-info
-              (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil}
+              (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil :dir analyzer-dir}
                                                 (some-> *deps* :cljd/opts :kind name)
-                                                "pub" "run" analyzer-dart))]
-
+                                                "pub" "run" "bin/analyzer.dart" user-dir))]
       (newline)
       (println (title "Compiling cljd.core to Dart"))
       (compile-core)

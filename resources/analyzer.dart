@@ -277,17 +277,27 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
   // }
 }
 
+late String projectDirectoryPath;
+
 void main(args) async {
+  late Directory dir;
+  if (args.isEmpty)
+    dir = Directory.current;
+  else
+    dir = Directory(args.first);
+  projectDirectoryPath = dir.uri.toFilePath(windows: Platform.isWindows);
+
   final resourceProvider =
       OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
   var pathContext = resourceProvider.pathContext;
   final String sep = pathContext.separator;
   final coll = AnalysisContextCollection(
       includedPaths: [
-        pathContext.normalize(pathContext.current)
+        //pathContext.normalize(pathContext.current)
+        pathContext.normalize(projectDirectoryPath)
       ],
       excludedPaths: [
-        pathContext.normalize("${pathContext.current}${sep}cljd-out")
+        pathContext.normalize("${projectDirectoryPath}${sep}cljd-out")
       ],
       resourceProvider: resourceProvider,
       sdkPath: dirname(dirname(Platform.resolvedExecutable)));
@@ -326,7 +336,7 @@ Future<Map<String, dynamic>?> retrieveElement(
   var pathContext = resourceProvider.pathContext;
   final String sep = pathContext.separator;
   final String filePath = pathContext
-      .normalize("${pathContext.current}${sep}lib${sep}cljdfuzzysearch.dart");
+      .normalize("${projectDirectoryPath}${sep}lib${sep}cljdfuzzysearch.dart");
   resourceProvider.setOverlay(filePath,
       content: "import '${lib}' as libalias;\n",
       modificationStamp: DateTime.now().millisecondsSinceEpoch);
@@ -369,7 +379,7 @@ Future<bool> doesLibraryExist(OverlayResourceProvider resourceProvider,
   var pathContext = resourceProvider.pathContext;
   final String sep = pathContext.separator;
   final String filePath = pathContext
-      .normalize("${pathContext.current}${sep}lib${sep}cljdfuzzysearch.dart");
+      .normalize("${projectDirectoryPath}${sep}lib${sep}cljdfuzzysearch.dart");
   resourceProvider.setOverlay(filePath,
       content: "import '${lib}' as fuzzyalias;\n",
       modificationStamp: DateTime.now().millisecondsSinceEpoch);
