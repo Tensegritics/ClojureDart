@@ -1571,6 +1571,19 @@
   [obj]
   (-meta obj))
 
+(defprotocol IReversible
+  "Protocol for reversing a seq."
+  (-rseq [coll]
+    "Returns a seq of the items in coll in reversed order."))
+
+(defn rseq
+  "Returns, in constant time, a seq of the items in rev (which
+  can be a vector or sorted-map), in reverse order. If rev is empty returns nil"
+  [rev]
+  {:inline (call-to `-rseq)
+   :inline-arities #{1}}
+  (-rseq rev))
+
 (defprotocol IHash
   "Protocol for adding hashing functionality to a type."
   (-hash [o] "Returns the hash code of o.")
@@ -3577,11 +3590,10 @@
   IEditableCollection
   (-as-transient [coll]
     (TransientVector. cnt shift ^:unique (Object.) root (aresize tail (.-length tail) 32 nil)))
-
-  #_#_IReversible
+  IReversible
   (-rseq [coll]
     (when (pos? cnt)
-      (RSeq. coll (dec cnt) nil)))
+      (RSeq. nil coll (dec cnt) -1)))
   Comparable
   (compareTo [x y]
     (if (vector? y)
@@ -3751,18 +3763,6 @@
     (cons o coll))
   IEmptyableCollection
   (-empty [coll] ()))
-
-(defn rseq
-  "Returns, in constant time, a seq of the items in rev (which
-  can be a vector or sorted-map), in reverse order. If rev is empty returns nil"
-  [rev]
-  ;; TODO : change message
-  (when-not (vector? rev)
-    (throw (Exception. (str "class " (.-runtimeType rev) " is not reversible."))))
-  (let [cnt (count rev)]
-    (if (zero? cnt)
-      nil
-      (RSeq. nil rev (dec cnt) -1))))
 
 (deftype #/(SubVec E)
   [meta ^PersistentVector v ^int start ^int end ^:mutable ^int __hash]
@@ -4289,8 +4289,8 @@
   (-empty [node] nil)
   ISeqable
   (-seq [node] (-seq #dart ^:fixed [_k _v]))
-  #_#_IReversible
-  (-rseq [node] (IndexedSeq. 'js [val key] 0 nil))
+  IReversible
+  (-rseq [node] (RSeq. nil [_k _v] 1 -1))
   ICounted
   (-count [node] 2)
   IIndexed
@@ -7389,7 +7389,7 @@
 (deftype TreapNode [^int cnt ^List arr]
   :type-only true
   TreapNode
-  (^int tnode_leaf_search [node k cmp]
+  (^int tnode_leaf_search [node k ^#/(dynamic dynamic -> int) cmp]
    (assert (even? (alength arr)))
    ; leaf, arr is kvkv...
    ; even on success, odd on failure
@@ -7402,7 +7402,7 @@
             (zero? z) m
             :pos (recur (inc m) j)))
         i)))
-  (^int tnode_branch_search [node k cmp]
+  (^int tnode_branch_search [node k ^#/(dynamic dynamic -> int) cmp]
    (assert (odd? (alength arr)))
    ; inner node, arr is rkrkr...r
    ; odd on success, even on failure
@@ -7415,7 +7415,7 @@
            (zero? z) m
            :pos (recur (inc m) j)))
        i)))
-  (tnode_lookup [node k not-found ^int rank cmp]
+  (tnode_lookup [node k not-found ^int rank ^#/(dynamic dynamic -> int) cmp]
     (assert (= (zero? rank) (even? (alength arr))))
     (if (zero? rank)
       (let [i (.tnode_leaf_search node k cmp)]
@@ -7466,7 +7466,7 @@
             [:copy larr 0 ln-1]
             [:insert (.tnode_zip ^TreapNode (aget arr 0) (aget larr ln-1) (dec rank))]
             [:copy arr 1])))))  ; ok: (odd-1) + 1 + (odd-1) = odd
-  (^int tnode_split [node ^int rank k v ^List lparr ^int li ^List rparr ^int ri cmp]
+  (^int tnode_split [node ^int rank k v ^List lparr ^int li ^List rparr ^int ri ^#/(dynamic dynamic -> int) cmp]
     (assert (= (zero? rank) (even? (alength arr))))
     ; returns 0 on update, 1 on insert
     (if (zero? rank)
@@ -7510,7 +7510,7 @@
             (aset lparr li (TreapNode lcnt larr))
             (aset rparr ri (TreapNode rcnt rarr))
             cnt-inc)))))
-  (^TreapNode tnode_without [node ^int rank ^int krank k cmp]
+  (^TreapNode tnode_without [node ^int rank ^int krank k ^#/(dynamic dynamic -> int) cmp]
    (assert (= (zero? rank) (even? (alength arr))))
    (assert (<= krank rank))
    (if (zero? rank)
@@ -7530,7 +7530,7 @@
            (if (identical? child child')
              node
              (TreapNode (dec cnt) (new-array [:copy arr 0 i] [:insert child'] [:copy arr (inc i)])))))))) ; ok: even + 1 + odd - (1+even)=1
-  (^TreapNode tnode_assoc [node ^int rank ^int krank k v cmp]
+  (^TreapNode tnode_assoc [node ^int rank ^int krank k v ^#/(dynamic dynamic -> int) cmp]
     (assert (= (zero? rank) (even? (alength arr))))
     (assert (<= krank rank))
     (cond
@@ -7627,7 +7627,7 @@
 ;; is kM.
 
 (deftype #/(HashRankedWideTreapMap K V)
-  [meta ^TreapNode root ^int top-rank cmp ^:mutable ^int __hash]
+  [meta ^TreapNode root ^int top-rank ^#/(dynamic dynamic -> int) cmp ^:mutable ^int __hash]
   :type-only true
   ^:mixin EqualsEquivMixin
   ^:mixin #/(dart-coll/MapMixin K V)
@@ -7742,13 +7742,11 @@
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
-  #_#_IEditableCollection
-  (-as-transient [coll]
-    (let [bitmap-hi (.-bitmap_hi root)
-          bitmap-lo (.-bitmap_lo root)
-          net-size (u32x2-bit-count bitmap-hi bitmap-lo)
-          gross-size (bit-and -8 (+ 7 net-size))]
-      (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil))))))
+  IReversible
+  (-rseq [coll]
+    (let [c (.-cnt root)]
+      (when (pos? c)
+        (RSeq. nil coll (dec c) -1)))))
 
 (defn sorted-map-by
   "keyval => key val

@@ -696,3 +696,7 @@
     #_(prn (dump (.-root mN) (.-top_rank mN)))
     (is (every? #(= (mN (str %)) (expected-vs (subs (str %) 1))) (range N)))
     (is (= (seq mN) (map (juxt str identity) (vals (sort expected-vs)))))))
+
+(deftest sorting-work-normally-with-boolean-comp
+  (is (= [32 23 9] (sort > [23 32 9])))
+  (is (= [9 23 32] (sort < [23 32 9]))))
