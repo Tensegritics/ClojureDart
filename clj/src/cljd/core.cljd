@@ -6854,6 +6854,20 @@
     (nil? y) 1
     :else (.compareTo ^Comparable x y)))
 
+(defn- ^#/(dynamic dynamic -> int) fn->comparator
+  "Given a fn that might be boolean valued or a comparator,
+   return a fn that is a comparator."
+  [f]
+  (if (identical? f compare)
+    compare
+    (fn [x y]
+      (let [r (f x y)]
+        (if (dart/is? r dart:core/num)
+          (if (dart/is? r dart:core/int) r (-> ^dart:core/num r .toInt))
+          (if r
+            -1
+            (if (f y x) 1 0)))))))
+
 (defn sort
   "Returns a sorted sequence of the items in coll. If no comparator is
   supplied, uses compare.  The comparator function must act as a Comparator.
@@ -6862,8 +6876,9 @@
    (sort compare coll))
   ([comp coll]
    (if (seq coll)
-     (let [a (to-array coll)]
-       (.sort ^List a comp #_(if (dart/is? comp #/(dynamic dynamic -> int)) comp (fn ^int [x y] (comp x y))))
+     (let [a (to-array coll)
+           comp' (fn->comparator comp)]
+       (.sort ^List a comp')
        (with-meta (seq a) (meta coll)))
      ())))
 
@@ -6875,7 +6890,8 @@
   ([keyfn coll]
    (sort-by keyfn compare coll))
   ([keyfn comp coll]
-   (sort (fn ^int [x y] (comp (keyfn x) (keyfn y))) coll)))
+   (let [comp' (fn->comparator comp)]
+     (sort (fn ^int [x y] (comp' (keyfn x) (keyfn y))) coll))))
 
 (defn min-key
   "Returns the x for which (k x), a number, is least.
@@ -7611,7 +7627,7 @@
 ;; is kM.
 
 (deftype #/(HashRankedWideTreapMap K V)
-         [meta ^TreapNode root ^int top-rank cmp ^:mutable ^int __hash]
+  [meta ^TreapNode root ^int top-rank cmp ^:mutable ^int __hash]
   :type-only true
   ^:mixin EqualsEquivMixin
   ^:mixin #/(dart-coll/MapMixin K V)
@@ -7654,7 +7670,7 @@
   IAssociative
   (-assoc [coll k v]
     (let [rank (hashrank k)]
-      (loop [^TreapNode root root top-rank top-rank]
+      (loop [^TreapNode root root ^int top-rank top-rank]
         (if (< top-rank rank)
           (recur (TreapNode (.-cnt root) #dart ^:fixed [root]) (inc top-rank))
           (#/(HashRankedWideTreapMap K V) meta (.tnode_assoc root top-rank rank k v cmp) top-rank cmp -1)))))
@@ -7740,7 +7756,7 @@
   comparator.  If any keys are equal, they are handled as if by
   repeated uses of assoc."
   ([comparator & keyvals]
-   (loop [m (HashRankedWideTreapMap nil -empty-treap-node 0 comparator -1) kvs (seq keyvals)]
+   (loop [m (HashRankedWideTreapMap nil -empty-treap-node 0 (fn->comparator comparator) -1) kvs (seq keyvals)]
      (if-some [[k & vkvs] kvs]
        (if-some [[v & kvs] vkvs]
          (recur (assoc m k v) kvs)
