@@ -7881,7 +7881,26 @@
                 acc (f acc (aget arr (- idx 2)))]
             (if (reduced? acc)
               (unreduced acc)
-              (recur acc))))))))
+              (recur acc)))))))
+  (-reduce [coll f]
+    (if (pos? (.-cnt (.-root tmap)))
+      (let [it (TreapIterator. (.-root tmap) 0 (.-top_rank tmap)
+                 (.filled #/(List int) (.-top_rank tmap) 0)
+                 (.filled #/(List TreapNode) (.-top_rank tmap) (.-root tmap))
+                 nil)
+            init (let [idx (.-idx (doto it .moveNext))
+                       arr (-> it .-node .-arr)]
+                   (aget arr (- idx 2)))]
+        (loop [acc init]
+          (if (not (.moveNext it))
+            acc
+            (let [idx (.-idx it)
+                  arr (-> it .-node .-arr)
+                  acc (f acc (aget arr (- idx 2)))]
+              (if (reduced? acc)
+                (unreduced acc)
+                (recur acc))))))
+      (f))))
 
 (defn sorted-set-by
   "Returns a new sorted set with supplied keys, using the supplied
