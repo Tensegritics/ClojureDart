@@ -7737,6 +7737,40 @@
               (if (reduced? acc)
                 (unreduced acc)
                 (recur acc)))))))
+  IReduce
+  (-reduce [coll f]
+    (if (pos? (.-cnt root))
+      (let [it (TreapIterator. root 0 top-rank
+                 (.filled #/(List int) top-rank 0)
+                 (.filled #/(List TreapNode) top-rank root)
+                 nil)
+            init (let [idx (.-idx (doto it .moveNext))
+                       arr (-> it .-node .-arr)]
+                   (new #/(PersistentMapEntry K V) (aget arr (- idx 2)) (aget arr (dec idx)) -1))]
+        (loop [acc init]
+          (if (not (.moveNext it))
+            acc
+            (let [idx (.-idx it)
+                  arr (-> it .-node .-arr)
+                  acc (f acc (new #/(PersistentMapEntry K V) (aget arr (- idx 2)) (aget arr (dec idx)) -1))]
+              (if (reduced? acc)
+                (unreduced acc)
+                (recur acc))))))
+      (f)))
+  (-reduce [coll f init]
+    (let [it (TreapIterator. root 0 top-rank
+               (.filled #/(List int) top-rank 0)
+               (.filled #/(List TreapNode) top-rank root)
+               nil)]
+      (loop [acc init]
+        (if (not (.moveNext it))
+          acc
+          (let [idx (.-idx it)
+                arr (-> it .-node .-arr)
+                acc (f acc (new #/(PersistentMapEntry K V) (aget arr (- idx 2)) (aget arr (dec idx)) -1))]
+            (if (reduced? acc)
+              (unreduced acc)
+              (recur acc)))))))
   IFn
   (-invoke [coll k]
     (-lookup coll k))
