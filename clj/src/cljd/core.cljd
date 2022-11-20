@@ -7801,3 +7801,102 @@
   equal, they are handled as if by repeated uses of assoc."
   ([& keyvals]
    (apply sorted-map-by compare keyvals)))
+
+(deftype #/(HashRankedWideTreapSet E)
+  [meta ^#/(HashRankedWideTreapMap E E) tmap ^:mutable ^int __hash]
+  :type-only true
+  ^:mixin EqualsEquivMixin
+  ^:mixin #/(dart-coll/SetMixin E)
+  (contains [this e]
+    (-contains-key? tmap e))
+  (lookup [this e]
+    (-lookup tmap e nil))
+  (add [this e]
+    (throw (UnsupportedError. "add not supported on sorted-set")))
+  (remove [this e]
+    (throw (UnsupportedError. "remove not supported on sorted-set")))
+  (clear [this]
+    (throw (UnsupportedError. "clear not supported on sorted-set")))
+  (length [this] (-count tmap))
+  (iterator [this] (.-iterator ^#/(Iterable E) (.-keys tmap)))
+  (toSet [this] (#/(Set/of E) (.-keys tmap)))
+  (^#/(HashRankedWideTreapSet R) #/(cast R) [coll]
+   (new #/(HashRankedWideTreapSet R) meta (-> tmap (. #/(cast R R))) __hash))
+  ^:mixin ToStringMixin
+  IPrint
+  ;; TODO : handle prefix-map & co
+  (-print [o sink]
+    (print-sequential "#{" "}" (-seq o) sink))
+  IWithMeta
+  (-with-meta [coll new-meta]
+    (if (identical? new-meta meta)
+      coll
+      (HashRankedWideTreapSet. new-meta tmap __hash)))
+  IMeta
+  (-meta [coll] meta)
+  ICollection
+  (-conj [coll o]
+    (HashRankedWideTreapSet. meta (-assoc tmap o o) __hash))
+  IEmptyableCollection
+  (-empty [coll] (HashRankedWideTreapSet. meta (-empty tmap) -1))
+  ;;AFAIRE
+  IEquiv
+  (-equiv [coll other] (-equiv-map coll other))
+  IHash
+  (-hash [coll] (ensure-hash __hash (-hash tmap)))
+  ISeqable
+  (-seq [coll] (iterator-seq (.-iterator (.-keys tmap))))
+  ICounted
+  (-count [coll] (-count tmap))
+  ILookup
+  (-lookup [coll k]
+    (-lookup tmap k nil))
+  (-lookup [coll k not-found]
+    (-lookup tmap k not-found))
+  (-contains-key? [coll k]
+    (-contains-key? tmap k))
+  ISet
+  (-disjoin [coll v]
+    (HashRankedWideTreapSet. meta (-dissoc tmap v) -1))
+  IFn
+  (-invoke [coll k]
+    (-lookup tmap k))
+  (-invoke [coll k not-found]
+    (-lookup tmap k not-found))
+  IReversible
+  (-rseq [coll]
+    (when (pos? (-count tmap))
+      (map key (rseq tmap))))
+  IReduce
+  (-reduce [coll f init]
+    (let [it (TreapIterator. (.-root tmap) 0 (.-top_rank tmap)
+               (.filled #/(List int) (.-top_rank tmap) 0)
+               (.filled #/(List TreapNode) (.-top_rank tmap) (.-root tmap))
+               nil)]
+      (loop [acc init]
+        (if (not (.moveNext it))
+          acc
+          (let [idx (.-idx it)
+                arr (-> it .-node .-arr)
+                acc (f acc (aget arr (- idx 2)))]
+            (if (reduced? acc)
+              (unreduced acc)
+              (recur acc))))))))
+
+(defn sorted-set-by
+  "Returns a new sorted set with supplied keys, using the supplied
+  comparator.  Any equal keys are handled as if by repeated uses of
+  conj."
+  ([comparator & keys]
+   (loop [m (HashRankedWideTreapSet. nil (HashRankedWideTreapMap. nil -empty-treap-node 0 (fn->comparator comparator) -1) -1)
+          ks (seq keys)]
+     (if-some [[k & ks'] ks]
+       (recur (conj m k) ks')
+       m))))
+
+(defn sorted-set
+  "Returns a new sorted set with supplied keys.  Any equal keys are
+  handled as if by repeated uses of conj."
+  ([& keys]
+   (apply sorted-set-by compare keys)))
+
