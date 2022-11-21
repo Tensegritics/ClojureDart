@@ -1584,6 +1584,23 @@
    :inline-arities #{1}}
   (-rseq rev))
 
+(defprotocol ISorted
+  "Protocol for a collection which can represent their items
+  in a sorted manner. "
+  (-sorted-seq [coll ascending?]
+   "Returns a sorted seq from coll in either ascending or descending order.")
+  (-sorted-seq-from [coll k ascending?]
+   "Returns a sorted seq from coll in either ascending or descending order.
+     If ascending is true, the result should contain all items which are > or >=
+     than k. If ascending is false, the result should contain all items which
+     are < or <= than k, e.g.
+     (-sorted-seq-from (sorted-set 1 2 3 4 5) 3 true) => (3 4 5)
+     (-sorted-seq-from (sorted-set 1 2 3 4 5) 3 false) => (3 2 1)")
+  (-entry-key [coll entry]
+    "Returns the key for entry.")
+  (-comparator [coll]
+    "Returns the comparator for coll."))
+
 (defprotocol IHash
   "Protocol for adding hashing functionality to a type."
   (-hash [o] "Returns the hash code of o.")
@@ -7780,7 +7797,14 @@
   (-rseq [coll]
     (let [c (.-cnt root)]
       (when (pos? c)
-        (RSeq. nil coll (dec c) -1)))))
+        (RSeq. nil coll (dec c) -1))))
+  ISorted
+  (-sorted-seq [coll ascending?]
+    (if ascending?
+      (-seq coll)
+      (-rseq coll)))
+  (-sorted-seq-from [coll k ascending?]
+    ))
 
 (defn sorted-map-by
   "keyval => key val
