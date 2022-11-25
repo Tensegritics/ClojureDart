@@ -35,7 +35,9 @@ In some contexts, suffixes may be appended to the munged name of a symbol. A suf
 
 `$C` and `$D` are reserved suffixes (to not clash with composite names)
 
-`$[0-9]+(tmp)?` is for locals: in the generated Dart code there's no shadowing. Those ending in `tmp` are used in recurs.
+`$[0-9]+(tmp)?` is for locals: in the generated Dart code there's no shadowing. Those ending in `tmp` are used in recurs
+
+`$v[0-9]+` is for redefinitions.
 
 `$iface` is for the vdirect-implementation interface of a protocol.
 
