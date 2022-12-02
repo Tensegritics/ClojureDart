@@ -658,7 +658,6 @@
   (let [{:keys [tag] :as m} (meta sym)
         type (some-> tag (emit-type env))]
     (cond-> {}
-      (:no-reload m) (assoc :dart/no-reload true)
       (:async m) (assoc :dart/async true)
       (:getter m) (assoc :dart/getter true)
       (:setter m) (assoc :dart/setter true)
@@ -2753,7 +2752,7 @@
                  expr))
         sub-type (cond
                    (:dynamic (meta sym)) :dynamic
-                   (:dart/no-reload (meta sym)) :defonce
+                   (:no-reload (meta sym)) :defonce
                    dart-type :fn
                    :else :field)
         dartqname (let [dartqname (dart-qualify dartname)]
