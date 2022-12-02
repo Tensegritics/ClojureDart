@@ -444,6 +444,11 @@
   "defs the supplied var names with no bindings, useful for making forward declarations."
   [& names] `(do ~@(map #(list 'def % nil) names)))
 
+(defmacro defonce
+  "defs name to have the root value of the expr iff the named var has no root value,
+  else expr is unevaluated"
+  [name expr] `(def  ~(vary-meta name assoc :no-reload true) ~expr))
+
 (defn ^bool satisfies?
   {:inline (fn [protocol x] `(.satisfies ~(vary-meta protocol assoc :tag `IProtocol) ~x))
    :inline-arities #{2}}

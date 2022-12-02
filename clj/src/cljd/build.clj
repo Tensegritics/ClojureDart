@@ -176,13 +176,14 @@
     (binding [compiler/*hosted* true
               compiler/analyzer-info
               (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil :dir analyzer-dir}
-                                                (some-> *deps* :cljd/opts :kind name)
-                                                "pub" "run" "bin/analyzer.dart" user-dir))]
+                                                    (some-> *deps* :cljd/opts :kind name)
+                                                    "pub" "run" "bin/analyzer.dart" user-dir))]
       (newline)
       (println (title "Compiling cljd.core to Dart"))
       (compile-core)
       (let [dirs (into #{} (map #(java.io.File. %)) (:paths *deps*))
             dirty-nses (volatile! #{})
+            recompile-count (volatile! 0)
             compile-nses
             (fn [nses]
               (let [nses (into @dirty-nses nses)]
@@ -192,7 +193,7 @@
                   (println (title "Compiling to Dart...") (timestamp))
                   (run! #(println " " %) (sort nses))
                   (try
-                    (compiler/recompile nses)
+                    (compiler/recompile nses (vswap! recompile-count inc))
                     (println (success))
                     true
                     (catch Exception e

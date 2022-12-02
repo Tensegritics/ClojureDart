@@ -658,6 +658,7 @@
   (let [{:keys [tag] :as m} (meta sym)
         type (some-> tag (emit-type env))]
     (cond-> {}
+      (:no-reload m) (assoc :dart/no-reload true)
       (:async m) (assoc :dart/async true)
       (:getter m) (assoc :dart/getter true)
       (:setter m) (assoc :dart/setter true)
@@ -2613,13 +2614,18 @@
 
 (declare write-top-dartfn write-top-field write-dynamic-var-top-field write-annotations)
 
+(defn dart-qualify [dartname]
+  (with-meta (symbol (str (dart-alias-for-ns (:current-ns @nses)) "." dartname))
+    (meta dartname)))
+
 (defn emit-defprotocol* [[_ pname spec] env]
   (let [dartname (munge pname env)]
     (swap! nses do-def pname
-      (assoc spec
-        :dart/name dartname
-        :dart/code (with-dart-str (write-top-field dartname (emit (list 'new (:impl spec)) {})))
-        :type :protocol))))
+           (assoc spec
+                  :dart/name dartname
+                  :dart/qname (dart-qualify dartname)
+                  :dart/code (with-dart-str (write-top-field dartname (emit (list 'new (:impl spec)) {})))
+                  :type :protocol))))
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
   (assert (and (re-matches #"[_$a-zA-Z][_$a-zA-Z0-9]*" (name class-name))
@@ -2700,6 +2706,13 @@
     (into [] (repeat (count args) {:kind :positional
                                    :type dc-dynamic}))))
 
+(def ^:dynamic *recompile-count*)
+
+(defn bump-version [dartqname]
+  (if-not (bound? #'*recompile-count*)
+    dartqname
+    (-> (str dartqname "$v" *recompile-count*) symbol (with-meta (meta dartqname)))))
+
 (defn emit-def [[_ sym & doc-string?+expr :as form] env]
   (let [[doc-string expr]
         (case (count doc-string?+expr)
@@ -2711,7 +2724,10 @@
           (throw (ex-info "Too many arguments to def" {})))
         sym (vary-meta sym assoc :doc doc-string)
         expr (macroexpand env expr)
-        kind (fn-kind expr)
+        kind (case (:dart/fn-type (dart-meta sym env))
+               :native :dart
+               :ifn :clj
+               (fn-kind expr))
         sym (cond-> sym
               kind (vary-meta assoc kind true)
               (:macro (meta sym)) (vary-meta assoc :macro-host-fn expr)
@@ -2722,22 +2738,35 @@
                     :dart
                     (cond-> dc-Function
                       ret-type (assoc
-                                 :return-type ret-type
-                                 :parameters (dart-fn-parameters expr)))
+                                :return-type ret-type
+                                :parameters (dart-fn-parameters expr)))
                     :clj (emit-type 'cljd.core/IFn$iface {})
                     nil)
         dartname (cond-> dartname
                    dart-type
                    (vary-meta (fn [{:dart/keys [type] :as m}]
                                 (assoc m :dart/ret-type type
-                                  :dart/type dart-type))))
+                                       :dart/type dart-type))))
         expr (when-not *host-eval*
                (if (and (seq? expr) (= 'fn* (first expr)))
                  (with-meta (cons (vary-meta (first expr) assoc :var-name sym) (next expr)) (meta expr))
                  expr))
+        sub-type (cond
+                   (:dynamic (meta sym)) :dynamic
+                   (:dart/no-reload (meta sym)) :defonce
+                   dart-type :fn
+                   :else :field)
+        dartqname (let [dartqname (dart-qualify dartname)]
+                    (case sub-type
+                      :field (bump-version dartqname)
+                      dartqname))
         dart-fn
         (binding [*class-prefix* (str *class-prefix* dartname)]
-          (swap! nses do-def sym {:dart/name dartname :type :field :dart/type dart-type}) ; predecl so that the def is visible in recursive defs
+          ; predecl so that the def is visible in recursive defs
+          (swap! nses do-def sym {:dart/qname dartqname
+                                  :dart/name dartname
+                                  :type :field
+                                  :dart/type dart-type})
           (emit expr env))
         dart-annotations
         (when-not *host-eval* (into [] (map #(emit % env)) (-> form meta :annotations)))
@@ -2751,14 +2780,14 @@
                 (write-dynamic-var-top-field k dartname dart-fn))
               (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
               (write-top-dartfn dartname
-                (or
+                                (or
                   ; peephole optimization: unwrap single let
-                  (and (seq? dart-fn) (= 'dart/let (first dart-fn))
-                    (let [[_ [[x e] & more-bindings] x'] dart-fn]
-                      (and (nil? more-bindings) (= x x') e)))
-                  (ensure-dart-expr dart-fn env)))
+                                 (and (seq? dart-fn) (= 'dart/let (first dart-fn))
+                                      (let [[_ [[x e] & more-bindings] x'] dart-fn]
+                                        (and (nil? more-bindings) (= x x') e)))
+                                 (ensure-dart-expr dart-fn env)))
               :else
-              (write-top-field dartname dart-fn))))]
+              (write-top-field dartqname dart-fn))))]
     (swap! nses alter-def sym assoc :dart/code dart-code)
     (emit sym env)))
 
@@ -2779,9 +2808,8 @@
       :def
       (if-some [t (when (= :class (:type v)) (:dart/type v))]
         (list 'dart/type t)
-        (let [{dart-name :dart/name the-ns :ns} v]
-          (with-meta (symbol (str (ensure-import-ns the-ns) "." dart-name))
-            (meta dart-name))))
+        (let [{dartqname :dart/qname} v]
+          dartqname))
       :dart (case (:kind v)
               :function
               ; this looks a LOT like specialize-function and dart-fn-lookup (has it ever been used?)
@@ -3246,7 +3274,8 @@
     (write x (var-locus (emit-type 'cljd.core/IFn$iface {}) (name sym)))))
 
 (defn write-top-field [sym x]
-  (write (ensure-dart-expr x {}) (var-locus (name sym))))
+  (write (ensure-dart-expr x {})
+         (var-locus (or (some-> (re-matches #"(?:.+\.)?(.+)" (name sym)) second) (name sym)))))
 
 (defn write-dynamic-var-top-field [k dart-sym x]
   (let [root-sym (symbol (str dart-sym "$root"))
@@ -4070,7 +4099,7 @@
 
 (defn recompile
   "Takes a collection of nses to recompile."
-  [nses-to-recompile]
+  [nses-to-recompile recompile-count]
   (with-dump-modified-files
     (let [nses-before @nses
           dependants (fn [ns]
@@ -4083,16 +4112,32 @@
       (try
         ; remove nses to be recompiled -- but not their libs to keep aliases stable
         (apply swap! nses dissoc nses-to-recompile)
-        (doseq [ns nses-to-recompile
+        (binding [*recompile-count* recompile-count]
+          (doseq [ns nses-to-recompile
                 ; the ns may already have been transitively reloaded
-                :when (nil? (@nses ns))]
+                  :when (nil? (@nses ns))]
           ; recompiling via ns and not via url because cljd/cljc shadowing
-          (compile-namespace ns))
+            (compile-namespace ns)))
         (catch Exception e
           (reset! nses nses-before) ; avoid messy states
           (throw e))))))
 
 (comment
+
+  (do
+
+    (require '[cljd.build :as build])
+
+    (binding [build/*deps* {:cljd/opts {:kind :dart}}]
+      (let [user-dir (System/getProperty "user.dir")
+            analyzer-dir (build/ensure-cljd-analyzer!)]
+        (build/exec {:in nil :out nil} "dart" "pub" "get")
+        (def li (mk-live-analyzer-info
+                 (build/exec {:async true :in nil :out nil :dir analyzer-dir}
+                             (some-> build/*deps* :cljd/opts :kind name)
+                             "pub" "run" "bin/analyzer.dart" user-dir))))))
+
+
 
   (def li (mk-dead-analyzer-info (load-libs-info)))
   (binding [analyzer-info li]
