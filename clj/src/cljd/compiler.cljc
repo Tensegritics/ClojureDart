@@ -3819,12 +3819,12 @@
           ("&&" "||" "^^" "+" "*" "&" "|" "^")
           (do
             (write obj expr-locus)
-            (assert (= (count args) 1))
             (doseq [arg args]
               (dart-print meth)
               (write arg expr-locus)))
           ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" #_">>>")
           (do
+            (assert (= (count args) 1))
             (write obj expr-locus)
             (dart-print meth)
             (write (first args) expr-locus))
