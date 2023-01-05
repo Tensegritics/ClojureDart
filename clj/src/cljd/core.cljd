@@ -442,7 +442,15 @@
 
 (defmacro declare
   "defs the supplied var names with no bindings, useful for making forward declarations."
-  [& names] `(do ~@(map #(list 'def % nil) names)))
+  [& names]
+  nil
+  ; temp hack sinc we force two passes at the moment
+  #_`(do ~@(map #(list 'def (vary-meta % assoc :declare true) nil) names)))
+
+(defmacro defonce
+  "defs name to have the root value of the expr iff the named var has no root value,
+  else expr is unevaluated"
+  [name expr] `(def  ~(vary-meta name assoc :no-reload true) ~expr))
 
 (defn ^bool satisfies?
   {:inline (fn [protocol x] `(.satisfies ~(vary-meta protocol assoc :tag `IProtocol) ~x))
@@ -7077,7 +7085,7 @@
       ([] (gensym "G__"))
       ([prefix-string] (symbol (str prefix-string (swap! id inc)))))))
 
-(declare tagged-literal)
+(def tagged-literal nil) ; TODO hack for macros but agged-literal will have to be implemented in cljd
 
 (defmacro defrecord [name [& fields] & opts+specs]
   (let [key (gensym "key")
