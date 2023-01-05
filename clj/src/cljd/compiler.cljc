@@ -2707,7 +2707,9 @@
 
 (def ^:dynamic *recompile-count*)
 
-(defn bump-version [dartqname]
+(defn tack-version
+  "When recompiling, adds a revision count to the name. Metadata is preserved."
+  [dartqname]
   (if-not (bound? #'*recompile-count*)
     dartqname
     (-> (str dartqname "$v" *recompile-count*) symbol (with-meta (meta dartqname)))))
@@ -2751,13 +2753,13 @@
                  (with-meta (cons (vary-meta (first expr) assoc :var-name sym) (next expr)) (meta expr))
                  expr))
         sub-type (cond
-                   (:dynamic (meta sym)) :dynamic
+                   (:dynamic (meta sym)) :dynamic ; dynamic as in dynamic var, not dc.dynamic
                    (:no-reload (meta sym)) :defonce
                    dart-type :fn
                    :else :field)
         dartqname (let [dartqname (dart-qualify dartname)]
                     (case sub-type
-                      :field (bump-version dartqname)
+                      :field (tack-version dartqname) ; only fields need to be versioned
                       dartqname))
         dart-fn
         (binding [*class-prefix* (str *class-prefix* dartname)]
@@ -3272,9 +3274,14 @@
     dart/fn (write x (named-fn-locus sym))
     (write x (var-locus (emit-type 'cljd.core/IFn$iface {}) (name sym)))))
 
+(defn strip-dart-alias
+  "Returns the unqualified dart name."
+  [dartname]
+  (or (some-> (re-matches #"(?:.+\.)?(.+)" dartname) second) dartname))
+
 (defn write-top-field [sym x]
   (write (ensure-dart-expr x {})
-         (var-locus (or (some-> (re-matches #"(?:.+\.)?(.+)" (name sym)) second) (name sym)))))
+         (var-locus (strip-dart-alias (name sym)))))
 
 (defn write-dynamic-var-top-field [k dart-sym x]
   (let [root-sym (symbol (str dart-sym "$root"))
