@@ -15,7 +15,7 @@ mobile and desktop apps.
 
 # Your first app!
 
-Prerequisites: have Clojure and Flutter installed and on your path.
+Prerequisites: Clojure and Flutter installed and on your path.
 
 Create a project directory with its `deps.edn`
 ``` shell
@@ -82,7 +82,7 @@ Tensegritics, an itty-bitty Clojure consultancy by [Baptiste Dupuch](https://git
 
 ClojureDart is not a revenue source for us, even if we build it for fun and hopefully profit -- by being the proverbial rising tide which lifts all boats.
 
-Sponsorships to either of us are welcome. Sponsorship money allowed us to have an intern on the project writing samples and producing videos.
+Sponsoring us is a good way to get the project moves faster. In the past sponsorship money allowed us to have an intern on the project writing samples and producing videos.
 
 Obviously you can contract us for assistance or development with ClojureDart.
 
@@ -91,7 +91,7 @@ Obviously you can contract us for assistance or development with ClojureDart.
 Here be Dragons!
 
 Let's repeat it: ClojureDart is a work-in-progress. Some features may be outright missing or
-partially implemented or even bugged. In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart))) or open an issue.
+partially implemented or even buggy. In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart))) or open an issue.
 
 Most notable missing bits are:
 - no REPL yet
@@ -107,7 +107,7 @@ Some differences have been documented, see [Differences with Clojure](doc/differ
 
 # Examples
 
-In the [samples directory](samples/) you'll find sample code either original or ports of [Flutter recipes](https://docs.flutter.dev/cookbook).
+In the [samples directory](samples/) directory, you'll find original sample code and ports of [Flutter recipes](https://docs.flutter.dev/cookbook).
 
 ## How to run a sample project
 
@@ -124,6 +124,7 @@ cd ClojureDart/samples/fab
 ```
 
 Init the project:
+
 ```shell
 clj -M:cljd init
 ```
@@ -136,6 +137,7 @@ clj -M:cljd flutter
 You should get the sample running either in Chrome or as a desktop app.
 
 To specify your exact target you must run `flutter devices` which outputs something like:
+
 ```shell
 3 connected devices:
 iPhone 6s (mobile) • D6707352-78D2-46BB-AB95-87355283FC82 • ios            •
@@ -145,7 +147,9 @@ macOS 12.4 21F79 darwin-arm
 Chrome (web)       • chrome                               • web-javascript •
 Google Chrome 103.0.5060.114
 ```
+
 The second column is the id of the target (here `D6707352-78D2-46BB-AB95-87355283FC82`, `macos` or `chrome`) that you pass to the watcher:
+
 ```shell
 clj -M:cljd flutter -d D6707352-78D2-46BB-AB95-87355283FC82
 ```
@@ -154,9 +158,11 @@ Enjoy! 🧃
 
 # `cljd.flutter.alpha`
 
-`cljd.flutter.alpha` is an utility namespace to remove Flutter boilerplate and integrate it a bit more with Clojure.
+Deprecated, use alpha2.
 
-[Learn more about it!](doc/flutter-helpers.md)
+# `cljd.flutter.alpha2`
+
+`cljd.flutter.alpha2` is an utility namespace to remove Flutter boilerplate and integrate more nicely with Clojure.
 
 # Thanks!
 
