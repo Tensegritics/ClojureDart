@@ -1572,7 +1572,7 @@
   (-meta obj))
 
 (defprotocol IReversible
-  "Protocol for reversing a seq."
+  "Protocol for producing a seq in reverse order over a collection."
   (-rseq [coll]
     "Returns a seq of the items in coll in reversed order."))
 
@@ -3310,12 +3310,15 @@
               (deref val)
               (recur val (inc idx))))
           acc))))
-  ; TODO : not reversible in clj (is in cljs)
+  ; not reversible in clj (is in cljs)
+  ; but the cljs behavior is weird: if we start to make some seq reversible then
+  ; all rseqs should be reversible etc.
+  ; STTAUS: don't uncomment
   #_#_IReversible
   (-rseq [coll]
     (let [c (-count coll)]
       (if (pos? c)
-        (RSeq. coll (dec c) nil)))))
+        (RSeq. coll 0 (dec c) nil)))))
 
 (extend-type String
   ISeqable
@@ -3610,7 +3613,7 @@
   IReversible
   (-rseq [coll]
     (when (pos? cnt)
-      (RSeq. nil coll (dec cnt) -1)))
+      (RSeq. nil coll 0 (dec cnt) -1)))
   Comparable
   (compareTo [x y]
     (if (vector? y)
@@ -3727,13 +3730,14 @@
 
 (deftype #/(RSeqIterator E)
   [^PersistentVector v
+   ^int to
    ^:mutable ^int i
    ^:mutable ^List curr]
   :type-only true
   #/(Iterator E)
   (current [iter] (aget curr (bit-and i 31)))
   (moveNext [iter]
-    (and (< 0 i)
+    (and (< to i)
       (do
         (when (zero? (bit-and i 31))
           (set! curr (unchecked-array-for (.-root v) (.-shift v) i)))
@@ -3741,17 +3745,17 @@
         true))))
 
 (deftype #/(RSeq E)
-  [meta v ^int i ^:mutable ^int __hash]
+  [meta v ^int to ^int i ^:mutable ^int __hash]
   :type-only true
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   (iterator [coll]
     (if (dart/is? v PersistentMapEntry)
       (.-iterator #dart ^:fixed ^E [(val v) (key v)])
-      (RSeqIterator. v (inc i) (.-tail ^PersistentVector v))))
+      (RSeqIterator. v to (inc i) (.-tail ^PersistentVector v))))
   ^:mixin #/(SeqListMixin E)
   (^#/(RSeq R) #/(cast R) [coll]
-   (new #/(RSeq R) meta v i __hash))
+   (new #/(RSeq R) meta v to i __hash))
   ^:mixin ToStringMixin
   IMeta
   (-meta [coll] meta)
@@ -3759,7 +3763,7 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (RSeq. new-meta v i __hash)))
+      (RSeq. new-meta v to i __hash)))
   ISeqable
   (-seq [coll] coll)
   ISequential
@@ -3767,14 +3771,14 @@
   (-first [coll]
     (-nth v i))
   (-rest [coll]
-    (if (pos? i)
-      (RSeq. nil v (dec i) __hash)
+    (if (< to i)
+      (RSeq. nil v to (dec i) __hash)
       ()))
   (-next [coll]
-    (when (pos? i)
-      (RSeq. nil v (dec i) __hash)))
+    (when (< to i)
+      (RSeq. nil v to (dec i) __hash)))
   ICounted
-  (-count [coll] (inc i))
+  (-count [coll] (- (inc i) to))
   ICollection
   (-conj [coll o]
     (cons o coll))
@@ -3891,7 +3895,11 @@
       (throw (ArgumentError. (str "Cannot compare " x " to " y)))))
   ISubvecable
   (-subvec [coll start1 end1]
-    (SubVec. nil v (+ start ^int start1) (+ start ^int end1) -1)))
+    (SubVec. nil v (+ start ^int start1) (+ start ^int end1) -1))
+  IReversible
+  (-rseq [coll]
+    (when (< start end)
+      (RSeq. nil v start (dec end) -1))))
 
 (defn subvec
   "Returns a persistent vector of the items in vector from
@@ -4307,7 +4315,7 @@
   ISeqable
   (-seq [node] (-seq #dart ^:fixed [_k _v]))
   IReversible
-  (-rseq [node] (RSeq. nil [_k _v] 1 -1))
+  (-rseq [node] (-seq #dart ^:fixed [_v _k]))
   ICounted
   (-count [node] 2)
   IIndexed
@@ -6871,19 +6879,21 @@
     (nil? y) 1
     :else (.compareTo ^Comparable x y)))
 
-(defn- ^#/(dynamic dynamic -> int) fn->comparator
-  "Given a fn that might be boolean valued or a comparator,
-   return a fn that is a comparator."
+(defn ^#/(dynamic dynamic -> int) dart-comparator
+  "Takes a fn that might be boolean valued or a comparator,
+   returns a dart:core/Comparator."
   [f]
-  (if (identical? f compare)
-    compare
+  (cond
+    (dart/is? f #/(dynamic dynamic -> int)) f
+    :else
     (fn [x y]
       (let [r (f x y)]
-        (if (dart/is? r dart:core/num)
-          (if (dart/is? r dart:core/int) r (-> ^dart:core/num r .toInt))
-          (if r
-            -1
-            (if (f y x) 1 0)))))))
+        (cond
+          (dart/is? r dart:core/num)
+          (-> ^dart:core/num r .toInt)
+          r -1 ; should we enforce r to be a boolean?
+          (f y x) 1
+          :else 0)))))
 
 (defn sort
   "Returns a sorted sequence of the items in coll. If no comparator is
@@ -6894,7 +6904,7 @@
   ([comp coll]
    (if (seq coll)
      (let [a (to-array coll)
-           comp' (fn->comparator comp)]
+           comp' (dart-comparator comp)]
        (.sort ^List a comp')
        (with-meta (seq a) (meta coll)))
      ())))
@@ -6907,7 +6917,7 @@
   ([keyfn coll]
    (sort-by keyfn compare coll))
   ([keyfn comp coll]
-   (let [comp' (fn->comparator comp)]
+   (let [comp' (dart-comparator comp)]
      (sort (fn ^int [x y] (comp' (keyfn x) (keyfn y))) coll))))
 
 (defn min-key
@@ -7644,7 +7654,7 @@
 ;; is kM.
 
 (deftype #/(HashRankedWideTreapMap K V)
-  [meta ^TreapNode root ^int top-rank ^#/(dynamic dynamic -> int) cmp ^:mutable ^int __hash]
+  [meta ^TreapNode root ^int top-rank ^#/(dynamic dynamic -> int) cmp cmpf ^:mutable ^int __hash]
   :type-only true
   ^:mixin EqualsEquivMixin
   ^:mixin #/(dart-coll/MapMixin K V)
@@ -7678,7 +7688,7 @@
           (.filled #/(List TreapNode) top-rank root)
           (fn [_ v] v)))))
   (^#/(HashRankedWideTreapMap RK RV) #/(cast RK RV) [coll]
-    (new #/(HashRankedWideTreapMap RK RV) meta root top-rank cmp __hash))
+    (new #/(HashRankedWideTreapMap RK RV) meta root top-rank cmp cmpf __hash))
   ^:mixin ToStringMixin
   IPrint
   ;; TODO : handle prefix-map & co
@@ -7690,12 +7700,12 @@
       (loop [^TreapNode root root ^int top-rank top-rank]
         (if (< top-rank rank)
           (recur (TreapNode (.-cnt root) #dart ^:fixed [root]) (inc top-rank))
-          (#/(HashRankedWideTreapMap K V) meta (.tnode_assoc root top-rank rank k v cmp) top-rank cmp -1)))))
+          (#/(HashRankedWideTreapMap K V) meta (.tnode_assoc root top-rank rank k v cmp) top-rank cmp cmpf -1)))))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (HashRankedWideTreapMap. new-meta root top-rank cmp __hash)))
+      (HashRankedWideTreapMap. new-meta root top-rank cmp cmpf __hash)))
   IMeta
   (-meta [coll] meta)
   ICollection
@@ -7710,7 +7720,7 @@
               (recur (-assoc ret (-nth e 0) (-nth e 1)) (-next s))
               (throw (ArgumentError. "conj on a map takes map entries or seqables of map entries"))))))))
   IEmptyableCollection
-  (-empty [coll] (#/(HashRankedWideTreapMap K V) meta -empty-treap-node 0 cmp -1))
+  (-empty [coll] (#/(HashRankedWideTreapMap K V) meta -empty-treap-node 0 cmp cmpf -1))
   IEquiv
   (-equiv [coll other] (-equiv-map coll other))
   IHash
@@ -7738,7 +7748,7 @@
         (loop [^TreapNode root new-root top-rank top-rank]
           (if (= 1 (alength (.-arr root)))
             (recur (aget (.-arr root) 0) (dec top-rank))
-            (#/(HashRankedWideTreapMap K V) meta root top-rank cmp -1))))))
+            (#/(HashRankedWideTreapMap K V) meta root top-rank cmp cmpf -1))))))
   IKVReduce
   (-kv-reduce [coll f init]
     (let [it (TreapIterator. root 0 top-rank
@@ -7797,7 +7807,7 @@
   (-rseq [coll]
     (let [c (.-cnt root)]
       (when (pos? c)
-        (RSeq. nil coll (dec c) -1))))
+        (RSeq. nil coll 0 (dec c) -1))))
   ISorted
   (-sorted-seq [coll ascending?]
     (if ascending?
@@ -7812,7 +7822,7 @@
   comparator.  If any keys are equal, they are handled as if by
   repeated uses of assoc."
   ([comparator & keyvals]
-   (loop [m (HashRankedWideTreapMap nil -empty-treap-node 0 (fn->comparator comparator) -1) kvs (seq keyvals)]
+   (loop [m (HashRankedWideTreapMap nil -empty-treap-node 0 (dart-comparator comparator) comparator -1) kvs (seq keyvals)]
      (if-some [[k & vkvs] kvs]
        (if-some [[v & kvs] vkvs]
          (recur (assoc m k v) kvs)
@@ -7931,7 +7941,7 @@
   comparator.  Any equal keys are handled as if by repeated uses of
   conj."
   ([comparator & keys]
-   (loop [m (HashRankedWideTreapSet. nil (HashRankedWideTreapMap. nil -empty-treap-node 0 (fn->comparator comparator) -1) -1)
+   (loop [m (HashRankedWideTreapSet. nil (HashRankedWideTreapMap. nil -empty-treap-node 0 (dart-comparator comparator) comparator -1) -1)
           ks (seq keys)]
      (if-some [[k & ks'] ks]
        (recur (conj m k) ks')
@@ -7942,4 +7952,3 @@
   handled as if by repeated uses of conj."
   ([& keys]
    (apply sorted-set-by compare keys)))
-
