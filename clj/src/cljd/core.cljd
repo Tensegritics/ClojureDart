@@ -5059,7 +5059,18 @@
     (throw (UnsupportedError. "clear not supported on PersistentHashSet")))
   (length [this] (-count hm))
   (iterator [this] (.-iterator ^#/(Iterable E) (.-keys hm)))
-  (toSet [this] (#/(Set/of E) (.-keys hm)))
+  (toSet [this] this)
+  (retainAll [this elements]
+    (throw (UnsupportedError. "retainAll not supported on PersistentHashSet")))
+  (union [this that]
+    ; TODO use fast union when possible
+    (into this that))
+  (intersection [this that]
+    ; TODO use fast intersection when possible
+    (transduce (remove #(.contains that %)) disj this this))
+  (difference [this that]
+    ; TODO use fast difference when possible
+    (reduce disj this that))
   (^#/(PersistentHashSet R) #/(cast R) [coll]
    (new #/(PersistentHashSet R) meta (-> hm (. #/(cast R R))) __hash))
   ^:mixin ToStringMixin
@@ -7668,11 +7679,11 @@
   ("[]" [coll k]
     (-lookup coll k nil))
   ("[]=" [coll key val]
-    (throw (UnsupportedError. "[]= not supported on PersistentHashMap")))
+    (throw (UnsupportedError. "[]= not supported on HashRankedWideTreapMap")))
   (remove [coll val]
-    (throw (UnsupportedError. "remove not supported on PersistentHashMap")))
+    (throw (UnsupportedError. "remove not supported on HashRankedWideTreapMap")))
   (clear [coll]
-    (throw (UnsupportedError. "clear not supported on PersistentHashMap")))
+    (throw (UnsupportedError. "clear not supported on HashRankedWideTreapMap")))
   (keys [coll]
     (reify ^:mixin #/(dart-coll/IterableMixin K)
       (iterator [_]
@@ -7705,7 +7716,7 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (HashRankedWideTreapMap. new-meta root top-rank cmp cmpf __hash)))
+      (#/(HashRankedWideTreapMap K V) new-meta root top-rank cmp cmpf __hash)))
   IMeta
   (-meta [coll] meta)
   ICollection
@@ -7837,100 +7848,124 @@
    (apply sorted-map-by compare keyvals)))
 
 (deftype #/(HashRankedWideTreapSet E)
-  [meta ^#/(HashRankedWideTreapMap E E) tmap ^:mutable ^int __hash]
+  [meta ^TreapNode root ^int top-rank ^#/(dynamic dynamic -> int) cmp cmpf ^:mutable ^int __hash]
   :type-only true
   ^:mixin EqualsEquivMixin
   ^:mixin #/(dart-coll/SetMixin E)
-  (contains [this e]
-    (-contains-key? tmap e))
-  (lookup [this e]
-    (-lookup tmap e nil))
+  (contains [coll k]
+    (not (identical? (-lookup coll k coll) coll)))
+  (lookup [coll k]
+    (-lookup coll k nil))
   (add [this e]
-    (throw (UnsupportedError. "add not supported on sorted-set")))
+    (throw (UnsupportedError. "add not supported on HashRankedWideTreapSet")))
   (remove [this e]
-    (throw (UnsupportedError. "remove not supported on sorted-set")))
+    (throw (UnsupportedError. "remove not supported on HashRankedWideTreapSet")))
   (clear [this]
-    (throw (UnsupportedError. "clear not supported on sorted-set")))
-  (length [this] (-count tmap))
-  (iterator [this] (.-iterator ^#/(Iterable E) (.-keys tmap)))
-  (toSet [this] (#/(Set/of E) (.-keys tmap)))
+    (throw (UnsupportedError. "clear not supported on HashRankedWideTreapSet")))
+  (length [this] (.-cnt root))
+  (iterator [this]
+    (TreapIterator. root 0 top-rank
+      (.filled #/(List int) top-rank 0)
+      (.filled #/(List TreapNode) top-rank root)
+      (fn [k _] k)))
+  (toSet [this] this)
+  (retainAll [this elements]
+    (throw (UnsupportedError. "retainAll not supported on HashRankedWideTreapSet")))
+  (union [this that]
+    ; TODO use fast union when possible
+    (into this that))
+  (intersection [this that]
+    ; TODO use fast intersection when possible
+    (transduce (remove #(.contains that %)) disj this this))
+  (difference [this that]
+    ; TODO use fast difference when possible
+    (reduce disj this that))
   (^#/(HashRankedWideTreapSet R) #/(cast R) [coll]
-   (new #/(HashRankedWideTreapSet R) meta (-> tmap (. #/(cast R R))) __hash))
+   (new #/(HashRankedWideTreapSet R) meta root top-rank cmp cmpf __hash))
   ^:mixin ToStringMixin
   IPrint
-  ;; TODO : handle prefix-map & co
   (-print [o sink]
     (print-sequential "#{" "}" (-seq o) sink))
   IWithMeta
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (HashRankedWideTreapSet. new-meta tmap __hash)))
+      (#/(HashRankedWideTreapSet E) new-meta root top-rank cmp cmpf __hash)))
   IMeta
   (-meta [coll] meta)
   ICollection
   (-conj [coll o]
-    (HashRankedWideTreapSet. meta (-assoc tmap o o) __hash))
+    (let [rank (hashrank o)]
+      (loop [^TreapNode root root ^int top-rank top-rank]
+        (if (< top-rank rank)
+          (recur (TreapNode (.-cnt root) #dart ^:fixed [root]) (inc top-rank))
+          (#/(HashRankedWideTreapSet E) meta (.tnode_assoc root top-rank rank o o cmp) top-rank cmp cmpf -1)))))
   IEmptyableCollection
-  (-empty [coll] (HashRankedWideTreapSet. meta (-empty tmap) -1))
-  ;;AFAIRE
+  (-empty [coll] (#/(HashRankedWideTreapSet E) meta -empty-treap-node 0 cmp cmpf -1))
+  ;; AFAIRE
   IEquiv
   (-equiv [coll other] (-equiv-map coll other))
   IHash
-  (-hash [coll] (ensure-hash __hash (-hash tmap)))
+  (-hash [coll] (ensure-hash __hash (hash-unordered-coll coll)))
   ISeqable
-  (-seq [coll] (iterator-seq (.-iterator (.-keys tmap))))
+  (-seq [coll] (iterator-seq (.-iterator (.-iterator coll))))
   ICounted
-  (-count [coll] (-count tmap))
+  (-count [coll] (.-cnt root))
   ILookup
   (-lookup [coll k]
-    (-lookup tmap k nil))
+    (-lookup coll k nil))
   (-lookup [coll k not-found]
-    (-lookup tmap k not-found))
+    (.tnode_lookup root k not-found top-rank cmp))
   (-contains-key? [coll k]
-    (-contains-key? tmap k))
+    (not (identical? (-lookup coll k coll) coll)))
   ISet
   (-disjoin [coll v]
-    (HashRankedWideTreapSet. meta (-dissoc tmap v) -1))
+    (let [new-root (.tnode_without root top-rank (hashrank v) v cmp)]
+      (if (identical? new-root root)
+        coll
+        (loop [^TreapNode root new-root top-rank top-rank]
+          (if (= 1 (alength (.-arr root)))
+            (recur (aget (.-arr root) 0) (dec top-rank))
+            (#/(HashRankedWideTreapSet E) meta root top-rank cmp cmpf -1))))))
   IFn
   (-invoke [coll k]
-    (-lookup tmap k))
+    (-lookup coll k))
   (-invoke [coll k not-found]
-    (-lookup tmap k not-found))
-  IReversible
+    (-lookup coll k not-found))
+  #_#_IReversible
   (-rseq [coll]
     (when (pos? (-count tmap))
       (map key (rseq tmap))))
   IReduce
   (-reduce [coll f init]
-    (let [it (TreapIterator. (.-root tmap) 0 (.-top_rank tmap)
-               (.filled #/(List int) (.-top_rank tmap) 0)
-               (.filled #/(List TreapNode) (.-top_rank tmap) (.-root tmap))
+    (let [it (TreapIterator. root 0 top-rank
+               (.filled #/(List int) top-rank 0)
+               (.filled #/(List TreapNode) top-rank root)
                nil)]
       (loop [acc init]
         (if (not (.moveNext it))
           acc
           (let [idx (.-idx it)
                 arr (-> it .-node .-arr)
-                acc (f acc (aget arr (- idx 2)))]
+                acc (f acc (aget arr (dec idx)))]
             (if (reduced? acc)
               (unreduced acc)
               (recur acc)))))))
   (-reduce [coll f]
-    (if (pos? (.-cnt (.-root tmap)))
-      (let [it (TreapIterator. (.-root tmap) 0 (.-top_rank tmap)
-                 (.filled #/(List int) (.-top_rank tmap) 0)
-                 (.filled #/(List TreapNode) (.-top_rank tmap) (.-root tmap))
+    (if (pos? (.-cnt root))
+      (let [it (TreapIterator. root 0 top-rank
+                 (.filled #/(List int) top-rank 0)
+                 (.filled #/(List TreapNode) top-rank root)
                  nil)
             init (let [idx (.-idx (doto it .moveNext))
                        arr (-> it .-node .-arr)]
-                   (aget arr (- idx 2)))]
+                   (aget arr (dec idx)))]
         (loop [acc init]
           (if (not (.moveNext it))
             acc
             (let [idx (.-idx it)
                   arr (-> it .-node .-arr)
-                  acc (f acc (aget arr (- idx 2)))]
+                  acc (f acc (aget arr (dec idx)))]
               (if (reduced? acc)
                 (unreduced acc)
                 (recur acc))))))
@@ -7941,7 +7976,7 @@
   comparator.  Any equal keys are handled as if by repeated uses of
   conj."
   ([comparator & keys]
-   (loop [m (HashRankedWideTreapSet. nil (HashRankedWideTreapMap. nil -empty-treap-node 0 (dart-comparator comparator) comparator -1) -1)
+   (loop [m (HashRankedWideTreapSet. nil -empty-treap-node 0 (dart-comparator comparator) comparator -1)
           ks (seq keys)]
      (if-some [[k & ks'] ks]
        (recur (conj m k) ks')
