@@ -359,7 +359,7 @@
            _ (when (seq non-shadowed-keys#)
                (.dependOnInheritedElement ctx# elt# .aspect non-shadowed-keys#))]
      (cljd.flutter.alpha2/InheritedBindings. (merge prev-bindings# bindings#)
-       (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
+       (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))
 
 (defn ^:macro-support expand-vsync [env name forms]
   `(reify :extends (widgets/StatefulWidget .key ~(:env key))
