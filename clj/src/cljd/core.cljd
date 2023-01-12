@@ -3613,7 +3613,7 @@
   IReversible
   (-rseq [coll]
     (when (pos? cnt)
-      (RSeq. nil coll 0 (dec cnt) -1)))
+      (iterator-seq (RPVIterator. coll 0 cnt tail))))
   Comparable
   (compareTo [x y]
     (if (vector? y)
@@ -3726,9 +3726,7 @@
         (set! i (inc i))
         true))))
 
-;;; Rseq
-
-(deftype #/(RSeqIterator E)
+(deftype #/(RPVIterator E)
   [^PersistentVector v
    ^int to
    ^:mutable ^int i
@@ -3738,52 +3736,11 @@
   (current [iter] (aget curr (bit-and i 31)))
   (moveNext [iter]
     (and (< to i)
-      (do
+      (let [i-1 (dec i)]
         (when (zero? (bit-and i 31))
-          (set! curr (unchecked-array-for (.-root v) (.-shift v) i)))
-        (set! i (dec i))
+          (set! curr (unchecked-array-for (.-root v) (.-shift v) i-1)))
+        (set! i i-1)
         true))))
-
-(deftype #/(RSeq E)
-  [meta v ^int to ^int i ^:mutable ^int __hash]
-  :type-only true
-  ^:mixin EquivSequentialHashMixin
-  ^:mixin #/(dart-coll/ListMixin E)
-  (iterator [coll]
-    (if (dart/is? v PersistentMapEntry)
-      (.-iterator #dart ^:fixed ^E [(val v) (key v)])
-      (RSeqIterator. v to (inc i) (.-tail ^PersistentVector v))))
-  ^:mixin #/(SeqListMixin E)
-  (^#/(RSeq R) #/(cast R) [coll]
-   (new #/(RSeq R) meta v to i __hash))
-  ^:mixin ToStringMixin
-  IMeta
-  (-meta [coll] meta)
-  IWithMeta
-  (-with-meta [coll new-meta]
-    (if (identical? new-meta meta)
-      coll
-      (RSeq. new-meta v to i __hash)))
-  ISeqable
-  (-seq [coll] coll)
-  ISequential
-  ISeq
-  (-first [coll]
-    (-nth v i))
-  (-rest [coll]
-    (if (< to i)
-      (RSeq. nil v to (dec i) __hash)
-      ()))
-  (-next [coll]
-    (when (< to i)
-      (RSeq. nil v to (dec i) __hash)))
-  ICounted
-  (-count [coll] (- (inc i) to))
-  ICollection
-  (-conj [coll o]
-    (cons o coll))
-  IEmptyableCollection
-  (-empty [coll] ()))
 
 (deftype #/(SubVec E)
   [meta ^PersistentVector v ^int start ^int end ^:mutable ^int __hash]
@@ -3899,7 +3856,9 @@
   IReversible
   (-rseq [coll]
     (when (< start end)
-      (RSeq. nil v start (dec end) -1))))
+      (let [n (dec end)
+            arr (if (<= (bit-and-not (dec (.-cnt v)) 31) n) (.-tail v) (unchecked-array-for (.-root v) (.-shift v) n))]
+        (iterator-seq (RPVIterator. v start end arr))))))
 
 (defn subvec
   "Returns a persistent vector of the items in vector from
@@ -4313,9 +4272,9 @@
   IEmptyableCollection
   (-empty [node] nil)
   ISeqable
-  (-seq [node] (-seq #dart ^:fixed [_k _v]))
+  (-seq [node] (cons _k (cons _v nil)))
   IReversible
-  (-rseq [node] (-seq #dart ^:fixed [_v _k]))
+  (-rseq [node] (cons _v (cons _k nil)))
   ICounted
   (-count [node] 2)
   IIndexed
@@ -7604,7 +7563,6 @@
                 child' (.tnode_assoc child (dec rank) krank k v cmp)]
             (TreapNode (+ (- cnt (.-cnt child)) (.-cnt child')) (new-array [:copy arr 0 i] [:insert child'] [:copy arr (inc i)])))))))) ; ok: even + 1 + (odd - (1 + even)) = odd
 
-
 (deftype #/(TreapIterator E)
   [^:mutable ^TreapNode node
    ^:mutable ^int idx
@@ -7818,7 +7776,7 @@
   (-rseq [coll]
     (let [c (.-cnt root)]
       (when (pos? c)
-        (RSeq. nil coll 0 (dec c) -1))))
+        #_(RSeq. nil coll 0 (dec c) -1))))
   ISorted
   (-sorted-seq [coll ascending?]
     (if ascending?

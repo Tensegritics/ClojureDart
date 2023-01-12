@@ -24,7 +24,8 @@
     (is (= '(3 2 1) (rseq (subvec [0 1 2 3] 1))))
     (is (nil? (meta (rseq (with-meta [1] {:a :b})))))
     (is (= (meta (with-meta (rseq [1 2 3]) {:a :b})) {:a :b}))
-    (is (= (rseq (vec (range 100))) (range 99 -1 -1)))))
+    (is (= (rseq (vec (range 100))) (range 99 -1 -1)))
+    (is (= (rseq (subvec (vec (range 100)) 33 42)) (range 41 32 -1)))))
 
 (deftest testing-dart-literal-typehints
   (testing "#dart[] List are typehints"
