@@ -615,3 +615,8 @@
   (let [s "name"
         f (fn ([] (Symbol s)) ([_] nil))]
     (is (identical? (Symbol s) (f)))))
+
+(deftest unary-minus-wrong-priority
+  ;; don't inline `m` as test will pass no matter what
+  (let [m {:num 10.2}]
+    (is (= "-10.20" (.toStringAsFixed (- ^num (:num m)) 2)))))
