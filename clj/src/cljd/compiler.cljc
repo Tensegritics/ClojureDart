@@ -3849,8 +3849,10 @@
                   (dart-print meth)
                   (write obj expr-locus)))
           "unary-" (do
+                     (dart-print "(")
                      (dart-print "-")
-                     (write obj expr-locus))
+                     (write obj expr-locus)
+                     (dart-print ")"))
           ("&&" "||" "^^" "+" "*" "&" "|" "^")
           (do
             (write obj expr-locus)
