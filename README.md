@@ -7,6 +7,19 @@ ClojureDart is a port of the Clojure language to Dart.
 Its primary goal is to leverage Dart and Flutter to extend Clojure's reach to
 mobile and desktop apps.
 
+# Status
+
+ClojureDart is production-ready: you can ship applications right now.
+
+Some features are missing:
+- no REPL yet, but we have excellent hot-reload so for UI work you get instant feedback
+- multi-method (WIP)
+- sorted-collection (WIP)
+
+In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart))) or open an issue.
+
+Some differences have been documented, see [Differences with Clojure](doc/differences.md).
+
 # Links dump
 
 [Slack](https://clojurians.slack.com/app_redirect?channel=clojuredart)
@@ -85,20 +98,6 @@ ClojureDart is not a revenue source for us, even if we build it for fun and hope
 Sponsoring us is a good way to get the project moves faster. In the past sponsorship money allowed us to have an intern on the project writing samples and producing videos.
 
 Obviously you can contract us for assistance or development with ClojureDart.
-
-# Status
-
-Here be Dragons!
-
-Let's repeat it: ClojureDart is a work-in-progress. Some features may be outright missing or
-partially implemented or even buggy. In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart))) or open an issue.
-
-Most notable missing bits are:
-- no REPL yet
-- multi-method (WIP)
-- sorted-collection (WIP)
-
-Some differences have been documented, see [Differences with Clojure](doc/differences.md).
 
 # Quick starts
 
