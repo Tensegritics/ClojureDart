@@ -30,11 +30,11 @@
           `(~new-params
             (let ~lets
               ~@body))
-          (not (symbol? (first params)))
+          (not (symbol? (first params))) ; [1]
           (let [gparam (gensym "p__")]
             (recur (next params) (conj new-params gparam)
               (-> lets (conj (first params)) (conj gparam))))
-          (contains? '#{... .&} (first params))
+          (.startsWith (name (first params)) ".") ; depends on [1] being false
           `([~@(concat new-params params)] (let ~lets ~@body))
           :else (recur (next params) (conj new-params (first params)) lets))))))
 

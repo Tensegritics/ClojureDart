@@ -776,8 +776,24 @@
         {n basis} (set! *locals-gen* (assoc *locals-gen* basis (inc (*locals-gen* basis 0))))]
     (symbol (str basis "$" n))))
 
+(defn- dot-symbol? [x]
+  (and (symbol? x)
+    (.startsWith (name x) ".")))
+
 (defn- parse-dart-params [params]
-  (let [[fixed-params [delim & opt-params]] (split-with (complement '#{.& ...}) params)]
+  (let [[fixed-params opt-params] (split-with (complement dot-symbol?) params)
+        [delim & opt-params]
+        (case (first opt-params)
+          (... nil) opt-params
+          .& (do
+               (println "DEPRECATION WARNING: named parameters should now be declared like this: .name1 .name2 and no more like that .& name1 .name2 -- old syntax will not be actively maintained anymore. ")
+               opt-params)
+          ; new syntax for named params
+          (cons '.&
+            (for [p opt-params]
+              (cond-> p
+                (dot-symbol? p)
+                (-> name (subs 1) symbol (with-meta (meta p)))))))]
     {:fixed-params fixed-params
      :opt-kind (case delim .& :named :positional)
      :opt-params
@@ -1280,10 +1296,6 @@
         :else
         [nil x])))
 
-(defn- dot-symbol? [x]
-  (and (symbol? x)
-    (.startsWith (name x) ".")))
-
 (defn- ensure-kw [x]
   (if (keyword? x)
     (let [s (symbol (str "." (name x)))]
@@ -1305,7 +1317,7 @@
       (-> [] (into (map #(vector nil (emit % env)) positional-args))
         (into (comp (partition-all 2) (map (fn [[name x]] [(ensure-kw name) (emit x env)]))) named-args)))
     (map? opts-types)
-    (let [args (remove '#{.&} args) ; temporary
+    (let [args (remove '#{.&} args) ; temporary as .& in args is redundant with args starting by a dot and the fact that we know the expected params. It's just some cpmpatibility feature with some very early cljd code
           positional-args (mapv #(vector nil (emit %1 env) %2) args fixed-types)
           rem-args (drop (count positional-args) args)
           all-args (into positional-args
@@ -1501,7 +1513,7 @@
   ;; TO BE CONTINUED
   ; now we have :dart/parameters and :dart/return-type on meta of dart-f to guide casting
   (let [dart-f (emit f env)
-        fn-type (if (some '#{.&} args)
+        fn-type (if (some dot-symbol? args)
                   :native
                   (let [{:dart/keys [fn-type type]} (infer-type dart-f)]
                     (or fn-type (case (:canon-qname type)
