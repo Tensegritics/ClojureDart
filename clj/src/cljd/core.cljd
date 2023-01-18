@@ -7228,7 +7228,8 @@
 
 (defn ^Stream stream
   "Coerces its last argument to a stream.
-  Currently streams, iterables, seqables and atoms can be coerced to streams.
+  Currently streams, Futures, iterables, seqables and atoms can be coerced to
+  streams.
   When a transducer is supplied, returns a stream of applications of
   the transform to the input events.
   When two transducers are supplied, the first one is applied to events,
@@ -7240,6 +7241,7 @@
   ([x]
    (cond ; TODO: introduce Streamable protocol
      (dart/is? x Stream) x
+     (dart/is? x Future) (Stream/fromFuture x)
      (dart/is? x Iterable) (Stream/fromIterable x)
      (satisfies? x IWatchable)
      (let [ctrl (dart-async/StreamController.broadcast)
