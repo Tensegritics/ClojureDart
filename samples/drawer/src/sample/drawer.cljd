@@ -30,9 +30,5 @@
            ; Then close the drawer
            #(.pop navigator)))))))
 
-(defn main
-  []
-  (m/runApp
-   (m/MaterialApp
-    .home (my-home-page "Drawer Demo")
-    .debugShowCheckedModeBanner false)))
+(defn main []
+  (f/run m/MaterialApp .home (my-home-page "Drawer Demo")))

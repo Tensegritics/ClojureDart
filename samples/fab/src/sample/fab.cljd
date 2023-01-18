@@ -115,7 +115,7 @@
                   children)
                 [tap-to-open-fab]))))
 
-(defn example-expandable-fab []
+(def example-expandable-fab
   (f/widget
    :context ctx
    (m/Scaffold
@@ -135,7 +135,4 @@
                                :icon (m/Icon m/Icons.videocam))]))))
 
 (defn main []
-  (m/runApp
-   (m/MaterialApp
-    .home (example-expandable-fab)
-    .debugShowCheckedModeBanner false)))
+  (f/run (m/MaterialApp .home example-expandable-fab)))

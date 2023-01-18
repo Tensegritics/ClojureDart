@@ -539,3 +539,10 @@
   (if (vector? argsvec?)
     `(fn [~closest-context ~@argsvec?] (-widget-cont {:closest-ctx true} ~@body))
     `(fn [~closest-context] (-widget-cont {:closest-ctx true} ~argsvec? ~@body))))
+
+(defmacro run
+  "Starts an application, takes a widget body and uses it as the application root widget.
+  Hot-reload friendly."
+  [& widget-body]
+  `(widgets/runApp
+     ~(stateless-flush {} widget-body)))

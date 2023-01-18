@@ -10,7 +10,7 @@
                     (rand-int 256)
                     1))
 
-(defn animated-container []
+(def animated-container
   (let [config (atom {:width 50.0 :height 50.0 :color m/Colors.green :border-radius (m/BorderRadius.circular 8.0)})]
     (m/Scaffold
      .appBar (m/AppBar .title (m/Text "AnimatedContainer Demo"))
@@ -34,4 +34,4 @@
           :border-radius (m/BorderRadius.circular (rand-int 100)))
        .child (m/Icon. m/Icons.play_arrow)))))
 
-(defn main [] (m/runApp (m/MaterialApp .home (animated-container))))
+(defn main [] (f/run m/MaterialApp .home animated-container))

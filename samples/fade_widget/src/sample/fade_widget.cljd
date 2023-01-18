@@ -22,7 +22,7 @@
 
 (defn main []
   (let [title "Opacity Demo"]
-    (m/runApp
-      (m/MaterialApp
-        .title title
-        .home (my-home-page title)))))
+    (f/run
+      (m/MaterialApp .title title)
+      .home
+      (my-home-page title))))

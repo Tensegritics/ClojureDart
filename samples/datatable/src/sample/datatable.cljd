@@ -31,7 +31,4 @@
              ["5" "wrj" "10" "beijing"]])))
 
 (defn main []
-  (m/runApp
-   (m/MaterialApp
-    .home demo
-    .debugShowCheckedModeBanner false)))
+  (f/run m/MaterialApp .home demo))

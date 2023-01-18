@@ -6,26 +6,25 @@
 
 (defn main []
   (let [counter (atom 0)]
-    (m/runApp
-      (f/widget
-        (m/MaterialApp
-          .title "Cljd Demo"
-          .theme (m/ThemeData .primarySwatch m/Colors.blue))
-        .home
-        (m/Scaffold
-          .appBar (m/AppBar .title (m/Text "ClojureDart Home Page"))
-          .floatingActionButton
-          (f/widget
-            (m/FloatingActionButton
-              .onPressed #(swap! counter inc)
-              .tooltip "Increment")
-            (m/Icon m/Icons.add)))
-        .body
-        m/Center
-        (m/Column .mainAxisAlignment m/MainAxisAlignment.center)
-        .children
-        [(m/Text "You have pushed the button this many times:")
-         (f/widget
-           :get {{{:flds [displayLarge]} .-textTheme} m/Theme}
-           :watch [N counter]
-           (m/Text (str N) .style displayLarge))]))))
+    (f/run
+      (m/MaterialApp
+        .title "Cljd Demo"
+        .theme (m/ThemeData .primarySwatch m/Colors.blue))
+      .home
+      (m/Scaffold
+        .appBar (m/AppBar .title (m/Text "ClojureDart Home Page"))
+        .floatingActionButton
+        (f/widget
+          (m/FloatingActionButton
+            .onPressed #(swap! counter inc)
+            .tooltip "Increment")
+          (m/Icon m/Icons.add)))
+      .body
+      m/Center
+      (m/Column .mainAxisAlignment m/MainAxisAlignment.center)
+      .children
+      [(m/Text "You have pushed the button this many times:")
+       (f/widget
+         :get {{{:flds [displayLarge]} .-textTheme} m/Theme}
+         :watch [N counter]
+         (m/Text (str N) .style displayLarge))])))
