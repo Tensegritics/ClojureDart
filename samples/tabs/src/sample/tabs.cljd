@@ -2,28 +2,25 @@
   "Faithful port of https://docs.flutter.dev/cookbook/design/tabs"
   (:require
    ["package:flutter/material.dart" :as m]
-   [cljd.flutter.alpha :as f]))
+   [cljd.flutter.alpha2 :as f]))
 
 (defn main
   []
   (let [title "Tabs Demo"]
-    (m/runApp
-     (m/MaterialApp
-      .title title
+    (f/run
+      (m/MaterialApp .title title)
       .home
-      (m/DefaultTabController
-       .length 3
-       .child
-       (m/Scaffold
+      (m/DefaultTabController .length 3)
+      (m/Scaffold
         .appBar
         (m/AppBar
-         .bottom
-         (m/TabBar
-          .tabs [(m/Tab .icon (m/Icon. m/Icons.directions_car)),
-                 (m/Tab .icon (m/Icon. m/Icons.directions_transit)),
-                 (m/Tab .icon (m/Icon. m/Icons.directions_bike))]))
-        .body
-        (m/TabBarView
-         .children [(m/Tab .icon (m/Icon. m/Icons.directions_car)),
-                    (m/Tab .icon (m/Icon. m/Icons.directions_transit)),
-                    (m/Tab .icon (m/Icon. m/Icons.directions_bike))])))))))
+          .bottom
+          (m/TabBar
+            .tabs [(m/Tab .icon (m/Icon. m/Icons.directions_car)),
+                   (m/Tab .icon (m/Icon. m/Icons.directions_transit)),
+                   (m/Tab .icon (m/Icon. m/Icons.directions_bike))])))
+      .body
+      (m/TabBarView
+        .children [(m/Tab .icon (m/Icon. m/Icons.directions_car)),
+                   (m/Tab .icon (m/Icon. m/Icons.directions_transit)),
+                   (m/Tab .icon (m/Icon. m/Icons.directions_bike))]))))
