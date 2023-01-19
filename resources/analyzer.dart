@@ -103,16 +103,15 @@ Map<String, dynamic> emitType(LibraryElement rootLib, DartType t) {
   if (i >= 0) name = name.substring(0, i);
   //if (!isParam || lib != null) addLibIdentifierIfNotContains(libsToDo, lib as String);
   var canonLib = lib == null ? null : "\"${lib}\"";
-  var exportingLib = canonLib == null
-      ? null
-      : (t.element2 == null
-          ? null
-          : (t.element2!.library == null
-              ? null
-              : (isExported(rootLib, t.element2!.library!)
-                  ? "\"${rootLib.identifier}\""
-                  : canonLib)));
-  exportingLib = exportingLib ?? canonLib;
+  var exportingLib = null;
+  if (canonLib != null && t.element2 != null) {
+    if (rootLib.exportNamespace.get(t.element2!.displayName) != null) {
+      exportingLib = "\"${rootLib.identifier}\"";
+    } else {
+      exportingLib = canonLib;
+    }
+  }
+
   return {
     ':kind': ':class',
     ':element-name': "\"${name}\"",
@@ -149,9 +148,6 @@ Map<String, dynamic> emitParameter(LibraryElement rootLib, ParameterElement p) {
     ':optional': p.isOptional
   };
 }
-
-bool isExported(LibraryElement rootLib, LibraryElement l) =>
-    rootLib.exportedLibraries.contains(l);
 
 class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
   final LibraryElement rootLib;
