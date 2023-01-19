@@ -1326,8 +1326,8 @@
                               (if-some [[_ type] (find opts-types k)]
                                 [k (emit expr env) type]
                                 (throw (Exception.
-                                         (str "Not an expected argument name: " (pr-str k)
-                                           ", valid names: " (str/join ", " (keys opts-types)))))))))
+                                         (str "Not an expected argument name: ." (name k)
+                                           ", valid names: " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))))))
                      (partition 2 rem-args))]
       (when-not (= (count positional-args) (count fixed-types))
         (throw (Exception. (str "Not enough positional arguments: expected " (count fixed-types) " got " (count positional-args)))))
