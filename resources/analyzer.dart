@@ -105,7 +105,10 @@ Map<String, dynamic> emitType(LibraryElement rootLib, DartType t) {
   var canonLib = lib == null ? null : "\"${lib}\"";
   var exportingLib = null;
   if (canonLib != null && t.element2 != null) {
-    if (rootLib.exportNamespace.get(t.element2!.displayName) != null) {
+    var telementExported = rootLib.exportNamespace.get(t.element2!.displayName);
+    // NOTE: we are not 100% sure that you can't get 2 elements instances for the same type
+    // but with different `id`s
+    if (telementExported != null && telementExported.id == t.element2!.id) {
       exportingLib = "\"${rootLib.identifier}\"";
     } else {
       exportingLib = canonLib;
