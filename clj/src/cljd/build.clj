@@ -300,6 +300,11 @@
         dir (java.io.File. (System/getProperty "user.dir"))
         project-name (.getName dir)
         project_name (str/replace project-name #"[- ]" "_")]
+    (with-open [w (io/writer ".gitattributes" :append true)]
+      (binding [*out* w]
+        (newline)
+        (println "# Syntax highlighting for ClojureDart files")
+        (println "*.cljd linguist-language=Clojure")))
     (doto (java.io.File. compiler/*lib-path*) .mkdirs)
     (println "Initializing" (bright project-name) "as a" (bright bin) "project!")
     (or
@@ -310,6 +315,14 @@
        "dart"
        (apply exec bin "create" "--force" (concat bin-opts [(System/getProperty "user.dir")])))
      (gen-entry-point)
+     (with-open [w (io/writer ".gitignore" :append true)]
+      (binding [*out* w]
+        (newline)
+        (run! println ["# ClojureDart"
+                       ".cpcache/"
+                       ".clojuredart/"]
+                       "lib/cljd-out/"
+                       "test/cljd-out/")))
      (println "👍" (green "All setup!") "Let's write some cljd in" main-ns))))
 
 (defn exit [status msg]
