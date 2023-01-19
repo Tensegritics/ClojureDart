@@ -63,42 +63,6 @@
                   (recur s (inc from) to))))
             -1))))))
 
-(deftype ReaderSink [^int delim ^Sink out
-                     ^ReaderSink? parent
-                     ^:mutable ^convert/StringConversionSink? child]
-  :extends convert/StringConversionSinkBase
-  (addSlice [_ s from to is-last]
-    (if child
-      (.addSlice child s from to)
-      (let [{index .-end} (.matchAsPrefix SPACE-REGEXP s from)]
-        (when (< index to)
-          (let [ch (.codeUnitAt s index)]
-            (if (== delim ch)
-              (.close out)
-              #_(doto rdr (.unread (.substring string (inc index))))
-              (let [child-reader (or (when (< ch 128) (aget macros ch))
-                                   token-reader)]
-                (set! child child-reader)
-                (.addSlice child s index to)))))))
-
-
-    (let [{index .-end} (.matchAsPrefix SPACE-REGEXP string s from)]
-      (if (<= to index)
-        (recur)
-        (let [ch (.codeUnitAt string index)]
-          (if (== delim ch)
-            (doto rdr (.unread (.substring string (inc index))))
-            (if-some [macro-reader (macros (saget string index))]
-              (do (.unread rdr (.substring string (inc index)))
-                  (let [val (await (macro-reader rdr))]
-                    (if (== val rdr)
-                      (recur)
-                      val)))
-              (do (.unread rdr (.substring string index))
-                      (-> (await (read-token rdr "")) interpret-token))))))))
-  (close [_])
-
-
 
     read
   [^ReaderInput rdr ^int delim]
