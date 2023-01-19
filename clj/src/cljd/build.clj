@@ -320,9 +320,9 @@
         (newline)
         (run! println ["# ClojureDart"
                        ".cpcache/"
-                       ".clojuredart/"]
+                       ".clojuredart/"
                        "lib/cljd-out/"
-                       "test/cljd-out/")))
+                       "test/cljd-out/"])))
      (println "👍" (green "All setup!") "Let's write some cljd in" main-ns))))
 
 (defn exit [status msg]
