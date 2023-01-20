@@ -20,7 +20,7 @@
 (defn compile-core []
   (compiler/compile 'cljd.core))
 
-(defn watch-dirs [dirs reload]
+(defn watch-dirs [^Process p dirs reload]
   (let [watcher (.newWatchService (java.nio.file.FileSystems/getDefault))
         reg1
         (fn [^java.io.File dir]
@@ -35,25 +35,27 @@
         (fn [dir]
           (eduction (keep reg1) (tree-seq some? #(.listFiles ^java.io.File %) dir)))]
     (loop [ks->dirs (into {} (mapcat reg*) dirs) to-reload #{}]
-      (if-some [k (.poll watcher (if (seq to-reload) 10 1000) java.util.concurrent.TimeUnit/MILLISECONDS)]
-        (let [events (.pollEvents k)] ; make sure we remove them, no matter what happens next
-          (if-some [^java.nio.file.Path dir (ks->dirs k)]
-            (let [[ks->dirs to-reload]
-                  (reduce (fn [[ks->dirs to-reload] ^java.nio.file.WatchEvent e]
-                            (let [f (some->> e .context (.resolve dir) .toFile)]
-                              (if (and (some? f) (not (.isDirectory f))
-                                    (re-matches #"[^.].*\.clj[dc]" (.getName f)))
-                                [(into ks->dirs (some->> f reg*))
-                                 (conj to-reload f)]
-                                [ks->dirs to-reload])))
-                    [ks->dirs to-reload] events)]
-              (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) to-reload))
-            (do
-              (.cancel k)
-              (recur ks->dirs to-reload))))
-        (do
-          (reload to-reload)
-          (recur ks->dirs #{}))))))
+      (when (.isAlive p)
+        (if-some [k (.poll watcher (if (seq to-reload) 10 1000) java.util.concurrent.TimeUnit/MILLISECONDS)]
+          (let [events (.pollEvents k)] ; make sure we remove them, no matter what happens next
+            (if-some [^java.nio.file.Path dir (ks->dirs k)]
+              (let [[ks->dirs to-reload]
+                    (reduce (fn [[ks->dirs to-reload] ^java.nio.file.WatchEvent e]
+                              (let [f (some->> e .context (.resolve dir) .toFile)]
+                                (if (and (some? f) (not (.isDirectory f))
+                                      (re-matches #"[^.].*\.clj[dc]" (.getName f)))
+                                  [(into ks->dirs (some->> f reg*))
+                                   (conj to-reload f)]
+                                  [ks->dirs to-reload])))
+                      [ks->dirs to-reload] events)]
+                (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) to-reload))
+              (do
+                (.cancel k)
+                (recur ks->dirs to-reload))))
+          (do
+            (reload to-reload)
+            (recur ks->dirs #{})))))
+    (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
 
 (defn title [s]
   (if *ansi*
@@ -272,7 +274,7 @@
                                        (recur state))))))))
                     (.setDaemon true)
                     .start))
-                (watch-dirs dirs (compile-files flutter-stdin)))
+                (watch-dirs p dirs (compile-files flutter-stdin)))
               (finally
                 (some-> p .destroy)))))))))
 
