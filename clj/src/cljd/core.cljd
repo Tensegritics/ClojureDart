@@ -828,18 +828,31 @@
 
 (defn ^bool string?
   "Return true if x is a String"
+  {:inline (fn [x] `(dart/is? ~x String))
+   :inline-arities #{1}}
   [x]
   (dart/is? x String))
 
 (defn ^bool number?
   "Returns true if x is a Number"
+  {:inline (fn [x] `(dart/is? ~x num))
+   :inline-arities #{1}}
   [x]
   (dart/is? x num))
 
 (defn ^bool int?
   "Returns true if x is an int?"
+  {:inline (fn [x] `(dart/is? ~x int))
+   :inline-arities #{1}}
   [x]
   (dart/is? x int))
+
+(defn ^int int
+  "Coerce to int"
+  [x]
+  (if (string? x)
+    (.codeUnitAt ^String x 0)
+    (.toInt ^num x)))
 
 (extend-type String
   IPrint
