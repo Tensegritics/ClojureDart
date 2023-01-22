@@ -401,6 +401,36 @@
         (println " " (bright cmd))
         (some->> doc (println "   "))))))
 
+(defn upgrade-cljd []
+  (let [hashes (with-open [rdr (-> "https://raw.githubusercontent.com/Tensegritics/ClojureDart/main/.hashes" java.net.URL. io/reader)]
+                 (into [] (comp (remove str/blank?) (map #(str \" % \"))) (line-seq rdr)))
+        latest (peek hashes)
+        pattern (re-pattern (str "(?<!#_)(?:" (str/join "|" hashes ) ")"))
+        versions-found (atom 0)
+        versions-replaced (atom 0)]
+    (when-not (seq hashes)
+      (throw (RuntimeException. "No past versions retrieved, can't update!")))
+    (-> "deps.edn"
+      slurp
+      (str/replace pattern (fn [v]
+                             (swap! versions-found inc)
+                             (str latest
+                               (when-not (= v latest)
+                                 (swap! versions-replaced inc)
+                                 (str " #_" v)))))
+      (->> (spit "deps.edn")))
+    (case @versions-replaced
+      0 (if (= @versions-found @versions-replaced)
+          (do
+            (println "No known versions found, please update manually to:")
+            (binding [*print-namespace-maps* false]
+              (prn {'tensegritics/clojuredart
+                    {:git/url "https://github.com/tensegritics/ClojureDart.git"
+                     :sha (re-find #"[^\"]+" latest)}})))
+          (println "Already up-to-date!"))
+      1 (println  "1 version upgraded to" latest)
+      (println  @versions-replaced "versions upgraded to" latest))))
+
 (def help-spec {:short "-h" :long "--help" :doc "Print this help."})
 
 (def commands
@@ -418,6 +448,7 @@
            :defaults {:target "flutter"}}
    "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart."}
    "clean" {:doc "When there's something wrong with compilation, erase all ClojureDart build artifacts.\nConsider running flutter clean too."}
+   "upgrade" {:doc "Upgrade cljd to latest version."}
    "watch" {:doc "Like compile but keep recompiling in response to file updates."}
    "flutter" {:options false
               :doc "Like watch but hot reload the application in the simulator or device. All options are passed to flutter run."}})
@@ -436,6 +467,8 @@
            :namespaces (or (seq (map symbol args))
                            (some-> *deps* :cljd/opts :main list))
            :watch (= cmd "watch"))
+          "upgrade"
+          (upgrade-cljd)
           "flutter"
           (let [[args [dash & flutter-args]] (split-with #(not= "--" %) args)
                 flutter-args (if dash flutter-args args)

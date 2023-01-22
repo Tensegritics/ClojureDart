@@ -45,6 +45,8 @@ cat << EOF > deps.edn
 EOF
 ```
 
+(To update an existing project to the latest ClojureDart, just do `clj -M:cljd upgrade`)
+
 Initialize project:
 
 ``` shell
