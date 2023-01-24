@@ -880,8 +880,8 @@
                      (when-some [member-info (class-info member)]
                        [identity member-info])
                      (some #(dart-member-lookup % member env)
-                       (cond->> (mapcat class-info [:interfaces :mixins :on])
-                         (:super class-info) (cons (:super class-info)))))]
+                       (concat (class-info :mixins) (some-> (:super class-info) list)
+                         (mapcat class-info [:interfaces :on]))))]
          [(comp ; ordering matters
             (type-env-for member member-type-arguments (:type-parameters member-info))
             (type-env-for class (:type-parameters class) (:type-parameters class-info))
