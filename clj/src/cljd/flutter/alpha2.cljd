@@ -73,25 +73,69 @@
   (-dispose-state [_ state]))
 
 (defn sub
-  "Returns a subscribable view on another subscribable.
+  "Returns a subscribable view on another subscribable or vector of subscribables.
    Values are the result of (apply f v args) for all values v yielded by the
-   upstream subscribable.
+   upstream subscribable (in the case of a vector of subscribable,yielded values are
+   vectors of each subscribable most recent value).
+   Subscription options can be passed to the upstream subscribable(s) by using the :sup/opts
+   option which must be a map of subscription options (like :default) or a vector of
+   such maps in the case of multiple subscribables.
    This subscribable generates events only when the resulting value changes."
   [s f & args]
-  (reify
-    Subscribable
-    (-subscribe [self f! opts]
-      (let [v (volatile! nil)]
-        (vreset! v v)
-        (-subscribe s
-          (fn [x]
-            (let [x (apply f x args)]
-              (when (not= x @v)
-                (vreset! v x)
-                (f! x))))
-          opts)))
-    (-unsubscribe [self sub]
-      (-unsubscribe s sub))))
+  (if (vector? s)
+    (reify
+      Subscribable
+      (-subscribe [self f! opts]
+        (let [v (volatile! nil)
+              _ (vreset! v v)
+              n (count s)
+              ins (volatile! (vec (repeat n nil)))
+              subs (into []
+                     (map-indexed
+                       (fn [i s]
+                         (-subscribe s
+                           (fn [x]
+                             (let [ins (vswap! ins assoc i x)
+                                   prev @v]
+                               (when-not (identical? prev v) ; when not init
+                                 (let [r (apply f ins args)]
+                                   (when (not= r prev)
+                                     (vreset! v r)
+                                     (f! r))))))
+                           (get (:sub/opts opts) i {}))))
+                     s)]
+          (f! (vreset! v (apply f @ins args)))
+          subs))
+      (-unsubscribe [self subs]
+        (dorun (map -unsubscribe s subs))))
+    (reify
+      Subscribable
+      (-subscribe [self f! opts]
+        (let [v (volatile! nil)
+              has-default (contains? opts :default)
+              default (:default opts)
+              sub-opts (cond-> (:sub/opts opts)
+                         has-default (assoc :default v))]
+          (vreset! v v)
+          (-subscribe s
+            (if has-default
+              (fn [x]
+                (if (identical? x v)
+                  (do
+                    (vreset! v default)
+                    (f! default))
+                  (let [x (apply f x args)]
+                    (when (not= x @v)
+                      (vreset! v x)
+                      (f! x)))))
+              (fn [x]
+                (let [x (apply f x args)]
+                  (when (not= x @v)
+                    (vreset! v x)
+                    (f! x)))))
+            (:sub/opts opts))))
+      (-unsubscribe [self sub]
+        (-unsubscribe s sub)))))
 
 (deftype InheritedBindings [bindings child]
   :extends (widgets/InheritedModel .child child)
