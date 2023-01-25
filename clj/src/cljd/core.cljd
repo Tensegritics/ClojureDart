@@ -2013,10 +2013,9 @@
   (-meta [_] meta)
   IWatchable
   (-notify-watches [this oldval newval]
-    (when-some [s (seq watches)]
-      (loop [[[key f] & r] s]
-        (f key this oldval newval)
-        (when r (recur r)))))
+    (reduce-kv (fn [_ k f]
+                 (f key this oldval newval)
+                 nil) nil watches))
   (-add-watch [this key f]
     (set! watches (assoc watches key f))
     this)
