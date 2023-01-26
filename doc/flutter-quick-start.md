@@ -67,19 +67,59 @@ EOF
 ```
 ## 7. Start a simulator
 
-In another terminal
+### iOS and iPadOS
+
+Install XCode if you don't have it yet. Starts it once to accept licenses.
+
+In another terminal:
 
 iOS:
 ``` shell
 open -a Simulator
 ```
+### Android
+You can either use Android Studio or Genymotion.
 
-Android:
+#### Android Studio
+Download Android Studio from https://developer.android.com/studio
 
-> :bulb: We recommand you to use Genymotion plugin for Android Studio, since its lighter than the AS native one.
+:bulb: There's currently a small incompatibility between the latest Studio (Eels) and Flutter: Android Studio renamed the directory containing its JRE from `jre` to `jbr`. Go to where Android Studio is installed (eg for a typical MacOS install: `/Applications/Android Studio.app/Contents/`) and do `ln -s jbr jre` (you may need to `sudo` this command).
 
+Now run `flutter doctor`. Android Studio shoud be fully green. Good job! However you still certainly have a warning about using a command-line tool name `sdkmanager` to install other command line tools. Something like this.
+
+```
+ ✗ cmdline-tools component is missing
+      Run path/to/sdkmanager --install "cmdline-tools;latest"
+      See https://developer.android.com/studio/command-line for more details.
+```
+
+The trick is that the SDK manager is a GUI in Android Studio:
+
+<img src="AndroidStudioSdkManager.png">
+
+Once everything is downloaded, run `flutter doctor` again, it will instruct you on how to accept licenses.
+
+Now we are almost done, we only have to create the virtual device. This is done in Android Studio Virtual Device Manager which can be found from a buried on the welcome dialogs (plural):
+
+<img src="AndroidStudioDeviceManagerAccess.png">
+<img src="AndroidStudioDeviceManagerAccess2.png">
+
+Once in the device manager, you pick the device and then an Android version and you'll get your virtual device listed:
+
+<img src="AndroidStudioDeviceManager.png">
+
+Now, `flutter emulators` lists:
+```
+2 available emulators:
+
+apple_ios_simulator • iOS Simulator  • Apple  • ios
+Pixel_5_API_33      • Pixel 5 API 33 • Google • android`
+```
+
+And `flutter emulators --launch Pixel_5_API_33` will start the emulator (maybe asking for some OS permissions the first time)!
+
+#### Genymotion
 Please follow [those guidelines](https://docs.genymotion.com/desktop/Get_started/Requirements/) to install and setup Genymotion.
-
 
 * Configure the SDK **within Genymotion** (`Genymotion > Preferences > ADB > Use custom Android SDK tools`) then use the path `/$HOME/Android/sdk` (default location after installing Android Studio)
 
