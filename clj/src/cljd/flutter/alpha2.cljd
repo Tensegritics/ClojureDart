@@ -581,7 +581,7 @@
   After the `argsvec` comes a body, interpreted as per the `widget` macro."
   [argsvec? & body]
   (if (vector? argsvec?)
-    `(fn [~closest-context ~@argsvec?] (-widget-cont {:closest-ctx true} ~@body))
+    `(fn ^widgets/Widget [~closest-context ~@argsvec?] (-widget-cont {:closest-ctx true} ~@body))
     `(fn [~closest-context] (-widget-cont {:closest-ctx true} ~argsvec? ~@body))))
 
 (defmacro run
@@ -590,3 +590,84 @@
   [& widget-body]
   `(widgets/runApp
      ~(stateless-flush {} widget-body)))
+
+(deftype Cell []
+  (subto [self s opts]))
+
+(def ^:private ^:dynamic ^Map *old-deps* (Map))
+(def ^:private ^:dynamic ^Map *new-deps* (Map))
+(def ^:private ^:dynamic ^Cell? *cell* nil)
+
+(defn <! [s & {:as opts}]
+  (if-some [v (. *new-deps* "[]" s)]
+    v
+    (if (.containsKey *new-deps* s)
+      nil
+      (if-some [v (. *old-deps* "[]" s)]
+        (do ; move to new gen
+          (.remove *old-deps* s)
+          (. *new-deps* "[]=" s v)
+          v)
+        (if (.containsKey *old-deps* s)
+          (do ; move to new gen
+            (.remove *old-deps* s)
+            (. *new-deps* "[]=" s nil)
+            nil)
+          ; a new subscription!
+          (do
+            (.subto *cell* s opts) ; subscription is going to fill new-deps
+            (. *new-deps* "[]" s)))))))
+
+(deftype Cell [f ^:mutable v ^Map subscribers
+               ^:mutable ^bool refreshing ^:mutable ^Map deps ^Map subs]
+  (subto [self s opts]
+    (. subs "[]=" s (-subscribe s (fn [x] (.update self s x)) opts)))
+  (refresh [self]
+    (let [old-deps deps
+          new-deps (set! deps (Map))] ; TODO "double buffer" rather than alloc
+      (set! refreshing true)
+      (let [v' (binding [*old-deps* old-deps
+                         *new-deps* new-deps
+                         *cell* self]
+                 (try
+                   (f)
+                   (catch Object e
+                     v)))]
+        (set! refreshing false)
+        (doseq [s (.-keys old-deps)]
+          (-unsubscribe s (.remove subs s)))
+        (when-not (= v v')
+          (set! v v')
+          (doseq [f! (.-values subscribers)]
+            (f! v'))))))
+  (update [self s x]
+    (if refreshing
+      (if (identical? self *cell*) ; init of a fresh subscription
+        (. deps "[]=" s x)
+        (throw (ex-info "I have no idea if it's legit" {})))
+      (do
+        (. deps "[]=" s x)
+        (.refresh self))))
+  Subscribable
+  (-subscribe [self f! opts]
+    (dart:core/print (str "sub cell " (dart:core/identityHashCode self)))
+    (when (zero? (.-length subscribers))
+      (.refresh self))
+    (let [sub (Object)]
+      (. subscribers "[]=" sub f!)
+      (f! v)
+      sub))
+  (-unsubscribe [self sub]
+    (.remove subscribers sub)
+    (dart:core/print (str "unsub cell " (dart:core/identityHashCode self) " l=" (.-length subscribers) " sub=" sub " subscribersks=" (seq (.-keys subscribers))))
+    (when (zero? (.-length subscribers))
+      (.forEach subs (fn [s sub] (-unsubscribe s sub)))
+      (.clear subs)
+      (.clear deps)
+      (set! v nil))))
+
+(defn cell [f]
+  (Cell f nil (Map/identity) false (Map) (Map)))
+
+(defmacro $ [expr]
+  `(cell (fn [] ~expr)))
