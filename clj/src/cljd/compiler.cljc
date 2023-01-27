@@ -3248,13 +3248,11 @@
   {:pre (str left-value "=")
    :post ";\n"})
 
-(defn var-locus
-  ([varname] (var-locus (-> varname meta :dart/type) varname))
-  ([vartype varname]
-   {:pre (str (or (some-> vartype type-str) "var") " " varname "=")
-    :post ";\n"
-    :decl (str (or (some-> vartype type-str) "var") " " varname ";\n")
-    :fork (assignment-locus varname)}))
+(defn var-locus [vartype varname]
+  {:pre (str (or (some-> vartype type-str) "var") " " varname "=")
+   :post ";\n"
+   :decl (str (or (some-> vartype type-str) "var") " " varname ";\n")
+   :fork (assignment-locus varname)})
 
 (defn final-locus
   ([varname] (final-locus (-> varname meta :dart/type) varname))
@@ -3293,7 +3291,7 @@
 
 (defn write-top-field [sym x]
   (write (ensure-dart-expr x {})
-         (var-locus (strip-dart-alias (name sym)))))
+         (var-locus dc-dynamic (strip-dart-alias (name sym)))))
 
 (defn write-dynamic-var-top-field [k dart-sym x]
   (let [root-sym (symbol (str dart-sym "$root"))
