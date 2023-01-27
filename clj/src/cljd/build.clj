@@ -223,7 +223,7 @@
         (when (or watch flutter)
           (newline)
           (when flutter
-            (println (title (str/join " " (into ["Lauching flutter run"] flutter)))))
+            (println (title (str/join " " (into ["Launching flutter run"] flutter)))))
           (let [p (some->> flutter
                     (apply exec {:async true :in nil :out nil :env {"TERM" ""}} "flutter" "run"))]
             (try
