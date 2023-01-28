@@ -1841,7 +1841,7 @@
       :else (throw (ex-info (str "cljd-hash not implemented for " (class x)) {:x x})))))
 
 (defn emit-case* [[op expr clauses default] env]
-  (assert (and (symbol? expr) (env expr)))
+  (assert (symbol? expr))
   (cond
     (empty? clauses) (emit default env)
     (or (every? #(or (char? % ) (string? %)) (mapcat first clauses))
