@@ -12,7 +12,7 @@
             ["dart:io" :as dart-io]
             ["dart:async" :as dart-async]))
 
-(def ^:private sentinel (Object.))
+(def ^:private sentinel ^:unique (Object.))
 
 (def ^:macro-support  argument-error
   (fn [msg]
@@ -1647,7 +1647,7 @@
     (when (and (map? y) (not (record? y)))
       ; assume all maps are counted
       (when (== (count x) (count y))
-        (let [never-equiv (Object.)]
+        (let [never-equiv ^:unique (Object.)]
           (if (satisfies? IKVReduce x)
             (reduce-kv
               (fn [_ k v]
@@ -3583,7 +3583,7 @@
     (-nth coll k not-found))
   IEditableCollection
   (-as-transient [coll]
-    (TransientVector. cnt shift (Object.) root (aresize tail (.-length tail) 32 nil)))
+    (TransientVector. cnt shift ^:unique (Object.) root (aresize tail (.-length tail) 32 nil)))
 
   #_#_IReversible
   (-rseq [coll]

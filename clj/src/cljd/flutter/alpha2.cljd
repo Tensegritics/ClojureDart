@@ -638,6 +638,7 @@
           (-unsubscribe s (.remove subs s)))
         (when-not (= v v')
           (set! v v')
+          (dart:core/print (str (dart:core/identityHashCode self) " distributing to " (count subscribers) " subscribers"))
           (doseq [f! (.-values subscribers)]
             (f! v'))))))
   (update [self s x]
@@ -653,7 +654,7 @@
     (dart:core/print (str "sub cell " (dart:core/identityHashCode self)))
     (when (zero? (.-length subscribers))
       (.refresh self))
-    (let [sub (Object)]
+    (let [sub ^:unique (Object)]
       (. subscribers "[]=" sub f!)
       (f! v)
       sub))
