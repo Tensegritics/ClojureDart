@@ -35,7 +35,7 @@
         (fn [dir]
           (eduction (keep reg1) (tree-seq some? #(.listFiles ^java.io.File %) dir)))]
     (loop [ks->dirs (into {} (mapcat reg*) dirs) to-reload #{}]
-      (when (.isAlive p)
+      (when (or (nil? p) (.isAlive p))
         (if-some [k (.poll watcher (if (seq to-reload) 10 1000) java.util.concurrent.TimeUnit/MILLISECONDS)]
           (let [events (.pollEvents k)] ; make sure we remove them, no matter what happens next
             (if-some [^java.nio.file.Path dir (ks->dirs k)]
