@@ -619,53 +619,81 @@
             (. *new-deps* "[]" s)))))))
 
 (deftype Cell [f ^:mutable v ^Map subscribers
-               ^:mutable ^bool refreshing ^:mutable ^Map deps ^Map subs]
+               ^:mutable ^int refreshing ^:mutable ^Map deps ^Map subs
+               ^:mutable ^Map spare-map]
   (subto [self s opts]
     (. subs "[]=" s (-subscribe s (fn [x] (.update self s x)) opts)))
   (refresh [self]
-    (let [old-deps deps
-          new-deps (set! deps (Map))] ; TODO "double buffer" rather than alloc
-      (set! refreshing true)
+    (assert (zero? refreshing))
+    ; deps=mapA, spare-map=mapB and mapB is empty
+    (let [old-deps deps]
+      (set! deps spare-map)
+      ; now deps=mapB, spare-map=mapB, old-deps=mapA
+      (set! refreshing 1)
       (let [v' (binding [*old-deps* old-deps
-                         *new-deps* new-deps
+                         *new-deps* deps
                          *cell* self]
                  (try
                    (f)
                    (catch Object e
                      v)))]
-        (set! refreshing false)
         (doseq [s (.-keys old-deps)]
           (-unsubscribe s (.remove subs s)))
+        (set! spare-map (doto old-deps .clear))
+        ; now deps=mapB, spare-map=mapA and mapA is empty
         (when-not (= v v')
+          ; propagating new value
+          (set! refreshing 2)
           (set! v v')
           (doseq [f! (.-values subscribers)]
-            (f! v'))))))
+            (try (f! v') (catch Object e)))
+          (.forEach spare-map
+            (fn [sub f!]
+              (if (identical? sub f!) ; sub as f! -> tombstone
+                (.remove subscribers sub)
+                (. subscribers "[]=" sub f!))))
+          (.clear spare-map))
+        (set! refreshing 0))))
   (update [self s x]
-    (if refreshing
-      (if (identical? self *cell*) ; init of a fresh subscription
-        (. deps "[]=" s x)
-        (throw (ex-info "I have no idea if it's legit" {})))
-      (do
-        (. deps "[]=" s x)
-        (.refresh self))))
+    (case refreshing
+      ; not refreshing
+      0 (do
+          (. deps "[]=" s x)
+          (.refresh self))
+      ; recomputing
+      1 (if (identical? self *cell*) ; init of a fresh subscription
+          (. deps "[]=" s x)
+          (throw (ex-info "I have no idea if it's legit" {})))
+      ; broadcasting new value
+      2 (throw (ex-info "Circular dependency" {:cell self}))))
   Subscribable
   (-subscribe [self f! opts]
-    (when (zero? (.-length subscribers))
-      (.refresh self))
-    (let [sub ^:unique (Object)]
-      (. subscribers "[]=" sub f!)
-      (f! v)
-      sub))
+    (case refreshing
+      0 (let [sub ^:unique (Object)]
+          (when (zero? (.-length subscribers))
+            (.refresh self))
+          (. subscribers "[]=" sub f!)
+          (f! v)
+          sub)
+      1 (throw (ex-info "Circular dependency" {:cell self}))
+      2 (let [sub ^:unique (Object)]
+          (. spare-map "[]=" sub f!)
+          (f! v)
+          sub)))
   (-unsubscribe [self sub]
-    (.remove subscribers sub)
-    (when (zero? (.-length subscribers))
-      (.forEach subs (fn [s sub] (-unsubscribe s sub)))
-      (.clear subs)
-      (.clear deps)
-      (set! v nil))))
+    (case refreshing
+      0 (do
+          (.remove subscribers sub)
+          (when (zero? (.-length subscribers))
+            (.forEach subs (fn [s sub] (-unsubscribe s sub)))
+            (.clear subs)
+            (.clear deps)
+            (set! v nil)))
+      1 (throw (ex-info "Circular dependency" {:cell self}))
+      2 (. spare-map "[]=" sub sub))))
 
 (defn cell [f]
-  (Cell f nil (Map/identity) false (Map) (Map)))
+  (Cell f nil (Map/identity) 0 (Map) (Map) (Map)))
 
 (defmacro $ [expr]
   `(cell (fn [] ~expr)))
