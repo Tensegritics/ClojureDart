@@ -1187,9 +1187,15 @@
                   args)
            (meta form))
          (.startsWith f-name ".")
-         (with-meta
-           (list* '. (first args) (with-meta (symbol (subs f-name 1)) (meta f)) (next args))
-           (meta form))
+         (if (and (.startsWith f-name ".-") (.endsWith f-name "!"))
+           (with-meta
+             (list* 'set! (list (with-meta (symbol (subs f-name 0 (dec (count f-name)))) (meta f))
+                            (first args))
+               (next args))
+             (meta form))
+           (with-meta
+             (list* '. (first args) (with-meta (symbol (subs f-name 1)) (meta f)) (next args))
+             (meta form)))
          :else
          (if-some [[type :as r] (resolve-static-member f)]
            (with-meta

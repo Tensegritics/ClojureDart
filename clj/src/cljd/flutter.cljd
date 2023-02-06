@@ -215,18 +215,20 @@
        (~'-init-state [_# state#]
          (let [~state ^WatchState state#
                ~subscribable ~expr]
-           (set! (.-k ~state) ~refresh-on)
-           (set! (.-subscribable ~state) ~subscribable)
-           (set! (.-subscription ~state) ~subscribe-call)))
+           (doto ~state
+             (.-k! ~refresh-on)
+             (.-subscribable! ~subscribable)
+             (.-subscription! ~subscribe-call))))
        (~'-dispose-state [_# state#]
          (let [state# ^WatchState state#]
            (doto (.-subscribable state#)
              (-unsubscribe (.-subscription state#))
              ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
-           (set! (.-k state#) nil)
-           (set! (.-subscribable state#) nil)
-           (set! (.-subscription state#) nil)
-           (set! (.-latest state#) nil)))
+           (doto state#
+             (.-k! nil)
+             (.-subscribable! nil)
+             (.-subscription! nil)
+             (.-latest! nil))))
        (~'-build [_# state# ctx#]
          (let [~binding (.-latest ^WatchState state#)
                ~closest-context ctx#]
@@ -240,9 +242,10 @@
                (-unsubscribe (.-subscription ~state))
                ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
              (let [~subscribable ~expr]
-               (set! (.-k ~state) k#)
-               (set! (.-subscribable ~state) ~subscribable)
-               (set! (.-subscription ~state) ~subscribe-call))))))))
+               (doto ~state
+                 (.-k! k#)
+                 (.-subscribable! ~subscribable)
+                 (.-subscription! ~subscribe-call)))))))))
 
 (defn ^:macro-support expand-bg-watcher
   [&env env binding expr {:keys [dispose] :as opts} body forms]
@@ -274,17 +277,19 @@
        (~'-init-state [_# state#]
          (let [~state ^WatchState state#
                ~subscribable ~expr]
-           (set! (.-k ~state) ~refresh-on)
-           (set! (.-subscribable ~state) ~subscribable)
-           (dart:async/scheduleMicrotask (fn [] (set! (.-subscription ~state) ~subscribe-call)))))
+           (doto ~state
+             (.-k! ~refresh-on)
+             (.-subscribable! ~subscribable))
+           (dart:async/scheduleMicrotask (fn [] (.-subscription! ~state ~subscribe-call)))))
        (~'-dispose-state [_# state#]
          (let [state# ^WatchState state#]
            (doto (.-subscribable state#)
              (-unsubscribe (.-subscription state#))
              ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
-           (set! (.-k state#) nil)
-           (set! (.-subscribable state#) nil)
-           (set! (.-subscription state#) nil)))
+           (doto state#
+             (.-k! nil)
+             (.-subscribable! nil)
+             (.-subscription! nil))))
        (~'-build [_# state# ctx#]
          (let [~closest-context ctx#]
            (-widget-cont ~(assoc env :key nil :closest-ctx true)
@@ -297,9 +302,10 @@
                (-unsubscribe (.-subscription ~state))
                ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
              (let [~subscribable ~expr]
-               (set! (.-k ~state) k#)
-               (set! (.-subscribable ~state) ~subscribable)
-               (dart:async/scheduleMicrotask (fn [] (set! (.-subscription ~state) ~subscribe-call))))))))))
+               (doto ~state
+                 (.-k! k#)
+                 (.-subscribable! ~subscribable))
+               (dart:async/scheduleMicrotask (fn [] (.-subscription! ~state ~subscribe-call))))))))))
 
 (deftype ResourceState [^:mutable k ^:mutable resource]
   :extends widgets/State
@@ -326,14 +332,14 @@
        (~'createState [_#] (ResourceState nil nil))
        cljd.flutter/StateLifecycle
        (~'-init-state [_# state#]
-         (let [state# ^ResourceState state#]
-           (set! (.-k state#) ~refresh-on)
-           (set! (.-resource state#) ~expr)))
+         (doto ^ResourceState state#
+           (.-k! ~refresh-on)
+           (.-resource! ~expr)))
        (~'-dispose-state [_# ^ResourceState state#]
-         (let [state# ^ResourceState state#]
-           (set! (.-k state#) nil)
-           (-> (dart/type-like (.-resource state#) ~expr) ~dispose)
-           (set! (.-resource state#) nil)))
+        (doto ^ResourceState state#
+          (.-k! nil)
+          (-> .-resource (dart/type-like ~expr) ~dispose)
+          (.-resource! nil)))
        (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
          (let [~binding (dart/type-like (.-resource ^ResourceState state#) ~expr)]
            (-widget-cont ~(assoc env :key nil :closest-ctx true)
@@ -342,9 +348,10 @@
          (let [state# ^ResourceState state#
                k# ~refresh-on]
            (when-not (= k# (.-k state#))
-             (-> (dart/type-like (.-resource state#) ~expr) ~dispose)
-             (set! (.-k state#) k#)
-             (set! (.-resource state#) ~expr)))))))
+             (doto state#
+               (-> .-resource (dart/type-like ~expr) ~dispose)
+               (.-k! k#)
+               (.-resource! ~expr))))))))
 
 (defn ^:macro-support expand-get-inherited [env v forms]
   (if-not (:closest-ctx env)

@@ -620,3 +620,10 @@
   ;; don't inline `m` as test will pass no matter what
   (let [m {:num 10.2}]
     (is (= "-10.20" (.toStringAsFixed (- ^num (:num m)) 2)))))
+
+(deftest new-setter-sugar
+  (let [{:flds [name value]} (doto (io/Cookie "name" "value")
+                               (.-name! "newname")
+                               (.-value! "newvalue"))]
+    (is (= name "newname"))
+    (is (= value "newvalue"))))
