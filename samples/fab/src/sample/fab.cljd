@@ -3,7 +3,7 @@
   (:require
    ["package:flutter/material.dart" :as m]
    ["dart:math" :as math]
-   [cljd.flutter.alpha2 :as f]))
+   [cljd.flutter :as f]))
 
 ;; https://docs.flutter.dev/cookbook/effects/expandable-fab#interactive-example
 

@@ -1,7 +1,7 @@
 (ns sample.form
   "Faithful port of https://docs.flutter.dev/cookbook/forms/retrieve-input"
   (:require ["package:flutter/material.dart" :as m]
-            [cljd.flutter.alpha2 :as f]))
+            [cljd.flutter :as f]))
 
 (defn my-custom-form-state [title]
   (f/widget

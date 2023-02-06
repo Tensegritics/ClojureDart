@@ -1,14 +1,10 @@
-(ns cljd.flutter.alpha2
-  "UNMAINTAINED because RENAMED to cljd.flutter, update your nses.
-   This namespace won't be deleted but won't receive any update."
+(ns cljd.flutter
   (:require ["package:flutter/widgets.dart" :as widgets]
             ["package:flutter/foundation.dart" :as foundation]
             ["dart:async" :as dart:async]
             [cljd.string :as str])
   (:host-ns
    (:require [clojure.string :as str])))
-
-;; "DEPRECATED"
 
 (defprotocol Subscribable
   (-subscribe [x f! opts]
@@ -215,7 +211,7 @@
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (WatchState nil nil nil nil))
-       cljd.flutter.alpha2/StateLifecycle
+       cljd.flutter/StateLifecycle
        (~'-init-state [_# state#]
          (let [~state ^WatchState state#
                ~subscribable ~expr]
@@ -274,7 +270,7 @@
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (WatchState nil nil nil nil))
-       cljd.flutter.alpha2/StateLifecycle
+       cljd.flutter/StateLifecycle
        (~'-init-state [_# state#]
          (let [~state ^WatchState state#
                ~subscribable ~expr]
@@ -328,7 +324,7 @@
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (ResourceState nil nil))
-       cljd.flutter.alpha2/StateLifecycle
+       cljd.flutter/StateLifecycle
        (~'-init-state [_# state#]
          (let [state# ^ResourceState state#]
            (set! (.-k state#) ~refresh-on)
@@ -406,7 +402,7 @@
            (remove (fn [k#] (contains? bindings# k#)) (keys prev-bindings#))
            _ (when (seq non-shadowed-keys#)
                (.dependOnInheritedElement ctx# elt# .aspect non-shadowed-keys#))]
-     (cljd.flutter.alpha2/InheritedBindings. (merge prev-bindings# bindings#)
+     (cljd.flutter/InheritedBindings. (merge prev-bindings# bindings#)
        (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))
 
 (defn ^:macro-support expand-vsync [env name forms]

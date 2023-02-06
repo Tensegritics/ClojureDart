@@ -2,7 +2,7 @@
   "Faithful port of https://docs.flutter.dev/cookbook/lists/grid-lists"
   (:require
    ["package:flutter/material.dart" :as m]
-   [cljd.flutter.alpha2 :as f]))
+   [cljd.flutter :as f]))
 
 (defn main []
   (let [title "Grid List"]

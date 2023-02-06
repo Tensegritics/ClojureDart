@@ -3,7 +3,7 @@
    ["package:flutter/gestures.dart" :as g]
    ["package:flutter/material.dart" :as m]
    ["package:vector_math/vector_math_64.dart" :as vm]
-   [cljd.flutter.alpha2 :as f]))
+   [cljd.flutter :as f]))
 
 (def radius 25)
 

@@ -1,7 +1,7 @@
 (ns sample.two-counters
   (:require
    ["package:flutter/material.dart" :as m]
-   [cljd.flutter.alpha2 :as f]))
+   [cljd.flutter :as f]))
 
 ;; this sample demos how to use :bind/:get
 

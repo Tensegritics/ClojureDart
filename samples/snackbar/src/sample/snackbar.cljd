@@ -2,7 +2,7 @@
   "Faithful port of https://docs.flutter.dev/cookbook/design/snackbars"
   (:require
    ["package:flutter/material.dart" :as m]
-   [cljd.flutter.alpha2 :as f]))
+   [cljd.flutter :as f]))
 
 (def snackbar
   (m/SnackBar

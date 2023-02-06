@@ -2,7 +2,7 @@
   "The perennial counter demo."
   (:require
    ["package:flutter/material.dart" :as m]
-   [cljd.flutter :as f]))
+   [cljd.flutter.alpha2 :as f]))
 
 (defn main []
   (let [counter (atom 0)]

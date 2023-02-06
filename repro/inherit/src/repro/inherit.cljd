@@ -1,5 +1,5 @@
 (ns repro.inherit
-  (:require [cljd.flutter.alpha2 :as f]
+  (:require [cljd.flutter :as f]
             ["package:flutter/material.dart" :as m]))
 
 (def inner-component

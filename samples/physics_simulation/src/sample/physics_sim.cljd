@@ -3,7 +3,7 @@
   (:require
    ["package:flutter/material.dart" :as m]
    ["package:flutter/physics.dart" :as p]
-   [cljd.flutter.alpha2 :as f]))
+   [cljd.flutter :as f]))
 
 (defn draggable-card [& {:keys [child]}]
   (f/widget

@@ -1,7 +1,7 @@
 (ns sample.datatable
   (:require
    ["package:flutter/material.dart" :as m]
-   [cljd.flutter.alpha2 :as f]))
+   [cljd.flutter :as f]))
 
 (defn data-table [& {:keys [cols rows]}]
   (f/widget

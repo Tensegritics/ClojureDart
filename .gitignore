@@ -8,6 +8,6 @@
 pubspec.lock
 lib/cljd-out/*
 test/cljd-out/*
-*.md-e
+*-e
 .*
 tmp/

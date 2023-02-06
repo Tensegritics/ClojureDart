@@ -157,13 +157,16 @@ clj -M:cljd flutter -d D6707352-78D2-46BB-AB95-87355283FC82
 
 Enjoy! 🧃
 
+# `cljd.flutter`
+`cljd.flutter` is an utility namespace to remove Flutter boilerplate and integrate more nicely with Clojure.
+
 # `cljd.flutter.alpha`
 
-Deprecated, use alpha2.
+Deprecated, use `cljd.flutter`.
 
 # `cljd.flutter.alpha2`
 
-`cljd.flutter.alpha2` is an utility namespace to remove Flutter boilerplate and integrate more nicely with Clojure.
+Got out of alpha status and lives a happy life as `cljd.flutter`.
 
 # Thanks!
 

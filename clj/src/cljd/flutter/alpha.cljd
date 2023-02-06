@@ -1,10 +1,13 @@
 (ns cljd.flutter.alpha
-  "Bridging Flutter and Clojure"
+  "DEPRECATED, see cljd.flutter instead.
+   This namespace won't be deleted but won't receive any update."
   (:require ["package:flutter/widgets.dart" :as widgets]
             ["package:flutter/foundation.dart" :as foundation]
             [cljd.string :as str])
   (:host-ns
    (:require [clojure.string :as str])))
+
+; DEPRECATED, see cljd.flutter instead
 
 ; TODO create our own Key type which uses equiv and not ==
 

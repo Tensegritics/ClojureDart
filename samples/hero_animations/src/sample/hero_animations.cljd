@@ -1,7 +1,7 @@
 (ns sample.hero-animations
   "Faithful port of https://docs.flutter.dev/cookbook/navigation/hero-animations"
   (:require ["package:flutter/material.dart" :as m]
-            [cljd.flutter.alpha2 :as f]))
+            [cljd.flutter :as f]))
 
 (def detail-screen
   (m/Scaffold
