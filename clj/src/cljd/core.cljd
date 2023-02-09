@@ -361,7 +361,7 @@
     (not (symbol? expr))
     `(let* [test# ~expr] (case test# ~@clauses))
     (even? (count clauses))
-    `(~'case ~expr ~@clauses (throw (ArgumentError/value ~expr nil "No matching clause.")))
+    `(~'case ~expr ~@clauses (throw (ArgumentError (str "No matching clause: " (pr-str ~expr)))))
     :else
     (let [clauses (vec (partition-all 2 clauses))
           [default] (peek clauses)
