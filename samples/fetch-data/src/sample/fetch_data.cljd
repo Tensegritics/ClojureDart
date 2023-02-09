@@ -1,0 +1,23 @@
+(ns sample.fetch-data
+  "Faithful port of https://docs.flutter.dev/cookbook/networking/fetch-data"
+  (:require
+   ["dart:convert" :as c]
+   ["package:flutter/material.dart" :as m]
+   ["package:http/http.dart" :as http]
+   [cljd.flutter.alpha2 :as f]))
+
+(defn main []
+  (f/run
+    (m/MaterialApp
+      .title "Fetch Data Example"
+      .theme (m/ThemeData .primarySwatch m/Colors.blue))
+    .home
+    (m/Scaffold .appBar (m/AppBar .title (m/Text "Fetch Data Example")))
+    .body
+    m/Center
+    :watch [response (http/get (Uri/parse "https://jsonplaceholder.typicode.com/albums/1"))]
+    (if-some [{sc .-statusCode body .-body} ^http/Response? response] ;; type hint is not necessary here, it removes compiler warnings
+      (case sc
+        200 (m/Text (get (c/json.decode body) "title"))
+        (m/Text (str "Something wrong happened, status code: " sc)))
+      (m/CircularProgressIndicator))))
