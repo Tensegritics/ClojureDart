@@ -4,7 +4,7 @@
    ["dart:convert" :as c]
    ["package:flutter/material.dart" :as m]
    ["package:http/http.dart" :as http]
-   [cljd.flutter.alpha2 :as f]))
+   [cljd.flutter :as f]))
 
 (defn main []
   (f/run
