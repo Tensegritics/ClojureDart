@@ -1730,7 +1730,25 @@
                                  (remove keyword? dart-args))))
           expr (with-meta (list* op dart-obj name dart-args)
                  {:dart/type expr-type :dart/const const :dart/inferred true})
-          bindings (concat dart-obj-bindings dart-args-bindings)]
+          bindings (concat dart-obj-bindings dart-args-bindings)
+          ; peephole optimizations
+          expr
+          (case member-name
+            "==" (let [dart-arg (first dart-args)]
+                   (cond
+                     (and (nil? dart-obj) (not (nullable-type? (:dart/type (infer-type dart-arg)))))
+                     false
+                     (and (nil? dart-arg) (not (nullable-type? (:dart/type (infer-type dart-obj)))))
+                     false
+                     :else expr))
+            "!=" (let [dart-arg (first dart-args)]
+                   (cond
+                     (and (nil? dart-obj) (not (nullable-type? (:dart/type (infer-type dart-arg)))))
+                     true
+                     (and (nil? dart-arg) (not (nullable-type? (:dart/type (infer-type dart-obj)))))
+                     true
+                     :else expr))
+            expr)]
       (cond->> expr
         (seq bindings) (list 'dart/let bindings)))))
 
