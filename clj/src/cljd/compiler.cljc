@@ -1303,12 +1303,16 @@
         [nil x])))
 
 (defn- ensure-kw [x]
-  (if (keyword? x)
+  (cond
+    (keyword? x)
     (let [s (symbol (str "." (name x)))]
       (binding [*out* *err*]
         (println "DEPRECATED use" s "instead of" x "for named parameters" (source-info)))
       x)
-    (-> x name (subs 1) keyword)))
+    (dot-symbol? x)
+    (-> x name (subs 1) keyword)
+    :else
+    (throw (Exception. (str "Expected an argument name (.argname) but got " (pr-str x))))))
 
 (defn- split-args
   "Returns a collection of triples [name dart-code expected-type]
