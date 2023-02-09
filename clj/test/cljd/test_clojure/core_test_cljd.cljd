@@ -627,3 +627,7 @@
                                (.-value! "newvalue"))]
     (is (= name "newname"))
     (is (= value "newvalue"))))
+
+(deftest positive-type-safe-if-some
+  (is (nil? (when-some [{finite .-isFinite} ^num (identity nil)] 1 2)))
+  (is (= 2 (if-some [{finite .-isFinite} ^num (identity nil)] 1 2))))

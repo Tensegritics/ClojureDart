@@ -591,11 +591,12 @@
      (vector? bindings) "a vector for its binding"
      (nil? oldform) "1 or 2 forms after binding vector"
      (= 2 (count bindings)) "exactly 2 forms in binding vector")
-   (let [form (bindings 0) tst (bindings 1)]
-     `(let [temp# ~tst]
-        (if (nil? temp#)
+   (let [form (bindings 0) tst (bindings 1)
+         temp `some#]
+     `(let [~temp ~(vary-meta tst dissoc :tag)]
+        (if (nil? ~temp)
           ~else
-          (let [~form temp#]
+          (let [~form ~(vary-meta temp assoc :tag (:tag (meta tst)))]
             ~then))))))
 
 (defmacro when-some
@@ -604,15 +605,7 @@
    When test is not nil, evaluates body with binding-form bound to the
    value of test"
   [bindings & body]
-  #_(assert-args
-    (vector? bindings) "a vector for its binding"
-    (= 2 (count bindings)) "exactly 2 forms in binding vector")
-  (let [form (bindings 0) tst (bindings 1)]
-    `(let [temp# ~tst]
-       (if (nil? temp#)
-         nil
-         (let [~form temp#]
-           ~@body)))))
+  `(if-some ~bindings (do ~@body) nil))
 
 (defmacro if-let
   "bindings => binding-form test
