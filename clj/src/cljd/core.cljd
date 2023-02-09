@@ -325,7 +325,7 @@
                                  bv (cond
                                       (and (simple-symbol? bk)
                                            (.startsWith (name bk) ".-")) ; field
-                                      (list bk gmap)
+                                      (list 'if (list `nil? gmap) (get defaults local) (list bk gmap))
                                       (contains? defaults local)
                                       (list `get gmap bk (defaults local))
                                       :else (list `get gmap bk))]
