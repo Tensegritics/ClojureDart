@@ -16,7 +16,7 @@
     .body
     m/Center
     :watch [response (http/get (Uri/parse "https://jsonplaceholder.typicode.com/albums/1"))]
-    (if-some [{sc .-statusCode body .-body} ^http/Response? response] ;; type hint is not necessary here, it removes compiler warnings
+    (if-some [{sc .-statusCode body .-body} ^http/Response response] ;; type hint is not necessary here, it removes compiler warnings
       (case sc
         200 (m/Text (get (c/json.decode body) "title"))
         (m/Text (str "Something wrong happened, status code: " sc)))
