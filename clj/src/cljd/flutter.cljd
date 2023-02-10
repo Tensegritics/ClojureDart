@@ -193,21 +193,53 @@
         ; works for 1 and 0 closed overs
         (first closed-overs)))))
 
+(defn- ^:macro-support destructuring-bound-locals [destructuring-form]
+  (letfn [(locals [ts form]
+            (cond
+              (symbol? form) (conj! ts form)
+              (map? form)
+              (reduce-kv
+                (fn [ts k v]
+                  (if (keyword? k)
+                    (case (name k)
+                      ("flds" "keys" "strs" "syms")
+                      (transduce
+                        (map #(-> % name symbol (with-meta (meta %))))
+                        conj! ts v)
+                      "or" ts
+                      "as" (conj! ts v))
+                    (locals ts k)))
+                ts form)
+              (vector? form)
+              (transduce (remove '#{&}) conj! ts form)
+              :else (throw (ex-info (str "Unexpected binding form " (pr-str form))
+                             {:unexpected-form form
+                              :whole-form destructuring-form}))))]
+    (-> #{} transient (locals destructuring-form) persistent!)))
+
 (defn ^:macro-support expand-watch
   [&env env binding expr {:keys [dispose] :as opts} forms]
   (let [accessor (:> opts)
+        destructured-locals (when-not (symbol? binding)
+                              (destructuring-bound-locals binding))
         dispose (if (true? dispose) '.dispose dispose)
         refresh-on (refresh-on-expr opts &env expr)
         opts (dissoc opts :refresh-on :> :dispose)
         state `state#
         subscribable `subscribable#
+        update-state (if (or accessor destructured-locals)
+                       (let [vsym `v#
+                             vexpr (if accessor (-> ~subscribable ~accessor) vsym)]
+                         `(fn [~vsym]
+                            ~(if destructured-locals
+                               `(let [~binding ~vexpr
+                                      tuple# [~@destructured-locals]]
+                                  (when-not (= tuple# (.-latest ~state))
+                                    (~state tuple#)))
+                               `(~state ~vexpr))))
+                       state)
         subscribe-call
-        `(-subscribe ~subscribable
-                     ~(if accessor
-                        `(fn [_#]
-                           (~state (-> ~subscribable ~accessor)))
-                        state)
-                     ~opts)]
+        `(-subscribe ~subscribable ~update-state ~opts)]
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (WatchState nil nil nil nil))
@@ -230,7 +262,7 @@
              (.-subscription! nil)
              (.-latest! nil))))
        (~'-build [_# state# ctx#]
-         (let [~binding (.-latest ^WatchState state#)
+         (let [~(if destructured-locals (vec destructured-locals) binding) (.-latest ^WatchState state#)
                ~closest-context ctx#]
            (-widget-cont ~(assoc env :key nil :closest-ctx true)
              ~@forms)))
@@ -491,7 +523,9 @@
        instead of :never).
    :watch [bindings] -- for each \"binding expr\" pair, subscribe to expr and
      use binding to bind each value received under the subscription. Each change
-     triggers a rebuild.
+     triggers a rebuild EXCEPT when binding is a destructuring form, in which case
+     the rebuild is triggered only when locals bound by the destructuring do change
+     (according to equality).
      Any object to which the Subscribable protocol has been extended can be watched.
      Out of the box it means: atoms, Streams, Futures, Listenables,
      ValueListenable and... nil.

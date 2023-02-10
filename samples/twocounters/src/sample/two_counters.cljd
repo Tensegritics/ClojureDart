@@ -23,7 +23,7 @@
         (f/widget
          :get {{{style .-displayLarge} .-textTheme} m/Theme
                :value-of [:counters]}
-         :watch [n (f/sub counters k)]
+         :watch [{n k} counters]
          :let [_ (dart:core/print (str "build text " k))]
          (m/Text (str n) .style style))
         (f/widget
