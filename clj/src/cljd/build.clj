@@ -20,42 +20,41 @@
 (defn compile-core []
   (compiler/compile 'cljd.core))
 
-(defn watch-dirs [^Process p dirs reload]
-  (let [watcher (.newWatchService (java.nio.file.FileSystems/getDefault))
-        reg1
-        (fn [^java.io.File dir]
-          (when (.isDirectory dir)
-            [(.register (.toPath dir) watcher (into-array [java.nio.file.StandardWatchEventKinds/ENTRY_CREATE
-                                                           java.nio.file.StandardWatchEventKinds/ENTRY_DELETE
-                                                           java.nio.file.StandardWatchEventKinds/ENTRY_MODIFY
-                                                           java.nio.file.StandardWatchEventKinds/OVERFLOW])
-               (into-array [com.sun.nio.file.SensitivityWatchEventModifier/HIGH]))
-             (.toPath dir)]))
-        reg*
-        (fn [dir]
-          (eduction (keep reg1) (tree-seq some? #(.listFiles ^java.io.File %) dir)))]
-    (loop [ks->dirs (into {} (mapcat reg*) dirs) to-reload #{}]
-      (when (or (nil? p) (.isAlive p))
-        (if-some [k (.poll watcher (if (seq to-reload) 10 1000) java.util.concurrent.TimeUnit/MILLISECONDS)]
-          (let [events (.pollEvents k)] ; make sure we remove them, no matter what happens next
-            (if-some [^java.nio.file.Path dir (ks->dirs k)]
-              (let [[ks->dirs to-reload]
-                    (reduce (fn [[ks->dirs to-reload] ^java.nio.file.WatchEvent e]
-                              (let [f (some->> e .context (.resolve dir) .toFile)]
-                                (if (and (some? f) (not (.isDirectory f))
-                                      (re-matches #"[^.].*\.clj[dc]" (.getName f)))
-                                  [(into ks->dirs (some->> f reg*))
-                                   (conj to-reload f)]
-                                  [ks->dirs to-reload])))
-                      [ks->dirs to-reload] events)]
-                (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) to-reload))
-              (do
-                (.cancel k)
-                (recur ks->dirs to-reload))))
-          (do
-            (reload to-reload)
-            (recur ks->dirs #{})))))
-    (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
+(defn watch-dirs [continue? dirs reload]
+  (with-open [watcher (.newWatchService (java.nio.file.FileSystems/getDefault))]
+    (let [reg1
+          (fn [^java.io.File dir]
+            (when (.isDirectory dir)
+              [(.register (.toPath dir) watcher (into-array [java.nio.file.StandardWatchEventKinds/ENTRY_CREATE
+                                                             java.nio.file.StandardWatchEventKinds/ENTRY_DELETE
+                                                             java.nio.file.StandardWatchEventKinds/ENTRY_MODIFY
+                                                             java.nio.file.StandardWatchEventKinds/OVERFLOW])
+                 (into-array [com.sun.nio.file.SensitivityWatchEventModifier/HIGH]))
+               (.toPath dir)]))
+          reg*
+          (fn [dir]
+            (eduction (keep reg1) (tree-seq some? #(.listFiles ^java.io.File %) dir)))]
+      (loop [ks->dirs (into {} (mapcat reg*) dirs) to-reload #{}]
+        (when (continue?) #_(or (nil? p) (.isAlive p))
+          (if-some [k (.poll watcher (if (seq to-reload) 10 1000) java.util.concurrent.TimeUnit/MILLISECONDS)]
+            (let [events (.pollEvents k)] ; make sure we remove them, no matter what happens next
+              (if-some [^java.nio.file.Path dir (ks->dirs k)]
+                (let [[ks->dirs to-reload]
+                      (reduce (fn [[ks->dirs to-reload] ^java.nio.file.WatchEvent e]
+                                (let [f (some->> e .context (.resolve dir) .toFile)]
+                                  (if (and (some? f) (not (.isDirectory f))
+                                        (re-matches #"[^.].*\.clj[dc]" (.getName f)))
+                                    [(into ks->dirs (some->> f reg*))
+                                     (conj to-reload f)]
+                                    [ks->dirs to-reload])))
+                        [ks->dirs to-reload] events)]
+                  (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) to-reload))
+                (do
+                  (.cancel k)
+                  (recur ks->dirs to-reload))))
+            (do
+              (reload to-reload)
+              (recur ks->dirs #{}))))))))
 
 (defn title [s]
   (if *ansi*
@@ -201,82 +200,88 @@
                     (catch Exception e
                       (vreset! dirty-nses nses)
                       (print-exception e)
-                      false)))))
-            compile-files
-            (fn [^java.io.Writer flutter-stdin]
-              (fn [files]
-                (when (some->
-                        (for [^java.io.File f files
-                              :let [fp (.toPath f)]
-                              ^java.io.File d dirs
-                              :let [dp (.toPath d)]
-                              :when (.startsWith fp dp)
-                              :let [ns (compiler/peek-ns f)]
-                              :when ns]
-                          ns)
-                        seq
-                        compile-nses)
-                  (when flutter-stdin
-                    (locking flutter-stdin
-                      (doto flutter-stdin (.write "r") .flush))))))]
-        (compile-nses namespaces)
-        (when (or watch flutter)
-          (newline)
-          (when flutter
-            (println (title (str/join " " (into ["Launching flutter run"] flutter)))))
-          (let [p (some->> flutter
-                    (apply exec {:async true :in nil :out nil :env {"TERM" ""}} "flutter" "run"))]
-            (try
-              (let [flutter-stdin (some-> p .getOutputStream (java.io.OutputStreamWriter. "UTF-8"))
-                    flutter-stdout (some-> p .getInputStream (java.io.InputStreamReader. "UTF-8") java.io.BufferedReader.)
-                    ansi *ansi*]
-                ; Unimplemented handling of missing static target
-                (when (and flutter-stdin flutter-stdout)
-                  (doto (Thread. #(while true
-                                    (let [s (read-line)]
-                                      (locking flutter-stdin
-                                        (doto flutter-stdin
-                                          (.write (case s "" "R" s))
-                                          .flush)))))
-                    (.setDaemon true)
-                    .start)
-                  (doto (Thread.
-                          #(binding [*ansi* ansi]
-                             (loop [state :idle]
-                               (when-some [line (.readLine flutter-stdout)]
-                                 (when-not (= :reload-failed state)
-                                   (println line))
-                                 (let [line (.trim line)]
-                                   (case state
-                                     :idle
-                                     (condp = line
-                                       "Performing hot reload..." (recur :reloading)
-                                       "Performing hot restart..." (recur :restarting)
-                                       (recur state))
-                                     :reloading
-                                     (condp = line
-                                       "Unimplemented handling of missing static target" (recur :reload-failed)
-                                       (recur state))
-                                     :reload-failed
-                                     (if (re-matches #"Reloaded .+ of .+ libraries in .+." line)
-                                       (do
-                                         (newline)
-                                         (println (bright "Hot reload failed, attempting hot restart!"))
-                                         (locking flutter-stdin
-                                           (doto flutter-stdin
-                                             (.write "R")
-                                             .flush))
-                                         (recur :restarting))
-                                       (recur state))
-                                     :restarting
-                                     (if (re-matches #"Restarted application .+" line)
-                                       (recur :idle)
-                                       (recur state))))))))
-                    (.setDaemon true)
-                    .start))
-                (watch-dirs p dirs (compile-files flutter-stdin)))
-              (finally
-                (some-> p .destroy)))))))))
+                      false)))))]
+        (if-not (or watch flutter)
+          (compile-nses namespaces)
+          (let [compile-files
+                (fn [^java.io.Writer flutter-stdin]
+                  (fn [files]
+                    (when (some->
+                            (for [^java.io.File f files
+                                  :let [fp (.toPath f)]
+                                  ^java.io.File d dirs
+                                  :let [dp (.toPath d)]
+                                  :when (.startsWith fp dp)
+                                  :let [ns (compiler/peek-ns f)]
+                                  :when ns]
+                              ns)
+                            seq
+                            compile-nses)
+                      (when flutter-stdin
+                        (locking flutter-stdin
+                          (doto flutter-stdin (.write "r") .flush))))))
+                initial-compile-success (atom nil)]
+            (watch-dirs #(not @initial-compile-success) dirs
+              (fn [changes] (when (or (seq changes) (nil? @initial-compile-success))
+                              (reset! initial-compile-success (boolean (compile-nses namespaces))))))
+            (newline)
+            (when flutter
+              (println (title (str/join " " (into ["Launching flutter run"] flutter)))))
+            (let [p (some->> flutter
+                      (apply exec {:async true :in nil :out nil :env {"TERM" ""}} "flutter" "run"))]
+              (try
+                (let [flutter-stdin (some-> p .getOutputStream (java.io.OutputStreamWriter. "UTF-8"))
+                      flutter-stdout (some-> p .getInputStream (java.io.InputStreamReader. "UTF-8") java.io.BufferedReader.)
+                      ansi *ansi*]
+                  ; Unimplemented handling of missing static target
+                  (when (and flutter-stdin flutter-stdout)
+                    (doto (Thread. #(while true
+                                      (let [s (read-line)]
+                                        (locking flutter-stdin
+                                          (doto flutter-stdin
+                                            (.write (case s "" "R" s))
+                                            .flush)))))
+                      (.setDaemon true)
+                      .start)
+                    (doto (Thread.
+                            #(binding [*ansi* ansi]
+                               (loop [state :idle]
+                                 (when-some [line (.readLine flutter-stdout)]
+                                   (when-not (= :reload-failed state)
+                                     (println line))
+                                   (let [line (.trim line)]
+                                     (case state
+                                       :idle
+                                       (condp = line
+                                         "Performing hot reload..." (recur :reloading)
+                                         "Performing hot restart..." (recur :restarting)
+                                         (recur state))
+                                       :reloading
+                                       (condp = line
+                                         "Unimplemented handling of missing static target" (recur :reload-failed)
+                                         (recur state))
+                                       :reload-failed
+                                       (if (re-matches #"Reloaded .+ of .+ libraries in .+." line)
+                                         (do
+                                           (newline)
+                                           (println (bright "Hot reload failed, attempting hot restart!"))
+                                           (locking flutter-stdin
+                                             (doto flutter-stdin
+                                               (.write "R")
+                                               .flush))
+                                           (recur :restarting))
+                                         (recur state))
+                                       :restarting
+                                       (if (re-matches #"Restarted application .+" line)
+                                         (recur :idle)
+                                         (recur state))))))))
+                      (.setDaemon true)
+                      .start))
+                  (watch-dirs #(or (nil? p) (.isAlive p)) dirs (compile-files flutter-stdin))
+                  (when p
+                    (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
+                (finally
+                  (some-> p .destroy))))))))))
 
 (defn gen-entry-point []
   (let [deps-cljd-opts (:cljd/opts *deps*)
