@@ -2,7 +2,7 @@
 
 # What is ClojureDart?
 
-ClojureDart is a port of the Clojure language to Dart.
+ClojureDart is a Clojure dialect for Dart and Flutter.
 
 Its primary goal is to leverage Dart and Flutter to extend Clojure's reach to
 mobile and desktop apps.
@@ -18,7 +18,9 @@ Some features are missing:
 
 In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart))) or open an issue.
 
-Some differences have been documented, see [Differences with Clojure](doc/differences.md).
+# Cheatsheet
+
+We have a [cheasheet](doc/ClojureDart Cheatsheet.pdf) covering ClojureDart specifics on one side and Flutter programming on the other side.
 
 # Links dump
 
@@ -86,10 +88,6 @@ clj -M:cljd flutter
 In most environments this will spawn a desktop app.
 
 More details [there](doc/flutter-quick-start.md)
-
-# Maturity
-
-ClojureDart is a work-in-progress but it's good enough for the bravest Clojurists to put in in production. Learn more about [what's going on.](NEWS.md)
 
 # Who is behind it?
 
