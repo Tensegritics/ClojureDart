@@ -16,11 +16,11 @@ Some features are missing:
 - multi-method (WIP)
 - sorted-collection (WIP)
 
-In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart))) or open an issue.
+In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart) or open an issue.
 
 # Cheatsheet
 
-We have a [cheasheet](doc/ClojureDart Cheatsheet.pdf) covering ClojureDart specifics on one side and Flutter programming on the other side.
+We have a [cheasheet](doc/ClojureDart%20Cheatsheet.pdf) covering ClojureDart specifics on one side and Flutter programming on the other side.
 
 # Links dump
 
