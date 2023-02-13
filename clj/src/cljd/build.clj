@@ -278,7 +278,7 @@
                                          (recur state))))))))
                       (.setDaemon true)
                       .start))
-                  (watch-dirs-until (fn [_] (some-> p .isAlive not)) dirs nil (compile-files flutter-stdin))
+                  (watch-dirs-until (fn [_] (some-> p .isAlive not)) nil dirs (compile-files flutter-stdin))
                   (when p
                     (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
                 (finally
