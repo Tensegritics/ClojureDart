@@ -20,7 +20,7 @@
 (defn compile-core []
   (compiler/compile 'cljd.core))
 
-(defn watch-dirs [continue? dirs reload]
+(defn watch-dirs-until [stop? init dirs reload]
   (with-open [watcher (.newWatchService (java.nio.file.FileSystems/getDefault))]
     (let [reg1
           (fn [^java.io.File dir]
@@ -34,8 +34,9 @@
           reg*
           (fn [dir]
             (eduction (keep reg1) (tree-seq some? #(.listFiles ^java.io.File %) dir)))]
-      (loop [ks->dirs (into {} (mapcat reg*) dirs) to-reload #{}]
-        (when (continue?) #_(or (nil? p) (.isAlive p))
+      (loop [ks->dirs (into {} (mapcat reg*) dirs) to-reload #{} state init]
+        (if (stop? state)
+          state
           (if-some [k (.poll watcher (if (seq to-reload) 10 1000) java.util.concurrent.TimeUnit/MILLISECONDS)]
             (let [events (.pollEvents k)] ; make sure we remove them, no matter what happens next
               (if-some [^java.nio.file.Path dir (ks->dirs k)]
@@ -48,13 +49,11 @@
                                      (conj to-reload f)]
                                     [ks->dirs to-reload])))
                         [ks->dirs to-reload] events)]
-                  (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) to-reload))
+                  (recur (cond-> ks->dirs (not (.reset k)) (dissoc ks->dirs k)) to-reload state))
                 (do
                   (.cancel k)
-                  (recur ks->dirs to-reload))))
-            (do
-              (reload to-reload)
-              (recur ks->dirs #{}))))))))
+                  (recur ks->dirs to-reload state))))
+            (recur ks->dirs #{} (reload state to-reload))))))))
 
 (defn title [s]
   (if *ansi*
@@ -200,12 +199,12 @@
                     (catch Exception e
                       (vreset! dirty-nses nses)
                       (print-exception e)
-                      false)))))]
-        (if-not (or watch flutter)
-          (compile-nses namespaces)
+                      false)))))
+            compilation-success (compile-nses namespaces)]
+        (when (or watch flutter)
           (let [compile-files
                 (fn [^java.io.Writer flutter-stdin]
-                  (fn [files]
+                  (fn [_ files]
                     (when (some->
                             (for [^java.io.File f files
                                   :let [fp (.toPath f)]
@@ -219,11 +218,13 @@
                             compile-nses)
                       (when flutter-stdin
                         (locking flutter-stdin
-                          (doto flutter-stdin (.write "r") .flush))))))
-                initial-compile-success (atom nil)]
-            (watch-dirs #(not @initial-compile-success) dirs
-              (fn [changes] (when (or (seq changes) (nil? @initial-compile-success))
-                              (reset! initial-compile-success (boolean (compile-nses namespaces))))))
+                          (doto flutter-stdin (.write "r") .flush))))))]
+            (watch-dirs-until true? (or (boolean compilation-success) :first)
+              dirs
+              (fn [state changes]
+                (if (or (= :first state) (seq changes))
+                  (boolean (compile-nses namespaces))
+                  state)))
             (newline)
             (when flutter
               (println (title (str/join " " (into ["Launching flutter run"] flutter)))))
@@ -277,7 +278,7 @@
                                          (recur state))))))))
                       (.setDaemon true)
                       .start))
-                  (watch-dirs #(or (nil? p) (.isAlive p)) dirs (compile-files flutter-stdin))
+                  (watch-dirs-until (fn [_] (some-> p .isAlive not)) dirs nil (compile-files flutter-stdin))
                   (when p
                     (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
                 (finally
