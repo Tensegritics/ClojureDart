@@ -631,3 +631,9 @@
 (deftest positive-type-safe-if-some
   (is (nil? (when-some [{finite .-isFinite} ^num (identity nil)] 1 2)))
   (is (= 2 (if-some [{finite .-isFinite} ^num (identity nil)] 1 2))))
+
+(deftest future-macro
+  (is (= :ok (await (future :ok))))
+  (is (= 2
+        (let [df (Future/value 1)]
+          (await (future (inc (await df))))))))

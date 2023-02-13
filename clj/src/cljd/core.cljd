@@ -7319,3 +7319,10 @@
                         (transient {})
                         m))]
     (with-meta ret (meta m))))
+
+(defmacro future
+  "Takes a body of expressions (including awaits) and yields
+  a dart:async Future.
+  Use await, not deref to get the result (or the exception)."
+  [& body] `(let [bindings# -DYNAMIC-BINDINGS]
+              (Future/microtask (fn [] (set! -DYNAMIC-BINDINGS bindings#) ~@body))))
