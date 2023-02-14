@@ -2066,7 +2066,8 @@
 
 (defn- no-future [type]
   (case (:canon-qname type)
-    (da.FutureOr da.Future) (-> type :type-parameters first)
+    (da.FutureOr da.Future)
+    (cond-> (-> type :type-parameters first) (:nullable type) (assoc :nullable true))
     nil dc-dynamic
     type))
 

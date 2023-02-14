@@ -637,3 +637,13 @@
   (is (= 2
         (let [df (Future/value 1)]
           (await (future (inc (await df))))))))
+
+(deftype NullableFutureType []
+  (^#/(Future? (List int)) ^:async hey [this i]
+   (if (odd? i)
+     #dart ^int ^:fixed [1 2]
+     (throw (Exception "thrown")))))
+
+(deftest await-propagate-nullable-future
+  (is (= 1 (.-first (await (.hey (NullableFutureType) 1)))))
+  (is (thrown? Exception (await (.hey (NullableFutureType) 2)))))
