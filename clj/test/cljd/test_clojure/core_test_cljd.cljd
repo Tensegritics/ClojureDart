@@ -647,3 +647,10 @@
 (deftest await-propagate-nullable-future
   (is (= 1 (.-first (await (.hey (NullableFutureType) 1)))))
   (is (thrown? Exception (await (.hey (NullableFutureType) 2)))))
+
+(deftest some-tests-for-nil
+  ; the = true/false are there to allow inlining to work in the expression under test
+  (is (= true (some? 12)))
+  (is (= false (some? nil)))
+  (is (= false (some? (seq []))))
+  (is (= false (some? (:k {:x 2})))))
