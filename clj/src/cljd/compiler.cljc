@@ -644,7 +644,7 @@
     (or (resolve-type tag type-vars nil) (when *hosted* (resolve-type (symbol (name tag)) type-vars nil))
       (throw (Exception. (str "Can't resolve type " tag "."))))))
 
-(defn dart-type-truthiness [type]
+(defn dart-type-truthiness [type] (assert type)
   (case (:canon-qname type)
     (nil dc.Object dc.dynamic dc.Never) nil
     (dc.Null void) :falsy
@@ -1244,7 +1244,7 @@
 
 (defn- dart-binding [hint dart-expr env]
   (let [tmp (dart-local hint env)
-        dart-expr (magicast dart-expr (-> tmp meta :dart/type) env)]
+        dart-expr (magicast dart-expr (-> tmp meta (:dart/type dc-dynamic)) env)]
     [(with-meta tmp (infer-type dart-expr)) dart-expr]))
 
 (defn lift-safe? [expr]
@@ -1319,22 +1319,23 @@
    where name is nil for positional parameters, dart-code MAY NOT BE A DART EXPR
    and thus must be lifted (see lift-args), expected-type may be nil when unknown."
   [args [fixed-types opts-types :as method-sig] env]
+  {:post [(or (every? (fn [[_ _ t]] (some? t)) %) (prn args method-sig))]}
   (cond
     (nil? method-sig)
     (let [[positional-args named-args]
           (split-with (complement dot-symbol?) args)
           named-args (cond-> named-args (= '.& (first named-args)) next)]
-      (-> [] (into (map #(vector nil (emit % env)) positional-args))
-        (into (comp (partition-all 2) (map (fn [[name x]] [(ensure-kw name) (emit x env)]))) named-args)))
+      (-> [] (into (map #(vector nil (emit % env) dc-dynamic) positional-args))
+        (into (comp (partition-all 2) (map (fn [[name x]] [(ensure-kw name) (emit x env) dc-dynamic]))) named-args)))
     (map? opts-types)
     (let [args (remove '#{.&} args) ; temporary as .& in args is redundant with args starting by a dot and the fact that we know the expected params. It's just some cpmpatibility feature with some very early cljd code
-          positional-args (mapv #(vector nil (emit %1 env) %2) args fixed-types)
+          positional-args (mapv #(vector nil (emit %1 env) (or %2 dc-dynamic)) args fixed-types)
           rem-args (drop (count positional-args) args)
           all-args (into positional-args
                      (map (fn [[k expr]]
                             (let [k (ensure-kw k)]
                               (if-some [[_ type] (find opts-types k)]
-                                [k (emit expr env) type]
+                                [k (emit expr env) (or type dc-dynamic)]
                                 (throw (Exception.
                                          (str "Not an expected argument name: ." (name k)
                                            ", valid names: " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))))))
@@ -1345,29 +1346,30 @@
         (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))
       all-args)
     :else
-    (let [all-args (mapv #(vector nil (emit %1 env) %2) args (concat fixed-types opts-types))]
+    (let [all-args (mapv #(vector nil (emit %1 env) (or %2 dc-dynamic)) args (concat fixed-types opts-types))]
       (when-not (<= 0 (- (count args) (count fixed-types)) (count opts-types))
         (throw (Exception. (str "Wrong argument count: expecting between " (count fixed-types) " and " (+ (count fixed-types) (count opts-types)) " but got " (count args)))))
       all-args)))
 
 (defn- simple-types
   [{:keys [canon-qname nullable] :as type}]
+  (assert type)
   (case canon-qname
     dc.dynamic [dc-Object dc-Null]
     da.FutureOr (let [[{cqn :canon-qname :as t} :as tps] (:type-parameters type)]
                   (cond->
                       [(assoc dc-Future :type-parameters tps)
                        (case cqn dc.dynamic dc-Object (dissoc t :nullable))]
-                    (or nullable (:nullable t) (= cqn 'dc.dynamic))
-                    (conj dc-Null)))
+                      (or nullable (:nullable t) (= cqn 'dc.dynamic))
+                      (conj dc-Null)))
     (if nullable
       [dc-Null (dissoc type :nullable)]
       [type])))
 
-(defn- nullable-type? [type]
+(defn- nullable-type? [type] (assert type)
   (or (:nullable type)
     (case (:canon-qname type)
-      dc.dynamic true
+      (pseudo.some dc.dynamic) true
       da.FutureOr (recur (first (:type-parameters type)))
       false)))
 
@@ -1411,7 +1413,7 @@
       (and (some? value-type)
         (is-assignable? slot-type value-type)))))
 
-(defn- num-type [type]
+(defn- num-type [type] (assert type)
   (case (:canon-qname type)
     dc.int dc-int
     dc.double dc-double
@@ -1421,6 +1423,8 @@
   ([dart-expr expected-type]
    (simple-cast dart-expr expected-type (:dart/type (infer-type dart-expr))))
   ([dart-expr expected-type actual-type]
+   (assert expected-type)
+   (assert actual-type)
    (cond
      (= (:canon-qname expected-type) 'pseudo.super)
      (let [super-type (:super (full-class-info actual-type) 'dc.Object)
@@ -1439,7 +1443,7 @@
      :else
      (list 'dart/as dart-expr expected-type))))
 
-(defn has-cast-method? [type]
+(defn has-cast-method? [type] (assert type)
   (if-some [member-info
             (some->
               (dart-member-lookup type "cast" {:type-vars #{}})
@@ -1454,15 +1458,18 @@
   ([dart-expr expected-type env]
    (magicast dart-expr expected-type (:dart/type (infer-type dart-expr)) env))
   ([dart-expr expected-type actual-type env]
+   (assert expected-type)
+   (assert actual-type)
    (cond
+     (= 'dc.dynamic (:canon-qname expected-type)) dart-expr ; TODO: should be covered by is-assignable?
      (is-assignable? expected-type actual-type) dart-expr ; <1>
      (and (nullable-type? expected-type) (nullable-type? actual-type))
      (with-lifted [dart-expr dart-expr] env
        (list 'dart/if (list 'dart/. nil "!=" dart-expr)
-           ; by construction expected-type can't be dynamic or FutureOr<dynamic>, otherwise
-           ; it would have matched the assignability test <1> above
-           (magicast dart-expr (positive-type expected-type) actual-type env)
-           nil))
+         ; by construction expected-type can't be dynamic or FutureOr<dynamic>, otherwise
+         ; it would have matched the assignability test <1> above
+         (magicast dart-expr (positive-type expected-type) actual-type env)
+         nil))
      ;; When inlined #dart[], we keep it inlines
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
      (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
@@ -1587,7 +1594,7 @@
                  more-items))
              lsym))
          (emit (list '. list-tag 'empty) env)))
-     (let [item-type (resolve-type item-tag (:type-vars env))
+     (let [item-type (or (resolve-type item-tag (:type-vars env)) dc-dynamic)
            [bindings items] (lift-args (for [item x] [nil (emit item env) item-type]) env)]
        (cond->> #_(vec items) (with-meta (vec items) (meta (dart-local (with-meta 'fl {:tag list-tag}) env)))
                 (seq bindings) (list 'dart/let bindings))))))
@@ -1718,12 +1725,13 @@
                  (nil :method :constructor) prop)
           name (if prop member-name (into [member-name] (map #(emit-type % env)) (:type-params (meta member))))
           op (if prop 'dart/.- 'dart/.)
-          expr-type (if special-num-op-sig
-                      (num-type (:dart/type (infer-type (first dart-args))))
-                      (cond
-                        (not prop) (:return-type member-info)
-                        (= :method (:kind member-info)) nil ; TODO type delegate
-                        :else (:type member-info)))
+          expr-type (or (if special-num-op-sig
+                          (num-type (:dart/type (infer-type (first dart-args))))
+                          (cond
+                            (not prop) (:return-type member-info)
+                            (= :method (:kind member-info)) nil ; TODO type delegate
+                            :else (:type member-info)))
+                      dc-dynamic)
           const (and (:const member-info)
                      (or prop
                          (every? (comp :dart/const infer-type)
@@ -1806,7 +1814,10 @@
          (fn [[dart-bindings env] [k v]]
            (let [dart-v (emit v env)
                  {:dart/keys [type]} (infer-type dart-v)
-                 decl (vary-meta (dart-local k env) assoc :dart/loop-local true)]
+                 decl (vary-meta (dart-local k env) assoc :dart/loop-local true)
+                 decl (cond-> decl
+                        (nil? (:dart/type (meta decl)))
+                        (vary-meta assoc :dart/type dc-dynamic))]
              [(conj dart-bindings [decl (magicast dart-v (-> decl meta :dart/type) env)])
               (assoc env k decl)]))
          [[] env] (partition 2 bindings))]
@@ -2064,14 +2075,14 @@
         [tmp :as binding] (if name [(env name) dart-sexpr] (dart-binding '^:clj f dart-sexpr env))]
     (list 'dart/let [binding] tmp)))
 
-(defn- no-future [type]
+(defn- no-future [type] (assert type)
   (case (:canon-qname type)
     (da.FutureOr da.Future)
     (cond-> (-> type :type-parameters first) (:nullable type) (assoc :nullable true))
     nil dc-dynamic
     type))
 
-(defn- ensure-future [type]
+(defn- ensure-future [type] (assert type)
   (assoc dc-Future :type-parameters [(no-future (or type dc-dynamic))]))
 
 (defn closed-overs
@@ -2105,14 +2116,14 @@
           (fn [[env dart-fixed-params] p]
             (let [local (dart-local p env)
                   param (vary-meta local dissoc :dart/type)]
-              [(assoc env p (simple-cast param (:dart/type (meta local)) nil))
+              [(assoc env p (simple-cast param (:dart/type (meta local) dc-dynamic) dc-dynamic))
                (conj dart-fixed-params param)]))
           [env []] fixed-params)
         [env dart-opt-params]
         (reduce
           (fn [[env dart-opt-params] [p d]]
             (let [param (with-meta p nil)] ; symbol name used as is, must be valid identifier
-              [(assoc env p (simple-cast param (:dart/type (dart-meta p env)) nil))
+              [(assoc env p (simple-cast param (:dart/type (dart-meta p env) dc-dynamic) dc-dynamic))
                (conj dart-opt-params
                  [param (emit d env)])]))
           [env []] opt-params)
@@ -3574,46 +3585,53 @@
   )
 
 (defn infer-type [x]
+  {:post [(or (:dart/type %) (do (binding [*print-meta* true]
+                                   (prn (meta (second x)))
+                                   (prn x))))]}
   (let [m (meta x)]
-    (->
-     (cond
-       (:dart/inferred m) m
-       (nil? x) {:dart/type dc-Null :dart/const true}
-       (boolean? x) {:dart/type dc-bool :dart/const true}
-       (string? x) {:dart/type dc-String :dart/const true}
-       (double? x) {:dart/type dc-double :dart/const true}
-       (integer? x) {:dart/type dc-int :dart/const true}
-       (and (symbol? x) (-> x meta :dart/type :canon-qname (= 'dc.Function)))
-       {:dart/ret-type (-> x meta :dart/signature :return-type)}
-       (seq? x)
-       (case (let [x (first x)] (when (symbol? x) x))
-         dart/loop (infer-type (last x))
-         dart/try
-         (let [[_ dart-expr dart-catches-expr] x]
-           {:dart/type (reduce (fn [acc item]
-                                 (if (= (:canon-qname (:dart/type acc)) 'dc.dynamic)
-                                   (reduced acc)
-                                   (merge-types acc item))) (:dart/type (infer-type dart-expr)) (map #(:dart/type (infer-type (last %))) dart-catches-expr))
-            :dart/const false})
-         dart/if
-         (let [[_ _ dart-then dart-else] x]
-           {:dart/type (merge-types (:dart/type (infer-type dart-then)) (:dart/type (infer-type dart-else)))
-            :dart/const false})
-         dart/let (infer-type (last x))
-         dart/.
-         (let [[_ a meth & bs :as all] x ; TODO use type-params
-               {:dart/keys [fn-type ret-type]} (infer-type a)
-               [methname type-params] (if (sequential? meth) [(name (first meth)) (second meth)] [meth nil])]
-           (when (and (= :ifn fn-type) ret-type) {:dart/type ret-type}))
-         dart/as (let [[_ _ type] x]
-                   {:dart/type type
-                    :dart/const false})
-         (let [{:keys [dart/ret-type]} (infer-type (first x))]
-           (when ret-type
-             {:dart/type ret-type})))
-       :else nil)
-     (merge-dart-meta m)
-     (assoc :dart/inferred true))))
+    (if (:dart/inferred m)
+      m
+      (let [inferred
+            (cond
+              (nil? x) {:dart/type dc-Null :dart/const true}
+              (boolean? x) {:dart/type dc-bool :dart/const true}
+              (string? x) {:dart/type dc-String :dart/const true}
+              (double? x) {:dart/type dc-double :dart/const true}
+              (integer? x) {:dart/type dc-int :dart/const true}
+              (and (symbol? x) (-> x meta :dart/type :canon-qname (= 'dc.Function)))
+              {:dart/ret-type (-> x meta :dart/signature :return-type)}
+              (seq? x)
+              (case (let [x (first x)] (when (symbol? x) x))
+                dart/loop (infer-type (last x))
+                dart/try
+                (let [[_ dart-expr dart-catches-expr] x]
+                  {:dart/type (reduce (fn [acc item]
+                                        (if (= (:canon-qname (:dart/type acc)) 'dc.dynamic)
+                                          (reduced acc)
+                                          (merge-types acc item))) (:dart/type (infer-type dart-expr)) (map #(:dart/type (infer-type (last %))) dart-catches-expr))
+                   :dart/const false})
+                dart/if
+                (let [[_ _ dart-then dart-else] x]
+                  {:dart/type (merge-types (:dart/type (infer-type dart-then)) (:dart/type (infer-type dart-else)))
+                   :dart/const false})
+                dart/let (infer-type (last x))
+                dart/.
+                (let [[_ a meth & bs :as all] x ; TODO use type-params
+                      {:dart/keys [fn-type ret-type]} (infer-type a)
+                      [methname type-params] (if (sequential? meth) [(name (first meth)) (second meth)] [meth nil])]
+                  (when (and (= :ifn fn-type) ret-type) {:dart/type ret-type}))
+                ;; (dart/.- other$2 "ns")
+                dart/as (let [[_ _ type] x]
+                          {:dart/type type
+                           :dart/const false})
+                (let [{:keys [dart/ret-type]} (infer-type (first x))]
+                  (when ret-type
+                    {:dart/type ret-type})))
+              :else nil)]
+        (merge-dart-meta
+          (cond-> (assoc inferred :dart/inferred true)
+            (nil? (:dart/type inferred)) (assoc :dart/type dc-dynamic))
+          m)))))
 
 (defn print-pre [locus]
   (dart-print (:pre locus))
