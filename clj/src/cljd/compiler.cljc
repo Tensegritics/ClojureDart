@@ -107,7 +107,8 @@
 (def pseudo-some '{:kind :class
                    :qname       dc.dynamic
                    :lib "dart:core"
-                   :canon-qname pseudo.some})
+                   :canon-qname pseudo.not-bool
+                   :nullable true})
 
 (def pseudo-super '{:kind :class
                     :qname       dc.dynamic
@@ -648,7 +649,7 @@
   (case (:canon-qname type)
     (nil dc.Object dc.dynamic dc.Never) nil
     (dc.Null void) :falsy
-    pseudo.some :some
+    pseudo.not-bool :some
     dc.bool (when-not (:nullable type) :boolean)
     (if (:nullable type) :some :truthy)))
 
@@ -1369,7 +1370,7 @@
 (defn- nullable-type? [type] (assert type)
   (or (:nullable type)
     (case (:canon-qname type)
-      (pseudo.some dc.dynamic) true
+      dc.dynamic true
       da.FutureOr (recur (first (:type-parameters type)))
       false)))
 
@@ -1535,7 +1536,7 @@
                   (let [{:dart/keys [fn-type type]} (infer-type dart-f)]
                     (or fn-type (case (:canon-qname type)
                                   dc.Function :native
-                                  (nil dc.Object dc.dynamic pseudo.some) nil
+                                  (nil dc.Object dc.dynamic pseudo.not-bool) nil
                                   :ifn))))
         [bindings dart-args] (lift-args (nil? fn-type)
                                (split-args args (some-> dart-f meta :dart/signature dart-method-sig) env) env)
