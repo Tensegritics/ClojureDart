@@ -307,7 +307,8 @@
                   (throw (Exception. "A namespace must be specified in deps.edn under :cljd/opts :main.")))
         dir (java.io.File. (System/getProperty "user.dir"))
         project-name (.getName dir)
-        project_name (str/replace project-name #"[- ]" "_")]
+        ;; aggressive project_name munging TODO make this smarter at some point
+        project_name (-> project-name str/lower-case (str/replace #"([^a-z0-9_]+)" "_") (->> (str "cljd_")))]
     (with-open [w (io/writer ".gitattributes" :append true)]
       (binding [*out* w]
         (newline)
