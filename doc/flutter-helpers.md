@@ -4,7 +4,7 @@
 
 Its two goals are to cut on Flutter boilerplate and make it more Clojure-like.
 
-## `nest` macro
+## `widget` macro
 
 In Flutter code, it's very common to have medium to long chains of widgets chained through `:child`.
 
@@ -37,59 +37,59 @@ IgnorePointer(
 
 which translates directly to
 ```clj
-(m/IgnorePointer.
-  :ignoring (boolean @open)
-  :child
-  (m/AnimatedContainer.
-    :transformAlignment m.Alignment/center
-    :transform (m.Matrix4/diagonal3Values
+(m/IgnorePointer
+  .ignoring (boolean @open)
+  .child
+  (m/AnimatedContainer
+    .transformAlignment m/Alignment.center
+    .transform (m/Matrix4.diagonal3Values
                  (if @open 0.7 1.0)
                  (if @open 0.7 1.0)
                  1.0)
-    :duration ^:const (m/Duration. :milliseconds 250)
-    :curve ^:const (m/Interval. 0.0 0.5 :curve m.Curves/easeOut)
-    :child
-    (m/AnimatedOpacity.
-      :opacity (if @open 0.0 1.0)
-      :curve ^:const (m/Interval. 0.25 1.0 :curve m.Curves/easeInOut)
-      :duration ^:const (m/Duration. :milliseconds 250)
-      :child
-      (m/FloatingActionButton.
-        :onPressed toggle
-        :child
-        (m/Icon. m.Icons/create)))))
+    .duration (Duration .milliseconds 250)
+    .curve (m/Interval 0.0 0.5 .curve m/Curves.easeOut)
+    .child
+    (m/AnimatedOpacity
+      .opacity (if @open 0.0 1.0)
+      .curve (m/Interval 0.25 1.0 .curve m/Curves.easeInOut)
+      .duration (Duration .milliseconds 250)
+      .child
+      (m/FloatingActionButton
+        .onPressed (fn [])
+        .child
+        (m/Icon m.Icons/create)))))
 ```
 
-can be flattened with `nest` into:
+can be flattened with `widget` into:
 
 ```clj
-(f/nest
-  (m/IgnorePointer. :ignoring (boolean @open))
-  (m/AnimatedContainer.
-    :transformAlignment m.Alignment/center
-    :transform (m.Matrix4/diagonal3Values
+(f/widget
+  (m/IgnorePointer .ignoring (boolean @open))
+  (m/AnimatedContainer
+    .transformAlignment m/Alignment.center
+    .transform (m/Matrix4.diagonal3Values
                  (if @open 0.7 1.0)
                  (if @open 0.7 1.0)
                  1.0)
-    :duration ^:const (m/Duration. :milliseconds 250)
-    :curve ^:const (m/Interval. 0.0 0.5 :curve m.Curves/easeOut))
-  (m/AnimatedOpacity.
-    :opacity (if @open 0.0 1.0)
-    :curve ^:const (m/Interval. 0.25 1.0 :curve m.Curves/easeInOut)
-    :duration ^:const (m/Duration. :milliseconds 250))
-  (m/FloatingActionButton. :onPressed toggle)
-  (m/Icon. m.Icons/create))
+    .duration (Duration .milliseconds 250)
+    .curve (m/Interval 0.0 0.5 .curve m/Curves.easeOut))
+  (m/AnimatedOpacity
+    .opacity (if @open 0.0 1.0)
+    .curve (m/Interval 0.25 1.0 .curve m/Curves.easeInOut)
+    .duration (Duration .milliseconds 250))
+  (m/FloatingActionButton .onPressed (fn []))
+  (m/Icon m.Icons/create))
   ```
 
-## `widget` macro
+## `widget` macro (following)
 
-It's the Swiss army knife of Flutter in ClojureDart: it replaces instances of `StatelessWidget`, `StatefulWidget`, `State`, `Builder` and `StatefulBuilder`.
+`widget` macro is also the Swiss army knife of Flutter in ClojureDart: it replaces instances of `StatelessWidget`, `StatefulWidget`, `State`, `Builder` and `StatefulBuilder`.
 
 The general structure of `widget` is a body preceded by inlined `:option value` pairs.
 
 The body always evaluates to a `Widget` and the whole `widget` form itself evaluates to a `Widget` too.
 
-Supported options are `:key`, `:context`, `:state`, `:watch`, `:with`, `:ticker` and `:tickers`.
+Supported options are `:key`, `:context`, `:let`, `:bind`, `:get`, `:watch`, `:managed`, `:vsync` and `:spy`.
 
 ### `:key k`
 
@@ -101,11 +101,34 @@ Local keys are used to identify siblings across reordering and updates.
 
 ### `:context ctx`
 
-Will bind `ctx` to the `BuildContext` of this widget.
+Will bind `ctx` to the current `BuildContext` of this widget.
 
-### `:state [my-state init]`
+### `:let [bindings*]`
 
-`:state [my-state init]` creates an atom as per `(let [my-state (atom init)] ...)`. Any change to this atom will trigger an update of the widget.
+Regular let. All bindings are visible to the next form.
+
+### `:bind {:some/name value}`
+
+Makes value available to :get {x :some/name} on all descendants.
+
+### `:get {a AClass b :some/name :value-of [AnotherClass] c (CClass .param true)}`
+
+Introduces a, b, c and another-class (kebab-cased version of AnotherClass) in the local scope for
+next forms.
+a, b and c may be destructuring forms.
+
+They are bound to:
+- for classes (eg AClass, CClass and AnotherClass) to the value returned by
+  their static .of method.
+  For example `:get [m/Theme]` binds `theme` to `(m/Theme.of ctx)` and `:get [(m/Focus .scopeOk true)]`
+  binds ``focus` to `(m/Focus.of ctx .scopeOk true)`
+- for keywords to the value set by the closest matching :bind directive in
+       the widget's ancestors.
+     Last, when .of expects more arguments (eg Localizations) then you can pass
+     these argument by by using (ClassName a b c) instead of just ClassName.
+
+### `:get [SomeClass1 ... SomeClass2]`
+:get [m/Navigator (m/Focus .scopeOk true)]
 
 ### `:watch pre-existing-atom`
 

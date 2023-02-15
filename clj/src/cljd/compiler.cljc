@@ -645,7 +645,7 @@
     (or (resolve-type tag type-vars nil) (when *hosted* (resolve-type (symbol (name tag)) type-vars nil))
       (throw (Exception. (str "Can't resolve type " tag "."))))))
 
-(defn dart-type-truthiness [type] (assert type)
+(defn dart-type-truthiness [type]
   (case (:canon-qname type)
     (nil dc.Object dc.dynamic dc.Never) nil
     (dc.Null void) :falsy
@@ -1354,7 +1354,6 @@
 
 (defn- simple-types
   [{:keys [canon-qname nullable] :as type}]
-  (assert type)
   (case canon-qname
     dc.dynamic [dc-Object dc-Null]
     da.FutureOr (let [[{cqn :canon-qname :as t} :as tps] (:type-parameters type)]
@@ -1367,7 +1366,7 @@
       [dc-Null (dissoc type :nullable)]
       [type])))
 
-(defn- nullable-type? [type] (assert type)
+(defn- nullable-type? [type]
   (or (:nullable type)
     (case (:canon-qname type)
       dc.Null true
@@ -1418,7 +1417,7 @@
       (and (some? value-type)
         (is-assignable? slot-type value-type)))))
 
-(defn- num-type [type] (assert type)
+(defn- num-type [type]
   (case (:canon-qname type)
     dc.int dc-int
     dc.double dc-double
@@ -1428,8 +1427,6 @@
   ([dart-expr expected-type]
    (simple-cast dart-expr expected-type (:dart/type (infer-type dart-expr))))
   ([dart-expr expected-type actual-type]
-   (assert expected-type)
-   (assert actual-type)
    (cond
      (= (:canon-qname expected-type) 'pseudo.super)
      (let [super-type (:super (full-class-info actual-type) 'dc.Object)
@@ -1448,7 +1445,7 @@
      :else
      (list 'dart/as dart-expr expected-type))))
 
-(defn has-cast-method? [type] (assert type)
+(defn has-cast-method? [type]
   (if-some [member-info
             (some->
               (dart-member-lookup type "cast" {:type-vars #{}})
@@ -1463,8 +1460,6 @@
   ([dart-expr expected-type env]
    (magicast dart-expr expected-type (:dart/type (infer-type dart-expr)) env))
   ([dart-expr expected-type actual-type env]
-   (assert expected-type)
-   (assert actual-type)
    (cond
      (= 'dc.dynamic (:canon-qname expected-type)) dart-expr ; TODO: should be covered by is-assignable?
      (is-assignable? expected-type actual-type) dart-expr ; <1>
@@ -1887,7 +1882,6 @@
       :else (throw (ex-info (str "cljd-hash not implemented for " (class x)) {:x x})))))
 
 (defn emit-case* [[op expr clauses default] env]
-  (assert (symbol? expr))
   (cond
     (empty? clauses) (emit default env)
     (or (every? #(or (char? % ) (string? %)) (mapcat first clauses))
@@ -2082,14 +2076,14 @@
         [tmp :as binding] (if name [(env name) dart-sexpr] (dart-binding '^:clj f dart-sexpr env))]
     (list 'dart/let [binding] tmp)))
 
-(defn- no-future [type] (assert type)
+(defn- no-future [type]
   (case (:canon-qname type)
     (da.FutureOr da.Future)
-    (cond-> (-> type :type-parameters first) (:nullable type) (assoc :nullable true))
+    (cond-> (-> type :type-parameters first) (nullable-type? type) (assoc :nullable true))
     nil dc-dynamic
     type))
 
-(defn- ensure-future [type] (assert type)
+(defn- ensure-future [type]
   (assoc dc-Future :type-parameters [(no-future (or type dc-dynamic))]))
 
 (defn closed-overs
