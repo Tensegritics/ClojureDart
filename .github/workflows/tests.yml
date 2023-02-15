@@ -38,7 +38,7 @@ jobs:
           github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Dart
-        uses: cedx/setup-dart@v3
+        uses: dart-lang/setup-dart@v1
 
       - name: Execute ClojureDart tests on Linux and MacOS
         if: ${{ matrix.os != 'windows-latest' }}
