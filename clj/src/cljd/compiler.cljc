@@ -1318,7 +1318,7 @@
 (defn- split-args
   "Returns a collection of triples [name dart-code expected-type]
    where name is nil for positional parameters, dart-code MAY NOT BE A DART EXPR
-   and thus must be lifted (see lift-args), expected-type may be nil when unknown."
+   and thus must be lifted (see lift-args)."
   [args [fixed-types opts-types :as method-sig] env]
   {:post [(or (every? (fn [[_ _ t]] (some? t)) %) (prn args method-sig))]}
   (cond
@@ -1370,6 +1370,7 @@
 (defn- nullable-type? [type] (assert type)
   (or (:nullable type)
     (case (:canon-qname type)
+      dc.Null true
       dc.dynamic true
       da.FutureOr (recur (first (:type-parameters type)))
       false)))
@@ -1377,9 +1378,12 @@
 (defn- positive-type
   [{:keys [canon-qname nullable] :as type}]
   (case canon-qname
+    dc.Null nil
     dc.dynamic dc-Object
     da.FutureOr (let [[t] (:type-parameters type)]
-                  (assoc da-FutureOr :type-parameters [(positive-type t)]))
+                  (if-some [t+ (positive-type t)]
+                    (assoc da-FutureOr :type-parameters [t+])
+                    (assoc dc-Future :type-parameters [t])))
     (dissoc type :nullable)))
 
 (defn is-assignable?
@@ -1465,12 +1469,14 @@
      (= 'dc.dynamic (:canon-qname expected-type)) dart-expr ; TODO: should be covered by is-assignable?
      (is-assignable? expected-type actual-type) dart-expr ; <1>
      (and (nullable-type? expected-type) (nullable-type? actual-type))
-     (with-lifted [dart-expr dart-expr] env
-       (list 'dart/if (list 'dart/. nil "!=" dart-expr)
-         ; by construction expected-type can't be dynamic or FutureOr<dynamic>, otherwise
-         ; it would have matched the assignability test <1> above
-         (magicast dart-expr (positive-type expected-type) actual-type env)
-         nil))
+     (if-some [expected-type+ (positive-type expected-type)]
+       (with-lifted [dart-expr dart-expr] env
+         (list 'dart/if (list 'dart/. nil "!=" dart-expr)
+           ; by construction expected-type can't be dynamic or FutureOr<dynamic>, otherwise
+           ; it would have matched the assignability test <1> above
+           (magicast dart-expr expected-type+ actual-type env)
+           nil))
+       (list 'dart/let [nil dart-expr] nil))
      ;; When inlined #dart[], we keep it inlines
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
      (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
