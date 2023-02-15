@@ -10,4 +10,5 @@ lib/cljd-out/*
 test/cljd-out/*
 *-e
 .*
+!.github
 tmp/
