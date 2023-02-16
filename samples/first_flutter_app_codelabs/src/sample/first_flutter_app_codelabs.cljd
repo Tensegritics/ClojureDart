@@ -1,0 +1,108 @@
+(ns main
+  (:require
+    ["package:flutter/material.dart" :as m]
+    ["package:english_words/english_words.dart" :as english]
+    [cljd.flutter :as f]))
+
+(def random-pair-fn english/WordPair.random)
+
+(defonce app-state
+  (atom {:pair (random-pair-fn)
+         :favorites #{}
+         :selected-index 0}))
+
+(defn big-card [^english/WordPair pair]
+  (f/widget
+    :get {{{:flds [primary onPrimary]} .-colorScheme
+           {:flds [displayMedium]} .-textTheme} m/Theme}
+    (m/Card .color primary)
+    (m/Padding .padding (m/EdgeInsets.all 20))
+    (m/Text (.-asLowerCase pair)
+            .style (.copyWith displayMedium .color onPrimary)
+            .semanticsLabel (.-asPascalCase pair))))
+
+(def generator-page
+  (f/widget
+    :watch [{:keys [pair
+                    favorites]} app-state]
+    :let [icon (if (favorites pair)
+                 m/Icons.favorite
+                 m/Icons.favorite_border)]
+    m/Center
+    (m/Column .mainAxisAlignment m/MainAxisAlignment.center)
+    .children
+    [(big-card pair)
+     (m/SizedBox .height 10)
+     (m/Row
+       .mainAxisSize m/MainAxisSize.min
+       .children [(m/ElevatedButton.icon
+                    .onPressed (fn [] (swap! app-state update :favorites #((if (% pair) disj conj) % pair)))
+                    .icon (m/Icon icon)
+                    .label (m/Text "Like"))
+                  (m/SizedBox .width 10)
+                  (f/widget
+                    (m/ElevatedButton .onPressed #(swap! app-state assoc :pair (random-pair-fn)))
+                    (m/Text "Next"))])]))
+
+(def favorites-page
+  (f/widget
+    :watch [{:keys [favorites]} app-state]
+    :get {{{:flds [primary]} .-colorScheme
+           {:flds [displaySmall]} .-textTheme} m/Theme}
+    :let [fav-count (count favorites)]
+    (if (zero? fav-count)
+      (m/Center
+        .child (m/Text "No favorites yet!"
+                       .style (m/TextStyle .color primary)))
+      (m/ListView
+        .children
+        (into [(f/widget
+                 (m/Padding .padding (m/EdgeInsets.all 20))
+                 (m/Text (str "You have " fav-count " favorites")
+                         .style (m/TextStyle .color primary)))]
+              (map #(m/ListTile
+                      .leading (m/Icon m/Icons.favorite
+                                           .color primary)
+                      .title (m/Text (.-asLowerCase ^english/WordPair %)
+                                     .style (m/TextStyle .color primary))))
+              favorites)))))
+
+(defn lateral-bar
+  [constraints]
+  (f/widget
+    :get {{{:flds [onPrimaryContainer]} .-colorScheme} m/Theme}
+    :watch [{:keys [selected-index]} app-state]
+    m/Row
+    .children
+    [(f/widget
+       m/SafeArea
+       (m/NavigationRail
+         .selectedIndex selected-index
+         .extended (>= (.-maxWidth ^m/BoxConstraints constraints) 600)
+         .onDestinationSelected #(swap! app-state assoc :selected-index %))
+       .destinations [(m/NavigationRailDestination
+                        .icon (m/Icon m/Icons.home)
+                        .label (m/Text "Home"))
+                      (m/NavigationRailDestination
+                        .icon (m/Icon m/Icons.favorite)
+                        .label (m/Text "Favorites"))])
+     (f/widget
+       m/Expanded
+       (m/Container .color onPrimaryContainer)
+       (case selected-index
+                 0 generator-page
+                 1 favorites-page))]))
+
+(defn main []
+  (f/run
+    (m/MaterialApp
+      .title "My first material app"
+      .theme (m/ThemeData
+               .useMaterial3 true
+               .colorScheme (m/ColorScheme.fromSeed
+                              .seedColor m/Colors.deepOrange)))
+    .home (m/Scaffold)
+    .body (m/LayoutBuilder
+            .builder
+            (f/build [constraints]
+                     (lateral-bar constraints)))))
