@@ -429,7 +429,7 @@
     (case @versions-replaced
       0 (if (= @versions-found @versions-replaced)
           (do
-            (println "No known versions found, please update manually to:")
+            (println "No known recommended versions found in deps.edn, please update manually to the latest recommended (next time it will work!):")
             (binding [*print-namespace-maps* false]
               (prn {'tensegritics/clojuredart
                     {:git/url "https://github.com/tensegritics/ClojureDart.git"
