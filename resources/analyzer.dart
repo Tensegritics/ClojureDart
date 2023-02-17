@@ -220,6 +220,55 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
     return this._visitInterfaceElement(e);
   }
 
+  Map<String, dynamic> visitExtensionElement(ExtensionElement e) {
+    Map<String, dynamic> classData = {
+      ':kind': ':class',
+      ':canon-qname-placeholder': true,
+      ':canon-lib': '"${e.library.identifier}"',
+      ':lib': '"${rootLib.identifier}"',
+      ':private': e.isPrivate,
+      ':internal': e.hasInternal,
+      ':type-parameters':
+          e.typeParameters.map((e) => emitTypeParameter(rootLib, e))
+    };
+
+    for (final m in e.methods.where(isPublic)) {
+      final name = m.displayName;
+      classData[
+          "\"${name == '-' && m.parameters.isEmpty ? 'unary-' : name}\""] = {
+        ':kind': ':method',
+        ':operator': m.isOperator,
+        ':static': m.isStatic,
+        ':return-type': emitType(rootLib, m.returnType),
+        ':parameters': m.parameters.map((e) => emitParameter(rootLib, e)),
+        ':type-parameters':
+            m.typeParameters.map((e) => emitTypeParameter(rootLib, e))
+      };
+    }
+    classData["\"${e.displayName}\""] = {
+      ':kind': ':constructor',
+      ':return-type': emitType(rootLib, e.extendedType),
+      ':parameters': [{
+        ":name": "ext",
+        ":kind": ':positional',
+        ':type': emitType(rootLib, e.extendedType)
+      }],
+      ':type-parameters':
+          e.typeParameters.map((e) => emitTypeParameter(rootLib, e))
+    };
+    for (final f in e.fields.where(isPublic)) {
+      classData["\"${f.displayName}\""] = {
+        ':kind': ':field',
+        ':static': f.isStatic,
+        ':const': f.isConst,
+        ':getter': f.getter != null,
+        ':setter': f.setter != null,
+        ':type': emitType(rootLib, f.type)
+      };
+    }
+    return classData;
+  }
+
   Map<String, dynamic> visitPropertyAccessorElement(PropertyAccessorElement e) {
     return {
       ':kind': ':field',
