@@ -4,7 +4,7 @@ You will find listed below in the `Sample` section all of the current samples, a
 ## Run a sample
 
 ```sh
-clj -Mcljd flutter
+clj -M:cljd flutter
 ```
 A native application will be created. If you want to test it on mobile, please follow [those instructions.](https://github.com/Tensegritics/ClojureDart/blob/main/doc/flutter-quick-start.md#7-start-a-simulator)
 
@@ -96,6 +96,17 @@ A native application will be created. If you want to test it on mobile, please f
     - AlertDialog
     - FloatingActionButton
 
+### [Form - with validation](./form_validate)
+- ScaffoldMessenger.of(context) with `:get`
+- `cljd.string/blank?`
+- GlobalKey\<FormState\> with `#/(m/GlobalKey m/FormState)`
+
+- Particular widgets
+    - TextFormField
+    - ScaffoldMessenger
+    - SnackBar
+
+
 ### [Gesture Detector](./gesture_detector)
 - state with `:state`
 - anonymous class extention with `reify :extends`
@@ -167,4 +178,3 @@ A native application will be created. If you want to test it on mobile, please f
     - Center
     - Row
     - ElevatedButton
-
