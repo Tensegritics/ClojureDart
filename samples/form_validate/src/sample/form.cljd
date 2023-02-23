@@ -4,7 +4,7 @@
             [cljd.flutter :as f]
             [cljd.string :as str]))
 
-(defn my-custom-form []
+(def my-custom-form
   (let [form-key (#/(m/GlobalKey m/FormState))]
     (f/widget
      :get [m/ScaffoldMessenger]
@@ -15,7 +15,7 @@
        .validator (fn [value] (when (str/blank? value) "Please enter some text")))
       (m/Padding .padding (m/EdgeInsets.symmetric .vertical 16.0))
       (m/ElevatedButton
-       .onPressed #(when (.validate ^m/FormState (.-currentState form-key))
+       .onPressed #(when (.validate (.-currentState form-key))
                      (.showSnackBar scaffold-messenger (m/SnackBar .content (m/Text "Processing Data")))
                      nil)
        .child (m/Text "Submit"))])))
@@ -27,4 +27,4 @@
       .title title
       .home (m/Scaffold
              .appBar (m/AppBar .title (m/Text title))
-             .body (my-custom-form))))))
+             .body my-custom-form)))))
