@@ -409,6 +409,8 @@ Future<Map<String, dynamic>?> retrieveElement(
       return res;
     }
     var e = rootLib.exportNamespace.get(element);
+    // not found? Try again in case it's a private class (from which a public may inherit members)
+    if (e == null) e = rootLib.getClass(element);
     if (e != null) {
       var res = e.accept(TopLevelVisitor(rootLib));
       if (res != null) {
