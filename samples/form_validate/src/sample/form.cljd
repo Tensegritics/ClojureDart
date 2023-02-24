@@ -1,0 +1,30 @@
+(ns sample.form
+  "Faithful port of https://docs.flutter.dev/cookbook/forms/validation"
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]
+            [cljd.string :as str]))
+
+(def my-custom-form
+  (let [form-key (#/(m/GlobalKey m/FormState))]
+    (f/widget
+     :get [m/ScaffoldMessenger]
+     (m/Form .key form-key)
+     (m/Column .crossAxisAlignment m/CrossAxisAlignment.start)
+     .children
+     [(m/TextFormField
+       .validator (fn [value] (when (str/blank? value) "Please enter some text")))
+      (m/Padding .padding (m/EdgeInsets.symmetric .vertical 16.0))
+      (m/ElevatedButton
+       .onPressed #(when (.validate (.-currentState form-key))
+                     (.showSnackBar scaffold-messenger (m/SnackBar .content (m/Text "Processing Data")))
+                     nil)
+       .child (m/Text "Submit"))])))
+
+(defn main []
+  (let [title "Form Validation Demo"]
+    (f/run
+     (m/MaterialApp
+      .title title
+      .home (m/Scaffold
+             .appBar (m/AppBar .title (m/Text title))
+             .body my-custom-form)))))
