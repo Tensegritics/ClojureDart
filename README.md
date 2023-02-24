@@ -20,7 +20,7 @@ In any case get in touch with us on [Clojurians #ClojureDart channel](https://cl
 
 # Cheatsheet
 
-We have a [cheasheet](doc/ClojureDart%20Cheatsheet.pdf) covering ClojureDart specifics on one side and Flutter programming on the other side.
+We have a [cheatsheet](doc/ClojureDart%20Cheatsheet.pdf) covering ClojureDart specifics on one side and Flutter programming on the other side.
 
 # Links dump
 
