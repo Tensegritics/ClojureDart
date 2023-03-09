@@ -229,7 +229,7 @@
         subscribable `subscribable#
         update-state (if (or accessor destructured-locals)
                        (let [vsym `v#
-                             vexpr (if accessor (-> ~subscribable ~accessor) vsym)]
+                             vexpr (if accessor `(-> ~subscribable ~accessor) vsym)]
                          `(fn [~vsym]
                             ~(if destructured-locals
                                `(let [~binding ~vexpr
