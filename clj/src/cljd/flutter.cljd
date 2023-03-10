@@ -218,13 +218,13 @@
     (-> #{} transient (locals destructuring-form) persistent!)))
 
 (defn ^:macro-support expand-watch
-  [&env env binding expr {:keys [dispose] :as opts} forms]
+  [&env env binding expr {:keys [dispose] subscribable-binding :as :as opts} forms]
   (let [accessor (:> opts)
         destructured-locals (when-not (symbol? binding)
                               (destructuring-bound-locals binding))
         dispose (if (true? dispose) '.dispose dispose)
         refresh-on (refresh-on-expr opts &env expr)
-        opts (dissoc opts :refresh-on :> :dispose)
+        opts (dissoc opts :refresh-on :> :dispose :as)
         state `state#
         subscribable `subscribable#
         update-state (if (or accessor destructured-locals)
@@ -262,10 +262,13 @@
              (.-subscription! nil)
              (.-latest! nil))))
        (~'-build [_# state# ctx#]
-         (let [~(if destructured-locals (vec destructured-locals) binding) (.-latest ^WatchState state#)
-               ~closest-context ctx#]
-           (-widget-cont ~(assoc env :key nil :closest-ctx true)
-             ~@forms)))
+        (let [~state ^WatchState state#
+              ~(if destructured-locals (vec destructured-locals) binding) (.-latest ~state)
+              ~closest-context ctx#
+              ~@(when subscribable-binding
+                  [subscribable-binding `(.-subscribable ~state)])]
+          (-widget-cont ~(assoc env :key nil :closest-ctx true)
+            ~@forms)))
        (~'-update-state [_# state#]
          (let [~state ^WatchState state#
                k# ~refresh-on]
@@ -570,7 +573,7 @@
       (if-some [[binding expr & more] (seq v)]
         (let [[opts & more] (collect-options more
                                              #(or (qualified-keyword? %)
-                                                  (#{:default :refresh-on :dispose :>} %)))]
+                                                  (#{:default :refresh-on :dispose :> :as} %)))]
           (expand-watch &env env binding expr opts (list* :watch more forms)))
         `(-widget-cont ~env ~@forms))
       :managed
