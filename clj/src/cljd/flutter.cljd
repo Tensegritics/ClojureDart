@@ -370,7 +370,7 @@
        (~'-dispose-state [_# ^ResourceState state#]
         (doto ^ResourceState state#
           (.-k! nil)
-          (-> .-resource (dart/type-like ~expr) ~dispose)
+          ~@(when dispose [`(-> .-resource (dart/type-like ~expr) ~dispose)])
           (.-resource! nil)))
        (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
          (let [~binding (dart/type-like (.-resource ^ResourceState state#) ~expr)]
@@ -381,7 +381,8 @@
                k# ~refresh-on]
            (when-not (= k# (.-k state#))
              (doto state#
-               (-> .-resource (dart/type-like ~expr) ~dispose)
+               ~@(when dispose
+                   [`(-> .-resource (dart/type-like ~expr) ~dispose)])
                (.-k! k#)
                (.-resource! ~expr))))))))
 
