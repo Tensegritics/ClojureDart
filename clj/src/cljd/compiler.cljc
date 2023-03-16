@@ -628,12 +628,11 @@
         (throw (ex-info (pr-str x) {:x x})))
       (with-meta
         (symbol
-          (when-not (= lib (:lib (nses current-ns)))
-            (or (get-in nses [current-ns :imports lib :clj-alias])
-              (some-> lib (global-lib-alias nil) (->> (str "$lib:")))))
+          (or (get-in nses [current-ns :imports lib :clj-alias])
+            (some-> lib (global-lib-alias nil) (->> (str "$lib:"))))
           (cond-> element-name nullable (str "?")))
         (cond-> {:type-params (mapv unresolve-type type-parameters)}
-          (= (:canon-qname dc-Function) canon-qname) (assoc :params-types (map unresolve-type (cons (or (:return-type x) dc-dynamic) (map :type (:parameters x))))))))))
+          (and (= (:canon-qname dc-Function) canon-qname) (:parameters x)) (assoc :params-types (map unresolve-type (cons (or (:return-type x) dc-dynamic) (map :type (:parameters x))))))))))
 
 (defn emit-type
   [tag {:keys [type-vars] :as env}]
@@ -977,7 +976,7 @@
         [(vary-meta mname assoc (case (count args) 1 :getter 2 :setter) true :tag (unresolve-type (:type member-info))) args])
       :method
       (let [[fixeds opts] (unresolve-params (:parameters member-info))
-            {:as actual :keys [opt-kind opt-params] [this & fixed-opts] :fixed-params}
+            {:as actual :keys [opt-kind opt-params] [this & fixed-and-opts] :fixed-params}
             (parse-dart-params args)
             _ (case opt-kind
                 :named
@@ -989,12 +988,12 @@
                 :positional
                 (when-not (<= (count opt-params) (count opts))
                   (throw (Exception. (str "Too many optional positional arguments (" (- (count opt-params) (count opts))  " extra(s)) for method " mname " for " (:element-name type) " of library " (:lib type))))))
-            _ (when-not (= (count fixeds) (count fixed-opts))
-                (throw (Exception. (str "Fixed arity mismatch on " mname " for " (:element-name type) " of library " (:lib type)))))
+            _ (when-not (= (count fixeds) (count fixed-and-opts))
+                (throw (Exception. (str args "Fixed arity mismatch (" (count fixeds) ", " (count fixed-and-opts) ") on " mname " for " (:element-name type) " of library " (:lib type)))))
             _ (when-not (case opt-kind :named (set? opts) (vector? opts))
                 (throw (Exception. (str "Optional mismatch on " mname " for " (:element-name type) "of library " (:lib type)))))
             actual-fixeds
-            (into [this] (map transfer-tag fixed-opts fixeds))
+            (into [this] (map transfer-tag fixed-and-opts fixeds))
             actual-opts
             (case opt-kind
               :named (into [] (mapcat (fn [[p d]] [(transfer-tag p (opts p)) d])) opt-params)
@@ -1033,16 +1032,17 @@
         iext (with-meta iext {:dart/name iext})
         impl (munge proto "iprot" {})
         impl (with-meta impl {:dart/name impl})
+        the-ns (name (:current-ns @nses))
+        full-iface (symbol the-ns (name iface))
+        full-iext (symbol the-ns (name iext))
+        full-proto (symbol the-ns (name proto))
         proto-map
         {:name proto
          :iface iface
          :iext iext
          :impl impl
-         :sigs method-mapping}
-        the-ns (name (:current-ns @nses))
-        full-iface (symbol the-ns (name iface))
-        full-iext (symbol the-ns (name iext))
-        full-proto (symbol the-ns (name proto))]
+         :full-iext full-iext
+         :sigs method-mapping}]
     (list* 'do
       (list* 'definterface iface
         (for [[method arity-mapping] method-mapping
@@ -1096,7 +1096,7 @@
           (list 'do
             (list* `deftype extension-name []
               :type-only true
-              (:iext info)
+              (:full-iext info)
               (for [[mname & body-or-bodies] meths
                     [[this & args] & body] (ensure-bodies body-or-bodies)
                     :let [mname (get-in info [:sigs mname (inc (count args)) :dart/name])]]
@@ -2736,8 +2736,19 @@
     (swap! nses alter-def class-name assoc :dart/code (with-dart-str (write-class class)) :dart/type dart-type)
     (emit class-name env)))
 
+(defn relocatable-class-name
+  "Returns a clojure (as in: usable in clojure code, not dart-sexp) symbol which works in
+   any namespace, irrespective of the requires/imports"
+  [class-name env]
+  (case class-name
+    fallback class-name
+    (let [relocatable-type (unresolve-type (resolve-type class-name #{}))]
+      (assert (qualified-symbol? relocatable-type) (str "oh noes " relocatable-type (resolve-type class-name #{})))
+      relocatable-type)))
+
 (defn emit-extend-type-protocol* [[_ class-name protocol-ns protocol-name extension-instance] env]
-  (let [{:keys [current-ns] {proto-map protocol-name} protocol-ns}
+  (let [class-name (relocatable-class-name class-name env)
+        {:keys [current-ns] {proto-map protocol-name} protocol-ns}
         (swap! nses assoc-in [protocol-ns protocol-name :extensions class-name] extension-instance)]
     (swap! nses assoc :current-ns protocol-ns)
     (emit (expand-protocol-impl proto-map) env)
@@ -2963,7 +2974,7 @@
           ns-lib (ns-to-lib ns-sym)
           ns-map (-> ns-prototype
                      (assoc :lib ns-lib)
-                     (assoc-in [:imports ns-lib] {:clj-alias ns-sym}))
+                     (assoc-in [:imports ns-lib] {:clj-alias (name ns-sym)}))
           ns-map
           (reduce #(%2 %1) ns-map
                   (for [[lib & {:keys [as refer rename]}] require-specs
