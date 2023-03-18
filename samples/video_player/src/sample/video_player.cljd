@@ -1,0 +1,37 @@
+(ns sample.video-player
+  "Example of video player"
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:video_player/video_player.dart" :as vp]
+            [cljd.flutter :as f]))
+
+(def video-player-widget
+  (f/widget
+    :managed [controller (vp/VideoPlayerController.network
+                           "https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4")]
+    :watch [_initialization! (.initialize controller)
+            ^vp/VideoPlayerValue
+            {:flds [isPlaying
+                    aspectRatio
+                    isInitialized]} controller]
+    (m/Scaffold
+      .floatingActionButton
+      (f/widget
+        (m/FloatingActionButton
+          .onPressed (fn []
+                         (if isPlaying
+                           (.pause controller)
+                           (.play controller))
+                         nil))
+        (m/Icon (if isPlaying m/Icons.pause m/Icons.play_arrow))))
+    .body
+    m/Center
+    (if isInitialized
+      (f/widget
+        (m/AspectRatio .aspectRatio aspectRatio)
+        (vp/VideoPlayer controller))
+      (m/Container))))
+
+(defn main []
+  (f/run
+    m/MaterialApp
+    .home video-player-widget))
