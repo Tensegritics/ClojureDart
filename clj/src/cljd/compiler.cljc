@@ -340,6 +340,14 @@
 (defmacro ^:private else->> [& forms]
   `(->> ~@(reverse forms)))
 
+(defmacro ^:private expect-some
+  "Like when-some but asserts on nil"
+  [[binding expr] & body]
+  `(let [v# ~expr]
+     (assert (some? v#) ~(str (pr-str expr) "is not expexcted to be nil"))
+     (let [~binding v#]
+       ~@body)))
+
 (defn- replace-all [^String s regexp f]
   #?(:cljd
      (.replaceAllMapped s regexp f)
@@ -812,7 +820,9 @@
       ;; TODO SELFHOST sort types
       (cons 'cond
         (concat
-          (mapcat (fn [[t ext]] [(list 'dart/is? 'x t) ext]) (sort-by (fn [[x]] (case x Object 1 0)) (dissoc extensions 'fallback)))
+          (mapcat (fn [[t ext]]
+                    (assert (qualified-symbol? t) (str "Types in the :extensions map must be fully qualified, " t " is not."))
+                    [(list 'dart/is? 'x t) ext]) (sort-by (fn [[x]] (case x Object 1 0)) (dissoc extensions 'fallback)))
           [:else (or ('fallback extensions) `(throw (dart:core/Exception. (.+ (.+ ~(str "No extension of protocol " name " found for type ") (.toString (.-runtimeType ~'x))) "."))))])))))
 
 (defn- roll-leading-opts [body]
@@ -2746,7 +2756,23 @@
       (assert (qualified-symbol? relocatable-type) (str "oh noes " relocatable-type (resolve-type class-name #{})))
       relocatable-type)))
 
+(defn ensure-import-ns [the-ns]
+  (let [{:keys [current-ns] :as all-nses} @nses
+        the-lib (:lib (all-nses the-ns))
+        dart-alias (some-> all-nses :libs (get the-lib) :dart-alias)]
+    (when-not dart-alias
+      (throw (ex-info (str "Namespace not required: " the-ns) {:ns the-ns})))
+    (when-not (some-> current-ns all-nses :imports (get the-lib))
+      (swap! nses assoc-in [current-ns :imports the-lib] {}))
+    dart-alias))
+
+(defn ensure-contrib-ns [protocol-ns contrib-ns]
+  (let [all-nses @nses
+        contrib-lib (:lib (all-nses contrib-ns))]
+    (swap! nses assoc-in [protocol-ns :contribs contrib-lib] contrib-lib)))
+
 (defn emit-extend-type-protocol* [[_ class-name protocol-ns protocol-name extension-instance] env]
+  (ensure-contrib-ns protocol-ns (-> extension-instance namespace symbol))
   (let [class-name (relocatable-class-name class-name env)
         {:keys [current-ns] {proto-map protocol-name} protocol-ns}
         (swap! nses assoc-in [protocol-ns protocol-name :extensions class-name] extension-instance)]
@@ -2855,16 +2881,6 @@
               (write-top-field dartqname dart-fn))))]
     (swap! nses alter-def sym assoc :dart/code dart-code)
     (emit sym env)))
-
-(defn ensure-import-ns [the-ns]
-  (let [{:keys [current-ns] :as all-nses} @nses
-        the-lib (:lib (all-nses the-ns))
-        dart-alias (some-> all-nses :libs (get the-lib) :dart-alias)]
-    (when-not dart-alias
-      (throw (ex-info (str "Namespace not required: " the-ns) {:ns the-ns})))
-    (when-not (some-> current-ns all-nses :imports (get the-lib))
-      (swap! nses assoc-in [current-ns :imports the-lib] {}))
-    dart-alias))
 
 (defn emit-symbol [x env]
   (let [[tag v] (resolve-symbol x env)]
@@ -4181,8 +4197,8 @@
     (let [nses-before @nses
           dependants (fn [ns]
                        (let [lib (some-> nses-before ns :lib)]
-                         (for [[ns {:keys [imports]}] nses-before
-                               :when (get imports lib)]
+                         (for [[ns {:keys [imports contribs]}] nses-before
+                               :when (and (get imports lib) (not (get contribs lib)))]
                            ns)))
           nses-to-recompile
           (transitive-closure nses-to-recompile dependants)]
