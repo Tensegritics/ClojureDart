@@ -12,6 +12,13 @@
             [clojure.java.io :as io]
             [clojure.edn :as edn]))
 
+(let [java-major-version (->> (System/getProperty "java.version")
+                              (re-seq #"\d+")
+                              first
+                              (Integer/parseInt))]
+  (when (< java-major-version 11)
+    (throw (ex-info "ClojureDart requires Java 11 or above." {}))))
+
 (def dc-void {:kind :class
               :element-name        "void"
               :canon-qname 'void
