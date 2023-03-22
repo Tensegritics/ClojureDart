@@ -1,0 +1,138 @@
+(ns sample.shopper
+  "Faithful port of https://docs.flutter.dev/development/data-and-backend/state-mgmt/simple"
+  (:require
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter :as f]))
+
+(defonce app-state (atom {:catalog [{:title "pain" :price 1 :color m/Colors.yellow}
+                                    {:title "chocolatine" :price 2 :color m/Colors.brown}
+                                    {:title "miel" :price 3 :color m/Colors.purple}]}))
+
+
+
+;; catalog page
+(defn add-button [item]
+  (f/widget
+    :get {{primary-color .-primaryColor} m/Theme}
+    :watch [added (f/$ (some-> (f/<! app-state) :cart (contains? item)))]
+    (m/TextButton
+      .onPressed (when-not added
+                   (fn []
+                     (swap! app-state update :cart (fnil conj #{}) item)))
+      .style
+      (m/ButtonStyle
+        .overlayColor
+        (m/MaterialStateProperty.resolveWith
+          (fn [s]
+            (when (.contains ^Set s m/MaterialState.pressed)
+              primary-color)))))
+    (if added
+      (m/Icon m/Icons.check .semanticLabel "ADDED")
+      (m/Text "Add"))))
+
+(defn my-list-item [{:keys [title color] :as item}]
+  (f/widget
+    :get {{{text-theme .-titleLarge} .-textTheme} m/Theme}
+    (m/Padding .padding (m/EdgeInsets.symmetric .horizontal 16 .vertical 8))
+    (m/LimitedBox .maxHeight 48)
+    (m/Row)
+    .children
+    [(f/widget
+       (m/AspectRatio .aspectRatio 1)
+       (m/Container .color color))
+     (m/SizedBox .width 24)
+     (m/Expanded .child (m/Text title .style text-theme))
+     (m/SizedBox .width 24)
+     (add-button item)]))
+
+(def catalog
+  (f/widget
+    :get {{{display-large .-displayLarge} .-textTheme} m/Theme}
+    (m/Scaffold)
+    .body
+    (m/CustomScrollView)
+    .slivers
+    [(m/SliverAppBar .title (m/Text "Catalog" .style display-large)
+       .floating true
+       .actions [(f/widget
+                   :context ctx
+                   :get [m/Navigator]
+                   (m/IconButton .icon (m/Icon m/Icons.shopping_cart))
+                   .onPressed
+                   (fn []
+                     (.push navigator (widget->route ctx .child my-cart))
+                     nil))])
+     (m/SliverToBoxAdapter .child (m/SizedBox .height 12))
+     (m/SliverList .delegate
+       (m/SliverChildBuilderDelegate
+         (f/build [idx]
+           (my-list-item (get-in @app-state [:catalog idx])))
+         .childCount (count (:catalog @app-state))))]))
+
+;; cart page
+(def cart-list
+  (f/widget
+    :get {{{title-large .-titleLarge} .-textTheme} m/Theme }
+    :watch [cart-content (f/$ (some->> (f/<! app-state) :cart (into [])))]
+    (m/ListView.builder
+      .itemCount (count cart-content)
+      .itemBuilder
+      (f/build [idx]
+        (let [item (get-in cart-content [idx])]
+          (m/ListTile .leading (m/Icon m/Icons.done)
+            .trailing (m/IconButton .icon (m/Icon m/Icons.remove_circle_outline)
+                        .onPressed (fn [] (swap! app-state update :cart disj item)))
+            .title (m/Text (:title item) .style title-large)))))))
+
+(def cart-total
+  (f/widget
+    :get {{{display-large .-displayLarge} .-textTheme} m/Theme}
+    (m/SizedBox .height 200)
+    m/Center
+    (m/Row .mainAxisAlignment m/MainAxisAlignment.center)
+    .children
+    [(f/widget
+       :watch [total-price (f/$ (->> (f/<! app-state) :cart (transduce (map :price) +)))]
+       (m/Text (str total-price "€") .style (.copyWith display-large .fontSize 48)))
+     (m/SizedBox .width 24)
+     (f/widget
+       :get [m/ScaffoldMessenger]
+       (m/FilledButton
+         .onPressed (fn []
+                      (.showSnackBar scaffold-messenger
+                        (m/SnackBar .content (m/Text "Buying not supported yet.")))
+                      nil)
+         .style (m/TextButton.styleFrom .foregroundColor m/Colors.white))
+       (m/Text "BUY"))]))
+
+(def my-cart
+  (f/widget
+    :get {{{display-large .-displayLarge} .-textTheme} m/Theme}
+    (m/Scaffold .appBar (m/AppBar .title (m/Text "Cart" .style display-large) .backgroundColor m/Colors.white))
+    .body
+    (m/Container .color m/Colors.yellow)
+    (m/Column)
+    .children
+    [(m/Expanded .child (m/Padding .padding (m/EdgeInsets.all 32) .child cart-list))
+     (m/Divider .height 4 .color m/Colors.black)
+     cart-total]))
+
+;; utility
+(defn widget->route [ctx .child]
+  (.createRoute (m/MaterialPage .child child) ctx))
+
+(def theme
+  (m/ThemeData
+    .colorSchemeSeed m/Colors.yellow
+    .useMaterial3 true
+    .textTheme (m/TextTheme
+                 .displayLarge (m/TextStyle
+                                 .fontWeight m/FontWeight.w700
+                                 .fontSize 24
+                                 .color m/Colors.black))))
+
+(defn main []
+  (f/run
+    (m/MaterialApp
+      .theme theme
+      .home catalog)))
