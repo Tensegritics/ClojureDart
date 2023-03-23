@@ -4088,18 +4088,23 @@
                (binding [*locals-gen* {}] (host-eval form))
                (recur))))))))
 
-(defn- rename-fresh-lib [{:keys [libs dart-aliases] :as nses} from to]
+(defn- rename-lib [{:keys [libs dart-aliases] :as nses} from to]
   (let [{:keys [ns dart-alias] :as m} (libs from)
         nses (assoc nses
                :libs (-> libs (dissoc from) (assoc to m))
-               :dart-aliases (assoc dart-aliases dart-alias to))
-        {:keys [clj-aliases imports] :as  the-ns} (nses ns)
-        imports (-> imports (dissoc from) (assoc to (imports from)))
-        clj-aliases (into {}
-                      (map (fn [[alias lib]]
-                             [alias (if (= lib from) to lib)]))
-                      clj-aliases)]
-    (assoc nses ns (assoc the-ns :lib to :imports imports :clj-aliases clj-aliases))))
+               :dart-aliases (assoc dart-aliases dart-alias to))]
+    (into nses (keep (fn [[ns ns-map]]
+                       (when (symbol? ns)
+                         (let [{:keys [clj-aliases imports lib contribs]} ns-map
+                               imports (-> imports (dissoc from) (assoc to (imports from)))
+                               clj-aliases (into {}
+                                             (map (fn [[alias lib]]
+                                                    [alias (if (= lib from) to lib)]))
+                                             clj-aliases)
+                               contribs (if (get contribs from) (-> contribs (dissoc from) (assoc to to)) contribs)]
+                           [ns (assoc ns-map :lib (if (= lib from) to lib)
+                                 :imports imports :clj-aliases clj-aliases
+                                 :contribs contribs)])))) nses)))
 
 (defn compile-input [in]
   (binding [*host-eval* false]
@@ -4112,7 +4117,7 @@
                      (str *test-path* (str/replace (subs libname (count *lib-path*)) #"\.dart$" "_test.dart"))
                      libname)]
       (when is-test-ns
-        (swap! nses rename-fresh-lib libname libname'))
+        (swap! nses rename-lib libname libname'))
       libname')))
 
 (defn ns-to-paths [ns-name]
