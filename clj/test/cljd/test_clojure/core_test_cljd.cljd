@@ -654,3 +654,13 @@
   (is (= false (some? nil)))
   (is (= false (some? (seq []))))
   (is (= false (some? (:k {:x 2})))))
+
+(deftype ExtendTypeWorkingOnMultipleNs [])
+
+(extend-type ExtendTypeWorkingOnMultipleNs
+  cljd.core/IPrint
+  (-print [_ a]
+    (.write ^Sink a "ohoh")))
+
+(deftest extend-type-multiple-ns
+  (is (= (with-out-str (prn (ExtendTypeWorkingOnMultipleNs)) "ohoh"))))
