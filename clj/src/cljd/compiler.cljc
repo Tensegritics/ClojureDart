@@ -425,14 +425,14 @@
      ArgumentError dart:core/ArgumentError,
      List dart:core/List}})
 
-(def nses (atom {:current-ns 'user
+(def nses (atom {:current-ns nil #_'user
                  :libs {"dart:core" {:dart-alias "dc" :ns nil}
                         "dart:async" {:dart-alias "da" :ns nil}} ; dc can't clash with user aliases because they go through dart-global
                  ; map from dart aliases to libs
                  :dart-aliases {"dc" "dart:core"
                                 "da" "dart:async"}
                  :ifn-mixins {}
-                 'user ns-prototype}))
+                 #_#_'user ns-prototype}))
 
 (defn global-lib-alias
   "ns may be nil, returns the alias for this lib"
