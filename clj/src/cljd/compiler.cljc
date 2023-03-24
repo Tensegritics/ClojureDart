@@ -2745,7 +2745,7 @@
                                        [name (-> arg (ensure-dart-expr env))])))
                                   super-ctor-split-args+types)))]
     (swap! nses alter-def class-name assoc :dart/code (with-dart-str (write-class class)) :dart/type dart-type)
-    (emit class-name env)))
+    (emit class-name env)))))
 
 (defn relocatable-class-name
   "Returns a clojure (as in: usable in clojure code, not dart-sexp) symbol which works in
