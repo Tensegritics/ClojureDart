@@ -4065,9 +4065,10 @@
   (-chunked-rest [coll]
     (or ^some (-chunked-next coll) ()))
   (-chunked-next [coll]
-    (let [end (+ i (alength arr))]
-      (when (< end (-count vec))
-        (PVChunkedSeq. vec (if (< end (bit-and-not end 31))
+    (let [end (+ i (alength arr))
+          len (-count vec)]
+      (when (< end len)
+        (PVChunkedSeq. vec (if (< end (bit-and-not len 31))
                              (unchecked-array-for (.-root vec) (.-shift vec) end)
                              (.-tail vec))
           end 0 nil -1))))

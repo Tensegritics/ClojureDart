@@ -709,3 +709,6 @@
 (deftest sorting-work-normally-with-boolean-comp
   (is (= [32 23 9] (sort > [23 32 9])))
   (is (= [9 23 32] (sort < [23 32 9]))))
+
+(deftest chunked-pv-seq-was-going-straight-to-the-tail-after-first-chunk
+  (is (= (range 65) (map identity (into [] (range 65))))))
