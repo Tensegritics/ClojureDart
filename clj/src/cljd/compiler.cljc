@@ -1727,7 +1727,7 @@
                                  nil)
           method-sig (or special-num-op-sig special-equality-sig
                        (some-> member-info dart-method-sig))
-          split-args+types (split-args args method-sig env)
+          split-args+types (split-args args (when-not prop method-sig) env)
           [dart-args-bindings dart-args] (lift-args split-args+types env)
           prop (case (:kind member-info)
                  :field (do
