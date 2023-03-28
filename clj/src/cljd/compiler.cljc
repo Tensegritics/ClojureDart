@@ -1120,7 +1120,12 @@
   (let [sym (symbol (str ns-sym "$host"))]
     (remove-ns sym)
     (binding [*ns* *ns*
-              *err* (java.io.Writer/nullWriter)]
+              *err*
+              (proxy [java.io.Writer] []
+                (close [])
+                (flush [])
+                (write ([_]) ([_ _ _])))
+              #_(java.io.Writer/nullWriter)]
       (eval (list* 'ns sym directives))
       ;; NOTE: big trick here...
       (require '[clojure.core :as cljd.core])
