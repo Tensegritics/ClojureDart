@@ -4,7 +4,7 @@
 
 ## System requirements
 
-ClojureDart needs at least Java 11.
+ClojureDart needs at least Java 8.
 
 ## 1. [Install the latest stable Flutter](https://flutter.dev/docs/get-started/install)
 
