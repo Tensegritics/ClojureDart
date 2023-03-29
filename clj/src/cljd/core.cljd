@@ -4375,38 +4375,43 @@
     (let [arr (.-arr node)]
       (mk-value (aget arr (- idx 2)) (aget arr (dec idx)))))
   (moveNext [iter]
-    (cond
-      (and (== depth 7) (< idx (* 2 (.-cnt node)))) ; collisions node
-      (do (set! idx (+ 2 idx)) true)
-      (not (zero? mask))
-      (let [bit (bit-and mask (- mask))]
-        (set! mask (bit-xor mask bit))
-        (if (zero? (bit-and kvs bit))
-          (let [^BitmapNode node' (aget (.-arr node) idx)
-                hi (.-bitmap_hi node')
-                lo (.-bitmap_lo node')]
-            (aset nodes depth node)
-            (aset masks depth mask)
-            (set! node node')
-            (set! idx 0)
-            (set! mask (bit-or hi lo))
-            (set! kvs (bit-and hi lo))
-            (set! depth (inc depth))
-            (recur))
-          (do
-            (set! idx (+ 2 idx))
-            true)))
-      (pos? depth)
-      (let [^BitmapNode node' (aget nodes (set! depth (dec depth)))
-            hi (.-bitmap_hi node')
-            lo (.-bitmap_lo node')]
-        (set! node node')
-        (set! mask (aget masks depth))
-        (set! idx (u32x2-bit-count (bit-and-not hi mask) (bit-and-not lo mask)))
-        (set! kvs (bit-and hi lo))
-        (recur))
-      :else
-      false)))
+    (or
+      (loop []
+        (if (< depth 7)
+          ; regular (non-collision) node
+          (if (not (zero? mask))
+            (let [bit (bit-and mask (- mask))]
+              (set! mask (bit-xor mask bit))
+              (if (zero? (bit-and kvs bit))
+                (let [^BitmapNode node' (aget (.-arr node) idx)
+                      hi (.-bitmap_hi node')
+                      lo (.-bitmap_lo node')]
+                  (aset nodes depth node)
+                  (aset masks depth mask)
+                  (set! node node')
+                  (set! idx 0)
+                        (set! mask (bit-or hi lo))
+                        (set! kvs (bit-and hi lo))
+                        (set! depth (inc depth))
+                        (recur))
+                (do
+                  (set! idx (+ 2 idx))
+                  true)))
+            false)
+          ; collision node
+          (if (< idx (* 2 (.-cnt node)))
+            (do (set! idx (+ 2 idx)) true)
+            false)))
+      (if (pos? depth)
+        (let [^BitmapNode node' (aget nodes (set! depth (dec depth)))
+              hi (.-bitmap_hi node')
+              lo (.-bitmap_lo node')]
+          (set! node node')
+          (set! mask (aget masks depth))
+          (set! idx (u32x2-bit-count (bit-and-not hi mask) (bit-and-not lo mask)))
+          (set! kvs (bit-and hi lo))
+          (recur))
+        false))))
 
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
   :type-only true
