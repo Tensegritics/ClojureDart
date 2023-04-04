@@ -24,6 +24,19 @@ Other characters are escaped as a sequence of `$uXXXX_` (where `XXXX` is 1 to 4 
 
 Once munged autogensyms tend bo very verbose (`x#` becomes `x__18920__auto__` which would be `x$UNDERSCORE_$UNDERSCORE_18920$UNDERSCORE_$UNDERSCORE_auto$UNDERSCORE_$UNDERSCORE_`) so there are two escape sequences for them: `$AUTO_` for `__auto__` and `$18920_` for `__18920`. Thus `x__18920__auto__` is actually munged to `x$18920_$AUTO_`.
 
+### Type quoting
+It's sometimes necessary to include a dart type in another name (eg for extensions). A dart type may contain characters outside of the identifiers characters: `.()<>[]{},` and space (before `Function`).
+
+Type quoting should be injective (as munging in general). So it's escape sequences must not be mistaken for other escape sequences (especially the ALLCAPS one -- especially for all characters which are valid in clojure symbols too: `.<>`) and for `Function` itself.
+
+If the type is foreign to CLJD it may contain a `$` which will mess up with our munging. But if the type is from CLJD it's safe.
+
+Having two mechanisms is not great. So we should escape `$` and `_` too.
+
+If we are set to escape everything then we should just re-munge the whole type.
+
+With the notable exception we don't have to escape underscores since dashes are not valid in dart names.
+
 ### Invariant
 A munged named must match this regexep: `([a-zA-Z0-9]|\$[a-zA-Z0-9]*_)([a-zA-Z0-9_]|\$[a-zA-Z0-9]*_)*`.
 
