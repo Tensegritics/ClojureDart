@@ -712,7 +712,9 @@
    "]"    "$RBRACK_"
    "/"    "$SLASH_"
    "\\"   "$BSLASH_"
-   "?"    "$QMARK_"})
+   "?"    "$QMARK_"
+   " "    "$SPACE_"
+   ","    "$COMMA_"})
 
 (defn munge-str
   "Returns a dart-safe id as string."
@@ -730,6 +732,23 @@
               ;; TODO SELFHOST :cljd version
               (str/join "_$u" (map #(-> % int Long/toHexString .toUpperCase) x))
               "_")))))))
+
+(defn quote-dart-type
+  [x]
+  (let [s (name x)]
+    (replace-all s #"__(\d+)|__auto__|(^-)|[^a-zA-Z0-9]"
+      (fn [[x n leading-dash]]
+        (else->>
+          (if leading-dash "$_")
+          (if n (str "$" n "_"))
+          (if (= "__auto__" x) "$AUTO_")
+          (or (case x
+                "_" x
+                (char-map x)))
+          (str "$u"
+            ;; TODO SELFHOST :cljd version
+            (str/join "_$u" (map #(-> % int Long/toHexString .toUpperCase) x))
+            "_"))))))
 
 (defn munge
   ([sym env] (munge sym nil env))
@@ -1100,7 +1119,13 @@
               :let [[tag info] (resolve-symbol protocol {})
                     _ (when-not (and (= tag :def) (= :protocol (:type info)))
                         (throw (Exception. (str protocol " isn't a protocol."))))
-                    extension-base (munge* [(str type) (str protocol)]) ; str to get ns aliases if any
+                    _ (assert (symbol? type) (pr-str type))
+                    quoted-type
+                    (case type
+                      fallback "fallback"
+                      (-> type (emit-type {}) type-str quote-dart-type))
+                    extension-base (munge* [quoted-type
+                                            (-> info :dart/qname quote-dart-type)])
                     extension-name (dont-munge extension-base "cext")
                     extension-instance (dont-munge extension-base "extension")]]
           (list 'do

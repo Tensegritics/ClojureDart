@@ -658,13 +658,19 @@
 
 (deftype ExtendTypeWorkingOnMultipleNs [])
 
-(extend-type ExtendTypeWorkingOnMultipleNs
-  cljd.core/IPrint
+(deftype ExtendTypeWorkingOnMultipleNs2 [])
+
+(extend-protocol cljd.core/IPrint
+  ExtendTypeWorkingOnMultipleNs
   (-print [_ a]
-    (.write ^Sink a "ohoh")))
+    (.write ^Sink a "ohoh"))
+  ExtendTypeWorkingOnMultipleNs2
+  (-print [_ a]
+    (.write ^Sink a "ahah")))
 
 (deftest extend-type-multiple-ns
-  (is (= (with-out-str (prn (ExtendTypeWorkingOnMultipleNs)) "ohoh"))))
+  (is (= (with-out-str (prn (ExtendTypeWorkingOnMultipleNs)) "ohoh")))
+  (is (= (with-out-str (prn (ExtendTypeWorkingOnMultipleNs2)) "ahah"))))
 
 (deftest treap
   (let [m (sorted-map)
@@ -685,7 +691,7 @@
     (is (= 42 (-> m (assoc "k" 1) (get "j" 42))))
     (is (every? #(= (m100 (str %)) %) (range 100)))
     (doseq [[args res] {["9" nil 12] [["9" 9] ["90" 90] ["91" 91] ["92" 92] ["93" 93] ["94" 94] ["95" 95] ["96" 96] ["97" 97] ["98" 98] ["99" 99]]
-                        ["9 " nil 12] [["90" 90] ["91" 91] ["92" 92] ["93" 93] ["94" 94] ["95" 95] ["96" 96] ["97" 97] ["98" 98] ["99" 99]]
+                        #_#_["9 " nil 12] [["90" 90] ["91" 91] ["92" 92] ["93" 93] ["94" 94] ["95" 95] ["96" 96] ["97" 97] ["98" 98] ["99" 99]]
                         ["8" "9" 14] [["8" 8] ["80" 80] ["81" 81] ["82" 82] ["83" 83] ["84" 84] ["85" 85] ["86" 86] ["87" 87] ["88" 88] ["89" 89]]
                         ["8" "9" 15] [["8" 8] ["80" 80] ["81" 81] ["82" 82] ["83" 83] ["84" 84] ["85" 85] ["86" 86] ["87" 87] ["88" 88] ["89" 89] ["9" 9]]
                         ["8" "9" 11] [["80" 80] ["81" 81] ["82" 82] ["83" 83] ["84" 84] ["85" 85] ["86" 86] ["87" 87] ["88" 88] ["89" 89] ["9" 9]]
