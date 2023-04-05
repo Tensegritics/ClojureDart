@@ -4497,11 +4497,11 @@
           (cond
             (== i n) node
             (= (aget arr i) k)
-            (let [n (- n 2)
-                  new-arr (ashrink arr n)]
-              (when-not (== i n)
-                (aset new-arr i (aget arr n))
-                (aset new-arr (inc i) (aget arr (inc n))))
+            (let [n-2 (- n 2)
+                  new-arr (ashrink arr n-2)]
+              (when-not (== i n-2)
+                (aset new-arr i (aget arr n-2))
+                (aset new-arr (inc i) (aget arr (inc n-2))))
               (BitmapNode. (dec cnt) 0 0 new-arr))
             :else (recur (+ 2 i)))))))
   (inode_assoc [node ^int shift ^int h k v]
@@ -4546,7 +4546,7 @@
                     shift' (+ 5 ^int shift)
                     n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
                     bit' (u32-bit-shift-left 1 n')
-                    new-node (-> (BitmapNode. 1 bit' bit' #dart ^:fixed [k' v']) (.inode_assoc shift' h k v))
+                    new-node (-> (BitmapNode. 1 bit' bit' #dart ^:fixed [k' v' nil nil]) (.inode_assoc_transient shift' h k v))
                     new-arr (.filled #/(List dynamic) size new-node)]
                 (dotimes [i idx] (aset new-arr i (aget arr i)))
                 (loop [^int i (inc idx) ^int j (inc i)]
@@ -7951,11 +7951,11 @@
                   (aset nodes rank-1 node)
                   (if (odd? i)
                     (do
-                      (aset idxs rank-1 (dec i))
+                      (aset idxs rank-1 i)
                       (recur rank-1 (aget arr (inc i))))
                     (if-some [child (aget arr i)]
                       (do
-                        (aset idxs rank-1 (- i 2))
+                        (aset idxs rank-1 (- i 1))
                         (recur rank-1 child))
                       (do
                         ; if child is nil it means it's the leftmost child
@@ -7973,7 +7973,7 @@
                 (let [i (.tnode_leaf_search node from cmp)]
                   (vreset! vnode node)
                   (cond
-                    (odd? i) (dec i) ; not-found, next key at (inc i) may be in
+                    (odd? i) (inc i) ; not-found, next key at (inc i) may be in
                     (zero? (bit-and 4 flags)) (+ 2 i) ; lower bound excluded
                     :else i))
                 (let [i (.tnode_branch_search node from cmp)
