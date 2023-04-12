@@ -202,10 +202,12 @@
                    (when (.exists pubspec)
                      (if-some [[_ name] (with-open [rdr (io/reader pubspec)]
                                           (some (fn [l] (re-matches #"name:[ ]+(\w+)" l)) (line-seq rdr)))]
-                       [name (clojure.string/replace
-                               (:git/url (val %))
-                               #":|git@"
-                               {":" "/" "git@" "https://"})
+                       [name (let [url (:git/url (val %))]
+                               (cond-> url
+                                 (not (.startsWith url "https"))
+                                 (clojure.string/replace
+                                   #":|git@"
+                                   {":" "/" "git@" "https://"})))
                         (:sha (val %))]
                        (throw (ex-info "Unable to parser pubspec.yaml" {:pubspec-path local-path}))))))
           deps-edn)]
