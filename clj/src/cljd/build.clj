@@ -176,7 +176,7 @@
                                             (if seen-cljd-tag
                                               (or (re-matches #"( {2}| {4}|[ #]+)(.*)" line)
                                                 (= "" line))
-                                              (re-matches #"(clojuredart:)[ #]*" line))]
+                                              (re-matches #"(clojuredart:)(.*)" line))]
                                         [(filter-line-fn seen-cljd-tag acc line) seen-cljd-tag]))
                               [[] false] (with-open [rdr (-> "pubspec.yaml" java.io.File. io/reader)]
                                            (vec (line-seq rdr))))
@@ -194,22 +194,23 @@
               (fn [v] (keep #(when (vector? %) (peek (re-matches #"( {2}| {4})(.*):" (first %)))) v))))
         deps-edn (:deps (:basis (deps/basis nil)))
         cljd-deps-with-pure-dart-dependencies
-        (keep #(when-some [local-path (some-> (:git/url (val %))
-                                        (git/procure
-                                          (key %)
-                                          (:sha (val %))))]
-                 (let [pubspec (java.io.File. (str local-path java.io.File/separatorChar "pubspec.yaml"))]
-                   (when (.exists pubspec)
-                     (if-some [[_ name] (with-open [rdr (io/reader pubspec)]
-                                          (some (fn [l] (re-matches #"name:[ ]+(\w+)" l)) (line-seq rdr)))]
-                       [name (let [url (:git/url (val %))]
-                               (cond-> url
-                                 (not (.startsWith url "https"))
-                                 (clojure.string/replace
-                                   #":|git@"
-                                   {":" "/" "git@" "https://"})))
-                        (:sha (val %))]
-                       (throw (ex-info "Unable to parser pubspec.yaml" {:pubspec-path local-path}))))))
+        (keep #(when (not= 'tensegritics/clojuredart (key %))
+                 (when-some [local-path (some-> (:git/url (val %))
+                                          (git/procure
+                                            (key %)
+                                            (:sha (val %))))]
+                   (let [pubspec (java.io.File. (str local-path java.io.File/separatorChar "pubspec.yaml"))]
+                     (when (.exists pubspec)
+                       (if-some [[_ name] (with-open [rdr (io/reader pubspec)]
+                                            (some (fn [l] (re-matches #"name:[ ]+(\w+)" l)) (line-seq rdr)))]
+                         [name (let [url (:git/url (val %))]
+                                 (cond-> url
+                                   (not (.startsWith url "https"))
+                                   (clojure.string/replace
+                                     #":|git@"
+                                     {":" "/" "git@" "https://"})))
+                          (:sha (val %))]
+                         (throw (ex-info "Unable to parser pubspec.yaml" {:pubspec-path local-path})))))))
           deps-edn)]
     (run!
       (fn [[name url ref]]
