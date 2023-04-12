@@ -211,7 +211,7 @@
           deps-edn)]
     (run!
       (fn [[name url ref]]
-        (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" name (str "--git-url=" url) (str "--git-ref=" ref)))
+        (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind clojure.core/name) "pub" "add" name (str "--git-url=" url) (str "--git-ref=" ref)))
       cljd-deps-with-pure-dart-dependencies)
     (spit "pubspec.yaml"
       (scan-pubspec
