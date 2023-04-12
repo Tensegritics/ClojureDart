@@ -1198,6 +1198,13 @@
 
 (declare cljd-closed-overs)
 
+(defn- blame-macro [f sym]
+  (fn [& args]
+    (try
+      (apply f args)
+      (catch Exception e
+        (throw (Exception. (str "While expanding macro " sym ": " (.getMessage e)) e))))))
+
 (defn macroexpand-1 [env form]
   (->
    (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
@@ -1206,7 +1213,7 @@
            macro-fn (case f-type
                       :def (case (:type f-v) ; TODO rename :type into :kind
                              :class (fn [form _ & _] (with-meta (cons 'new form) (meta form)))
-                             (-> f-v :meta :macro-host-fn))
+                             (some-> f-v :meta :macro-host-fn (blame-macro f)))
                       :dart (case (:kind f-v)
                               :class (fn [form _ & _] (with-meta (cons 'new form) (meta form)))
                               nil)
