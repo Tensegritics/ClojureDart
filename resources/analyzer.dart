@@ -161,7 +161,7 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
   //  throw "coucou";
 //  }
 
-  Map<String, dynamic> _visitInterfaceElement(InterfaceElement e) {
+  Map<String, dynamic> _visitInterfaceElement(InterfaceElement e, {String? interfaceTypeAliasDisplayName}) {
     var f = (t) => emitType(rootLib, t);
     Map<String, dynamic> classData = {
       ':kind': ':class',
@@ -193,7 +193,7 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
       };
     }
     for (final c in e.constructors.where(isPublic)) {
-      classData["\"${c.displayName}\""] = {
+      classData["\"${interfaceTypeAliasDisplayName != null ? c.displayName.replaceFirst(RegExp(e.displayName), interfaceTypeAliasDisplayName) : c.displayName}\""] = {
         ':kind': ':constructor',
         ':named': !c.isDefaultConstructor,
         ':const': c.isConst,
@@ -303,9 +303,13 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
     return this._visitInterfaceElement(e);
   }
 
-  // void visitTypeAliasElement(TypeAliasElement e) {
-  //   print("; typedef ${e.displayName}");
-  // }
+  Map<String, dynamic> visitTypeAliasElement(TypeAliasElement e) {
+    if (e.aliasedType is InterfaceType) {
+      return this._visitInterfaceElement(e.aliasedType.element as InterfaceElement, interfaceTypeAliasDisplayName: e.displayName);
+    }
+    throw "TypeAliasElement type not handled, please contact cljd team @dupuchba or @cgrand";
+    return {};
+  }
 
   Map<String, dynamic> visitFunctionElement(FunctionElement e) {
     return {

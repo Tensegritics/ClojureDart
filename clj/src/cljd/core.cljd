@@ -4294,9 +4294,9 @@
   ^:mixin ToStringMixin
   IPrint
   (-print [o sink] (print-sequential "[" "]" o sink))
-  #/(MapEntry K V)
-  (^K key [_] _k)
-  (^V value [_] _v)
+  ;; #/(MapEntry K V)
+  ;; (^K key [_] _k)
+  ;; (^V value [_] _v)
   IMapEntry
   (-key [node] _k)
   (-val [node] _v)

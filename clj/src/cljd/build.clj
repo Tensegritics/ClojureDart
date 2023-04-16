@@ -159,12 +159,12 @@
         pubspec-yaml (-> analyzer-dir (java.io.File. "pubspec.yaml"))]
     (when-not (.exists pubspec-yaml)
       (with-open [out (java.io.FileOutputStream. pubspec-yaml)]
-        (-> "name: cljd_helper\n\nenvironment:\n  sdk: '>=2.17.0 <3.0.0'\n"
+        (-> "name: cljd_helper\n\nenvironment:\n  sdk: '>=3.0.0-417.1.beta <4.0.0'\n"
           (.getBytes java.nio.charset.StandardCharsets/UTF_8)
           java.io.ByteArrayInputStream.
           (.transferTo out))))
     (when-not (.exists analyzer-dart)
-      (exec {:dir analyzer-dir} (some-> *deps* :cljd/opts :kind name) "pub" "add" "analyzer:5.1.0")
+      (exec {:dir analyzer-dir} (some-> *deps* :cljd/opts :kind name) "pub" "add" "analyzer:5.10.0")
       (with-open [out (java.io.FileOutputStream. analyzer-dart)]
         (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream "analyzer.dart") (.transferTo out))))
     (.getPath analyzer-dir)))
