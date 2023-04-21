@@ -14,7 +14,6 @@ ClojureDart is production-ready: you can ship applications right now.
 Some features are missing:
 - no REPL yet, but we have excellent hot-reload so for UI work you get instant feedback
 - multi-method (WIP)
-- sorted-collection (WIP)
 
 In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart) or open an issue.
 
@@ -61,21 +60,24 @@ Add some source code:
 mkdir -p src/acme
 cat << EOF > src/acme/main.cljd
 (ns acme.main
-  (:require ["package:flutter/material.dart" :as m]))
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
 
 (defn main []
-  (m/runApp
+  (f/run
     (m/MaterialApp
       .title "Welcome to Flutter"
-      .theme (m/ThemeData .primarySwatch m.Colors/pink)
-      .home (m/Scaffold
-              .appBar (m/AppBar
-                        .title (m/Text "Welcome to ClojureDart"))
-              .body (m/Center
-                      .child (m/Text "This text is Centered."
-                               .style (m/TextStyle
-                                        .color m.Colors/red
-                                        .fontSize 32.0)))))))
+      .theme (m/ThemeData .primarySwatch m.Colors/pink))
+    .home
+    (m/Scaffold
+      .appBar (m/AppBar
+                .title (m/Text "Welcome to ClojureDart")))
+    .body
+    m/Center
+    (m/Text "Let's get coding!"
+       .style (m/TextStyle
+                .color m.Colors/red
+                .fontSize 32.0))))
 EOF
 ```
 
