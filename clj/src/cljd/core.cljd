@@ -2848,12 +2848,24 @@
   [^int x ^int y]
   (u32 (.+ x y)))
 
-; can't work for dartjs (see Math/imul)
 (defn ^int u32-mul
-  {:inline (fn [x y] `(u32 (.* ~(hint-as x `int) ~(hint-as y `int))))
+  {:inline (fn [x y]
+             `(let [^int x# ~x ^int y# ~y]
+                (u32
+                  (.+ (u32 (.* (.& 0xFFFF0000 x#) y#))
+                    (.* (.& 0xFFFF x#) y#))))
+             #_`(u32 (.* ~(hint-as x `int) ~(hint-as y `int))))
    :inline-arities #{2}}
   [^int x ^int y]
-  (u32 (.* x y)))
+  ; workaround for dartjs, we don'ty want to have more than 53 significant
+  ; digits in intermediate results.
+  ; x = hi + lo where hi and lo are 16-bit halves of x
+  ; then x * y = (hi + lo) * y = hi*y + lo*y
+  ; where each term of this sum has at most 48 significant bits
+  (u32
+    (.+ (u32 (.* (.& 0xFFFF0000 x) y))
+      (.* (.& 0xFFFF x) y)))
+  #_(u32 (.* x y)))
 
 (defn ^int u32-bit-shift-right
   {:inline (fn [x n] `(.>> ~(hint-as x `int) (.& 31 ~n)))

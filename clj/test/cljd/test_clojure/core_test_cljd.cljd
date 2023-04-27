@@ -727,3 +727,6 @@
   (let [l [nil 0 2.0 "~eight" 1 true "five" false 'seven :six]]
     (is (= (reduce conj #{} l)
           (persistent! (reduce conj! (transient #{}) l))))))
+
+(deftest compiler-and-runtime-agree-on-hash
+  (is (= (hash :left) (hash (keyword "left")))))
