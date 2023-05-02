@@ -4080,7 +4080,7 @@
     (let [end (+ i (alength arr))
           len (-count vec)]
       (when (< end len)
-        (PVChunkedSeq. vec (if (< end (bit-and-not len 31))
+        (PVChunkedSeq. vec (if (< end (bit-and-not (dec len) 31))
                              (unchecked-array-for (.-root vec) (.-shift vec) end)
                              (.-tail vec))
           end 0 nil -1))))

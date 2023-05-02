@@ -730,3 +730,6 @@
 
 (deftest compiler-and-runtime-agree-on-hash
   (is (= (hash :left) (hash (keyword "left")))))
+
+(deftest chunked-seq-of-64-item-vector
+  (is (= (repeat 64 nil) (reduce conj [] (repeat 64 nil)))))
