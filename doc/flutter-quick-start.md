@@ -34,6 +34,8 @@ EOF
 
 `acme.main` is the root namespace of the project where the `main` function is defined.
 
+(To update an existing project to the latest ClojureDart, just do `clj -M:cljd upgrade`)
+
 ## 4. Initialize the project
 
 ``` shell
@@ -48,23 +50,27 @@ First create a directory where clojure files live
 mkdir -p src/acme
 cat << EOF > src/acme/main.cljd
 (ns acme.main
-  (:require ["package:flutter/material.dart" :as m]))
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
 
 (defn main []
-  (m/runApp
+  (f/run
     (m/MaterialApp
       .title "Welcome to Flutter"
-      .theme (m/ThemeData .primarySwatch m/Colors.pink)
-      .home (m/Scaffold
-              .appBar (m/AppBar
-                        .title (m/Text "Welcome to ClojureDart"))
-              .body (m/Center
-                      .child (m/Text "This text is Centered."
-                               .style (m/TextStyle
-                                        .color m.Colors/red
-                                        .fontSize 32.0)))))))
+      .theme (m/ThemeData .primarySwatch m.Colors/pink))
+    .home
+    (m/Scaffold
+      .appBar (m/AppBar
+                .title (m/Text "Welcome to ClojureDart")))
+    .body
+    m/Center
+    (m/Text "Let's get coding!"
+       .style (m/TextStyle
+                .color m.Colors/red
+                .fontSize 32.0))))
 EOF
 ```
+
 ## 7. Start a simulator
 
 ### iOS and iPadOS
