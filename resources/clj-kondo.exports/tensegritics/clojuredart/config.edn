@@ -4,7 +4,7 @@
            :unresolved-namespace {:exclude [dart dart:core]}
            :unresolved-symbol 
            {:exclude [AbstractClassInstantiationError ArgumentError AssertionError BidirectionalIterator 
-                      BigIntbool CastError Comparable Comparator ConcurrentModificationError 
+                      BigIntbool bool CastError Comparable Comparator ConcurrentModificationError 
                       CyclicInitializationError DateTime double Duration Error Exception Expando  
                       FallThroughError Finalizer FormatException Function IndexError IntegerDivisionByZeroException
                       Invocation Iterable Iterator List Map MapEntry Match NoSuchMethodError Null NullThrownError
