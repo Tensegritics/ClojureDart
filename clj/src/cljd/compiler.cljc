@@ -902,7 +902,11 @@
    (dart-member-lookup class member (meta member) env))
   ([class member member-meta {:keys [type-vars] :as env}]
    (let [member-type-arguments (map #(resolve-type % type-vars) (:type-params member-meta))
-         member (name member)]
+         member (name member)
+         member (if (and (.endsWith member ".new")
+                      (= (str (:element-name class) ".new") member))
+                  (:element-name class)
+                  member)]
      (when-some [class-info (full-class-info class)]
        (when-some [[type-env member-info]
                    (or

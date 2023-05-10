@@ -733,3 +733,6 @@
 
 (deftest chunked-seq-of-64-item-vector
   (is (= (repeat 64 nil) (reduce conj [] (repeat 64 nil)))))
+
+(deftest default-constructor-tear-off
+  (is (= (Symbol "hello") (Function.apply Symbol.new ["hello"] {}))))
