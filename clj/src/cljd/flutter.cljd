@@ -376,9 +376,10 @@
           ~@(when dispose [`(-> .-resource (dart/type-like ~expr) ~dispose)])
           (.-resource! nil)))
        (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
-         (let [~binding (dart/type-like (.-resource ^ResourceState state#) ~expr)]
+         (let [~binding (dart/type-like (.-resource ^ResourceState state#) ~expr)
+               ~closest-context ctx#]
            (-widget-cont ~(assoc env :key nil :closest-ctx true)
-                         ~@forms)))
+             ~@forms)))
        (~'-update-state [_# state#]
          (let [state# ^ResourceState state#
                k# ~refresh-on]
