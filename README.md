@@ -7,6 +7,12 @@ ClojureDart is a Clojure dialect for Dart and Flutter.
 Its primary goal is to leverage Dart and Flutter to extend Clojure's reach to
 mobile and desktop apps.
 
+# Dart 3 and Flutter 3.10
+
+On 10 May 2023, Flutter 3.10 was released and is the first version to use Dart 3 which was conjointly released. Dart 3 introduces breaking changes over Dart 2, we are activeky working on Dart 3 support. 
+
+**In the meantime please stick to a previous version of Flutter, it's a matter of days. Thanks!**
+
 # Status
 
 ClojureDart is production-ready: you can ship applications right now.
