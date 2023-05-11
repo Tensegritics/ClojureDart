@@ -277,19 +277,19 @@
         casted-map (. original #/(cast String int))]
     (is (false? (dart/is? original #/(cljd.core/PersistentHashMap String int))))
     (is (true? (dart/is? original #/(cljd.core/PersistentHashMap dynamic dynamic))))
-    (is (false? (dart/is? (first original) #/(cljd.core/PersistentMapEntry String int))))
+    (is (false? (dart/is? (first original) #/(MapEntry String int))))
 
     (is (true? (dart/is? casted-map #/(cljd.core/PersistentHashMap String int))))
-    (is (true? (dart/is? (first casted-map) #/(cljd.core/PersistentMapEntry String int))))
+    (is (true? (dart/is? (first casted-map) #/(MapEntry String int))))
 
-    (is (false? (dart/is? (find [0 1 2] 1) #/(cljd.core/PersistentMapEntry int int))))
-    (is (true? (dart/is? (find (. [0 1 2] #/(cast int)) 1) #/(cljd.core/PersistentMapEntry int int))))
+    (is (false? (dart/is? (find [0 1 2] 1) #/(MapEntry int int))))
+    (is (true? (dart/is? (find (. [0 1 2] #/(cast int)) 1) #/(MapEntry int int))))
 
-    (is (false? (dart/is? (find (subvec [0 1 2] 1) 1) #/(cljd.core/PersistentMapEntry int int))))
-    (is (true? (dart/is? (find (. ^List (subvec [0 1 2] 1) #/(cast int)) 1) #/(cljd.core/PersistentMapEntry int int))))
+    (is (false? (dart/is? (find (subvec [0 1 2] 1) 1) #/(MapEntry int int))))
+    (is (true? (dart/is? (find (. ^List (subvec [0 1 2] 1) #/(cast int)) 1) #/(MapEntry int int))))
 
-    (is (false? (dart/is? (find {"a" "b"} "a") #/(cljd.core/PersistentMapEntry String String))))
-    (is (true? (dart/is? (find (. {"a" "b"} #/(cast String String)) "a") #/(cljd.core/PersistentMapEntry String String))))))
+    (is (false? (dart/is? (find {"a" "b"} "a") #/(MapEntry String String))))
+    (is (true? (dart/is? (find (. {"a" "b"} #/(cast String String)) "a") #/(MapEntry String String))))))
 
 (deftest colls-are-equal-for-dart
   (let [ma {:a 1}
@@ -736,3 +736,8 @@
 
 (deftest default-constructor-tear-off
   (is (= (Symbol "hello") (Function.apply Symbol.new ["hello"] {}))))
+
+(deftest map-entries-equiv
+  (is (= [0 1] (MapEntry 0 1)))
+  (is (= (MapEntry 0 1) [0 1]))
+  (is (= ^:unique (MapEntry 0 1) ^:unique (MapEntry 0 1))))

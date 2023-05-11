@@ -339,6 +339,8 @@ void main(args) async {
     dir = Directory(args.first);
   projectDirectoryPath = dir.uri.toFilePath(windows: Platform.isWindows);
 
+  print("{:dart \"" + Platform.version.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"") + "\"}");
+
   final resourceProvider =
       OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
   var pathContext = resourceProvider.pathContext;

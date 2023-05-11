@@ -1532,7 +1532,7 @@
   (is (nil? (re-seq #"\w+" ""))))
 
 (deftest test-cljs-2001
-  (is (map-entry? (cljd.core/PersistentMapEntry. :key :val -1)))
+  (is (map-entry? (MapEntry :key :val)))
   (is (not (map-entry? [:key :val]))))
 
 (deftype Foo2455 []

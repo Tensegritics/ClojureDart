@@ -42,8 +42,8 @@ the sorting function."}
   [inner outer form]
   (cond
    (list? form) (outer (apply list (map inner form)))
-   (satisfies? cljd.core/IMapEntry form)
-   (outer (cljd.core/PersistentMapEntry. (inner (key form)) (inner (val form)) -1))
+   (map-entry? form)
+   (outer (MapEntry. (inner (key form)) (inner (val form))))
    (seq? form) (outer (doall (map inner form)))
    (satisfies? cljd.core/IRecord form)
      (outer (reduce (fn [r x] (conj r (inner x))) form form))
