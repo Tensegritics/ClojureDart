@@ -388,7 +388,7 @@
                          (cons n (maybe-destructured p body)))))
                 specs)
         deftype-form (list* 'deftype* class-name fields opts specs)]
-    (if (or (:type-only opts) (:abstract (meta class-name)))
+    (if (or (:type-only opts) (:abstract (meta class-name)) (:mixin (meta class-name)))
       deftype-form
       `(do
          ~deftype-form
@@ -868,7 +868,7 @@
         (.write ^StringSink sink s)))
     nil))
 
-(deftype ^:abstract ToStringMixin []
+(deftype ^:mixin ToStringMixin []
   Object
   (toString [o]
     (let [sb (StringBuffer.)]
@@ -1290,7 +1290,7 @@
   (-pop! coll))
 
 (defprotocol IEquiv
-  "Protocol for adding value comparison functionality to a type."
+  "Protocol for adding value equivalence functionality to a type."
   (-equiv [o other]
     "Returns true if o and other are equal, false otherwise."))
 
@@ -1664,7 +1664,7 @@
   (-hash [o] 0)
   (-hash-realized? [o] true))
 
-(extend-type Object
+(extend-type fallback
   IHash
   (-hash [o] (m3-hash-int (.-hashCode o)))
   (-hash-realized? [o] true))
@@ -1710,12 +1710,12 @@
                 (= (get y (first xkv) never-equiv) (second xkv)))
               x)))))))
 
-(deftype ^:abstract EqualsEquivMixin []
+(deftype ^:mixin EqualsEquivMixin []
   Object
   (== [x y] (-equiv x y))
   (hashCode [x] (-hash x)))
 
-(deftype ^:abstract EquivSequentialHashMixin [^:mutable ^int __hash]
+(deftype ^:mixin EquivSequentialHashMixin [^:mutable ^int __hash]
   Object
   (== [x y] (-equiv-sequential x y))
   (hashCode [x] (-hash x))
@@ -1916,24 +1916,21 @@
   [map key]
   (-find map key))
 
-(defprotocol IMapEntry
-  "Protocol for examining a map entry."
-  (-key [coll]
-    "Returns the key of the map entry.")
-  (-val [coll]
-    "Returns the value of the map entry."))
-
 (defn ^bool map-entry?
   [x]
-  (satisfies? IMapEntry x))
+  (dart/is? x MapEntry))
 
 (defn key
   "Returns the key of the map entry."
+  {:inline (fn [x] `(.-key (hint-as ~x MapEntry)))
+   :inline-arities #{2}}
   [^MapEntry e]
   (.-key e))
 
 (defn val
   "Returns the key of the map entry."
+  {:inline (fn [x] `(.-val (hint-as ~x MapEntry)))
+   :inline-arities #{2}}
   [^MapEntry e]
   (.-value e))
 
@@ -3065,7 +3062,7 @@
             true) false sequence)
   (.write sink end))
 
-(deftype ^:abstract #/(SeqListMixin E)
+(deftype ^:mixin #/(SeqListMixin E)
   []
   Object
   (toString [o]
@@ -3500,6 +3497,19 @@
    ^:mutable ^List curr]
   :type-only true) ; predecl
 
+(defprotocol IComparable
+  "Protocol for adding value comparison functionality to a type
+   which doesn't implement dc.Comparable."
+  (-compare [o other]))
+
+(defn ^int compare [x y]
+  (cond
+    (identical? x y) 0
+    (nil? x) -1
+    (nil? y) 1
+    (dart/is? x Comparable) (.compareTo ^Comparable x y)
+    :else (-compare x y)))
+
 (defn- ^int compare-indexed
   "Used as foundation for indexed DS as comparator function."
   [x y]
@@ -3510,7 +3520,7 @@
       (< cnty cntx) 1
       :else (loop [^int idx 0]
               (if (< idx cntx)
-                (let [c (.compareTo ^Comparable (-nth x idx) (-nth y idx))]
+                (let [c (compare (-nth x idx) (-nth y idx))]
                   (if (zero? c)
                     (recur (inc idx))
                     c))
@@ -3608,7 +3618,7 @@
   IFind
   (-find [coll n]
     (when-some [v' (-lookup coll n nil)]
-      (new #/(PersistentMapEntry int E) n v' -1)))
+      (new #/(MapEntry int E) n v')))
   #_APersistentVector
   IVector
   (-assoc-n [coll n val]
@@ -3775,20 +3785,10 @@
   ^:mixin EquivSequentialHashMixin
   ^:mixin #/(dart-coll/ListMixin E)
   (iterator [coll]
-    (if (dart/is? v PersistentMapEntry)
-      (->
-        (if (.== end start) ; untyped lists because E is only a promise in Cljd
-          #dart ^:fixed []
-          (cond
-            (pos? start) #dart ^:fixed [(val v)]
-            (.== 1 end) #dart ^:fixed [(key v)]
-            :else #dart ^:fixed [(key v) (val v)]))
-        (. #/(cast E))
-        .-iterator)
-      (PVIterator. v start end
-        (if (<= (bit-and-not (dec (.-cnt v)) 31) start)
-          (.-tail v)
-          (unchecked-array-for (.-root v) (.-shift v) start)))))
+    (PVIterator. v start end
+      (if (<= (bit-and-not (dec (.-cnt v)) 31) start)
+        (.-tail v)
+        (unchecked-array-for (.-root v) (.-shift v) start))))
   ^:mixin #/(SeqListMixin E)
   (^#/(SubVec R) #/(cast R) [coll]
    (new #/(SubVec R) meta v start end __hash))
@@ -3849,7 +3849,7 @@
   IFind
   (-find [coll n]
     (when-some [v' (-lookup coll n nil)]
-      (new #/(PersistentMapEntry int E) n v' -1)))
+      (new #/(MapEntry int E) n v')))
   IVector
   (-assoc-n [coll n val]
     (let [^int n n
@@ -4260,9 +4260,6 @@
 
 ;;; Mapentry
 (extend-type MapEntry
-  IMapEntry
-  (-key [node] (.-key node))
-  (-val [node] (.-value node))
   ICounted
   (-count [_] 2)
   IIndexed
@@ -4273,47 +4270,28 @@
   (-nth [node n not-found]
     (cond (== n 0) (.-key node)
           (== n 1) (.-value node)
-          :else    not-found)))
-
-(deftype #/(PersistentMapEntry K V)
-  [_k _v ^:mutable ^int __hash]
-  :type-only true
-  ^:mixin EquivSequentialHashMixin
-  ^:mixin ToStringMixin
+          :else    not-found))
   IPrint
-  (-print [o sink] (print-sequential "[" "]" o sink))
-  ;; #/(MapEntry K V)
-  ;; (^K key [_] _k)
-  ;; (^V value [_] _v)
-  IMapEntry
-  (-key [node] _k)
-  (-val [node] _v)
+  (-print [o sink]
+    (doto ^StringSink sink
+      (.write "[")
+      (->> (-print (.-key o)))
+      (.write " ")
+      (->> (-print (.-value o)))
+      (.write "]")))
   IMeta
   (-meta [node] nil)
   IStack
-  (-peek [node] _v)
-  (-pop [node]
-    (PersistentVector. nil 1 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k] -1))
+  (-peek [node] (.-value node))
+  (-pop [node] [(.-key node)])
   ICollection
-  (-conj [node o]
-    (PersistentVector. nil 3 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v o]  -1))
+  (-conj [node o] [(.-key node) (.-value node) o])
   IEmptyableCollection
   (-empty [node] nil)
   ISeqable
-  (-seq [node] (cons _k (cons _v nil)))
+  (-seq [node] (cons (.-key node) (cons (.-value node) nil)))
   IReversible
-  (-rseq [node] (cons _v (cons _k nil)))
-  ICounted
-  (-count [node] 2)
-  IIndexed
-  (-nth [node n]
-    (cond (== n 0) _k
-          (== n 1) _v
-          :else    (throw (ArgumentError. "Index out of bounds"))))
-  (-nth [node n not-found]
-    (cond (== n 0) _k
-          (== n 1) _v
-          :else    not-found))
+  (-rseq [node] (cons (.-value node) (cons (.-key node) nil)))
   ILookup
   (-lookup [node k] (-nth node k nil))
   (-lookup [node k not-found] (-nth node k not-found))
@@ -4321,9 +4299,7 @@
     (or (== k 0) (== k 1)))
   IAssociative
   (-assoc [node k v]
-    (->
-      (PersistentVector. nil 2 5 (.-root -EMPTY-VECTOR) #dart ^:fixed [_k _v]  -1)
-      (-assoc k v)))
+    (-assoc [(.-key node) (.-value node)] k v))
   #_#_IFind
   (-find [node k]
     ;; TODO : replace with case
@@ -4332,31 +4308,33 @@
       (== k 1) (MapEntry. 1 val -1)))
   IVector
   (-assoc-n [node n v]
-    (->
-      (PersistentVector. nil 2 5 (.-root -EMPTY-VECTOR)
-        #dart ^:fixed [_k _v]  -1)
-      (-assoc-n n v)))
+    (-assoc-n [(.-key node) (.-value node)] n v))
   IReduce
   (-reduce [node f]
-    (unreduced (f _k _v)))
+    (unreduced (f (.-key node) (.-value node))))
   (-reduce [node f start]
-    (let [r (f start _k)]
-      (if (reduced? r)
-        (deref r)
-        (unreduced (f r _v)))))
+    (let [r (f start (.-key node))]
+      (unreduced (cond-> r (not (reduced? r))
+                   (f (.-value node))))))
   IFn
   (-invoke [node k]
     (-nth node k))
   (-invoke [node k not-found]
     (-nth node k not-found))
-  Comparable
-  (compareTo [x y]
+  IComparable
+  (-compare [x y]
     (if (vector? y)
       (compare-indexed x y)
       (throw (ArgumentError. (str "Cannot compare " x " to " y)))))
   ISubvecable
-  (-subvec [coll start end]
-    (if (zero? start) [_k] [_v])))
+  (-subvec [node start end]
+    (if (zero? start) [(.-key node)] [(.-value node)]))
+  ISequential
+  IEquiv
+  (-equiv [x y] (-equiv-sequential x y))
+  IHash
+  (-hash [coll] (hash-ordered-coll coll))
+  (-hash-realized? [coll] false))
 
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr] :type-only true)
 
@@ -4770,7 +4748,7 @@
       (throw (ArgumentError. "conj! after persistent!")))
     (cond
       (map-entry? o)
-      (-assoc! tcoll (-key o) (-val o))
+      (-assoc! tcoll (key o) (val o))
       (vector? o)
       (-assoc! tcoll (-nth o 0) (-nth o 1))
       :else
@@ -4884,7 +4862,7 @@
        (BitmapIterator. root 0 0 0 1
          (.filled #/(List int) 7 (bit-or (.-bitmap_hi root) (.-bitmap_lo root)))
          (.filled #/(List BitmapNode) 7 root)
-         #(new #/(PersistentMapEntry K V) %1 %2 -1))
+         #(new #/(MapEntry K V) %1 %2))
        )))
   ("[]" [coll k]
    (-lookup coll k nil))
@@ -4959,7 +4937,7 @@
   IFind
   (-find [coll k]
     (when-some [v (-lookup coll k nil)]
-      (new #/(PersistentMapEntry K V) k v -1)))
+      (new #/(MapEntry K V) k v)))
   IMap
   (-dissoc [coll k]
     (let [new-root (.inode_without root 0 (hash k) k)]
@@ -6878,13 +6856,6 @@
           (next keys)))
       (-with-meta ret (meta map)))))
 
-(defn ^int compare [x y]
-  (cond
-    (identical? x y) 0
-    (nil? x) -1
-    (nil? y) 1
-    :else (.compareTo ^Comparable x y)))
-
 (defn ^#/(dynamic dynamic -> int) dart-comparator
   "Takes a fn that might be boolean valued or a comparator,
    returns a dart:core/Comparator."
@@ -7170,8 +7141,8 @@
              (new ~name ~@(conj (vec fields) 'meta) (or (dissoc ~extmap k#) {}) -1)))
          'cljd.core/ISeqable
          `(~'-seq [coll#]
-           ;; TODO: cast PME to K & V
-           (seq (concat [~@(map #(list 'new 'cljd.core/PersistentMapEntry (keyword %) % -1) fields)]  ~extmap)))
+           ;; TODO: cast ME to K & V
+           (seq (concat [~@(map #(list 'new 'dart:core/MapEntry (keyword %) %) fields)]  ~extmap)))
          'cljd.core/IAssociative
          (let [v (gensym "val")]
            `(~'-assoc [coll# k# ~v]
@@ -7212,11 +7183,13 @@
          (let [coll (gensym "coll")]
            `(~'entries [~coll]
              (-> ~(tagged-literal 'dart
-                    ;; TODO: cast PME to K V
-                    (with-meta (into [] (map #(list 'new 'cljd.core/PersistentMapEntry (keyword %) % -1) fields))
-                      {:fixed true
-                       :tag '^{:type-params (K V)} dart:core/MapEntry}))
-               (.followedBy (.-entries ~extmap)))))
+                    ;; TODO: cast ME to K V
+                    (with-meta (into [] (map #(list 'new 'dart:core/MapEntry (keyword %) %) fields))
+                      {:fixed true}))
+               (.followedBy (.-entries ~extmap))
+               ~(with-meta
+                  '.cast {:type-params [(with-meta 'dart:core/MapEntry
+                                         {:type-params '(K V)})]}))))
          (let [coll (gensym "coll")]
            `(~(with-meta 'keys {:tag (with-meta 'Iterable {:type-params '(K)})}) [~coll]
              (-> ~(tagged-literal 'dart
@@ -7715,7 +7688,7 @@
         (TreapIterator root 0 top-rank
           (.filled #/(List int) top-rank 0)
           (.filled #/(List TreapNode) top-rank root)
-          #(new #/(PersistentMapEntry K V) %1 %2 -1)
+          #(new #/(MapEntry K V) %1 %2)
           nil 0))))
   ("[]" [coll k]
     (-lookup coll k nil))
@@ -7793,7 +7766,7 @@
   IFind
   (-find [coll k]
     (when-some [v (-lookup coll k nil)]
-      (new #/(PersistentMapEntry K V) k v -1)))
+      (new #/(MapEntry K V) k v)))
   IMap
   (-dissoc [coll k]
     (let [new-root (.tnode_without root top-rank (hashrank k) k cmp)]
@@ -7827,13 +7800,13 @@
                  nil nil 0)
             init (let [idx (.-idx (doto it .moveNext))
                        arr (-> it .-node .-arr)]
-                   (new #/(PersistentMapEntry K V) (aget arr (- idx 2)) (aget arr (dec idx)) -1))]
+                   (new #/(MapEntry K V) (aget arr (- idx 2)) (aget arr (dec idx))))]
         (loop [acc init]
           (if (not (.moveNext it))
             acc
             (let [idx (.-idx it)
                   arr (-> it .-node .-arr)
-                  acc (f acc (new #/(PersistentMapEntry K V) (aget arr (- idx 2)) (aget arr (dec idx)) -1))]
+                  acc (f acc (new #/(MapEntry K V) (aget arr (- idx 2)) (aget arr (dec idx))))]
               (if (reduced? acc)
                 (unreduced acc)
                 (recur acc))))))
@@ -7848,7 +7821,7 @@
           acc
           (let [idx (.-idx it)
                 arr (-> it .-node .-arr)
-                acc (f acc (new #/(PersistentMapEntry K V) (aget arr (- idx 2)) (aget arr (dec idx)) -1))]
+                acc (f acc (new #/(MapEntry K V) (aget arr (- idx 2)) (aget arr (dec idx))))]
             (if (reduced? acc)
               (unreduced acc)
               (recur acc)))))))
@@ -7865,7 +7838,7 @@
           (TreapReverseIterator root (alength (.-arr root)) top-rank
             (.filled #/(List int) top-rank 0)
             (.filled #/(List TreapNode) top-rank root)
-            #(new #/(PersistentMapEntry K V) %1 %2 -1)
+            #(new #/(MapEntry K V) %1 %2)
             nil 0)))))
   ISorted
   (-sorted-seq [coll from to flags]
@@ -7927,7 +7900,7 @@
                       (recur rank-1 (aget arr (+ 2 i)))))))))]
       (iterator-seq
         (TreapIterator from-node from-idx from-rank
-          idxs nodes #(new #/(PersistentMapEntry K V) %1 %2 -1)
+          idxs nodes #(new #/(MapEntry K V) %1 %2)
           @vnode to-idx))))
   (-sorted-rseq [coll from to flags]
     (let [flags ^int flags
@@ -7988,7 +7961,7 @@
                       (recur rank-1 (aget arr (+ 2 i)))))))))]
       (iterator-seq
         (TreapReverseIterator to-node to-idx to-rank
-          idxs nodes #(new #/(PersistentMapEntry K V) %1 %2 -1)
+          idxs nodes #(new #/(MapEntry K V) %1 %2)
           @vnode from-idx)))))
 
 (defn sorted-map-by

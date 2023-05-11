@@ -248,6 +248,8 @@
   [lib element] returns a full map TBD."}
   analyzer-info)
 
+(def ^:dynamic *dart-version* :dart3)
+
 (defn mk-dead-analyzer-info [dart-libs-info]
   (fn
     ([lib] (some-> (dart-libs-info lib) (select-keys [:private])))
@@ -259,6 +261,7 @@
   (let [stdin (java.io.OutputStreamWriter. (.getOutputStream p) "UTF-8")
         stdout (clojure.lang.LineNumberingPushbackReader.
                  (java.io.InputStreamReader. (.getInputStream p) "UTF-8"))
+        {dart-version :dart} (edn/read stdout)
         cache (atom (-> {}
                       (assoc-in ["dart:core" "Never"] dc-Never)
                       (assoc-in ["dart:core" "dynamic"] dc-dynamic)
@@ -275,6 +278,11 @@
                                     (map? v) [k (qname v)]
                                     (vector? v) [k (into [] (map qname) v)]
                                     :else [k v]))))))]
+    (set! *dart-version*
+      (cond
+        (.startsWith dart-version "3.") :dart3
+        (.startsWith dart-version "2.") :dart2
+        :else (throw (Exception. (str "Unsupported Dart version: " dart-version)))))
     #_(fn [& args]
         (let [c @cache
               r (c args c)]
@@ -2062,7 +2070,7 @@
                       fixed-arities-expr)))))))
         [{:keys [current-ns]}] (swap-vals! nses assoc :current-ns 'cljd.core)]
     (emit
-      `(deftype ~(vary-meta (dont-munge mixin-name nil) assoc :abstract true) []
+      `(deftype ~(vary-meta (dont-munge mixin-name nil) assoc :mixin true) []
          cljd.core/IFn
          ~@fixed-invokes
          ~@invoke-exts
@@ -2730,6 +2738,7 @@
             (not (reserved-words (name class-name))))
     "class-names must be valid dart ids")
   (let [abstract (:abstract (meta class-name))
+        mixin (:mixin (meta class-name))
         [class-name & type-params] (cons class-name (:type-params (meta class-name)))
         mclass-name (with-meta
                       (or (:dart/name (meta class-name)) class-name)
@@ -2741,7 +2750,7 @@
                               {:keys [dart/type] :as m} (dart-meta f env)
                               m (cond-> m
                                   mutable (assoc :dart/mutable true)
-                                  abstract (assoc :dart/late true))]]
+                                  (or mixin abstract) (assoc :dart/late true))]]
                     [f (vary-meta (munge f env) merge m)]))
         dart-fields (map env fields)
         parsed-class-specs (parse-class-specs class-name opts specs env)
@@ -2770,6 +2779,7 @@
                   (assoc :name dart-type
                          :ctor mclass-name
                          :abstract abstract
+                         :mixin mixin
                          :fields dart-fields
                          :ctor-params (map #(list '. %) dart-fields))
                   (assoc-in [:super-ctor :args]
@@ -3480,11 +3490,11 @@
     (dart-print (case opt-kind :positional "]" "}")))
   (dart-print ")"))
 
-(defn write-class [{class-name :name :keys [abstract extends implements with fields ctor ctor-params super-ctor methods nsm]}]
+(defn write-class [{class-name :name :keys [mixin abstract extends implements with fields ctor ctor-params super-ctor methods nsm]}]
   (when abstract (dart-print "abstract "))
   (let [[_ dart-alias local-class-name] (re-matches #"(?:([a-zA-Z0-9_$]+)\.)?(.+)" (type-str class-name))]
     ; TODO assert dart-alias is current alias
-    (dart-print "class" local-class-name))
+    (dart-print (if mixin "mixin class" "class") local-class-name))
   (when extends (dart-print " extends ") (write-type extends))
   (write-types with " with ")
   (write-types implements " implements ")
@@ -3496,7 +3506,7 @@
     (when type (write-type type) (dart-print " "))
     (dart-print field) (dart-print ";\n"))
 
-  (when-not abstract
+  (when-not (or mixin abstract)
     (dart-newline)
     (when (-> class-name :members (get (name ctor)) :const) ; this :members is weird
       (dart-print "const "))

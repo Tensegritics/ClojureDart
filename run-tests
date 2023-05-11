@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+PATH="$PWD/.fvm/flutter_sdk/bin:$PATH"
+
 set -e
 
 rm -rf tmp/tests

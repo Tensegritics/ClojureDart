@@ -228,10 +228,12 @@
     (ensure-pubspec-dependencies)
     (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind name) "pub" "get")
     (binding [compiler/*hosted* true
-              compiler/analyzer-info
-              (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil :dir analyzer-dir}
-                                                (some-> *deps* :cljd/opts :kind name)
-                                                "pub" "run" "bin/analyzer.dart" user-dir))]
+              compiler/*dart-version* nil
+              compiler/analyzer-info nil]
+      (set! compiler/analyzer-info
+        (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil :dir analyzer-dir}
+                                          (some-> *deps* :cljd/opts :kind name)
+                                          "pub" "run" "bin/analyzer.dart" user-dir)))
       (newline)
       (println (title "Compiling cljd.core to Dart"))
       (compile-core)
