@@ -23,6 +23,12 @@ In any case get in touch with us on [Clojurians #ClojureDart channel](https://cl
 
 We have a [cheatsheet](doc/ClojureDart%20Cheatsheet.pdf) covering ClojureDart specifics on one side and Flutter programming on the other side.
 
+# Conj 2023
+
+Want to see what's the workflow like? Our talk at Clojure/Conj 2023 is mostly a live-coding session, starting from scratch and assuming no prior knowledge of Dart or Flutter!
+
+https://www.youtube.com/watch?v=dqBeGpuedf0&list=PLZdCLR02grLpIQQkyGLgIyt0eHE56aJqd&index=24
+
 # Links dump
 
 [Slack](https://clojurians.slack.com/app_redirect?channel=clojuredart)
