@@ -159,7 +159,7 @@
         pubspec-yaml (-> analyzer-dir (java.io.File. "pubspec.yaml"))]
     (when-not (.exists pubspec-yaml)
       (with-open [out (java.io.FileOutputStream. pubspec-yaml)]
-        (-> "name: cljd_helper\n\nenvironment:\n  sdk: '>=3.0.0-417.1.beta <4.0.0'\n"
+        (-> "name: cljd_helper\n\nenvironment:\n  sdk: '>=2.17.0 <4.0.0'\n"
           (.getBytes java.nio.charset.StandardCharsets/UTF_8)
           java.io.ByteArrayInputStream.
           (.transferTo out))))
@@ -235,6 +235,7 @@
                                           (some-> *deps* :cljd/opts :kind name)
                                           "pub" "run" "bin/analyzer.dart" user-dir)))
       (newline)
+      (println "targetting" (name compiler/*dart-version*))
       (println (title "Compiling cljd.core to Dart"))
       (compile-core)
       (let [dirs (into #{} (map #(java.io.File. %)) (:paths *deps*))
