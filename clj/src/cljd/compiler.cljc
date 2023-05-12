@@ -3494,8 +3494,8 @@
   (when abstract (dart-print "abstract "))
   (let [[_ dart-alias local-class-name] (re-matches #"(?:([a-zA-Z0-9_$]+)\.)?(.+)" (type-str class-name))]
     ; TODO assert dart-alias is current alias
-    (dart-print (if mixin "mixin class" "class") local-class-name))
-  (when extends (dart-print " extends ") (write-type extends))
+    (dart-print (if mixin "mixin" "class") local-class-name))
+  (when extends (dart-print (if mixin " on " " extends ")) (write-type extends))
   (write-types with " with ")
   (write-types implements " implements ")
   (dart-print " {\n")
