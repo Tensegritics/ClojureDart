@@ -45,8 +45,6 @@ jobs:
         run: ./run-tests
         shell: bash
 
-          dart-stable:
-
   testing-on-dart2:
     strategy:
       matrix:
