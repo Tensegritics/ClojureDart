@@ -235,8 +235,10 @@
                                           (some-> *deps* :cljd/opts :kind name)
                                           "pub" "run" "bin/analyzer.dart" user-dir)))
       (newline)
-      (println "targetting" (name compiler/*dart-version*))
-      (println (title "Compiling cljd.core to Dart"))
+      (println (title (str "Compiling cljd.core to Dart "
+                        (case compiler/*dart-version*
+                          :dart2 "2"
+                          :dart3 "3"))))
       (compile-core)
       (let [dirs (into #{} (map #(java.io.File. %)) (:paths *deps*))
             dirty-nses (volatile! #{})
