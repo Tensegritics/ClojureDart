@@ -9,7 +9,7 @@ However in Dart, generics are not erased so we ClojureDart people have to deal w
 ## Notation transcription
 Every time you see `foo<bar,baz>` you can write `#/(foo bar baz)`, it's irrelevant to whether the `foo` symbol is a type, a method or whatever.
 
-`#/(foo bar baz)` read as a symbol with metadata. It's just a shorthand for `^{:type-params [bar baz]} foo`.
+`#/(foo bar baz)` reads as a symbol with metadata: it's just a shorthand for `^{:type-params [bar baz]} foo`.
 
 ## Covariance and contravariance
 Let's not talk about function return types for now and consider all other cases.
