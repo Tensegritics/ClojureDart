@@ -1,4 +1,4 @@
-# All you have never wanted to know about Dart generics
+# All you never wanted to know about Dart generics
 
 ## Preamble
 In Java, generics exist only at the language level, not at the JVM level (the loss of this information is known as type erasure).
@@ -63,7 +63,7 @@ List<Object> objects = [42];
 acceptOnlyStrings(objects.cast()); // still 👌 despite 42 being obviously not a string!
 ```
 
-`.cast` methods create wrappers whose purpose is only to lie on their static type. The lie will hold as long as we don't di anything that could betray it:
+`.cast` methods create wrappers whose purpose is only to lie on their static type. The lie will hold as long as we don't do anything that could betray it:
 
 ```dart
 List<Object> objects = ["I'm a string", 42];
