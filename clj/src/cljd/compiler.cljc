@@ -3864,8 +3864,9 @@
           (dart-print "if(")
           (write test expr-locus)
           (dart-print "){\n")
+          (write then locus)
           (cond
-            (write then locus)
+            (:exit locus)
             (do
               (dart-print "}\n")
               (write else locus))

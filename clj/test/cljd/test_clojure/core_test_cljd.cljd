@@ -741,3 +741,13 @@
   (is (= [0 1] (MapEntry 0 1)))
   (is (= (MapEntry 0 1) [0 1]))
   (is (= ^:unique (MapEntry 0 1) ^:unique (MapEntry 0 1))))
+
+(deftest no-short-circuiting-in-statement-position
+  (let [f (fn [n]
+            (let [a (atom 0)]
+              (cond
+                (= 1 n) (swap! a inc)
+                (= 1 n) (throw (Exception. "thrown"))
+                :else (swap! a inc))
+              @a))]
+    (is (= 1 (f 1)))))
