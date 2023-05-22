@@ -12,6 +12,7 @@
 (ns cljd.test-clojure.core-test-cljd
   (:require ["dart:developer" :as dev]
             ["dart:io" :as io]
+            ["dart:typed_data" :as typed-data]
             [cljd.string :as str])
   (:use [cljd.test :only [deftest is testing are]]))
 
@@ -751,3 +752,8 @@
                 :else (swap! a inc))
               @a))]
     (is (= 1 (f 1)))))
+
+(deftest constructor-as-set-target
+  ; ensures that all targets are lifted unless they are dart/as
+  ; it's mostly a compile-time test as this expression used to crash the cmpiler
+  (is (= 1.0 (.-last! (typed-data/Float32List 63) 1.0))))

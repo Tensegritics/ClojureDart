@@ -1842,7 +1842,13 @@
             [_ fld] (re-matches #"-?(.+)" (name member))
             #_(dart-member-lookup type! fld nil env)
             ; TODO actual field resolution + simple-cast
-            [bindings [dart-obj dart-val]] (lift-args true (split-args [obj expr] nil env) env)]
+            [bindings [dart-obj dart-val]] (lift-args true (split-args [obj expr] nil env) env)
+            ; only dart/as supported by the writer, this forcibly lift everything
+            ; else even if "lift-safe".
+            dart-obj-binding (when (and (seq? dart-obj) (not= 'dart/as (first dart-obj)))
+                               (dart-binding "obj" dart-obj env))
+            dart-obj (or (first dart-obj-binding) dart-obj)
+            bindings (cond->> bindings dart-obj-binding (cons dart-obj-binding))]
         (list 'dart/let
               (conj (vec bindings)
                     [nil (list 'dart/set! (list 'dart/.- dart-obj fld) dart-val)])
