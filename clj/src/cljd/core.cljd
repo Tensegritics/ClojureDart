@@ -3786,7 +3786,7 @@
   (moveNext [iter]
     (and (< to i)
       (let [i-1 (dec i)]
-        (when (zero? (bit-and i 31))
+        (when (and (zero? (bit-and i 31)) (< i (.-cnt v)))
           (set! curr (unchecked-array-for (.-root v) (.-shift v) i-1)))
         (set! i i-1)
         true))))

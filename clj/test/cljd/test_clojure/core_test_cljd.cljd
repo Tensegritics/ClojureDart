@@ -30,14 +30,15 @@
 
 (deftest testing-dart-literal-typehints
   (testing "#dart[] List are typehints"
-    (is (dart/is? #dart[1 2] #/(List dynamic)))
-    (is (dart/is? #dart ^int [1 2] #/(List int)))
-    (is (dart/is? #dart ^:fixed ^int [1 2] #/(List int)))
+    (is (dart/is? #dart[1 2] #/[List dynamic]))
+    (is (dart/is? #dart ^int [1 2] #/[List int]))
+    (is (not (dart/is? #dart ^int [1 2] #/[List String])))
+    (is (dart/is? #dart ^:fixed ^int [1 2] #/[List int]))
     (let [a #dart ^int [1 2]
           b a
           c b
           d c]
-      (dart/is? d #/(List int)))))
+      (is (dart/is? d #/[List int])))))
 
 (deftest testing-if-typehints
   (testing "if typehints"
@@ -757,3 +758,7 @@
   ; ensures that all targets are lifted unless they are dart/as
   ; it's mostly a compile-time test as this expression used to crash the cmpiler
   (is (= 1.0 (.-last! (typed-data/Float32List 63) 1.0))))
+
+(deftest rseq-on-vectors-whose-length-is-a-multiple-of-32
+  (is (= (range 31 -1 -1) (rseq (vec (range 32)))))
+  (is (= (range 63 -1 -1) (rseq (vec (range 64))))))
