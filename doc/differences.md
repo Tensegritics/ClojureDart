@@ -12,7 +12,6 @@ Dart has three compilation targets:
 ## Missing features
  * [REPL](https://github.com/Tensegritics/ClojureDart/issues/6)
  * [multimethods](https://github.com/Tensegritics/ClojureDart/issues/3)
- * [sorted collections](https://github.com/Tensegritics/ClojureDart/issues/4)
 
 ## Divergent features
 ### ns, :require, :use and :import
@@ -89,6 +88,9 @@ Code like this is fine:
 (defmacro my-macro [& body]
   `(my-fn (fn [] ~@body))) ; it's ok, nothing special to do
 ```
+
+## Lazy defs
+`def`s are not initialized in order but lazily on a by-need basis. This is a consequence of Dart tree-shaking and fast startup goals.
 
 ## Interop
 ### Member names as strings
