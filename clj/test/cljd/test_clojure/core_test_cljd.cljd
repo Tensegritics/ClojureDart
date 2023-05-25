@@ -762,3 +762,9 @@
 (deftest rseq-on-vectors-whose-length-is-a-multiple-of-32
   (is (= (range 31 -1 -1) (rseq (vec (range 32)))))
   (is (= (range 63 -1 -1) (rseq (vec (range 64))))))
+
+(deftest atom-can-be-used-in-stream
+  (let [ping (atom nil)
+        first-val (.-first (stream ping))]
+    (reset! ping 1)
+    (is (= 1 (await first-val)))))

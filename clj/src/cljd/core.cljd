@@ -7286,7 +7286,7 @@
      (dart/is? x Stream) x
      (dart/is? x Future) (Stream/fromFuture x)
      (dart/is? x Iterable) (Stream/fromIterable x)
-     (satisfies? x IWatchable)
+     (satisfies? IWatchable x)
      (let [ctrl (dart-async/StreamController.broadcast)
            cb (fn [k r o n] (.add ctrl n))]
        (add-watch x cb cb)
