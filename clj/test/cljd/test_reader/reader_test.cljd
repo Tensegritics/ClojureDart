@@ -44,7 +44,12 @@
   (is (== 1340 (int/parse "02474" .radix 8) (await (r/read-string "02474"))))
   (is (== -1340 (int/parse "-02474" .radix 8) (await (r/read-string "-02474"))))
   (is (thrown-with-msg? FormatException #"Invalid number: 09."
-        (await (r/read-string "09")))))
+        (await (r/read-string "09"))))
+
+  ;; arbitrary radix
+  (is (= 3 (r/read-string "2r11")))
+  (is (= 13 (r/read-string "12r11")))
+  (is (= 37 (r/read-string "36r11"))))
 
 (deftest read-floating
   (is (== 42.23 (await (r/read-string "42.23"))))
@@ -146,29 +151,43 @@
   (is (= {:tag "foo"} (meta (await (r/read-string "^\"foo\" 'bar")))))
   (is (= {:tag 'String} (meta (await (r/read-string "^String 'x"))))))
 
-(comment
 
-  (deftest read-keyword
-    (is (= :foo-bar (await (r/read-string ":foo-bar"))))
-    (is (= :foo/bar (await (r/read-string ":foo/bar"))))
-    (is (= :*+!-_? (await (r/read-string ":*+!-_?"))))
-    (is (= :abc:def:ghi (await (r/read-string ":abc:def:ghi"))))
-    (is (= :abc.def/ghi (await (r/read-string ":abc.def/ghi"))))
-    (is (= :abc/def.ghi (await (r/read-string ":abc/def.ghi"))))
-    (is (= :abc:def/ghi:jkl.mno (await (r/read-string ":abc:def/ghi:jkl.mno"))))
-    (is (dart/is? (await (r/read-string ":alphabet")) cljd.core/Keyword))
-    #_(is (= :bar/bar (binding [*alias-map* '{foo bar}] (r/read-string "::foo/bar")))))
+(deftest read-keyword
+  (is (= :foo-bar (await (r/read-string ":foo-bar"))))
+  (is (= :foo/bar (await (r/read-string ":foo/bar"))))
+  (is (= :*+!-_? (await (r/read-string ":*+!-_?"))))
+  (is (= :abc:def:ghi (await (r/read-string ":abc:def:ghi"))))
+  (is (= :abc.def/ghi (await (r/read-string ":abc.def/ghi"))))
+  (is (= :abc/def.ghi (await (r/read-string ":abc/def.ghi"))))
+  (is (= :abc:def/ghi:jkl.mno (await (r/read-string ":abc:def/ghi:jkl.mno"))))
+  (is (dart/is? (await (r/read-string ":alphabet")) cljd.core/Keyword))
+  #_(is (= :bar/bar (binding [*alias-map* '{foo bar}] (r/read-string "::foo/bar")))))
+
+(deftest read-char
+  (are [expected s] (= expected (r/read-string s))
+    \a "\\a"
+    \return "\\return"
+    \uABCD "\\uABCD"
+    \o40 "\\o40"))
+
+(deftest read-unquote
+  (are [expected s] (= expected (r/read-string s))
+    '(cljd.core/unquote 42) "~42"
+    '(cljd.core/unquote-splicing 42) "~@42"))
+
+(comment
 
   (deftest read-regex
     ;; TODO: handle modifiers
     #_(is (= (.-pattern #"(?i)abc")
             (.-pattern (await (r/read-string "#\"(?i)abc\"")))))
     (is (= (.-pattern #"\[\]?(\")\\")
-          (.-pattern (await (r/read-string "#\"\\[\\]?(\\\")\\\\\""))))))
+          (.-pattern (await (r/read-string "#\"\\[\\]?(\\\")\\\\\"")))))))
 
-  (deftest read-quote
-    (is (= ''foo (await (r/read-string "'foo")))))
+(deftest read-quote
+  (is (= ''foo (await (r/read-string "'foo")))))
 
+(comment
   (def cljd-resolver
     (reify r/IResolver
       (currentNS [_] 'cljd.user)
@@ -268,11 +287,12 @@
           '(cljd.core/seq
              (cljd.core/concat
                (cljd.core/list (quote .prop))
-               (cljd.core/list (quote cljd.user/obj)))))))
+               (cljd.core/list (quote cljd.user/obj))))))))
 
-  (deftest read-deref
-    (is (= '(cljd.core/deref foo) (await (r/read-string "@foo")))))
+(deftest read-deref
+  (is (= '(cljd.core/deref foo) (await (r/read-string "@foo")))))
 
+(comment
   (deftest read-var
     (is (= '(var foo) (await (r/read-string "#'foo")))))
 
@@ -343,21 +363,27 @@
         (is (= a {:a 1 :b 2 :c 3}))
         (is (instance? PersistentArrayMap a))
         (is (= b {:a 1 :b 2 :c 3 :d 4 :e 5 :f 6 :g 7 :h 8 :i 9}))
-        (is (instance? PersistentHashMap b))))
+        (is (instance? PersistentHashMap b)))))
 
-  ;; End of cljs.tools.reader-test
-  (deftest testing-simple-collections
-    (is (= (await (r/read-string "(1 2 3)"))
-          (list 1 2 3)))
-    (is (= (await (r/read-string "(true true nil)"))
-          (list true true nil)))
-    (is (= (await (r/read-string "[true true nil]"))
-          [true true nil]))
-    (is (= (await (r/read-string "{true true nil nil}"))
-          {true true nil nil}))
-    (is (= (await (r/read-string "{true true nil [true true]}"))
-          {true true nil [true true]})))
 
+;; End of cljs.tools.reader-test)
+(deftest testing-simple-collections
+  (is (= (await (r/read-string "(1 2 3)"))
+        (list 1 2 3)))
+  (is (= (await (r/read-string "(true true nil)"))
+        (list true true nil)))
+  (is (= (await (r/read-string "[true true nil]"))
+        [true true nil]))
+  (is (= (await (r/read-string "{true true nil nil}"))
+        {true true nil nil}))
+  (is (= (await (r/read-string "{true true nil [true true]}"))
+        {true true nil [true true]})))
+
+(deftest testing-discard
+    (is (= (r/read-string "#{:aaa #_(1 2 3) 1 2 3}")
+          #{:aaa #_(1 2 3) 1 2 3})))
+
+  (comment
   ;; TODO: add options
   (deftest testing-reader-cond-exceptions
     (is (thrown-with-msg? FormatException #"EOF while reading"
@@ -419,7 +445,7 @@
             {true true nil nil}))
       (is (= (await (r/read-string "{true true nil [true true]}"))
             {true true nil [true true]})))
-  #_#_#_#_#_#_#_#_#_#_#_#_#_#_#_#_(is (= (await (r/read-string "#(:aa % 1 %2 %& 2 3 4)"))
+  #_#_#_#_#_#_#_#_#_#_#_#_#_#_(is (= (await (r/read-string "#(:aa % 1 %2 %& 2 3 4)"))
                                         #(:aa % 1 %2 %& 2 3 4)))
   (is (= (await (r/read-string "#(1)"))
         #(1)))
@@ -447,10 +473,9 @@
         (:aaa :aa/bb :aa:adsf:sdf :dd///)))
   (is (= (await (r/read-string "(:aaa #_(1 2 3) 1 2 3 )"))
         (:aaa #_(1 2 3) 1 2 3 )))
-  (is (= (await (r/read-string "#{:aaa #_(1 2 3) 1 2 3}"))
-        #{:aaa #_(1 2 3) 1 2 3}))
 
 
-  (is (= (await (r/read-string "@true"))
-        @true))
+
+  #_(is (= (await (r/read-string "@true"))
+        '@true))
   #_(as-> (await (r/read-string ";;coucou text \n (true true)")) r (prn r (.-runtimeType r))))
