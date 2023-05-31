@@ -14,7 +14,9 @@ So dynamic calls:
 
 We currently do not correctly infer extension methods as methods, but you can still use them with our custom syntax.
 Let's take the example of `DateTimeCopyWith` from `dart:core`, which can be found at https://api.flutter.dev/flutter/dart-core/DateTimeCopyWith.html .
+
 This class exposes a new extension method called `copyWith`, which allows you to create a copy of a DateTime object and override its properties according to your needs.
+
 In pure Dart, you would write the following code:
 ``` dart
 var now = DateTime.now();
