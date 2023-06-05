@@ -1,0 +1,6 @@
+{:paths ["src"] ; where your cljd files are
+ :deps {org.clojure/clojure {:mvn/version "1.10.1"}
+        tensegritics/clojuredart {:local/root "../../"}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :cljd/opts {:main sample.navigate-named-routes
+             :kind :flutter}}

@@ -1,0 +1,39 @@
+(ns sample.navigate-named-routes
+  "Port of https://docs.flutter.dev/cookbook/navigation/named-routes.html"
+  (:require
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter :as f]))
+
+(defn ^m/Widget first-screen [ctx]
+  (f/widget
+    :get [m/Navigator]
+    (m/Scaffold
+       .appBar (m/AppBar
+                .title (m/Text "First Screen"))
+       .body   (m/Center
+                .child (m/ElevatedButton
+                            .onPressed #(do
+                                          (.pushNamed navigator "/second")
+                                          nil)
+                            .child     (m/Text "Launch Screen"))))))
+
+
+(defn ^m/Widget second-screen [ctx]
+  (f/widget
+    :get [m/Navigator]
+    (m/Scaffold
+       .appBar (m/AppBar
+                .title (m/Text "Second Screen"))
+       .body   (m/Center
+                .child (m/ElevatedButton
+                            .onPressed #(.pop navigator)
+                            .child     (m/Text "Go Back!"))))))
+
+(defn main []
+  (m/runApp
+   (m/MaterialApp
+    .title "Navigation Basics"
+    .initialRoute "/"
+    .routes       {"/" first-screen
+                   "/second"   second-screen})))
+
