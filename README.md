@@ -15,13 +15,6 @@ Work is not complete, some features are missing:
 - no REPL yet, but we have excellent hot-reload so for UI work you get instant feedback
 - multi-method (WIP)
 
-# Support
-Stop by the [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart) or open an issue.
-
-If you are betting the farm on ClojureDart, *we can offer you paid support and assistance*.
-
-You can help us spend more time on ClojureDart by sponsoring [:heart: Baptiste](https://github.com/sponsors/dupuchba) or [:heart: Christophe](https://github.com/sponsors/cgrand).
-
 # Cheatsheet
 
 We have a [cheatsheet](doc/ClojureDart%20Cheatsheet.pdf) covering ClojureDart specifics on one side and Flutter programming on the other side.
