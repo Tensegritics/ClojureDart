@@ -1,0 +1,69 @@
+(ns sample.drawer-navigate-named
+  "Example for using drawer with named routes navigation."
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
+
+(defn drawer
+  [component]
+  (f/widget
+    :let [drawer-routes [["/"
+                          "Initial Page"
+                          m/Icons.home]
+                         ["/favorites"
+                          "Favorite Page"
+                          m/Icons.favorite]
+                         ["/movies"
+                          "Movies Page"
+                          m/Icons.local_movies]]]
+    (m/Scaffold
+      .appBar (m/AppBar
+                .title (m/Text "Drawer"))
+      .drawer (f/widget
+                :get [m/Navigator]
+                m/Drawer
+                (m/ListView
+                  .padding (m/EdgeInsets.all 20)
+                  .children (into [(f/widget
+                                     (m/SizedBox .height 50)
+                                     (m/Container))]
+                                  (map (fn [[route
+                                             title
+                                             icon]]
+                                         (f/widget
+                                           (m/ListTile
+                                             .leading (m/Icon icon)
+                                             .title (m/Text title)
+                                             .onTap
+                                             (fn []
+                                               (.pop navigator)
+                                               (.pushNamed navigator route)
+                                               nil)))))
+                                  drawer-routes)))
+      .body component)))
+
+
+(def routes
+  {"/"          (drawer
+                  (f/widget
+                    m/Center
+                    (m/Text "Initial Page!")))
+   "/favorites" (drawer
+                  (f/widget
+                    m/Center
+                    (m/Text "Favorites Page!")))
+   "/movies"    (drawer
+                  (f/widget
+                    m/Center
+                    (m/Text "Movies Page!")))})
+
+
+(defn main []
+  (f/run
+    (m/MaterialApp
+      .title "Drawer with Named Routes Demo"
+      .initialRoute "/"
+      .routes       (into {}
+                          (keep (fn [[k v]]
+                                  {k (fn ^m/Widget k [ctx]
+                                       v)}))
+                          routes))))
