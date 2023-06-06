@@ -1,23 +1,26 @@
 <img src="logo1024.png" width="100%">
 
 # What is ClojureDart?
+ClojureDart is a Clojure dialect for Dart (2.13+ and 3) and Flutter.
 
-ClojureDart is a Clojure dialect for Dart and Flutter.
+It's production-ready: you can ship applications with it right now.
 
 Its primary goal is to leverage Dart and Flutter to extend Clojure's reach to
 mobile and desktop apps.
 
 # Status
+We stay true to Clojure philosophy and we will avoid breaking changes at all cost.
 
-ClojureDart is production-ready: you can ship applications right now.
-
-It works with both Dart 2.13+ and Dart 3.
-
-Some features are missing:
+Work is not complete, some features are missing:
 - no REPL yet, but we have excellent hot-reload so for UI work you get instant feedback
 - multi-method (WIP)
 
-In any case get in touch with us on [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart) or open an issue.
+# Support
+Stop by the [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart) or open an issue.
+
+If you are betting the farm on ClojureDart, *we can offer you paid support and assistance*.
+
+You can help us spend more time on ClojureDart by sponsoring [:heart: Baptiste](https://github.com/sponsors/dupuchba) or [:heart: Christophe](https://github.com/sponsors/cgrand).
 
 # Cheatsheet
 
