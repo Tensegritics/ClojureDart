@@ -143,6 +143,23 @@ Method names can be tagged with `:getter` and/or `:setter` if the method is in f
 
 For a getter you must provide a 1-arg arity of the method (`[this]`) and for a setter a 2-arg arity (`[this new-value]`).
 
+#### `^:mutable`
+**deftype**
+`deftype` parameters can be tagged as mutable. Once mutable the field can be modified with `set!`.
+
+Below an example with 3 equivalent methods setting the val field.
+
+``` clj
+(deftype Example [^:mutable ^int val]
+  (method [this new-val]
+    (set! val new-val))
+  (method2 [this new-val]
+    (.-val! this new-val))
+  (method3 [this new-val]
+    (set! (.-val this) this new-val)))
+```
+
+
 #### Calling `super`
 When you must call the `super` implementation (since one can now extend a super type) you have to add metadata on the "this" at the super call site. For example when implementing a [State](https://api.flutter.dev/flutter/widgets/State/initState.html) one can write:
 
