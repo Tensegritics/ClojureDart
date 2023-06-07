@@ -768,3 +768,9 @@
         first-val (.-first (stream ping))]
     (reset! ping 1)
     (is (= 1 (await first-val)))))
+
+(deftest dart-record-literal-are-working
+  (is (dart/is? #dart(1) Record))
+  (is (dart/is? #dart(1 .name "name") Record))
+  (is (dart/is? #dart(.name "name") Record))
+  (is (dart/is? #dart() Record)))

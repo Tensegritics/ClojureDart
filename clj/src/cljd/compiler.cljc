@@ -367,7 +367,8 @@
    ; map from aliases found in clj code to dart libs
    :clj-aliases {"dart:core" "dart:core"}
    :mappings
-   '{Type dart:core/Type,
+   '{Record dart:core/Record
+     Type dart:core/Type,
      BidirectionalIterator dart:core/BidirectionalIterator,
      bool dart:core/bool,
      UnimplementedError dart:core/UnimplementedError,
@@ -1351,15 +1352,15 @@
        (list 'dart/let bindings# ~wrapped-expr)
        ~wrapped-expr)))
 
-(defn- lift-arg [must-lift x hint env]
-  (or (liftable x env)
-      (cond
-        (lift-safe? x) [nil x]
-        (and must-lift (not (:dart/const (infer-type x))))
-        (let [[tmp :as binding] (dart-binding hint x env)]
-          [[binding] tmp])
-        :else
-        [nil x])))
+(defn- lift-arg [must-lift dart-expr hint env]
+  (or (liftable dart-expr env)
+    (cond
+      (lift-safe? dart-expr) [nil dart-expr]
+      (and must-lift (not (:dart/const (infer-type dart-expr))))
+      (let [[tmp :as binding] (dart-binding hint dart-expr env)]
+        [[binding] tmp])
+      :else
+      [nil dart-expr])))
 
 (defn- ensure-kw [x]
   (cond
@@ -1633,31 +1634,50 @@
     (cond->> dart-fn-call
       (seq bindings) (list 'dart/let bindings))))
 
+(defn emit-dart-list-literal
+  [maybe-quoted-emit x env]
+  (else->>
+    (let [item-tag (:tag (meta x) 'dart:core/dynamic)
+          list-tag (vary-meta 'dart:core/List assoc :type-params [item-tag])])
+    (if (:fixed (meta x))
+      (if-some [[item & more-items] (seq x)]
+        (let [lsym (dart-local (with-meta 'fl {:tag list-tag}) env)]
+          (list 'dart/let
+            (cons
+              [lsym (with-lifted [item (maybe-quoted-emit item env)] env
+                      (list 'dart/. (emit-type list-tag env) "filled" (count x) item))]
+              (map-indexed (fn [i item]
+                             [nil (with-lifted [item (maybe-quoted-emit item env)] env
+                                    (list 'dart/. lsym "[]=" (inc i) item))])
+                more-items))
+            lsym))
+        (emit (list '. list-tag 'empty) env)))
+    (let [item-type (or (resolve-type item-tag (:type-vars env)) dc-dynamic)
+          [bindings items] (lift-args (for [item x] [nil (emit item env) item-type]) env)]
+      (cond->> #_(vec items)
+               (with-meta (vec items) (meta (dart-local (with-meta 'fl {:tag list-tag}) env)))
+               (seq bindings) (list 'dart/let bindings)))))
+
+(defn emit-dart-record-literal
+  [x env]
+  (let [split-args+types (split-args x nil env)
+        [bindings dart-record-args] (lift-args split-args+types env)]
+    (cond->> (with-meta (list* 'dart/record dart-record-args)
+               {:dart/type dc-dynamic
+                :dart/const (every? (comp :dart/const infer-type) (remove keyword? dart-record-args))
+                :dart/inferred true})
+      (seq bindings) (list 'dart/let bindings))))
+
 (defn emit-dart-literal
-  ([x env] (emit-dart-literal emit x env))
-  ([maybe-quoted-emit x env]
-   (else->>
-     (if (not (vector? x))
-       (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x})))
-     (let [item-tag (:tag (meta x) 'dart:core/dynamic)
-           list-tag (vary-meta 'dart:core/List assoc :type-params [item-tag])])
-     (if (:fixed (meta x))
-       (if-some [[item & more-items] (seq x)]
-         (let [lsym (dart-local (with-meta 'fl {:tag list-tag}) env)]
-           (list 'dart/let
-             (cons
-               [lsym (with-lifted [item (maybe-quoted-emit item env)] env
-                       (list 'dart/. (emit-type list-tag env) "filled" (count x) item))]
-               (map-indexed (fn [i item]
-                              [nil (with-lifted [item (maybe-quoted-emit item env)] env
-                                     (list 'dart/. lsym "[]=" (inc i) item))])
-                 more-items))
-             lsym))
-         (emit (list '. list-tag 'empty) env)))
-     (let [item-type (or (resolve-type item-tag (:type-vars env)) dc-dynamic)
-           [bindings items] (lift-args (for [item x] [nil (emit item env) item-type]) env)]
-       (cond->> #_(vec items) (with-meta (vec items) (meta (dart-local (with-meta 'fl {:tag list-tag}) env)))
-                (seq bindings) (list 'dart/let bindings))))))
+  [x env]
+  (cond
+    (vector? x)
+    (emit-dart-list-literal emit x env)
+
+    (list? x)
+    (emit-dart-record-literal x env)
+    :else
+    (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))))
 
 (defn emit-coll
   ([coll env] (emit-coll emit coll env))
@@ -1675,7 +1695,7 @@
                     (set? coll) 'cljd.core/set
                     (seq? coll) 'cljd.core/-list-lit
                     :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll}))) ]
-       (with-lifted [fixed-list (emit-dart-literal maybe-quoted-emit (with-meta (vec items) {:fixed true}) env)] env
+       (with-lifted [fixed-list (emit-dart-list-literal maybe-quoted-emit (with-meta (vec items) {:fixed true}) env)] env
          (list (emit fn-sym env) fixed-list)))
      :empty-coll
      (emit
@@ -3750,6 +3770,12 @@
         (print-post locus))
     (seq? x)
     (case (let [op (first x)] (when (symbol? op) op))
+      dart/record
+      (let [[_ & args] x]
+        (print-pre locus)
+        (write-args args)
+        (print-post locus)
+        (:exit locus))
       dart/fn
       (let [[_ fixed-params opt-kind opt-params async body] x]
         (print-pre locus)
@@ -4284,7 +4310,8 @@
 
     (require '[cljd.build :as build])
 
-    (binding [build/*deps* {:cljd/opts {:kind :dart}}]
+    (binding [build/*deps* {:cljd/opts {:kind :dart}}
+              *dart-version* :dart3]
       (let [user-dir (System/getProperty "user.dir")
             analyzer-dir (build/ensure-cljd-analyzer!)]
         (build/exec {:in nil :out nil} "dart" "pub" "get")
@@ -4292,6 +4319,17 @@
                  (build/exec {:async true :in nil :out nil :dir analyzer-dir}
                              (some-> build/*deps* :cljd/opts :kind name)
                              "pub" "run" "bin/analyzer.dart" user-dir))))))
+
+  (binding [analyzer-info li
+            *dart-out* *out*
+            *locals-gen* {}]
+    #_(write
+      (emit-test `~(tagged-literal 'dart '[1 2]) {})
+      return-locus)
+    (write (emit `(let [a# '~(tagged-literal 'dart ['caca])]
+                    a#) {})
+      return-locus)
+    )
 
 
 
