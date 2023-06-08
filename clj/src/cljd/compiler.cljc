@@ -4092,7 +4092,10 @@
         (str/join "/" (concat (map (constantly "..") ss) all-ts))))))
 
 ;; Compile clj -> dart file
-(defn dump-ns [{ns-lib :lib :as ns-map}]
+(defn dump-ns [ns-name {ns-lib :lib :as ns-map}]
+  (tap> {::msg-kind :dump-ns
+         :ns ns-name
+         :lib ns-lib})
   (doseq [lib (keys (:imports ns-map))
           :let [dart-alias (-> @nses :libs (get lib) :dart-alias)]]
     (dart-print "import ")
@@ -4230,6 +4233,7 @@
 
 (defn compile-namespace [ns-name]
   ;; iterate first on file variants then on paths, not the other way!
+  (tap> {::msg-kind :compile-ns :ns ns-name})
   (let [file-paths (ns-to-paths ns-name)
         cljd-core (when-not (= ns-name 'cljd-core) (get @nses 'cljd.core))]
     (if-some [[file-path url] (some (fn [p] (some->> (find-resource p) (vector p))) file-paths)]
@@ -4252,7 +4256,7 @@
                           (java.io.OutputStreamWriter. "UTF-8")
                           java.io.BufferedWriter.)]
         (binding [*dart-out* out#]
-          (dump-ns ns-map#))))))
+          (dump-ns ns# ns-map#))))))
 
 (defn compile
   [ns]

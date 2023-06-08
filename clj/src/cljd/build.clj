@@ -105,7 +105,7 @@
       (st/print-stack-trace e))))
 
 (defn timestamp []
-  (.format (java.text.SimpleDateFormat. "@HH:mm" java.util.Locale/FRENCH) (java.util.Date.)))
+  (.format (java.text.SimpleDateFormat. "@HH:mm:ss" (java.util.Locale/getDefault)) (java.util.Date.)))
 
 (defn exec [& args]
   (let [{:keys [async in err out env dir] :as opts
@@ -168,126 +168,141 @@
         (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream "analyzer.dart") (.transferTo out))))
     (.getPath analyzer-dir)))
 
+(defmacro with-taps [fns & body]
+  `(let [fns# [~@fns]]
+     (try
+       (run! add-tap fns#)
+       ~@body
+       (finally
+         (run! remove-tap fns#)))))
+
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
   (let [user-dir (System/getProperty "user.dir")
         analyzer-dir (ensure-cljd-analyzer!)]
     (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind name) "pub" "get")
-    (binding [compiler/*hosted* true
-              compiler/*dart-version* nil
-              compiler/analyzer-info nil]
-      (set! compiler/analyzer-info
-        (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil :dir analyzer-dir}
-                                          (some-> *deps* :cljd/opts :kind name)
-                                          "pub" "run" "bin/analyzer.dart" user-dir)))
-      (newline)
-      (println (title (str "Compiling cljd.core to Dart "
-                        (case compiler/*dart-version*
-                          :dart2 "2"
-                          :dart3 "3"))))
-      (compile-core)
-      (let [dirs (into #{} (map #(java.io.File. %)) (:paths *deps*))
-            dirty-nses (volatile! #{})
-            recompile-count (volatile! 0)
-            compile-nses
-            (fn [nses]
-              (let [nses (into @dirty-nses nses)]
-                (vreset! dirty-nses #{})
-                (when (seq nses)
-                  (newline)
-                  (println (title "Compiling to Dart...") (timestamp))
-                  (run! #(println " " %) (sort nses))
-                  (try
-                    (compiler/recompile nses (vswap! recompile-count inc))
-                    (println (success))
-                    true
-                    (catch Exception e
-                      (vreset! dirty-nses nses)
-                      (print-exception e)
-                      false)))))
-            compilation-success (compile-nses namespaces)]
-        (when (or watch flutter)
-          (let [compile-files
-                (fn [^java.io.Writer flutter-stdin]
-                  (fn [_ files]
-                    (when (some->
-                            (for [^java.io.File f files
-                                  :let [fp (.toPath f)]
-                                  ^java.io.File d dirs
-                                  :let [dp (.toPath d)]
-                                  :when (.startsWith fp dp)
-                                  :let [ns (compiler/peek-ns f)]
-                                  :when ns]
-                              ns)
-                            seq
-                            compile-nses)
-                      (when flutter-stdin
-                        (locking flutter-stdin
-                          (doto flutter-stdin (.write "r") .flush))))))]
-            (watch-dirs-until true? (or (boolean compilation-success) :first)
-              dirs
-              (fn [state changes]
-                (if (or (= :first state) (seq changes))
-                  (boolean (compile-nses namespaces))
-                  state)))
-            (newline)
-            (when flutter
-              (println (title (str/join " " (into ["Launching flutter run"] flutter)))))
-            (let [p (some->> flutter
-                      (apply exec {:async true :in nil :out nil :env {"TERM" ""}} "flutter" "run"))]
-              (try
-                (let [flutter-stdin (some-> p .getOutputStream (java.io.OutputStreamWriter. "UTF-8"))
-                      flutter-stdout (some-> p .getInputStream (java.io.InputStreamReader. "UTF-8") java.io.BufferedReader.)
-                      ansi *ansi*]
-                  ; Unimplemented handling of missing static target
-                  (when (and flutter-stdin flutter-stdout)
-                    (doto (Thread. #(while true
-                                      (let [s (read-line)]
-                                        (locking flutter-stdin
-                                          (doto flutter-stdin
-                                            (.write (case s "" "R" s))
-                                            .flush)))))
-                      (.setDaemon true)
-                      .start)
-                    (doto (Thread.
-                            #(binding [*ansi* ansi]
-                               (loop [state :idle]
-                                 (when-some [line (.readLine flutter-stdout)]
-                                   (when-not (= :reload-failed state)
-                                     (println line))
-                                   (let [line (.trim line)]
-                                     (case state
-                                       :idle
-                                       (condp = line
-                                         "Performing hot reload..." (recur :reloading)
-                                         "Performing hot restart..." (recur :restarting)
-                                         (recur state))
-                                       :reloading
-                                       (condp = line
-                                         "Unimplemented handling of missing static target" (recur :reload-failed)
-                                         (recur state))
-                                       :reload-failed
-                                       (if (re-matches #"Reloaded .+ of .+ libraries in .+." line)
-                                         (do
-                                           (newline)
-                                           (println (bright "Hot reload failed, attempting hot restart!"))
-                                           (locking flutter-stdin
-                                             (doto flutter-stdin
-                                               (.write "R")
-                                               .flush))
-                                           (recur :restarting))
-                                         (recur state))
-                                       :restarting
-                                       (if (re-matches #"Restarted application .+" line)
-                                         (recur :idle)
-                                         (recur state))))))))
-                      (.setDaemon true)
-                      .start))
-                  (watch-dirs-until (fn [_] (some-> p .isAlive not)) nil dirs (compile-files flutter-stdin))
-                  (when p
-                    (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
-                (finally
-                  (some-> p .destroy))))))))))
+    (with-taps
+      [(fn [x]
+         (case (::compiler/msg-kind x)
+           :compile-ns
+           (println " - compiling" (:ns x) (timestamp))
+           :dump-ns
+           (println " - writing compiled" (:ns x) "to" (:lib x) (timestamp))))]
+      (binding [compiler/*hosted* true
+                compiler/*dart-version* nil
+                compiler/analyzer-info nil]
+        (set! compiler/analyzer-info
+          (compiler/mk-live-analyzer-info (exec {:async true :in nil :out nil :dir analyzer-dir}
+                                            (some-> *deps* :cljd/opts :kind name)
+                                            "pub" "run" "bin/analyzer.dart" user-dir)))
+        (newline)
+        (println (title (str "Compiling cljd.core to Dart "
+                          (case compiler/*dart-version*
+                            :dart2 "2"
+                            :dart3 "3"))))
+        (compile-core)
+        (let [dirs (into #{} (map #(java.io.File. %)) (:paths *deps*))
+              dirty-nses (volatile! #{})
+              recompile-count (volatile! 0)
+              compile-nses
+              (fn [nses]
+                (let [nses (into @dirty-nses nses)]
+                  (vreset! dirty-nses #{})
+                  (when (seq nses)
+                    (newline)
+                    (println (title "Compiling to Dart...") (timestamp))
+                    (run! #(println " " %) (sort nses))
+                    (try
+                      (compiler/recompile nses (vswap! recompile-count inc))
+                      (println (success) (timestamp))
+                      true
+                      (catch Exception e
+                        (vreset! dirty-nses nses)
+                        (print-exception e)
+                        false)))))
+              compilation-success (compile-nses namespaces)]
+          (when (or watch flutter)
+            (let [compile-files
+                  (fn [^java.io.Writer flutter-stdin]
+                    (fn [_ files]
+                      (when (some->
+                              (for [^java.io.File f files
+                                    :let [fp (.toPath f)]
+                                    ^java.io.File d dirs
+                                    :let [dp (.toPath d)]
+                                    :when (.startsWith fp dp)
+                                    :let [ns (compiler/peek-ns f)]
+                                    :when ns]
+                                ns)
+                              seq
+                              compile-nses)
+                        (when flutter-stdin
+                          (locking flutter-stdin
+                            (doto flutter-stdin (.write "r") .flush))))))]
+              (watch-dirs-until true? (or (boolean compilation-success) :first)
+                dirs
+                (fn [state changes]
+                  (if (or (= :first state) (seq changes))
+                    (boolean (compile-nses namespaces))
+                    state)))
+              (newline)
+              (when flutter
+                (println (title (str/join " " (into ["Launching flutter run"] flutter)))))
+              (let [p (some->> flutter
+                        (apply exec {:async true :in nil :out nil :env {"TERM" ""}} "flutter" "run"))]
+                (try
+                  (let [flutter-stdin (some-> p .getOutputStream (java.io.OutputStreamWriter. "UTF-8"))
+                        flutter-stdout (some-> p .getInputStream (java.io.InputStreamReader. "UTF-8") java.io.BufferedReader.)
+                        ansi *ansi*]
+                    ; Unimplemented handling of missing static target
+                    (when (and flutter-stdin flutter-stdout)
+                      (doto (Thread. #(while true
+                                        (let [s (read-line)]
+                                          (locking flutter-stdin
+                                            (doto flutter-stdin
+                                              (.write (case s "" "R" s))
+                                              .flush)))))
+                        (.setDaemon true)
+                        .start)
+                      (doto (Thread.
+                              #(binding [*ansi* ansi]
+                                 (loop [state :idle]
+                                   (when-some [line (.readLine flutter-stdout)]
+                                     (when-not (= :reload-failed state)
+                                       (println line))
+                                     (let [line (.trim line)]
+                                       (case state
+                                         :idle
+                                         (condp = line
+                                           "Performing hot reload..." (recur :reloading)
+                                           "Performing hot restart..." (recur :restarting)
+                                           (recur state))
+                                         :reloading
+                                         (condp = line
+                                           "Unimplemented handling of missing static target" (recur :reload-failed)
+                                           (recur state))
+                                         :reload-failed
+                                         (if (re-matches #"Reloaded .+ of .+ libraries in .+." line)
+                                           (do
+                                             (newline)
+                                             (println (bright "Hot reload failed, attempting hot restart!"))
+                                             (locking flutter-stdin
+                                               (doto flutter-stdin
+                                                 (.write "R")
+                                                 .flush))
+                                             (recur :restarting))
+                                           (recur state))
+                                         :restarting
+                                         (if (re-matches #"Restarted application .+" line)
+                                           (recur :idle)
+                                           (recur state))))))))
+                        (.setDaemon true)
+                        .start))
+                    (watch-dirs-until (fn [_] (some-> p .isAlive not)) nil dirs (compile-files flutter-stdin))
+                    (when p
+                      (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
+                  (finally
+                    (some-> p .destroy)))))))))))
 
 (defn gen-entry-point []
   (let [deps-cljd-opts (:cljd/opts *deps*)
