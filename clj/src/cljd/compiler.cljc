@@ -1132,6 +1132,7 @@
               :let [[tag info] (resolve-symbol protocol {})
                     _ (when-not (and (= tag :def) (= :protocol (:type info)))
                         (throw (Exception. (str protocol " isn't a protocol."))))
+                    type (if (nil? type) 'dart:core/Null type)
                     quoted-type
                     (case type
                       fallback "fallback"
