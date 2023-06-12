@@ -395,10 +395,18 @@
   (let [v (volatile! nil)]
     [#(vreset! v (f)) #(f @v)]))
 
-(defn register-fixtures [fixtures-callbacks]
+(defn register-once-fixtures [fixtures-callbacks]
   (doseq [[setUp tearDown] fixtures-callbacks]
     (dt/setUpAll setUp)
     (dt/tearDownAll tearDown)))
+
+(defn register-each-fixtures [fixtures-callbacks]
+  (doseq [[setUp tearDown] fixtures-callbacks]
+    (dt/setUp setUp)
+    (dt/tearDown tearDown)))
+
+(defn register-fixtures [fixtures-callbacks]
+  (register-once-fixtures fixtures-callbacks))
 
 (defmacro use-fixtures [type & fns]
   `(do
@@ -415,7 +423,7 @@
         tests (keep (fn [[k v]] (when (and (symbol? k) (::test (:meta v))) (list k))) the-ns)]
     `(defn ~'^:dart/test main []
        ~(when (the-ns 'cljd-test-once-fixtures)
-          `(register-fixtures ~'cljd-test-once-fixtures))
+          `(register-once-fixtures ~'cljd-test-once-fixtures))
        ~@tests)))
 
 (defmacro deftest
@@ -438,7 +446,7 @@
                thunk#
                (fn []
                  ~(when (the-ns 'cljd-test-each-fixtures)
-                    `(register-fixtures ~'cljd-test-each-fixtures))
+                    `(register-each-fixtures ~'cljd-test-each-fixtures))
                  (testing name# ~@body))]
            (if *in-test*
              (thunk#)
