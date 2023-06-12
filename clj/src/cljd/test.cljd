@@ -148,7 +148,7 @@
    (use-fixtures :each fixture1 fixture2 ...)
    The fixture1, fixture2 are just functions like the example above.
    They can also be anonymous functions, like this:
-   (use-fixtures :each (fn [f] setup... (f) cleanup...))
+   (use-fixtures :each (fn ([] setup...) ([res] cleanup...)))
 
    The other kind of fixture, a \"once\" fixture, is only run once,
    around ALL the tests in the namespace.  \"once\" fixtures are useful
