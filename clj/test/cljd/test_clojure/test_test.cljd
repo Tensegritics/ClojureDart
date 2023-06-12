@@ -12,7 +12,7 @@
    (reset! test-state {})))
 
 (defn ^:private repeated-fixture
-  "Resets test-state to what it was before running the tests `f`"
+  "Resets test-state to what it was before running the tests"
   ([] ;;setup
    @test-state)
   ([start-state] ;; teardown
