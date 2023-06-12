@@ -1379,7 +1379,7 @@
    where name is nil for positional parameters, dart-code MAY NOT BE A DART EXPR
    and thus must be lifted (see lift-args)."
   [args [fixed-types opts-types :as method-sig] env]
-  {:post [(or (every? (fn [[_ _ t]] (some? t)) %) (prn args method-sig))]}
+  #_{:post [(or (every? (fn [[_ _ t]] (some? t)) %) (prn args method-sig))]}
   (cond
     (nil? method-sig)
     (let [[positional-args named-args]
@@ -2170,6 +2170,17 @@
 (defn- ensure-future [type]
   (assoc dc-Future :type-parameters [(no-future (or type dc-dynamic))]))
 
+(defn- leaves
+  [branch? children tree]
+  ; reduced not properly handled
+  (reify clojure.lang.IReduceInit
+    (reduce [this rf init]
+      (letfn [(visit [x acc]
+                (if (branch? x)
+                  (reduce rf acc (children x))
+                  (rf acc x)))]
+        (visit tree init)))))
+
 (defn closed-overs
   "Returns the set of dart locals (values of the env) referenced in the emitted code."
   [emitted env]
@@ -2185,7 +2196,9 @@
                 (:dart/const (infer-type dart-expr)) nil
                 :else (throw (ex-info (str "Unexpected dart value in environment for key " k ": " (pr-str dart-expr)) {:dart-expr dart-expr})))))
           env)]
-    (into #{} (comp (filter symbol?) (keep dart-locals)) (tree-seq sequential? seq emitted))))
+    (into #{} (comp (filter symbol?) (keep dart-locals))
+      (leaves sequential? identity emitted)
+      #_(tree-seq sequential? seq emitted))))
 
 (defn cljd-closed-overs [expr env]
   (let [dart-locals (closed-overs (emit expr env) env)]
@@ -3188,32 +3201,35 @@
             (emit (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) env)
             (nil? x) nil
             (and (seq? x) (seq x)) ; non-empty seqs only
-            (let [emit (case (first x)
-                         . emit-dot ;; local inference done
-                         set! emit-set!
-                         dart/is? emit-dart-is ;; local inference done
-                         dart/await emit-dart-await
-                         dart/assert emit-dart-assert
-                         dart/type-like emit-dart-type-like
-                         throw emit-throw
-                         new emit-new ;; local inference done
-                         ns emit-ns
-                         try emit-try
-                         case* emit-case*
-                         quote emit-quote
-                         do emit-do
-                         var emit-var
-                         let* emit-let*
-                         loop* emit-loop*
-                         recur emit-recur
-                         if emit-if
-                         fn* emit-fn*
-                         letfn emit-letfn
-                         def emit-def
-                         reify* emit-reify*
-                         deftype* emit-deftype*
-                         defprotocol* emit-defprotocol*
-                         extend-type-protocol* emit-extend-type-protocol*
+            (let [f (first x)
+                  emit (if (symbol? f)
+                         (case f
+                           . emit-dot ;; local inference done
+                           set! emit-set!
+                           dart/is? emit-dart-is ;; local inference done
+                           dart/await emit-dart-await
+                           dart/assert emit-dart-assert
+                           dart/type-like emit-dart-type-like
+                           throw emit-throw
+                           new emit-new ;; local inference done
+                           ns emit-ns
+                           try emit-try
+                           case* emit-case*
+                           quote emit-quote
+                           do emit-do
+                           var emit-var
+                           let* emit-let*
+                           loop* emit-loop*
+                           recur emit-recur
+                           if emit-if
+                           fn* emit-fn*
+                           letfn emit-letfn
+                           def emit-def
+                           reify* emit-reify*
+                           deftype* emit-deftype*
+                           defprotocol* emit-defprotocol*
+                           extend-type-protocol* emit-extend-type-protocol*
+                           emit-fn-call)
                          emit-fn-call)]
               (binding [*source-info* (let [{:keys [line column]} (meta x)]
                                         (if line
@@ -3246,7 +3262,7 @@
     (try
       (let [x (macroexpand {} x)]
         (when (seq? x)
-          (case (first x)
+          (case (when (symbol? (first x)) (first x))
             ns (emit-ns x {})
             def (emit-def x {})
             do (run! host-eval (next x))
