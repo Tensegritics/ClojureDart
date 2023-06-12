@@ -424,6 +424,8 @@
     `(defn ~'^:dart/test main []
        ~(when (the-ns 'cljd-test-once-fixtures)
           `(register-once-fixtures ~'cljd-test-once-fixtures))
+       ~(when (the-ns 'cljd-test-each-fixtures)
+          `(register-each-fixtures ~'cljd-test-each-fixtures))
        ~@tests)))
 
 (defmacro deftest
@@ -443,11 +445,7 @@
     `(do
        (defn ~(vary-meta name assoc ::test true) []
          (let [name# ~(str (:current-ns (:nses &env)) "/" name)
-               thunk#
-               (fn []
-                 ~(when (the-ns 'cljd-test-each-fixtures)
-                    `(register-each-fixtures ~'cljd-test-each-fixtures))
-                 (testing name# ~@body))]
+               thunk# (fn [] (testing name# ~@body))]
            (if *in-test*
              (thunk#)
              (binding [*in-test* true]
