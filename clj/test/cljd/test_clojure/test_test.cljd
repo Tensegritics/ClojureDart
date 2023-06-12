@@ -1,29 +1,30 @@
 (ns cljd.test-clojure.test-test
   (:use [cljd.test :only [deftest testing is use-fixtures]]))
 
-(def- test-state
+(def ^:private test-state
   (atom {}))
 
-(defn- onetime-fixture
+(defn ^:private onetime-fixture
   ([] ;; setup
    (swap! test-state assoc :base-data :foo))
+  ;; the "teardown" (1-arity) version is called with what the "setup" returned
   ([_] ;; teardown
    (reset! test-state {})))
 
-(defn- repeated-fixture
+(defn ^:private repeated-fixture
   "Resets test-state to what it was before running the tests `f`"
-  [f]
-  (let [start-state @test-state
-        test-result (f)]
-    (reset! test-state start-state)
-    test-result))
+  ([] ;;setup
+   @test-state)
+  ([start-state] ;; teardown
+   (reset! test-state start-state)))
 
 (use-fixtures :once onetime-fixture)
 (use-fixtures :each repeated-fixture)
 
 (deftest mutator-test
   (testing "Initial state"
-    (is (= {:base-data :foo} @test-state)))
+    (is (= {:base-data :foo} @test-state)
+        ":once fixtures are run before any tests and in the very end"))
 
   (testing "Mutating state"
     (swap! test-state assoc :base-data :bar)
