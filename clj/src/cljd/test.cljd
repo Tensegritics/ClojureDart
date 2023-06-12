@@ -135,6 +135,7 @@
       Return value will be passed as argument to the 1-arg arity.
       Thus you can pass references to resources to free etc.)
     ([resources]
+     The resources passed in are what the zero-arity \"setup\" returned
      Tear-down / clean-up code here)
 
    Fixtures are attached to namespaces in one of two ways.  \"each\"
