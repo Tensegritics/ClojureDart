@@ -2176,11 +2176,11 @@
   ; reduced not properly handled
   (reify clojure.lang.IReduceInit
     (reduce [this rf init]
-      (letfn [(visit [x acc]
+      (letfn [(visit [acc x]
                 (if (branch? x)
-                  (reduce rf acc (children x))
+                  (reduce visit acc (children x))
                   (rf acc x)))]
-        (visit tree init)))))
+        (visit init tree)))))
 
 (defn closed-overs
   "Returns the set of dart locals (values of the env) referenced in the emitted code."
