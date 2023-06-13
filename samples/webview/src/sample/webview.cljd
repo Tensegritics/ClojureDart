@@ -1,0 +1,58 @@
+(ns sample.webview
+  ;; how to use https://pub.dev/packages/webview_flutter
+  (:require
+   ["package:flutter/material.dart" :as m]
+   ["package:webview_flutter/webview_flutter.dart" :as webview]
+   ["package:webview_flutter_wkwebview/webview_flutter_wkwebview.dart" :as webview-ios]
+   [cljd.flutter :as f]))
+
+(defn web-view [current-url]
+  (f/widget
+    :let [ios (dart/is? webview/WebViewPlatform.instance webview-ios/WebKitWebViewPlatform)
+          ;; you can customize parameters passed to the underlying platform ios/android/web...
+          ;; @see here: https://pub.dev/documentation/webview_flutter_wkwebview/latest/webview_flutter_wkwebview/WebKitWebViewControllerCreationParams-class.html
+          params (if ios
+                   (webview-ios/WebKitWebViewControllerCreationParams)
+                   (webview/PlatformWebViewControllerCreationParams))]
+    :managed [loading (m/ValueNotifier true)
+              controller
+              (doto (webview/WebViewController.fromPlatformCreationParams params)
+                ;; depending on your needs
+                (.setJavaScriptMode webview/JavaScriptMode.unrestricted)
+                (.setBackgroundColor m/Colors.white)
+                (.enableZoom true)
+                (.setUserAgent "ClojureDart")
+                (.setNavigationDelegate
+                  (webview/NavigationDelegate
+                    .onPageStarted (fn [_] (.-value! loading true) nil)
+                    .onPageFinished (fn [_] (.-value! loading false) nil)
+                    .onNavigationRequest
+                    (fn [{for-main-frame .-isMainFrame
+                          url .-url :as ^webview/NavigationRequest nav}]
+                      webview/NavigationDecision.navigate
+                      ;;webview/NavigationDecision.prevent
+                      )
+                    .onWebResourceError
+                    (fn [{error-type .-errorType :as ^webview/WebResourceError error}]
+                      ;; handle error here
+                      nil)))
+                (cond-> ios
+                  (-> ^webview-ios/WebKitWebViewController (.-platform)
+                    ;; if you want the user to be able to go back, ios only
+                    (.setAllowsBackForwardNavigationGestures true)))
+                (.loadRequest (Uri/parse current-url)))
+              ;; WebViewController does not have a .dispose method so we must set the option to false
+              :dispose false]
+    :watch [ld loading]
+    (if ld
+      (m/CircularProgressIndicator)
+      (webview/WebViewWidget .controller controller))))
+
+(defn main []
+  (f/run
+    m/MaterialApp
+    .home
+    (m/Scaffold .appBar (m/AppBar .title (m/Text "Embed a webview")))
+    .body
+    m/Center
+    (web-view "https://clojuredart.org")))

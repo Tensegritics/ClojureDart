@@ -8,6 +8,7 @@
 /*/macos/*
 /*/pubspec.yaml
 /*/README.md
+!/webview/README.md
 /*/test/*
 /*/web/*
 /*/windows/*
