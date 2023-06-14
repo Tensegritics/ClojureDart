@@ -316,14 +316,20 @@
                r (get-in c [lib element] c)]
            (if-not (identical? r c)
              r
-             (when (and lib element) ; how does nil happen?
+             (when (and lib element ; how does nil happen?
+                     (not
+                       (or (and (= (name lib) "dart:core")
+                             (case (name element)
+                               ("assert" "await" "is") true
+                               false))
+                         (<= 0 (.indexOf (name element) ".")))))
                (doto stdin (.write "elt ") (.write lib) (.write " ") (.write element) (.write "\n") .flush)
                ;; nil means elt does not exist
-                 (when-some [r (some-> (edn/read stdout) qname)]
-                   (if (:local-lib r)
-                     ;; We *don't* cache local-lib
-                     (dissoc r :local-lib)
-                     (do (swap! cache assoc-in [lib element] r)
+               (when-some [r (some-> (edn/read stdout) qname)]
+                 (if (:local-lib r)
+                   ;; We *don't* cache local-lib
+                   (dissoc r :local-lib)
+                   (do (swap! cache assoc-in [lib element] r)
                          r)))))))))))
 
 
