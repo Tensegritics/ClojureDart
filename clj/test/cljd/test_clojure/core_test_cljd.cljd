@@ -774,3 +774,16 @@
   (is (dart/is? #dart(1 .name "name") Record))
   (is (dart/is? #dart(.name "name") Record))
   (is (dart/is? #dart() Record)))
+
+(defprotocol NilExtension
+  (-extenso [_]))
+
+(extend-protocol NilExtension
+  nil
+  (-extenso [_] :nil)
+  String
+  (-extenso [_] :str))
+
+(deftest extend-type-nil-works
+  (is (= :str (-extenso "hello")))
+  (is (= :nil (-extenso nil))))
