@@ -115,6 +115,11 @@
                     :lib "dart:core"
                     :canon-qname pseudo.super})
 
+(def pseudo-never '{:kind :class
+                    :qname       dc.dynamic
+                    :lib "dart:core"
+                    :canon-qname pseudo.never})
+
 (def cljd-ifn '{:kind :class
                 :qname lcoc_core.IFn$iface
                 :canon-qname lcoc_core.IFn$iface
@@ -669,7 +674,7 @@
 
 (defn dart-type-truthiness [type]
   (case (:canon-qname type)
-    (nil dc.Object dc.dynamic dc.Never) nil
+    (nil dc.Object dc.dynamic dc.Never pseudo.never) nil
     (dc.Null void) :falsy
     pseudo.not-bool :some
     dc.bool (when-not (:nullable type) :boolean)
@@ -2233,54 +2238,42 @@
                  [param (emit d env)])]))
           [env []] opt-params)
         function-type
-        (fn [async ret-type]
-          (let [ret-type (cond-> ret-type async ensure-future)]
-            (assoc dc-Function
-              :return-type ret-type
-              :parameters (-> []
-                            (into (map (fn [n]
-                                         {:name n
-                                          :kind :positional
-                                          :type dc-dynamic})) dart-fixed-params)
-                            (into (map (fn [[n _]] ; default value has no place in types
-                                         {:name n
-                                          :kind opt-kind
-                                          :optional true
-                                          :type dc-dynamic}))
-                              dart-opt-params)))))
-        patch-env
-        (fn [env function-type]
-          (cond-> env
-            fn-name
-            (update fn-name vary-meta assoc :dart/type function-type :dart/ret-type (:return-type function-type))))
-        ; 1st pass
-        dart-body (emit (cons 'do body) (patch-env env (function-type async (or ret-type dc-Never))))
-        async' (or async (has-await? dart-body))
-        mutable-closed-overs
-        (when-some [dart-locals (seq (filter #(or (:dart/loop-local (meta %)) (:dart/mutable (meta %))) (closed-overs dart-body env)))]
-          (let [dart-locals (set dart-locals)]
-            (into {}
-              (keep (fn [[clj dart]]
-                      (when (dart-locals dart)
-                        [dart (with-meta (dart-local (name clj) env)
-                                (dissoc (meta dart) :dart/mutable :dart/loop-local))])))
-              env)))
-        dart-body
-        (if (or (and fn-name (nil? ret-type)) ; potentially recursive fn of unknow type
-              (and (not async) async') ; implicit async
-              (seq mutable-closed-overs))
-          ; 2nd pass
-          (let [env (patch-env env (function-type async' (:dart/type (infer-type dart-body))))
-                env (if (seq mutable-closed-overs)
-                      (into env
-                        (keep (fn [[clj dart]]
-                                (when-some [dart (mutable-closed-overs dart)]
-                                  [clj dart])))
-                        env)
-                      env)]
-            (emit (cons 'do body) env))
-          dart-body)
-        async async'
+        (assoc dc-Function
+          :return-type (cond-> (or ret-type pseudo-never) async ensure-future)
+          :parameters (-> []
+                        (into (map (fn [n]
+                                     {:name n
+                                      :kind :positional
+                                      :type dc-dynamic})) dart-fixed-params)
+                        (into (map (fn [[n _]] ; default value has no place in types
+                                     {:name n
+                                      :kind opt-kind
+                                      :optional true
+                                      :type dc-dynamic}))
+                          dart-opt-params)))
+        env
+        (cond-> env
+          fn-name
+          (update fn-name vary-meta assoc :dart/type function-type :dart/ret-type (:return-type function-type)))
+        ; mutable-locals : mutable-dart -> immutable-dart
+        mutable-locals (into {}
+                         (keep (fn [[clj dart]]
+                                 (when (or (:dart/loop-local (meta dart)) (:dart/mutable (meta dart)))
+                                   [dart
+                                    (with-meta (dart-local (name clj) env)
+                                      (dissoc (meta dart) :dart/mutable :dart/loop-local))])))
+                         env)
+        ; mutable-locals : immutable-dart -> mutable-dart
+        safe-locals (into {} (map (fn [[k v]] [v k])) mutable-locals)
+        safe-env ; no mutables
+        (into env
+          (keep (fn [[clj dart]]
+                  (when-some [safe-dart (mutable-locals dart)]
+                    [clj safe-dart])))
+          env)
+        dart-body (emit (cons 'do body) safe-env)
+        async (or async (has-await? dart-body))
+        mutable-closed-overs (into [] (keep #(find safe-locals %)) (closed-overs dart-body safe-env))
         recur-params (when (has-recur? dart-body) dart-fixed-params)
         dart-fixed-params (if recur-params
                             (map #(with-meta (dart-local % env) nil) fixed-params) ; regen new fixed params
@@ -2299,23 +2292,21 @@
         ret-type (let [ret-type' (or ret-type body-type dc-dynamic)]
                    (cond-> ret-type'
                      ;; We don't want to emit a fn with dc.Never type as it would lead to subtle bugs
-                     (and (nil? ret-type) (= (:canon-qname ret-type') (:canon-qname dc-Never))) (do dc-dynamic)
+                     (and (nil? ret-type) (= (:canon-qname ret-type') (:canon-qname pseudo-never))) (do dc-dynamic)
                      async ensure-future))
         dart-fn
         (-> (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)
           (vary-meta assoc
             :dart/ret-type  ret-type
             :dart/fn-type   :native
-            :dart/type      (function-type async ret-type)))
+            :dart/type      (assoc function-type :return-type ret-type)))
         dart-fn
         (if fn-name
           (let [dart-fn-name (with-meta (env fn-name) (meta dart-fn))]
             (list 'dart/let [[dart-fn-name dart-fn]] dart-fn-name))
           dart-fn)]
     (if (seq mutable-closed-overs)
-      (list 'dart/let
-        (into [] (map (fn [[mutable immutable]] [immutable mutable])) mutable-closed-overs)
-        dart-fn)
+      (list 'dart/let mutable-closed-overs dart-fn)
       dart-fn)))
 
 (defn emit-fn* [[fn* & bodies :as form] env]
@@ -3677,6 +3668,8 @@
                                 :type-parameters
                                 (into []
                                   (map merge-types (:type-parameters a) (:type-parameters b))))
+                  (= 'pseudo.never qna) b
+                  (= 'pseudo.never qnb) a
                   (= 'dc.Never qna) b
                   (= 'dc.Never qnb) a
                   (= 'dc.dynamic qna) dc-dynamic
