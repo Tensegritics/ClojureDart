@@ -812,3 +812,16 @@
            "hello"
            .bar "world")))
     (is (= #dart ("hey" .bar "foo") (.method2 obj #dart ("hey" .bar "foo"))))))
+
+(defprotocol NilExtension
+  (-extenso [_]))
+
+(extend-protocol NilExtension
+  nil
+  (-extenso [_] :nil)
+  String
+  (-extenso [_] :str))
+
+(deftest extend-type-nil-works
+  (is (= :str (-extenso "hello")))
+  (is (= :nil (-extenso nil))))
