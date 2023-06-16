@@ -163,7 +163,7 @@
           java.io.ByteArrayInputStream.
           (.transferTo out))))
     (when-not (.exists analyzer-dart)
-      (exec {:dir analyzer-dir} (some-> *deps* :cljd/opts :kind name) "pub" "add" "analyzer:5.10.0")
+      (exec {:dir analyzer-dir} (some-> *deps* :cljd/opts :kind name) "pub" "add" "analyzer:5.13.0")
       (with-open [out (java.io.FileOutputStream. analyzer-dart)]
         (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream "analyzer.dart") (.transferTo out))))
     (.getPath analyzer-dir)))

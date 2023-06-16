@@ -133,106 +133,6 @@
     (assoc m k (f v))
     m))
 
-(defn load-libs-info []
-  (let [dart-libs-info
-        (-> (str (System/getProperty "user.dir") "/.clojuredart/libs-info.edn")
-          java.io.File.
-          clojure.java.io/reader
-          clojure.lang.LineNumberingPushbackReader.
-          edn/read)
-        inline-exports
-        (fn export [{exports :exports :as v} source-lib past-exports]
-          (let [v (into v (keep (fn [{:keys [lib shown hidden]}]
-                                  (when-not (contains? past-exports lib)
-                                    (cond
-                                      shown
-                                      (select-keys (export (dart-libs-info lib) lib (conj past-exports lib)) shown)
-                                      hidden
-                                      (reduce dissoc (export (dart-libs-info lib) lib (conj past-exports lib)) hidden)
-                                      :else (export (dart-libs-info lib) lib (conj past-exports lib)))))) exports)]
-            (assoc v :export-fn (if exports
-                                  #(if (v (:element-name %)) (assoc % :lib source-lib) %)
-                                  identity))))
-        assoc->qnames
-        (fn [export-fn {name :element-name :as entity}]
-          (case name
-            "void" (assoc entity :qname (:qname dc-void) :canon-qname (:qname dc-void))
-            (if (:is-param entity)
-              (let [qname (symbol name)]
-                (assoc entity :qname qname :canon-qname qname))
-              (let [lib (:lib (export-fn entity) "dart:core")
-                    canon-lib (or (:canon-lib entity) (:lib entity "dart:core"))
-                    canon-qname (-> (global-lib-alias canon-lib nil) (str "." name) symbol)
-                    qname (if (= lib canon-lib)
-                            canon-qname
-                            (-> (global-lib-alias lib nil) (str "." name) symbol))]
-                (assoc entity
-                       :qname qname
-                       :canon-qname canon-qname
-                       :lib lib
-                       :canon-lib canon-lib)))))
-        qualify-entity
-        (fn qualify-entity [export-fn entity]
-          (let [qualify-entity #(qualify-entity export-fn %)
-                assoc->qnames #(assoc->qnames export-fn %)]
-            (case (:kind entity)
-              :class
-              (let [members (into {} (comp (filter #(string? (key %)))
-                                           (map (fn [[n v]] [n (qualify-entity v)])))
-                                  entity)
-                    entity (persistent! (reduce dissoc! (transient entity) (keys members)))]
-                (->
-                 (assoc->qnames entity)
-                 (assoc :members members)
-                 (update-if :type-parameters #(into [] (map qualify-entity) %))
-                 (update-if :super qualify-entity)
-                 (update-if :bound qualify-entity)
-                 (update-if :interfaces #(into [] (map qualify-entity) %))
-                 (update-if :on #(into [] (map qualify-entity) %))
-                 (update-if :mixins #(into [] (map qualify-entity) %))))
-              :field (cond-> (update entity :type qualify-entity)
-                       (:toplevel entity) assoc->qnames)
-              :function (->
-                         (assoc->qnames entity)
-                         (update-if :return-type qualify-entity)
-                         (update-if :parameters #(into [] (map qualify-entity) %))
-                         (update-if :type-parameters #(into [] (map qualify-entity) %)))
-              :method (-> entity
-                          (update :return-type qualify-entity)
-                          (update-if :parameters #(into [] (map qualify-entity) %))
-                          (update-if :type-parameters #(into [] (map qualify-entity) %)))
-              :constructor (-> entity
-                               (update-if :parameters #(into [] (map qualify-entity) %))
-                               (update-if :type-parameters #(into [] (map qualify-entity) %))
-                               (update :return-type qualify-entity))
-              (:named :positional) (update entity :type qualify-entity)
-              ; type
-              (recur export-fn (-> entity
-                                   (dissoc :type)
-                                   (assoc
-                                    :kind (case (:type entity) "Function" :function :class)
-                                    :element-name (:type entity)))))))]
-    (-> (into {}
-              (map (fn [[lib content]]
-                     (let [{:keys [export-fn] :as libs} (inline-exports content lib #{lib})]
-                       [lib (into {}
-                                  (map (fn [[name entity]]
-                                         [name
-                                          (cond-> entity
-                                            (string? name)
-                                            (->
-                                             (assoc
-                                              :element-name name
-                                              :lib lib
-                                              :toplevel true
-                                              :canon-lib (:lib entity))
-                                             (->> (qualify-entity export-fn))))]))
-                                  libs)])))
-              dart-libs-info)
-        (assoc-in ["dart:core" "Never"] dc-Never)
-        (assoc-in ["dart:core" "dynamic"] dc-dynamic)
-        (assoc-in ["dart:_internal" :private] true))))
-
 (def ^:dynamic ^java.io.Writer *dart-out*)
 
 (defmacro with-dart-str [& body]
@@ -4370,9 +4270,6 @@
       return-locus)
     )
 
-
-
-  (def li (mk-dead-analyzer-info (load-libs-info)))
   (binding [analyzer-info li]
     (do
       (time

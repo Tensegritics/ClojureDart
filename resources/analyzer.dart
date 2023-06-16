@@ -47,6 +47,22 @@ String M(Map<String, dynamic> m) {
 
 Map<String, dynamic> emitType(LibraryElement rootLib, DartType t) {
   final lib = t.element2?.library?.identifier;
+
+  if (t is RecordType) {
+    return {
+      ':element-name': "\"Record\"",
+      ":kind": ":record",
+      ":qname": "dc.Record",
+      ":canon-qname": "dc.Record",
+      ":canon-lib": "\"dart:core\"",
+      ":lib": "\"dart:core\"",
+      ':nullable': t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question,
+      ':positional-fields': t.positionalFields.map((e) => {':type': emitType(rootLib, e.type)}),
+      ':named-fields': t.namedFields
+          .map((e) => {':type': emitType(rootLib, e.type), ':name': e.name})
+    };
+  }
+
   if (t is FunctionType) {
     return {
       ':element-name': "\"Function\"",
@@ -161,7 +177,8 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
   //  throw "coucou";
 //  }
 
-  Map<String, dynamic> _visitInterfaceElement(InterfaceElement e, {String? interfaceTypeAliasDisplayName}) {
+  Map<String, dynamic> _visitInterfaceElement(InterfaceElement e,
+      {String? interfaceTypeAliasDisplayName}) {
     var f = (t) => emitType(rootLib, t);
     Map<String, dynamic> classData = {
       ':kind': ':class',
@@ -193,7 +210,8 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
       };
     }
     for (final c in e.constructors.where(isPublic)) {
-      classData["\"${interfaceTypeAliasDisplayName != null ? c.displayName.replaceFirst(RegExp(e.displayName), interfaceTypeAliasDisplayName) : c.displayName}\""] = {
+      classData[
+          "\"${interfaceTypeAliasDisplayName != null ? c.displayName.replaceFirst(RegExp(e.displayName), interfaceTypeAliasDisplayName) : c.displayName}\""] = {
         ':kind': ':constructor',
         ':named': !c.isDefaultConstructor,
         ':const': c.isConst,
@@ -248,11 +266,13 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
     classData["\"${e.displayName}\""] = {
       ':kind': ':constructor',
       ':return-type': emitType(rootLib, e.extendedType),
-      ':parameters': [{
-        ":name": "ext",
-        ":kind": ':positional',
-        ':type': emitType(rootLib, e.extendedType)
-      }],
+      ':parameters': [
+        {
+          ":name": "ext",
+          ":kind": ':positional',
+          ':type': emitType(rootLib, e.extendedType)
+        }
+      ],
       ':type-parameters':
           e.typeParameters.map((e) => emitTypeParameter(rootLib, e))
     };
@@ -305,7 +325,9 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
 
   Map<String, dynamic> visitTypeAliasElement(TypeAliasElement e) {
     if (e.aliasedType is InterfaceType) {
-      return this._visitInterfaceElement(e.aliasedType.element as InterfaceElement, interfaceTypeAliasDisplayName: e.displayName);
+      return this._visitInterfaceElement(
+          e.aliasedType.element as InterfaceElement,
+          interfaceTypeAliasDisplayName: e.displayName);
     }
     throw "TypeAliasElement type not handled, please contact cljd team @dupuchba or @cgrand";
     return {};
@@ -339,7 +361,9 @@ void main(args) async {
     dir = Directory(args.first);
   projectDirectoryPath = dir.uri.toFilePath(windows: Platform.isWindows);
 
-  print("{:dart \"" + Platform.version.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"") + "\"}");
+  print("{:dart \"" +
+      Platform.version.replaceAll("\\", "\\\\").replaceAll("\"", "\\\"") +
+      "\"}");
 
   final resourceProvider =
       OverlayResourceProvider(PhysicalResourceProvider.INSTANCE);
