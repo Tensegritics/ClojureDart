@@ -21,19 +21,17 @@
 (use-fixtures :once onetime-fixture)
 (use-fixtures :each repeated-fixture)
 
-;; test order is not guaranteed, so both tests test both for mutation
-;; and the reset of the state by the :each fixture
+;; test order is not guaranteed, so both tests test for
+;; the reset of the state by the :each fixture
 
 (deftest mutator-test-one
   (testing "Initial state"
-    (is (or (= {:base-data :foo} @test-state)
-            (= {:base-data :bar-2} @test-state))
-        ":once fixtures are run before any tests and in the very end.
-         if mutator-test-two ran first the value is expected to be :bar-2"))
+    (is (= {:base-data :foo} @test-state)
+        ":once fixtures are run before any tests and in the very end"))
 
   (testing "Mutating state"
-    (swap! test-state assoc :base-data :bar-1)
-    (is (= :bar-1 (:base-data @test-state)))
+    (swap! test-state assoc :base-data :bar)
+    (is (= :bar (:base-data @test-state)))
 
     (swap! test-state assoc :my-data :baz)
     (is (= :baz (:my-data @test-state))))
@@ -44,14 +42,12 @@
 
 (deftest mutator-test-two
   (testing "Initial state"
-    (is (or (= {:base-data :foo} @test-state)
-            (= {:bar-data :bar-1} @test-state))
-        ":once fixtures are run before any tests and in the very end.
-         if mutator-test-one ran first the value is expected to be :bar-1"))
+    (is (= {:base-data :foo} @test-state)
+        ":once fixtures are run before any tests and in the very end"))
 
   (testing "Mutating state"
-    (swap! test-state assoc :base-data :bar-2)
-    (is (= :bar-2 (:base-data @test-state)))
+    (swap! test-state assoc :base-data :bar)
+    (is (= :bar (:base-data @test-state)))
 
     (swap! test-state assoc :my-data :baz)
     (is (= :baz (:my-data @test-state))))
