@@ -787,3 +787,9 @@
 (deftest extend-type-nil-works
   (is (= :str (-extenso "hello")))
   (is (= :nil (-extenso nil))))
+
+(deftest wtf
+  (let [a (atom 0)
+        v (.substring "abc" 0 (swap! a inc))]
+    (is (= @a 1))
+    (is (= v "a"))))

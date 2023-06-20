@@ -1358,7 +1358,11 @@
           [[binding] tmp])))
     nil))
 
-(defmacro ^:private with-lifted [[name expr] env wrapped-expr]
+(defmacro ^:private with-lifted
+  "CAUTION: with-lifted is NOT appropriate for preventing double evaluation.
+   Its purpose is to turn expressions which are not suitable dart expressions
+   into statement."
+  [[name expr] env wrapped-expr]
   `(let [~name ~expr]
      (if-some [[bindings# ~name] (liftable ~name ~env)]
        (list 'dart/let bindings# ~wrapped-expr)
@@ -1536,13 +1540,18 @@
      (is-assignable? expected-type actual-type) dart-expr ; <1>
      (and (nullable-type? expected-type) (nullable-type? actual-type))
      (if-some [expected-type+ (positive-type expected-type)]
-       (with-lifted [dart-expr dart-expr] env
-         (list 'dart/if (list 'dart/. nil "!=" dart-expr)
-           ; by construction expected-type can't be dynamic or FutureOr<dynamic>, otherwise
-           ; it would have matched the assignability test <1> above
-           (magicast dart-expr expected-type+ actual-type env)
-           nil))
-       (list 'dart/let [nil dart-expr] nil))
+       (let [[tmp :as binding] (when-not (symbol? dart-expr)
+                         (dart-binding 'maybe dart-expr env))
+             tmp (or tmp dart-expr)
+             dart-expr
+             `(dart/if (dart/. nil "!=" ~tmp)
+                ; by construction expected-type can't be dynamic or FutureOr<dynamic>, otherwise
+                ; it would have matched the assignability test <1> above
+                ~(magicast tmp expected-type+ actual-type env)
+                nil)]
+         (cond->> dart-expr
+           binding (list 'dart/let [binding])))
+       (list 'dart/let [[nil dart-expr]] nil))
      ;; When inlined #dart[], we keep it inlines
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
      (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
