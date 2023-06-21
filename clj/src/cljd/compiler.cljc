@@ -3537,9 +3537,19 @@
   (when (seq opt-params)
     (dart-print (case opt-kind :positional "[" "{"))
     (doseq [[p d] opt-params
-            :let [{:dart/keys [type]} (meta p)]]
+            :let [{:dart/keys [type]} (meta p)
+                  required-meta (and (= :named opt-kind)
+                                  (not (nullable-type? type))
+                                  (nil? d))]]
+      (when required-meta
+        (dart-print "required "))
       (write-type (or type dc-dynamic))
-      (dart-print " ") (dart-print p "= ") (write d expr-locus) (dart-print ", "))
+      (dart-print " ")
+      (dart-print p)
+      (when-not required-meta
+        (dart-print " = ")
+        (write d expr-locus))
+      (dart-print ", "))
     (dart-print (case opt-kind :positional "]" "}")))
   (dart-print ")"))
 
