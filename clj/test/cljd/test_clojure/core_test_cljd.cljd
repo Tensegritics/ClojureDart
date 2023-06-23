@@ -30,15 +30,15 @@
 
 (deftest testing-dart-literal-typehints
   (testing "#dart[] List are typehints"
-    (is (dart/is? #dart[1 2] #/[List dynamic]))
-    (is (dart/is? #dart ^int [1 2] #/[List int]))
-    (is (not (dart/is? #dart ^int [1 2] #/[List String])))
-    (is (dart/is? #dart ^:fixed ^int [1 2] #/[List int]))
+    (is (dart/is? #dart[1 2] #/(List dynamic)))
+    (is (dart/is? #dart ^int [1 2] #/(List int)))
+    (is (not (dart/is? #dart ^int [1 2] #/(List String))))
+    (is (dart/is? #dart ^:fixed ^int [1 2] #/(List int)))
     (let [a #dart ^int [1 2]
           b a
           c b
           d c]
-      (is (dart/is? d #/[List int])))))
+      (is (dart/is? d #/(List int))))))
 
 (deftest testing-if-typehints
   (testing "if typehints"
@@ -386,11 +386,11 @@
     (is (dart/is? (.-result ser) String?))))
 
 (definterface INullableFunctionBug
-  (^String text [^^{:params-types (void)} Function? onPressed]))
+  (^String text [^^{:fn-type {:ret-type void}} Function? onPressed]))
 
 (deftype NullableFunctionBug []
   INullableFunctionBug
-  (text [this ^^{:params-types (void)} Function? onPressed]
+  (text [this ^^{:fn-type {:ret-type void}} Function? onPressed]
     (if-not (nil? onPressed)
       (do (onPressed)
           "hooo")
@@ -468,8 +468,12 @@
 
 ;; see https://github.com/Tensegritics/ClojureDart/issues/112
 (definterface IIssue112
-  (^String? positionalopts [^String one ... ^int? two ^^{:params-types (String String String)} Function? three])
-  (^String? namedopts [^String one ^int? .two ^^{:params-types (String String String)} Function? .three]))
+  (^String? positionalopts [^String one ... ^int? two
+                            ^^{:fn-type {:ret-type String
+                                         :fixed-params-types (String String)}} Function? three])
+  (^String? namedopts [^String one ^int? .two
+                       ^^{:fn-type {:ret-type String
+                                    :fixed-params-types (String String)}} Function? .three]))
 
 (deftype ConcreteIssue112 []
   IIssue112

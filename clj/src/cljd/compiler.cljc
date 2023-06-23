@@ -537,13 +537,35 @@
        :dart (do
                (some-> info :lib (global-lib-alias nil))
                (case (:canon-qname info)
-                 dc.Function
-                 ;; TODO enrich type-vars with locally defined type params
-                 (if-some [[rt & pt] (seq (map #(resolve-type % type-vars) (:params-types (meta sym))))]
+                 dc.Record
+                 (if-some [{:keys [fixed-fields-types named-fields-types]} (:fields-types (meta sym))]
                    (assoc info
-                     :parameters (map (fn [t] {:kind :positional :type t}) pt)
-                     :return-type rt)
+                     :positional-fields (map (fn [t] {:type (resolve-type t type-vars)}) fixed-fields-types)
+                     :named-fields (map (fn [[n t]]
+                                          {:type (resolve-type t type-vars)
+                                           :name n}) named-fields-types))
                    info)
+                 dc.Function
+                 (let [type-vars' (into (set type-vars) (:type-params (meta sym)))]
+                   (if-some [{:keys [fixed-params-types opt-kind opt-params-types ret-type]} (:fn-type (meta sym))]
+                     (assoc info
+                       :parameters
+                       (concat
+                         (map (fn [t] {:kind :positional :type (resolve-type t type-vars')}) fixed-params-types)
+                         (case opt-kind
+                           :named
+                           (map (fn [[n t]]
+                                  {:name n
+                                   :kind :named
+                                   :optional true ; TODO handle required
+                                   :type (resolve-type t type-vars')}) opt-params-types)
+                           (map (fn [t]
+                                  {:kind :positional
+                                   :optional true
+                                   :type (resolve-type t type-vars')}) opt-params-types)))
+                       :return-type (resolve-type ret-type type-vars')
+                       :type-parameters (map #(resolve-dart-type % type-vars') (:type-params (meta sym))))
+                     info))
                  info))
        :def (case (:type info)
               :class (:dart/type info)
@@ -573,8 +595,35 @@
           (or (get-in nses [current-ns :imports lib :clj-alias])
             (some-> lib (global-lib-alias nil) (->> (str "$lib:"))))
           (cond-> element-name nullable (str "?")))
-        (cond-> {:type-params (mapv unresolve-type type-parameters)}
-          (and (= (:canon-qname dc-Function) canon-qname) (:parameters x)) (assoc :params-types (map unresolve-type (cons (or (:return-type x) dc-dynamic) (map :type (:parameters x))))))))))
+        (let [m {:type-params (mapv unresolve-type type-parameters)}]
+          (cond
+            (and (= (:canon-qname dc-Function) canon-qname) (:parameters x))
+            (let [opt-kind (if (some #(= :named (:kind %)) (:parameters x)) :named :positional)]
+              ; the line above (determining opt-kind) and the two :when below (<1> and <2>)
+              ; assumes that named implies optional and this isn't true anymore since Dart 2.12
+              (assoc m :fn-type {:opt-kind opt-kind
+                                 :fixed-params-types
+                                 (for [{:keys [kind optional type]} (:parameters x)
+                                       :when (and (not optional) (= :positional kind))] ; <1> see note above
+                                   (unresolve-type type))
+                                 :opt-params-types
+                                 (case opt-kind
+                                   :named
+                                   (into {}
+                                     (for [{:keys [name kind optional type]} (:parameters x)
+                                           :when (or optional (= :named kind))] ; <2> see note above
+                                       [name (unresolve-type type)]))
+                                   (for [{:keys [optional type]} (:parameters x)
+                                         :when optional]
+                                     (unresolve-type type)))
+                                 :ret-type (unresolve-type (or (:return-type x) dc-dynamic))}))
+
+            #_#_(and (= (:canon-qname dc-Record) canon-qname) (:positional-fields x))
+            (assoc m {:fields-types {:fixed-fields-types (map #(unresolve-type (:type %)) (:positional-fields x))
+                                     :named-fields-types
+                                     (into {} (map (fn [{:keys [type name]}] [name (unresolve-type type)])
+                                                (:named-fields x)))}})
+            :else m))))))
 
 (defn emit-type
   [tag {:keys [type-vars] :as env}]
@@ -4086,20 +4135,48 @@
     (dart-println code)
     (dart-println "// END" sym)))
 
+;; #/[bool bool .foo String]
+;^{:record-type [bool bool .foo String]} dc.Record
+
+(defn- parse-dart-params-types [params]
+  (let [[fixed-params opt-params] (split-with (complement dot-symbol?) params)
+        [delim & opt-params]
+        (case (first opt-params)
+          (... nil) opt-params
+          (cons '.& opt-params))]
+    {:fixed-params-types fixed-params
+     :opt-kind (case delim .& :named ... :positional nil)
+     :opt-params-types
+     (case delim
+       .& (into {} (comp (partition-all 2) (map (fn [[p t]] [(symbol (subs (name p) 1)) t]))) opt-params)
+       opt-params)}))
+
 (defn dart-type-params-reader [x]
-  (else->>
-    (if (symbol? x) x)
-    (let [[args [_ ret slash & type-params :as rets]] (split-with (complement '#{->}) x)])
-    (if (seq rets)
-      (do ; TODO correct support of optionals
-        (assert (or (= 2 (count rets)) (= slash '/)))
-        (with-meta 'dart:core/Function
-          {:params-types (map dart-type-params-reader (cons ret args))
-           :type-params type-params})))
-    (let [[type & params] x]
-      (cond-> type
-        params
-        (vary-meta assoc :type-params (map dart-type-params-reader params))))))
+  (cond
+    (symbol? x) x
+    (seq? x)
+    (let [[args [_ ret slash & type-params :as rets]] (split-with (complement '#{->}) x)]
+      (if (seq rets)
+        ; fn type
+        (let [params-types (parse-dart-params-types (map dart-type-params-reader args))]
+          (assert (or (= 2 (count rets)) (= slash '/)))
+          (with-meta 'dart:core/Function
+            {:fn-type (assoc params-types :ret-type (dart-type-params-reader ret))
+             :type-params type-params}))
+        ; parametrized type
+        (let [[type & params] x]
+          (cond-> type
+            params
+            (vary-meta assoc :type-params (map dart-type-params-reader params))))))
+    (vector? x)
+    (let [{:keys [opt-kind fixed-params-types opt-params-types]}
+          (parse-dart-params-types (map dart-type-params-reader x))]
+      (when (= :positional opt-kind)
+        (throw (Exception. (str "A record type can't have optional fields: " (pr-str x)))))
+      (with-meta 'dart:core/Record {:fields-types {:fixed-fields-types fixed-params-types
+                                                   :named-fields-types opt-params-types}}))
+    :else
+    (throw (Exception. (str "Unsupported type literal syntax: " (pr-str x))))))
 
 (def dart-data-readers
   {'dart #(tagged-literal 'dart %)
