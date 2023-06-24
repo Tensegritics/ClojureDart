@@ -618,11 +618,11 @@
                                      (unresolve-type type)))
                                  :ret-type (unresolve-type (or (:return-type x) dc-dynamic))}))
 
-            #_#_(and (= (:canon-qname dc-Record) canon-qname) (:positional-fields x))
-            (assoc m {:fields-types {:fixed-fields-types (map #(unresolve-type (:type %)) (:positional-fields x))
-                                     :named-fields-types
-                                     (into {} (map (fn [{:keys [type name]}] [name (unresolve-type type)])
-                                                (:named-fields x)))}})
+            (and (= (:canon-qname dc-Record) canon-qname) (:positional-fields x))
+            (assoc m :fields-types {:fixed-fields-types (map #(unresolve-type (:type %)) (:positional-fields x))
+                                    :named-fields-types
+                                    (into {} (map (fn [{:keys [type name]}] [name (unresolve-type type)])
+                                               (:named-fields x)))})
             :else m))))))
 
 (defn emit-type
@@ -4376,23 +4376,16 @@
                              (some-> build/*deps* :cljd/opts :kind name)
                              "pub" "run" "bin/analyzer.dart" user-dir))))))
 
+
   (binding [analyzer-info li
             *dart-out* *out*
             *locals-gen* {}]
     #_(write
         (emit-test `~(tagged-literal 'dart '[1 2]) {})
         return-locus)
-    (write (emit `(let [a# '~(tagged-literal 'dart '( 1 2 .caca "boudin"))]
-                    (.-caca a#)) {})
-      return-locus)
-    )
-
-  (binding [analyzer-info li
-            *dart-out* *out*
-            *locals-gen* {}]
-    (write (emit '(let [a (ex/Caca)]
-                    (.-$1 (.boudinn a))
-                    "dd") {})
+    (write (emit `(fn [~(with-meta 'a
+                          {:tag (dart-type-params-reader '[String .foo int? .bar String])})]
+                    (.toString ~'a)) {})
       return-locus))
 
   (binding [analyzer-info li]
@@ -4407,9 +4400,9 @@
           (compile 'cljd.string)))
 
       #_(time
-        (binding [*hosted* false
-                  analyzer-info li]
-          (compile 'cljd.multi)))
+          (binding [*hosted* false
+                    analyzer-info li]
+            (compile 'cljd.multi)))
 
       (time
         (binding [analyzer-info li]

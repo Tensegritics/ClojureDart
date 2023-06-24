@@ -773,12 +773,6 @@
     (reset! ping 1)
     (is (= 1 (await first-val)))))
 
-(deftest dart-record-literal-are-working
-  (is (dart/is? #dart(1) Record))
-  (is (dart/is? #dart(1 .name "name") Record))
-  (is (dart/is? #dart(.name "name") Record))
-  (is (dart/is? #dart() Record)))
-
 (defprotocol NilExtension
   (-extenso [_]))
 
@@ -797,3 +791,24 @@
         v (.substring "abc" 0 (swap! a inc))]
     (is (= @a 1))
     (is (= v "a"))))
+
+(deftest dart-record-literal-are-working
+  (is (dart/is? #dart(1) Record))
+  (is (dart/is? #dart(1 .name "name") Record))
+  (is (dart/is? #dart(.name "name") Record))
+  (is (dart/is? #dart() Record)))
+
+(deftype ^:abstract TestingResolveTypeUnresolveType []
+  (^#/(String .bar String -> int) method1 [_ _])
+  (^#/[String .bar String] method2 [_ _]))
+
+(deftest dart-record-and-function-correctly-inferred
+  (let [obj (reify :extends TestingResolveTypeUnresolveType
+              :no-meta true
+              (method1 [_ f] f)
+              (method2 [_ r] r))]
+    (is (= 10
+          ((.method1 obj (fn ^int [^String one ^String .bar] (+ (.-length one) (.-length bar)) ))
+           "hello"
+           .bar "world")))
+    (is (= #dart ("hey" .bar "foo") (.method2 obj #dart ("hey" .bar "foo"))))))
