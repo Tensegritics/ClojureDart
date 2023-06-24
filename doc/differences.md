@@ -206,6 +206,8 @@ Furthermore, ClojureDart will automatically emit such `cast` calls. This means t
 
 ### Dart literals
 
+#### Dart lists
+
 ```clj
 #dart [1 2 3] ; a growable List<dynamic>
 #dart ^:fixed [1 2 3] ; a fixed List<dynamic>
@@ -214,6 +216,25 @@ Furthermore, ClojureDart will automatically emit such `cast` calls. This means t
 ```
 
 Fixed [Dart lists](https://api.dart.dev/stable/2.9.3/dart-core/List-class.html) are the closest you can get to arrays in Dart — well, except for [typed_data](https://api.dart.dev/stable/2.16.1/dart-typed_data/dart-typed_data-library.html) when you deal with arrays of scalar values.
+
+#### Dart Records (only in <3.0.0)
+
+``` clj
+;; creating records
+#dart (1 2) ; a Record of type (int, int)
+#dart (1 2 .bar "hey") ; a Record of type (int, int, {String hey})
+#dart () ; the empty Record
+
+;; type hinting records
+(defn ^#/[int int .bar String] returns-record [] #dart (1 1 .bar "hey"))
+
+;; consumings records
+(-> #dart (1 2) .-$1) ;; returns 1
+(-> #dart (1 2) .-$2) ;; returns 2
+(-> #dart (.hey "ho") .-hey) ;; returns "ho"
+```
+
+[Dart records](https://dart.dev/language/records) are a tuple like structure perfect for holding heterogeneous data.
 
 ### Nullability and `^some`
 
