@@ -165,6 +165,7 @@ Map<String, dynamic> emitParameter(LibraryElement rootLib, ParameterElement p) {
     ":kind": p.isNamed ? ':named' : ':positional',
     ':type': emitType(rootLib, p.type),
     ':optional': p.isOptional
+    //':required': p.isRequired
   };
 }
 

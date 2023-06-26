@@ -3527,12 +3527,13 @@
     (dart-print (case opt-kind :positional "[" "{"))
     (doseq [[p d] opt-params
             :let [{:dart/keys [type]} (meta p)
+                  type (or type dc-dynamic)
                   required-meta (and (= :named opt-kind)
                                   (not (nullable-type? type))
                                   (nil? d))]]
       (when required-meta
         (dart-print "required "))
-      (write-type (or type dc-dynamic))
+      (write-type type)
       (dart-print " ")
       (dart-print p)
       (when-not required-meta
