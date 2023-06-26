@@ -1,491 +1,99 @@
 (ns cljd.reader
   (:require ["dart:io" :as io]
-            ["dart:async" :as async]))
-
-(deftype ReaderInput [^#/(async/Stream String) in
-                      ^:mutable ^#/(async/StreamSubscription? String) subscription
-                      ^:mutable ^#/(async/Completer? String?) completer
-                      ^:mutable ^String? buffer]
-  (^void init_stream_subscription [this]
-   (set! subscription
-     (doto (.listen in
-             (fn [^String s]
-               (assert (nil? buffer))
-               (when-not (== "" s)
-                 (.complete (.-completer this) s)
-                 (.pause (.-subscription this))))
-             .onDone
-             (fn []
-               (assert (nil? buffer))
-               (.complete (.-completer this) nil)
-               (set! (.-subscription this) nil)
-               nil))
-       (.pause)))
-   nil)
-  (^#/(async/FutureOr String?) read [this]
-   (when-not (nil? subscription)
-     (if-some [buf buffer]
-       (do (set! buffer nil)
-           (.value #/(async/Future String?) buf))
-       (do (set! completer (async/Completer.))
-           (.resume subscription)
-           (.-future completer)))))
-  (^void unread [this ^String s]
-   (assert (nil? buffer))
-   (assert (not (nil? subscription)))
-   (set! buffer (when-not (== "" s) s))
-   nil)
-  #_(^#/(Future void) ^:async close [this]
-   (when-some [sub subscription]
-     (await (.cancel sub))
-     (set! subscription nil)
-     nil)))
-
-(defn ^ReaderInput make-reader-input [^#/(async/StreamController String) controller]
-  (doto (ReaderInput. (.-stream controller) nil nil nil) (.init_stream_subscription)))
-
-(defn- saget
-  {:inline (fn [s idx] (list '. `^String ~s "[]" `^int ~idx))
-   :inline-arities #{2}}
-  ([^String s ^int idx]
-   (. s "[]" idx))
-  ([^String s ^int idx & idxs]
-   (apply saget (saget s idx) idxs)))
-
-;; read-* functions
-(declare ^:async ^:dart read)
-
-(defn ^int cu0 [^String ch] (.codeUnitAt ch 0))
-
-(defn ^#/(Future cljd.core/PersistentList) ^:async read-list [^ReaderInput rdr]
-  (let [result #dart[]]
-    (loop []
-      (let [val (await (read rdr (cu0 ")")))]
-        (if (== val rdr)
-          (-list-lit result)
-          (do (.add result val)
-              (recur)))))))
-
-(defn ^#/(Future cljd.core/PersistentHashMap) ^:async read-hash-map [^ReaderInput rdr]
-  (let [result #dart[]]
-    (loop []
-      (let [val (await (read rdr (cu0 "}")))]
-        (if (== val rdr)
-          (if (zero? (bit-and 1 (.-length result)))
-            (-map-lit result)
-            (throw (FormatException. "Map literal must contain an even number of forms")))
-          (do (.add result val)
-              (recur)))))))
-
-(defn ^#/(Future cljd.core/PersistentHashSet) ^:async read-hash-set [^ReaderInput rdr]
-  (let [result #dart[]]
-    (loop []
-      (let [val (await (read rdr (cu0 "}")))]
-        (if (== val rdr)
-          (set result)
-          (do (.add result val)
-              (recur)))))))
-
-(defn ^#/(Future cljd.core/PersistentVector) ^:async read-vector [^ReaderInput rdr]
-  (let [result #dart[]]
-    (loop []
-      (let [val (await (read rdr (cu0 "]")))]
-        (if (== val rdr)
-          (if (< 32 (.-length result))
-            (vec result)
-            (-vec-owning result))
-          (do (.add result val)
-              (recur)))))))
-
-(def ^RegExp COMMENT-CONTENT-REGEXP #"[^\r\n]*")
-
-(defn ^:async read-comment [^ReaderInput rdr]
-  (loop []
-    (if-some [s (await (.read rdr))]
-      (let [index (or (some-> (.matchAsPrefix COMMENT-CONTENT-REGEXP s) .-end) 0)]
-        (if (< index (.-length s))
-          (doto rdr (.unread (.substring s index)))
-          (recur)))
-      rdr)))
-
-(defn ^:async read-regexp [^ReaderInput rdr]
-  (let [sb (StringBuffer.)
-        string (await (.read rdr))]
-    (loop [index 0]
-      (let [ch (saget string index)]
-        (if (== "\"" ch)
-          (do (.unread rdr (.substring string (inc index)))
-              (RegExp. (.toString sb)))
-          (if (< (cu0 ch) 0)
-            (throw (FormatException. "EOF while reading regex"))
-            (do (.write sb ch)
-                (if (== "\\" ch)
-                  (let [index (inc index)
-                        ch (saget string index)]
-                    (if (< (cu0 ch) 0)
-                      (throw (FormatException. "EOF while reading regex"))
-                      (do (.write sb ch)
-                          (recur (inc index)))))
-                  (recur (inc index))))))))))
-
-(defn ^:async read-meta [^ReaderInput rdr]
-  (let [meta (await (read rdr -1))
-        meta (if (or (symbol? meta) (string? meta))
-               {:tag meta}
-               (if (keyword? meta)
-                 {meta true}
-                 (if (map? meta)
-                   meta
-                   (throw (FormatException. "Metadata must be Symbol,Keyword,String or Map")))))
-        obj (await (read rdr -1))]
-    (if (satisfies? cljd.core/IWithMeta obj)
-      (with-meta obj meta)
-      ;;TODO handle IReference with reset-meta
-      (throw (FormatException. "Metadata can only be applied to IWithMeta")))))
-
-(def ^RegExp STRING-CONTENT-REGEXP (RegExp. "(?:[^\"\\\\]|\\\\.)*"))
-(def ^RegExp STRING-ESC-REGEXP (RegExp. "\\\\(?:u([0-9a-fA-F]{0,4})|([0-7]{1,3})|(.))"))
-
-(defn ^:async read-string-content [^ReaderInput rdr]
-  (let [f ^:async (fn ^String [^ReaderInput rdr]
-                    (let [sb (StringBuffer.)]
-                      (loop []
-                        (if-some [^String string (await (.read rdr))]
-                          (let [^int i (or (some-> (.matchAsPrefix STRING-CONTENT-REGEXP string) .-end) 0)]
-                            (.write sb (.substring string 0 i))
-                            (if (< i (.-length string))
-                              (do (.unread rdr (.substring string (inc i)))
-                                  (.toString sb))
-                              (recur)))
-                          (throw (FormatException. "Unexpected EOF while reading a string."))))))]
-    (.replaceAllMapped (await (f rdr))
-      STRING-ESC-REGEXP
-      (fn [^Match m]
-        (if-some [^String m1 (.group m 1)]
-          (if (< (.-length m1) 4)
-            (throw (FormatException. (str "Unsupported escape for character: \\u" m1 " \\u MUST be followed by 4 hexadecimal digits")))
-            (String/fromCharCode (int/parse m1 .radix 16)))
-          (if-some [^String m2 (.group m 2)]
-            (String/fromCharCode (int/parse m2 .radix 8))
-            (let [m3 (.group m 3)]
-              (case m3
-                "\"" (str m3)
-                "\\" (str m3)
-                "b" "\b"
-                "n" "\n"
-                "r" "\r"
-                "t" "\t"
-                "f" "\f"
-                (throw (FormatException. (str "Unsupported escape character: \\" m3)))))))))))
-
-(def ^:dynamic *arg-env* nil)
-
-(declare ^:dart interpret-token ^:dart ^:async read-token ^:dart terminating?)
-
-(defn ^:async read-arg [^ReaderInput rdr]
-  ;; funny case `(let [% 1] %)` > 1
-  (if (nil? *arg-env*)
-    (interpret-token (await (read-token rdr "%")))
-    (let [string (await (.read rdr))
-          ch (cu0 (saget string 0))]
-      (if (or (< ch 0) (terminating? ch))
-        (let [sym (symbol "param")]
-          (.unread rdr (.substring string 1))
-          (set! *arg-env* (assoc *arg-env* 1 sym))
-          sym)
-        (if-some [^Match m (.matchAsPrefix #"(?:([\d]+)|(&))([^\d&]).*$" string)]
-          (if-some [^String g3 (.group m 3)]
-            (if (terminating? (cu0 g3))
-              (let [g1 (.group m 1)
-                    g2 (.group m 2)]
-                (cond
-                  g1 (let [sym (symbol (str "param" g1))]
-                       (.unread rdr (.substring string (.-length g1)))
-                       (set! *arg-env* (assoc *arg-env* (int/parse g1) sym))
-                       sym)
-                  g2 (do (.unread rdr (.substring string 1))
-                         (set! *arg-env* (assoc *arg-env* -1 'parammore))
-                         'parammore)))
-              (throw (FormatException. "arg literal must be %, %& or %integer"))))
-          (throw (FormatException. "arg literal must be %, %& or %integer")))))))
-
-(defn ^:async read-fn [^ReaderInput rdr]
-  (when-not (nil? *arg-env*)
-    (throw (FormatException. "Nested #()s are not allowed")))
-  (binding [*arg-env* {}]
-    (let [result (await (read-list rdr))
-          arg-count (cond-> (->> (keys *arg-env*) (apply max 0))
-                      (*arg-env* -1) (+ 2))]
-      (list 'fn*
-        (list (reduce #(let [[n param] %2]
-                         (if (< n 0)
-                           (-> (assoc %1 (dec arg-count) param)
-                             (assoc (- arg-count 2) '&))
-                           (assoc %1 (dec n) param)))
-                (vec (repeat arg-count '_)) *arg-env*)
-          result)))))
-
-(defn ^:async read-unquote [^ReaderInput rdr]
-  (let [string (await (.read rdr))
-        char (saget string 0)]
-    (if (< (cu0 char) 0)
-      (throw (FormatException. "EOF while reading character"))
-      (if (== char "@")
-        (do (.unread rdr (.substring string 1))
-            (list 'cljd.core/unquote-splicing (await (read rdr -1))))
-        (do (.unread rdr string)
-            (list 'cljd.core/unquote (await (read rdr -1))))))))
-
-(declare ^:dart sq-expand-list)
-
-(defprotocol IResolver
-  (currentNS [resolver])
-  (resolveClass [resolver sym])
-  (resolveAlias [resolver sym])
-  (resolveVar [resolver sym]))
-
-(def ^:dynamic *resolver* nil)
-(def ^:dynamic *gensym-env* nil)
-
-(defn unquote? [form]
-  (and (seq? form) (= 'cljd.core/unquote (first form))))
-
-(defn unquote-splicing? [form]
-  (and (seq? form) (= 'cljd.core/unquote-splicing (first form))))
-
-;; TODO: should not be in reader.cljd
-(defn special-form? [form]
-  (contains? '#{. set! dart/is? dart/await dart/assert throw new ns try case* quote do var let* loop* recur
-                if fn* letfn def reify* deftype* defprotocol* extend-type-protocol*} form))
-
-(defn- syntax-quote [form]
-  (cond
-    (special-form? form) (list 'quote form)
-    (symbol? form)
-    (let [nsform (namespace form)
-          nameform (name form)]
-      (->> (cond
-             (and (nil? nsform) (.endsWith nameform "#"))
-             (if  (nil? *gensym-env*)
-               ;; Should never happen
-               (throw (FormatException. "Gensym literal not in syntax-quote"))
-               (or
-                 (*gensym-env* form)
-                 (let [gs (symbol nil
-                            (str (gensym (str (.substring nameform 0 (dec (.-length nameform))) "__")) "__auto__"))]
-                   (set! *gensym-env* (assoc *gensym-env* form gs))
-                   gs)))
-             (and (nil? nsform) (.endsWith nameform "."))
-             (let [rc (resolveClass *resolver* (symbol nil (.substring nameform 0 (dec (.-length nameform)))))]
-               (symbol (namespace rc) (str (name rc) ".")))
-             (and (nil? nsform) (== (saget nameform 0) "."))
-             form
-             :else
-             (let [nsym (let [alias (some->> nsform (symbol nil))
-                              nsym (some->> alias (resolveClass *resolver*))]
-                          (if (nil? nsym) (resolveAlias *resolver* alias) nsym))]
-               (if (not (nil? nsym))
-                 (symbol (name nsym) nameform)
-                 (if (nil? nsform)
-                   (let [rsym (resolveClass *resolver* form)
-                         rsym (if (nil? rsym) (resolveVar *resolver* form) rsym)]
-                     (if (not (nil? rsym))
-                       rsym
-                       (symbol (name (currentNS *resolver*)) nameform)))
-                   form))))
-        (list 'quote)))
-    (unquote? form) (second form)
-    (unquote-splicing? form) (throw (FormatException. "splice not in list"))
-    (number? form) form
-    (string? form) form
-    (keyword? form) form
-    (coll? form)
-    (cond
-      ;; TODO records
-      (vector? form)
-      (list 'cljd.core/apply 'cljd.core/vector (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form))))
-      (set? form)
-      (list 'cljd.core/apply 'cljd.core/hash-set (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form))))
-      (map? form)
-      (list 'cljd.core/apply 'cljd.core/hash-map (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list (apply concat form)))))
-      (or (list? form) (seq? form))
-      (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form)))
-      :else (throw (FormatException. "Unknown Collection type")))
-    :else (list 'quote form)))
-
-(defn- sq-expand-list [s]
-  (doall (map #(cond
-                 (unquote? %) (list 'cljd.core/list (second %))
-                 (unquote-splicing? %) (second %)
-                 :else (list 'cljd.core/list (syntax-quote %))) s)))
-
-(defn ^:async read-syntax-quote [^ReaderInput rdr]
-  (binding [*gensym-env* {}]
-    (syntax-quote (await (read rdr -1)))))
-
-(defn ^:async read-namespace-map [^ReaderInput rdr]
-  (let [string (await (.read rdr))
-        auto (== ":" (saget string 0))
-        key (if (== -1 (.indexOf (if auto (.substring string 1) string) #"^[\s,{]"))
-              (await (read (doto rdr (.unread (str ":" string))) -1))
-              (if auto
-                (do
-                  (.unread rdr (.substring string 1))
-                  (currentNS *resolver*))
-                (throw (FormatException. "Namespaced map must specify a namespace")))) ]
-    (when-not (nil? (namespace key))
-      (throw (FormatException. (str "Namespaced map must specify a valid namespace: " (namespace key) "/" (name key)))))
-    (let [m (await (read rdr -1))]
-      (when-not (map? m)
-        (throw (FormatException. "Namespaced map must specify a map")))
-      (into {} (for [[k v] m
-                     :let [k' (cond
-                                (keyword? k)
-                                (cond-> k
-                                  (== "_" (namespace k)) (->> name (keyword nil))
-                                  (nil? (namespace k)) (->> name (keyword (name key))))
-                                (symbol? k)
-                                (cond-> k
-                                  (== "_" (namespace k)) (->> name (symbol nil))
-                                  (nil? (namespace k)) (->> name (symbol (name key))))
-                                :else k)]]
-                 [k' v])))))
-
-(def ^:dynamic *top-level-form* nil)
-(def ^:dynamic *features* #{:cljd :clj})
-
-(defn ^:async read-conditional
-  [^ReaderInput rdr]
-  ;; TODO : manage EOF
-  ;; TODO: should check if reader conditional are allowed
-  ;; TODO: handle preserve read-cond
-  (let [string (await (.read rdr))
-        splicing (if (== "@" (saget string 0))
-                   (do (.unread rdr (.substring string 1)) true)
-                   (do (.unread rdr string) false))
-        [_ expr :as body] (await (read rdr -1))
-        ;; TODO : in clj java.util.List but in Dart, PV are List and PL are also List...
-        is-list? (list? body)]
-    (when-not is-list?
-      (throw (FormatException. "read-cond body must be a list")))
-    (when-not (or (dart/is? expr List) (not splicing))
-      (throw (FormatException. "Spliced form list in read-cond-splicing must implement dart:core/List")))
-    (when-not (or (not splicing) (not *top-level-form*))
-      (throw (FormatException. "Reader conditional splicing not allowed at the top level.")))
-    (let [discard1 ^:unique (Object.)
-          discard ^:unique (Object.)
-          hold ^:unique (Object.)
-          check-feature (fn [feature]
-                          (when-not (keyword? feature)
-                            (throw (FormatException. (str "Feature should be a keyword: " feature))))
-                          (when (#{:none :else} feature)
-                            (throw (FormatException. (str "Feature name " feature " is reserved."))))
-                          (if (contains? *features* feature)
-                            hold
-                            discard1))
-          result
-          (reduce (fn [state form]
-                    (cond
-                      (identical? hold state) (reduced form)
-                      (identical? discard1 state) discard
-                      (identical? discard state) (check-feature form)))
-            discard body)]
-      (when (identical? result hold)
-        (throw (FormatException. "read-cond requires an even number of forms.")))
-      (when (or (identical? result discard1) (identical? result discard))
-        (throw (FormatException. "EOF while reading")))
-      (if splicing
-        (let [post (await (.read rdr))]
-          (doto rdr (.unread (str (apply pr-str result) post))))
-        result))))
-
-(defn read-tagged [^ReaderInput rdr ^cljd.core/Symbol tag form]
-  (if-some [dr-fn (or (some-> cljd.core/*data-readers* tag) (some-> cljd.core/default-data-readers tag))]
-    (dr-fn form)
-    (if-some [default-fn (some-> cljd.core/*default-data-reader-fn* tag)]
-      (default-fn tag form)
-      (throw (FormatException. (str "No reader function for tag " tag))))))
-
-(defn ^:async read-record [^ReaderInput rdr]
-  (throw (Exception. "read-reacord NOT IMPLEMENTED YET")))
-
-(defn ^:async ctor-reader [^ReaderInput rdr]
-  (let [tag (await (read rdr -1))]
-    (when-not (symbol? tag)
-      (throw (FormatException. "Reader tag must be a symbol")))
-    (let [form (await (read rdr -1))]
-      ;; TODO: handle preserve read-cond
-      (if (.contains (name tag) ".")
-        (read-record rdr)
-        (read-tagged rdr tag form)))))
-
-(def dispatch-macros
-  {"_"  ^:async (fn [^ReaderInput rdr] (await (read rdr -1)) rdr)
-   "^"  ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
-   "{"  ^:async (fn [^ReaderInput rdr] (await (read-hash-set rdr)))
-   "("  ^:async (fn [^ReaderInput rdr] (await (read-fn rdr)))
-   "!"  ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
-   "\"" ^:async (fn [^ReaderInput rdr] (await (read-regexp rdr)))
-   "'"  ^:async (fn [^ReaderInput rdr] (list 'var (await (read rdr -1))))
-   "<"  ^:async (fn [^ReaderInput rdr] (throw (FormatException. "Unreadable form")))
-   ":"  ^:async (fn [^ReaderInput rdr] (await (read-namespace-map rdr)))
-   "?"  ^:async (fn [^ReaderInput rdr] (await (read-conditional rdr)))})
-
-(def macros
-  {"("  ^:async (fn [^ReaderInput rdr] (await (read-list rdr)))
-   ")"  ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
-   "{"  ^:async (fn [^ReaderInput rdr] (await (read-hash-map rdr)))
-   "}"  ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
-   "["  ^:async (fn [^ReaderInput rdr] (await (read-vector rdr)))
-   "]"  ^:async (fn [_] (throw (FormatException. "EOF while reading, starting at line")))
-   "'"  ^:async (fn [^ReaderInput rdr] (list (symbol nil "quote") (await (read rdr -1))))
-   "`"  ^:async (fn [^ReaderInput rdr] (await (read-syntax-quote rdr)))
-   "@"  ^:async (fn [^ReaderInput rdr] (list 'cljd.core/deref (await (read rdr -1))))
-   ";"  ^:async (fn [^ReaderInput rdr] (await (read-comment rdr)))
-   "^"  ^:async (fn [^ReaderInput rdr] (await (read-meta rdr)))
-   "\"" ^:async (fn [^ReaderInput rdr] (await (read-string-content rdr)))
-   "%"  ^:async (fn [^ReaderInput rdr] (await (read-arg rdr)))
-   "~"  ^:async (fn [^ReaderInput rdr] (await (read-unquote rdr)))
-   "#"  ^:async (fn [^ReaderInput rdr]
-                  (if-some [string (await (.read rdr))]
-                    (if-some [macroreader (dispatch-macros (saget string 0))]
-                      (do (.unread rdr (.substring string 1))
-                          (await (macroreader rdr)))
-                      (if-some [result (do (.unread rdr string)
-                                           (await (ctor-reader rdr)))]
-                        result
-                        (throw (FormatException. (str "Unepxected dispatch sequence: #" (saget string 0))))))
-                    (throw (FormatException. "EOF while reading dispatch sequence.")))) })
+            ["dart:async" :as async]
+            ["dart:collection" :as coll]
+            ["dart:convert" :as convert]))
 
 (def ^RegExp SPACE-REGEXP #"[\s,]*")
 
-(defn ^bool terminating? [^int code-unit]
-  (let [ch (String/fromCharCode code-unit)]
-    (cond
-      (< -1 (.indexOf "'#%" ch)) false
-      (macros ch) true
-      (< 0 (or (some-> (.matchAsPrefix SPACE-REGEXP ch) .-end) 0)) true
-      :else false)))
+;; REFACTORING THE READER
+;; Two goals:
+;; * perfs
+;; * synchronous read-string
 
-(defn ^#/(Future String) ^:async read-token [^ReaderInput rdr ^String init]
-  (let [sb (StringBuffer. init)]
-    (loop [^int index 0
-           ^String string ""]
-      (if (== index (.-length string))
-        (do (.write sb string)
-            (when-some [s (await (.read rdr))]
-              (recur 0 ^String s)))
-        (let [cu (.codeUnitAt string index)]
-          (if (terminating? cu)
-            (do (.write sb (.substring string 0 index))
-                (.unread rdr (.substring string index)))
-            (recur (inc index) string)))))
-    (.toString sb)))
+; stack is interleaved state and fns
+(deftype ReaderState [^List stack  ^coll/Queue q])
 
+(defn resume! [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (loop [from from]
+    (if (or (neg? from) (.-isEmpty stack))
+      from
+      (recur ((.-last stack) state s from to)))))
 
-(def ^RegExp INT-REGEXP (RegExp. "([-+]?)(?:(0)|([1-9][0-9]*)|0[xX]([0-9A-Fa-f]+)|0([0-7]+)|([1-9][0-9]?)[rR]([0-9A-Za-z]+)|0[0-9]+)(N)?$"))
-(def ^RegExp DOUBLE-REGEXP (RegExp. "([-+]?[0-9]+([.][0-9]*)?([eE][-+]?[0-9]+)?)(M)?$"))
-(def ^RegExp SYMBOL-REGEXP (RegExp. "(?:([:]{2})|([:]))?(?:([^0-9/:].*)/)?(/|[^0-9/][^/]*)$"))
+(defn eof! [^ReaderState {:flds [stack] :as state}]
+  (while (.-isNotEmpty stack)
+    ((.-last stack) state)))
+
+;; We are using the dart:convert classes to get us async and sync
+;; It means we have to provide a Decoder.
+;; What's interesting is what happens when a chunked conversion is started.
+(deftype CljDecoder [init-state!]
+  :extends #/(convert/Converter String Object?)
+  (convert [this s]
+    (let [^ReaderState state (doto (ReaderState #dart [] (coll/Queue))
+                               init-state!)
+          from (resume! state s 0 (.-length s))]
+      (when (neg? from)
+        (eof! state))
+      (-> state .-q .-first)))
+  (startChunkedConversion [_ out]
+    (let [^ReaderState state (doto (ReaderState #dart [] (coll/Queue))
+                               init-state!)
+          q (.-q state)
+          drain! #(while (.-isNotEmpty q)
+                    (.add out (.removeFirst q)))]
+      (reify
+        :extends convert/StringConversionSinkBase
+        (close [_]
+          (eof! state)
+          (drain!)
+          (.close out))
+        (addSlice [this s from to is-last]
+          (loop [from from]
+            (let [from (resume! state s from to)]
+              (drain!)
+              (cond
+                (not (neg? from)) ; read is over, let's resume!
+                (do (init-state! state) (recur from))
+                is-last (.close this)))))))))
+
+(defn do-read-token
+  ([^ReaderState {:flds [q stack] :as state}]
+   (let [n-2 (- (.-length stack) 2)
+         ^StringBuffer sb (aget stack n-2)]
+     (.-length! stack n-2)
+     (-> state .-q (.add (.toString sb)))))
+  ([^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+   (let [n-2 (- (.-length stack) 2)
+         ^StringBuffer sb (aget stack n-2)]
+     (loop [from from]
+       (if (< from to)
+         (if (terminating? s from)
+           (do
+             (.-length! stack n-2)
+             (-> state .-q (.add (.toString sb)))
+             from)
+           (let [cu (.codeUnitAt s from)]
+             (.writeCharCode sb cu)
+             (recur (inc from))))
+         -1)))))
+
+(defn read-token
+  [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (doto stack
+    (.add (StringBuffer (. s "[]" from)))
+    (.add do-read-token))
+  (do-read-token state s (inc from) to))
+
+(defn dispatch [^ReaderState state ^String s ^int from ^int to]
+  (let [cu (.codeUnitAt s from)]
+    (if-some [rd (when (< cu 128) (aget macros cu))]
+      (rd state s (inc from) to)
+      (let [_ (-> state .-stack (.add post-interpret-token))
+            from (read-token state s from to)]
+        (if (neg? from)
+          from
+          (post-interpret-token state s from to))))))
 
 (defn interpret-token [^String token]
   (case token
@@ -530,33 +138,556 @@
                 (symbol g3 g4))))
           (throw (FormatException. (str "Invalid token: " token))))))))
 
-(defn ^#/(Future dynamic) ^:async read
-  [^ReaderInput rdr ^int delim]
-  (binding [*top-level-form* (nil? *top-level-form*)]
-    (loop []
-      (if-some [string (await (.read rdr))]
-        (let [index (or (some-> (.matchAsPrefix SPACE-REGEXP string) .-end) 0)]
-          (if (== index (.-length string))
-            (recur)
-            (let [ch (.codeUnitAt string index)]
-              (if (== delim ch)
-                (doto rdr (.unread (.substring string (inc index))))
-                (if-some [macro-reader (macros (saget string index))]
-                  (do (.unread rdr (.substring string (inc index)))
-                      (let [val (await (macro-reader rdr))]
-                        (if (== val rdr)
-                          (recur)
-                          val)))
-                  (do (.unread rdr (.substring string index))
-                      (-> (await (read-token rdr "")) interpret-token)))))))
-        (if (< delim 0)
-          rdr
-          (throw (FormatException. (str "Unexpected EOF, expected " (String/fromCharCode delim)))))))))
+(def post-interpret-token (post-read interpret-token))
 
-(defn ^#/(Future dynamic) ^:async read-string [^String s]
-  (let [controller (new #/(async/StreamController String))
-        rdr (make-reader-input controller)]
-    (.add controller s)
-    (let [res (read rdr -1)]
-      (.close controller)
-      (await res))))
+(defn skip-space [^String s ^int from ^int to]
+  (let [{end .-end} (.matchAsPrefix SPACE-REGEXP s from)]
+    (if (< end to)
+      end
+      -1)))
+
+(defn do-read
+  ([^ReaderState {:flds [stack q] :as state}]
+   (when (.-isEmpty q)
+     (throw (Exception "EOF while reading")))
+   (.removeLast stack))
+  ([^ReaderState {:flds [stack q] :as state} ^String s ^int from ^int to]
+   (if (.-isNotEmpty q)
+     (do
+       (.removeLast stack)
+       from)
+     (let [from (skip-space s from to)]
+       (cond
+         (neg? from) from
+         (< from to)
+         (let [from (dispatch state s from to)]
+           (if (neg? from)
+             from
+             ; something has been read but the q may still be empty, let's loop to check!
+             (recur state s from to)))
+         :else -1)))))
+
+(defn read
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (if (-> state .-q .-isNotEmpty)
+    from
+    (do
+      (.add stack do-read)
+      (do-read state s from to))))
+
+(defn do-maybe-read
+  ([^ReaderState {:flds [stack q] :as state}]
+   (.removeLast stack))
+  ([^ReaderState {:flds [stack q] :as state} ^String s ^int from ^int to]
+   (if (.-isNotEmpty q)
+     (do
+       (.removeLast stack)
+       from)
+     (let [from (skip-space s from to)]
+       (cond
+         (neg? from) from
+         (< from to)
+         (let [from (dispatch state s from to)]
+           (if (neg? from)
+             from
+             ; something has been read but the q may still be empty, let's loop to check!
+             (recur state s from to)))
+         :else -1)))))
+
+(defn maybe-read
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (if (-> state .-q .-isNotEmpty)
+    from
+    (do
+      (.add stack do-maybe-read)
+      (do-maybe-read state s from to))))
+
+(defn mk-read-coll [closing-delim mk-coll]
+  (let [closing-cu (int closing-delim)
+        do-read-coll
+        (fn
+          ([^ReaderState state] (throw (Exception "EOF while reading")))
+          ([^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+           (let [n-2 (- (.-length stack) 2)
+                 ^List items (aget stack n-2)]
+             (loop [from (skip-space s from to)]
+               (.addAll items q)
+               (.clear q)
+               (cond
+                 (neg? from) from
+                 (< from to)
+                 (if (== closing-cu (.codeUnitAt s from))
+                   (do
+                     (.-length! stack n-2)
+                     (.add q (mk-coll items))
+                     (inc from))
+                   (let [from (read state s from to)]
+                     (if (neg? from)
+                       from
+                       (recur from))))
+                 :else -1)))))]
+    (fn
+      ([^ReaderState state] (throw (Exception "EOF encoutered, expecting closing delimiter.")))
+      ([^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+       (doto stack
+         (.add #dart [])
+         (.add do-read-coll))
+       (do-read-coll state s from to)))))
+
+;; a chunked reader is a stateful function with three arities:
+;; EOF: [] -> ?
+;; chunk [s from to] -> reader
+;; result [x] -> reader
+
+;; a chunked reader is a stateful function [string from to] -> i
+;; when i < 0 all input was consumed
+;; else reader is done and input upto i (excluded) is consumed
+;; if string is nil then it means EOF
+
+(def ^RegExp INT-REGEXP (RegExp. "([-+]?)(?:(0)|([1-9][0-9]*)|0[xX]([0-9A-Fa-f]+)|0([0-7]+)|([1-9][0-9]?)[rR]([0-9A-Za-z]+)|0[0-9]+)(N)?$"))
+(def ^RegExp DOUBLE-REGEXP (RegExp "([-+]?[0-9]+([.][0-9]*)?([eE][-+]?[0-9]+)?)(M)?$"))
+(def ^RegExp SYMBOL-REGEXP (RegExp "(?:([:]{2})|([:]))?(?:([^0-9/:].*)/)?(/|[^0-9/][^/]*)$"))
+
+(defn terminating? ^bool [^String s ^int i]
+  (some? (.matchAsPrefix #"[\s,;()\[\]{}\"~^@`\\]" s i)))
+
+(defprotocol IResolver
+  (currentNS [resolver])
+  (resolveClass [resolver sym])
+  (resolveAlias [resolver sym])
+  (resolveVar [resolver sym]))
+
+(def ^:dynamic *resolver* nil)
+
+(def ^RegExp STRING-ESC-REGEXP
+  #"\\(?:u([0-9a-fA-F]{0,4})|([0-7]{1,3})|(.))")
+
+(defn- unesc [^String s]
+  (.replaceAllMapped s
+    STRING-ESC-REGEXP
+    (fn [^Match m]
+      (if-some [m1 (.group m 1)]
+        (if (< (.-length m1) 4)
+          (throw (FormatException (str "Unsupported escape for character: \\u" m1 " \\u MUST be followed by 4 hexadecimal digits")))
+          (String/fromCharCode (int/parse m1 .radix 16)))
+        (if-some [m2 (.group m 2)]
+          (String/fromCharCode (int/parse m2 .radix 8))
+          (let [m3 (.group m 3)]
+            (case m3
+              "\"" (str m3)
+              "\\" (str m3)
+              "b" "\b"
+              "n" "\n"
+              "r" "\r"
+              "t" "\t"
+              "f" "\f"
+              (throw (FormatException (str "Unsupported escape character: \\" m3))))))))))
+
+(defn do-read-raw-string
+  ([^ReaderState state] (throw (Exception "EOF encoutered, string not properly terminated.")))
+  ([^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+   (let [n-3 (- (.-length stack) 3)
+         ^StringBuffer sb (aget stack (inc n-3))]
+     (loop [from from ^bool esc (aget stack n-3)]
+       (if (< from to)
+         (let [cu (.codeUnitAt s from)]
+           (if (and (not esc) (== 34 cu)) ; \"
+             (do
+               (.-length! stack n-3)
+               (->> sb .toString (.add q))
+               (inc from))
+             (do
+               (.writeCharCode sb cu)
+               (recur (inc from) (and (not esc) (== 92 cu)))))) ; \\
+         (do
+           (aset stack n-3 esc)
+           -1))))))
+
+(def post-stringlit (post-read unesc))
+
+(defn read-stringlit
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (doto stack
+    (.add post-stringlit)
+    (.add false) ; escape flag
+    (.add (StringBuffer))
+    (.add do-read-raw-string))
+  (let [from (do-read-raw-string state s from to)]
+    (if (neg? from)
+      from
+      (post-stringlit state s from to))))
+
+(def post-regexp (post-read #(RegExp %)))
+
+(defn read-regexp
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (doto stack
+    (.add post-regexp)
+    (.add false) ; escape flag
+    (.add (StringBuffer))
+    (.add do-read-raw-string))
+  (let [from (do-read-raw-string state s from to)]
+    (if (neg? from)
+      from
+      (post-regexp state s from to))))
+
+(def post-char-token
+  (post-read
+    (fn [^String token]
+      (if (= 1 (.-length token))
+        token
+        (case token
+          "newline" \newline
+          "space" \space
+          "tab" \tab
+          "backspace" \backspace
+          "formfeed" \formfeed
+          "return" \return
+          (cond
+            (.startsWith token "u")
+            (let [cu (int/parse (.substring token 1) .radix 16)]
+              (when (or (not= 5 (.-length token))
+                      (neg? cu)
+                      (<= 0xD800 cu 0xDFFF))  ; surrogate code unit?
+                (throw (Exception (str "Invalid character constant: \\" token))))
+              (String/fromCharCode cu))
+            (.startsWith token "o")
+            (let [cu (int/parse (.substring token 1) .radix 8)]
+              (when (< 4 (.-length token))
+                (throw (Exception (str "Invalid octal escape sequence length: " (dec (.-length token))))))
+              (when-not (<= 0 cu 0377)
+                (throw (Exception "Octal escape sequence must be in range [0, 377].")))
+              (String/fromCharCode cu))
+            :else (throw (Exception (str "Unsupported character: \\" token)))))))))
+
+(defn read-char
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (.add stack post-char-token)
+  (let [from (read-token state s from to)]
+    (if (neg? from)
+      from
+      (post-char-token state s from to))))
+
+(defn do-read-meta
+  ([^ReaderState {:flds [stack] :as state}]
+   (when (neg? (do-read-meta state "" 0 0))
+     (throw (Exception "EOF while reading a value with metadata."))))
+  ([^ReaderState {:flds [stack q] :as state} ^String s ^int from ^int to]
+   (let [n-2 (- (.-length stack) 2)]
+     (loop [from from]
+       (let [from (read state s from to)]
+         (if (neg? from)
+           from
+           (let [x (.removeFirst q)]
+             (if-some [m (aget stack n-2)]
+               (do
+                 (.-length! stack n-2)
+                 (.addFirst q (with-meta x m))
+                 from)
+               (let [m (cond
+                         (map? x) x
+                         (keyword? x) {x true}
+                         (or (symbol? x) (string? x)) {:tag x}
+                         :else (throw (Exception (str "Invalid value as metadata: " (pr-str x)))))]
+                 (aset stack n-2 m)
+                 (recur from))))))))))
+
+(defn read-meta
+  [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (do
+    (.add stack nil)
+    (.add stack do-read-meta)
+    (do-read-meta state s from to)))
+
+(defn get-binding [^List stack k]
+  (let [i (inc (.lastIndexOf stack k))]
+    (when (pos? i) (aget stack i))))
+
+(defn do-pop-binding
+  ([^ReaderState {:flds [stack] :as state}]
+   (.-length! stack (- (.-length stack) 3)))
+  ([^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+   (.-length! stack (- (.-length stack) 3))
+   from))
+
+(defn push-binding [^List stack k v]
+  (doto stack
+    (.add :args-env)
+    (.add v)
+    (.add do-pop-binding)))
+
+(defn read-anon-arg
+  [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (let [^Map? args-env (get-binding stack :args-env)
+        post
+        (post-read
+          (if (nil? args-env)
+            interpret-token
+            (fn [token]
+              (let [n (case token
+                        "%" 1
+                        "%&" -1
+                        (or
+                          (let [n (interpret-token token)]
+                            (when (dart/is? n num)
+                              (let [n (.toInt ^num n)]
+                                (when (or (pos? n) (= -1 n))
+                                  n))))
+                          (throw (FormatException. "arg literal must be %, %& or %integer"))))]
+                (or (. args-env "[]" n)
+                  (let [sym (gensym (if (pos? n) (str "p" n "__") "rest__"))]
+                    (. args-env "[]=" n sym)
+                    sym))))))
+        _ (.add stack post)
+        from (read-token state s from to)]
+    (if (neg? from)
+      from
+      (post state s from to))))
+
+(defn read-fn [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (let [args-env (Map)
+        _ (push-binding stack :args-env args-env)
+        read (mk-read-coll ")"
+               (fn [items]
+                 (let [n (reduce max 0 (keys args-env))
+                       rest-arg (get args-env -1)
+                       args
+                       (cond->
+                           (into [] (map (fn [i] (or (get args-env i) (gensym (str "p" i "__"))))) (range 1 (inc n)))
+                         rest-arg
+                         (conj '& rest-arg))]
+                   (list 'fn* args (-list-lit items)))))
+        from (read state s from to)]
+    (if (neg? from)
+      from
+      (do-pop-binding state s from to))))
+
+(defn post-read [f]
+  (fn self
+    ([^ReaderState {:flds [stack] :as state}]
+     (self state "" 0 0))
+    ([^ReaderState {:flds [stack q] :as state} ^String s ^int from ^int to]
+     (let [x (.removeFirst q)]
+       (.removeLast stack)
+       (.addFirst q (f x))
+       from))))
+
+(defn mk-read-wrapped [sym]
+  (let [post (post-read #(list sym %))]
+    (fn [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+      (.add stack post)
+      (let [from (read state s from to)]
+        (if (neg? from)
+          from
+          (post state s from to))))))
+
+(def read-non-splicing-unquote (mk-read-wrapped 'cljd.core/unquote))
+
+(def read-splicing-unquote (mk-read-wrapped 'cljd.core/unquote-splicing))
+
+(defn do-read-unquote
+  ([^ReaderState {:flds [stack] :as state}]
+   (throw (Exception "EOF after a ~")))
+  ([^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+   (if (< from to)
+     (do
+       (.removeLast stack)
+       (if (= \@ (. s "[]" from))
+         (read-splicing-unquote state s (inc from) to)
+         (read-non-splicing-unquote state s from to)))
+     -1)))
+
+(defn read-unquote [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (.add stack do-read-unquote)
+  (do-read-unquote state s from to))
+
+(def ^:dynamic *gensym-env* nil)
+
+(defn unquote? [form]
+  (and (seq? form) (= 'cljd.core/unquote (first form))))
+
+(defn unquote-splicing? [form]
+  (and (seq? form) (= 'cljd.core/unquote-splicing (first form))))
+
+;; TODO: should not be in reader.cljd
+(defn special-form? [form]
+  (contains? '#{. set! dart/is? dart/await dart/assert throw new ns try case* quote do var let* loop* recur
+                if fn* letfn def reify* deftype* defprotocol* extend-type-protocol*} form))
+
+(defn- syntax-quote [form]
+  (cond
+    (special-form? form) (list 'quote form)
+    (symbol? form)
+    (let [nsform (namespace form)
+          nameform (name form)]
+      (->> (cond
+             (and (nil? nsform) (.endsWith nameform "#"))
+             (if  (nil? *gensym-env*)
+               ;; Should never happen
+               (throw (FormatException. "Gensym literal not in syntax-quote"))
+               (or
+                 (*gensym-env* form)
+                 (let [gs (symbol nil
+                            (str (gensym (str (.substring nameform 0 (dec (.-length nameform))) "__")) "__auto__"))]
+                   (set! *gensym-env* (assoc *gensym-env* form gs))
+                   gs)))
+             (and (nil? nsform) (.endsWith nameform "."))
+             (let [rc (resolveClass *resolver* (symbol nil (.substring nameform 0 (dec (.-length nameform)))))]
+               (symbol (namespace rc) (str (name rc) ".")))
+             (and (nil? nsform) (.startsWith nameform "."))
+             form
+             :else
+             (let [nsym (let [alias (some->> nsform (symbol nil))
+                              nsym (some->> alias (resolveClass *resolver*))]
+                          (if (nil? nsym) (resolveAlias *resolver* alias) nsym))]
+               (if (not (nil? nsym))
+                 (symbol (name nsym) nameform)
+                 (if (nil? nsform)
+                   (let [rsym (resolveClass *resolver* form)
+                         rsym (if (nil? rsym) (resolveVar *resolver* form) rsym)]
+                     (if (not (nil? rsym))
+                       rsym
+                       (symbol (name (currentNS *resolver*)) nameform)))
+                   form))))
+        (list 'quote)))
+    (unquote? form) (second form)
+    (unquote-splicing? form) (throw (FormatException. "splice not in list"))
+    (number? form) form
+    (string? form) form
+    (keyword? form) form
+    (coll? form)
+    (cond
+      ;; TODO records
+      (vector? form)
+      (list 'cljd.core/apply 'cljd.core/vector (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form))))
+      (set? form)
+      (list 'cljd.core/apply 'cljd.core/hash-set (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form))))
+      (map? form)
+      (list 'cljd.core/apply 'cljd.core/hash-map (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list (apply concat form)))))
+      (or (list? form) (seq? form))
+      (list 'cljd.core/seq (cons 'cljd.core/concat (sq-expand-list form)))
+      :else (throw (FormatException. "Unknown Collection type")))
+    :else (list 'quote form)))
+
+(defn- sq-expand-list [s]
+  (doall (map #(cond
+                 (unquote? %) (list 'cljd.core/list (second %))
+                 (unquote-splicing? %) (second %)
+                 :else (list 'cljd.core/list (syntax-quote %))) s)))
+
+(def post-syntax-quote
+  (post-read
+    (fn [form]
+      (binding [*gensym-env* {}]
+        (syntax-quote form)))))
+
+(defn read-syntax-quote [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (.add stack post-syntax-quote)
+  (let [from (read state s from to)]
+    (if (neg? from)
+      from
+      (post-syntax-quote state s from to))))
+
+(defn do-discard
+  ([^ReaderState {:flds [stack] :as state}]
+   (when (neg? (do-discard state "" 0 0))
+     (throw (Exception "EOF while reading a discarded form."))))
+  ([^ReaderState {:flds [stack q] :as state} ^String s ^int from ^int to]
+   (let [from (read state s from to)]
+     (if (neg? from)
+       from
+       (let [_ (.removeFirst q)]
+         (.removeLast stack)
+         from)))))
+
+(defn discard
+  [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (do
+    (.add stack do-discard)
+    (do-discard state s from to)))
+
+(defn do-read-comment
+  ([^ReaderState {:flds [stack]}] (.removeLast stack))
+  ([^ReaderState {:flds [stack]} ^String s ^int from ^int to]
+   (loop [from from]
+     (if (< from to)
+       (let [cu (.codeUnitAt s from)]
+         (if (== 10 cu) ; newline
+           (do
+             (.removeLast stack)
+             (inc from))
+           (recur (inc from))))
+       -1))))
+
+(defn read-comment
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (.add stack do-read-comment)
+  (do-read-comment state s from to))
+
+#_(defn ctor-reader [out!]
+  (fn
+    ([] (throw (Exception "EOF while reading")))
+    ([^String s ^int from ^int to]
+     (throw (Exception "TODO ctor-reader or only taglit")))))
+
+(defn do-read-dispatch-macro
+  ([^ReaderState state] (throw (Exception "EOF encoutered after a #.")))
+  ([^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+   (if (< from to)
+     (let [cu (.codeUnitAt s from)]
+       (if-some [rd (when (< cu 128) (aget dispatch-macros cu))]
+         (do
+           (.removeLast stack)
+           (rd state s (inc from) to))
+         (throw "TODO ctor"))))))
+
+(defn read-dispatch-macro
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (.add stack do-read-dispatch-macro)
+  (do-read-dispatch-macro state s from to))
+
+(defn unexpected [msg]
+  (fn [_ _ _ _]
+    (throw (FormatException (str "Unexpected " msg ".")))))
+
+(def macros
+  (doto (List/filled 128 nil)
+    (aset (int "\"") read-stringlit)
+    (aset (int "\\") read-char)
+    (aset (int "~") read-unquote)
+    (aset (int \`) read-syntax-quote)
+    (aset (int \%) read-anon-arg)
+    (aset (int "(") (mk-read-coll ")" -list-lit))
+    (aset (int ")") (unexpected "closing parenthesis"))
+    (aset (int "{")
+      (mk-read-coll "}"
+        (fn [kvs]
+          (if (even? (count kvs))
+            (-map-lit kvs)
+            (throw (FormatException "Map literal must contain an even number of forms"))))))
+    (aset (int "}") (unexpected "closing curly brace"))
+    (aset (int "[") (mk-read-coll "]" vec))
+    (aset (int "]") (unexpected "closing square bracket"))
+    (aset (int "^") read-meta)
+    (aset (int "@") (mk-read-wrapped 'cljd.core/deref))
+    (aset (int "'") (mk-read-wrapped 'quote))
+    (aset (int "#") read-dispatch-macro)
+    (aset (int ";") read-comment)))
+
+(def dispatch-macros
+  (doto (List/filled 128 nil)
+    (aset (int "_") discard)
+    (aset (int "(") read-fn)
+    (aset (int "{") (mk-read-coll "}" set))
+    (aset (int \") read-regexp)
+    (aset (int \') (mk-read-wrapped 'var))))
+
+(defn read-string
+  "Synchronous, takes a string and returns the value of the first form."
+  [s]
+  (.convert (CljDecoder #(read % "" 0 0)) s))
+
+(defn ^Stream read-stream
+  "Takes a stream of strings and returns a stream of read values."
+  [s]
+  (.bind (CljDecoder #(maybe-read % "" 0 0)) s))
