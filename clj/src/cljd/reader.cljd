@@ -16,10 +16,9 @@
 
 (defn resume! [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
   (loop [from from]
-    (let [from ((.-last stack) state s from to)]
-      (if (or (neg? from) (.-isEmpty stack))
-        from
-        (recur from)))))
+    (if (or (neg? from) (.-isEmpty stack))
+      from
+      (recur ((.-last stack) state s from to)))))
 
 (defn eof! [^ReaderState {:flds [stack] :as state}]
   (while (.-isNotEmpty stack)
@@ -28,21 +27,35 @@
 ;; We are using the dart:convert classes to get us async and sync
 ;; It means we have to provide a Decoder.
 ;; What's interesting is what happens when a chunked conversion is started.
-(deftype CljDecoder [^ReaderState state]
+(deftype CljDecoder [init-state!]
   :extends #/(convert/Converter String Object?)
   (convert [this s]
-    (let [from (resume! state s 0 (.-length s))]
+    (let [^ReaderState state (doto (ReaderState #dart [] (coll/Queue))
+                               init-state!)
+          from (resume! state s 0 (.-length s))]
       (when (neg? from)
         (eof! state))
       (-> state .-q .-first)))
   (startChunkedConversion [_ out]
-    (reify
-      :extends convert/StringConversionSinkBase
-      (close [_] (eof! state) (->> state .-q .-first (.add out)))
-      (addSlice [this s from to is-last]
-        (let [from (resume! state s from to)]
-          (when (and (neg? from) is-last)
-            (.close this)))))))
+    (let [^ReaderState state (doto (ReaderState #dart [] (coll/Queue))
+                               init-state!)
+          q (.-q state)
+          drain! #(while (.-isNotEmpty q)
+                    (.add out (.removeFirst q)))]
+      (reify
+        :extends convert/StringConversionSinkBase
+        (close [_]
+          (eof! state)
+          (drain!)
+          (.close out))
+        (addSlice [this s from to is-last]
+          (loop [from from]
+            (let [from (resume! state s from to)]
+              (drain!)
+              (cond
+                (not (neg? from)) ; read is over, let's resume!
+                (do (init-state! state) (recur from))
+                is-last (.close this)))))))))
 
 (defn do-read-token
   ([^ReaderState {:flds [q stack] :as state}]
@@ -162,6 +175,33 @@
       (.add stack do-read)
       (do-read state s from to))))
 
+(defn do-maybe-read
+  ([^ReaderState {:flds [stack q] :as state}]
+   (.removeLast stack))
+  ([^ReaderState {:flds [stack q] :as state} ^String s ^int from ^int to]
+   (if (.-isNotEmpty q)
+     (do
+       (.removeLast stack)
+       from)
+     (let [from (skip-space s from to)]
+       (cond
+         (neg? from) from
+         (< from to)
+         (let [from (dispatch state s from to)]
+           (if (neg? from)
+             from
+             ; something has been read but the q may still be empty, let's loop to check!
+             (recur state s from to)))
+         :else -1)))))
+
+(defn maybe-read
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (if (-> state .-q .-isNotEmpty)
+    from
+    (do
+      (.add stack do-maybe-read)
+      (do-maybe-read state s from to))))
+
 (defn mk-read-coll [closing-delim mk-coll]
   (let [closing-cu (int closing-delim)
         do-read-coll
@@ -243,7 +283,7 @@
               "f" "\f"
               (throw (FormatException (str "Unsupported escape character: \\" m3))))))))))
 
-(defn do-read-stringlit
+(defn do-read-raw-string
   ([^ReaderState state] (throw (Exception "EOF encoutered, string not properly terminated.")))
   ([^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
    (let [n-3 (- (.-length stack) 3)
@@ -254,7 +294,7 @@
            (if (and (not esc) (== 34 cu)) ; \"
              (do
                (.-length! stack n-3)
-               (->> sb .toString unesc (.add q))
+               (->> sb .toString (.add q))
                (inc from))
              (do
                (.writeCharCode sb cu)
@@ -263,13 +303,33 @@
            (aset stack n-3 esc)
            -1))))))
 
+(def post-stringlit (post-read unesc))
+
 (defn read-stringlit
   [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
   (doto stack
+    (.add post-stringlit)
     (.add false) ; escape flag
     (.add (StringBuffer))
-    (.add do-read-stringlit))
-  (do-read-stringlit state s from to))
+    (.add do-read-raw-string))
+  (let [from (do-read-raw-string state s from to)]
+    (if (neg? from)
+      from
+      (post-stringlit state s from to))))
+
+(def post-regexp (post-read #(RegExp %)))
+
+(defn read-regexp
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (doto stack
+    (.add post-regexp)
+    (.add false) ; escape flag
+    (.add (StringBuffer))
+    (.add do-read-raw-string))
+  (let [from (do-read-raw-string state s from to)]
+    (if (neg? from)
+      from
+      (post-regexp state s from to))))
 
 (def post-char-token
   (post-read
@@ -338,6 +398,69 @@
     (.add stack nil)
     (.add stack do-read-meta)
     (do-read-meta state s from to)))
+
+(defn get-binding [^List stack k]
+  (let [i (inc (.lastIndexOf stack k))]
+    (when (pos? i) (aget stack i))))
+
+(defn do-pop-binding
+  ([^ReaderState {:flds [stack] :as state}]
+   (.-length! stack (- (.-length stack) 3)))
+  ([^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+   (.-length! stack (- (.-length stack) 3))
+   from))
+
+(defn push-binding [^List stack k v]
+  (doto stack
+    (.add :args-env)
+    (.add v)
+    (.add do-pop-binding)))
+
+(defn read-anon-arg
+  [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (let [^Map? args-env (get-binding stack :args-env)
+        post
+        (post-read
+          (if (nil? args-env)
+            interpret-token
+            (fn [token]
+              (let [n (case token
+                        "%" 1
+                        "%&" -1
+                        (or
+                          (let [n (interpret-token token)]
+                            (when (dart/is? n num)
+                              (let [n (.toInt ^num n)]
+                                (when (or (pos? n) (= -1 n))
+                                  n))))
+                          (throw (FormatException. "arg literal must be %, %& or %integer"))))]
+                (or (. args-env "[]" n)
+                  (let [sym (gensym (if (pos? n) (str "p" n "__") "rest__"))]
+                    (. args-env "[]=" n sym)
+                    sym))))))
+        _ (.add stack post)
+        from (read-token state s from to)]
+    (if (neg? from)
+      from
+      (post state s from to))))
+
+(defn read-fn [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (let [args-env (Map)
+        _ (push-binding stack :args-env args-env)
+        read (mk-read-coll ")"
+               (fn [items]
+                 (let [n (reduce max 0 (keys args-env))
+                       rest-arg (get args-env -1)
+                       args
+                       (cond->
+                           (into [] (map (fn [i] (or (get args-env i) (gensym (str "p" i "__"))))) (range 1 (inc n)))
+                         rest-arg
+                         (conj '& rest-arg))]
+                   (list 'fn* args (-list-lit items)))))
+        from (read state s from to)]
+    (if (neg? from)
+      from
+      (do-pop-binding state s from to))))
 
 (defn post-read [f]
   (fn self
@@ -411,7 +534,7 @@
              (and (nil? nsform) (.endsWith nameform "."))
              (let [rc (resolveClass *resolver* (symbol nil (.substring nameform 0 (dec (.-length nameform)))))]
                (symbol (namespace rc) (str (name rc) ".")))
-             (and (nil? nsform) (== (saget nameform 0) "."))
+             (and (nil? nsform) (.startsWith nameform "."))
              form
              :else
              (let [nsym (let [alias (some->> nsform (symbol nil))
@@ -532,8 +655,8 @@
     (aset (int "\"") read-stringlit)
     (aset (int "\\") read-char)
     (aset (int "~") read-unquote)
-    #_#_TODO (aset (int "`") read-syntax-quote)
-    #_#_TODO (aset (int "%") read-anon-arg)
+    (aset (int \`) read-syntax-quote)
+    (aset (int \%) read-anon-arg)
     (aset (int "(") (mk-read-coll ")" -list-lit))
     (aset (int ")") (unexpected "closing parenthesis"))
     (aset (int "{")
@@ -554,9 +677,17 @@
 (def dispatch-macros
   (doto (List/filled 128 nil)
     (aset (int "_") discard)
-    (aset (int "{") (mk-read-coll "}" set))))
+    (aset (int "(") read-fn)
+    (aset (int "{") (mk-read-coll "}" set))
+    (aset (int \") read-regexp)
+    (aset (int \') (mk-read-wrapped 'var))))
 
-(defn read-string [s]
-  (let [state (ReaderState #dart [] (coll/Queue))]
-    (read state "" 0 0)
-    (.convert (CljDecoder state) s)))
+(defn read-string
+  "Synchronous, takes a string and returns the value of the first form."
+  [s]
+  (.convert (CljDecoder #(read % "" 0 0)) s))
+
+(defn ^Stream read-stream
+  "Takes a stream of strings and returns a stream of read values."
+  [s]
+  (.bind (CljDecoder #(maybe-read % "" 0 0)) s))
