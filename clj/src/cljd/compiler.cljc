@@ -4223,7 +4223,8 @@
      (with-cljd-reader
        (let [in (clojure.lang.LineNumberingPushbackReader. in)]
          (loop []
-           (let [form (read {:eof in :read-cond :allow} in)]
+           (let [form (read {:eof in :read-cond :allow
+                             :features #{:cljd :cljd/clj-host}} in)]
              (when-not (identical? form in)
                (binding [*locals-gen* {}] (host-eval form))
                (recur))))))))

@@ -29,3 +29,8 @@ In ClojureDart for extensions methods you would write:
     (-> now dart:core/DateTimeCopyWith (.copyWith .year (dec (.-year now)))))
 ```
 ⚠️ Please note that we understand that being able to call extensions as regular method calls would be ideal, but we have not reached that point yet.
+
+## Conditional reading, CLJC
+Currently CLJD uses the Clojure reader so the `:clj` features in conditional is always on so **you have to put `:clj` last in your conditionals**.
+
+Second, when you need a macro (which is currently compiled by Clojure) to use some Clojure path, it's better to use `:cljd/clj-host` so as to not confuse "clj-for-clj" and "clj-for-cljd-macros".

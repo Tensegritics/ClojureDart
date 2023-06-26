@@ -16,7 +16,7 @@
 
 (def ^:macro-support  argument-error
   (fn [msg]
-    (new #?(:cljd ArgumentError :clj IllegalArgumentException) msg)))
+    (new #?(:cljd/clj-host IllegalArgumentException :cljd ArgumentError) msg)))
 
 (def ^:macro-support ^:private maybe-destructured
   (fn* [params body]
