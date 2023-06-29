@@ -3251,6 +3251,8 @@
   (-first [coll] value)
   (-rest [coll] (or _rest (set! _rest (or (iterator-seq iter) ()))))
   (-next [coll] (-seq (-rest coll)))
+  ICollection
+  (-conj [coll o] (cons o coll))
   IMeta
   (-meta [coll] meta)
   IWithMeta
