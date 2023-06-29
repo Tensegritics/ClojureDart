@@ -14,6 +14,6 @@ $ make
 $ cd ..
 $ clj -M:cljd init
 $ clj -M:cljd compile
-$ dart run bin/
+$ dart run bin/ffi.dart
 # Returns `Hello World`
 ```
