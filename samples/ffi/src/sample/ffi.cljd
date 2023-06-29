@@ -1,0 +1,25 @@
+(ns sample.ffi
+  ;; ffi example from https://dart.dev/guides/libraries/c-interop
+  (:require ["dart:ffi" :as ffi]
+            ["dart:io" :as io]
+            ["package:path/path.dart" :as path]))
+
+(defn main []
+  (let [lib-path (cond
+                   io/Platform.isMacOS
+                   (path/join io/Directory.current.path "hello_library" "libhello.dylib")
+                   io/Platform.isWindows
+                   (path/join io/Directory.current.path "hello_library" "Debug" "hello.dll")
+                   :else
+                   (path/join io/Directory.current.path "hello_library" "libhello.so"))
+        dylib (ffi/DynamicLibrary.open lib-path)
+        ;; NOTE: that's how one would write `.lookup<ffi.NativeFunction<ffi.Void Function()>>('hello_world')`
+        hello (-> dylib
+                (. #/(lookup (ffi/NativeFunction (-> ffi/Void))) "hello_world")
+                ;; `ffi/NativeFunctionPointer` is currently the way to call a method on an extension.
+                ffi/NativeFunctionPointer
+                ;; NOTE: `asFunction` takes also a type parameter that is used by cljd
+                ;; analyzer to guess the return type.
+                ;; Note that return type is *needed* in this ffi case
+                (. #/(asFunction (-> void))))]
+    (hello)))

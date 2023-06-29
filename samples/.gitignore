@@ -12,3 +12,6 @@
 /*/test/*
 /*/web/*
 /*/windows/*
+!/ffi/hello_library/
+!/ffi/README.md
+!/ffi/pubspec.yaml
