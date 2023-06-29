@@ -3092,7 +3092,7 @@
   (-print [o sink] (print-sequential "(" ")" o sink))
   #/(List E)
   (length [coll ^int val]
-    (throw (UnsupportedError. "lenght= not supported on Cons")))
+    (throw (UnsupportedError. "length= not supported on Cons")))
   (add [coll _]
     (throw (UnsupportedError. "add not supported on Cons")))
   ("[]=" [coll ^int index ^E value]
