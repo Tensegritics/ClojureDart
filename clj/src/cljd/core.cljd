@@ -5088,10 +5088,7 @@
     (and
       (set? other)
       (== (-count hm) (-count other))
-      (reduce
-        (fn [_ k]
-          (or (-contains-key? hm k) (reduced false)))
-        true other)))
+      (every? #(-contains-key? hm %) other)))
   IHash
   (-hash [coll] (ensure-hash __hash (hash-unordered-coll coll)))
   ISeqable
@@ -8077,9 +8074,12 @@
           (#/(HashRankedWideTreapSet E) meta (.tnode_assoc root top-rank rank o o cmp) top-rank cmp cmpf -1)))))
   IEmptyableCollection
   (-empty [coll] (#/(HashRankedWideTreapSet E) meta -empty-treap-node 0 cmp cmpf -1))
-  ;; AFAIRE
   IEquiv
-  (-equiv [coll other] (-equiv-map coll other))
+  (-equiv [coll other]
+    (and
+      (set? other)
+      (== (.-cnt root) (-count other))
+      (every? #(identical? % (.tnode_lookup root % other top-rank cmp)) other)))
   IHash
   (-hash [coll] (ensure-hash __hash (hash-unordered-coll coll)))
   ISeqable
