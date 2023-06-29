@@ -5302,10 +5302,10 @@
   "Returns true if (pred x) is logical true for every x in coll, else
   false."
   [pred coll]
-  (cond
-    (nil? (seq coll)) true
-    (pred (first coll)) (recur pred (next coll))
-    true false))
+  (reduce
+    (fn [t x]
+      (if (pred x) t (reduced false)))
+    true coll))
 
 (defn ^bool not-every?
   "Returns false if (pred x) is logical true for every x in
@@ -5408,8 +5408,9 @@
   this will return :fred if :fred is in the sequence, otherwise nil:
   (some #{:fred} coll)"
   [pred coll]
-  (when-let [s (seq coll)]
-    (or (pred (first s)) (recur pred (next s)))))
+  (reduce (fn [_ x]
+            (when-let [t (pred x)]
+              (reduced t))) nil coll))
 
 (defn some-fn
   "Takes a set of predicates and returns a function f that returns the first logical true value
