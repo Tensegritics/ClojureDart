@@ -455,10 +455,13 @@
      (~'createState [_#]
        (reify :extends widgets/State
          :no-meta true
-         (~'build [state# ~closest-context]
-           (let [~name state#]
-             (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))
-         ^:mixin widgets/TickerProviderStateMixin))))
+         (~'build [state# ctx#]
+          (-build (.-widget state#) state# ctx#))
+         ^:mixin widgets/TickerProviderStateMixin))
+     StateLifecycle
+     (~'-build [_# state# ~closest-context]
+       (let [~(vary-meta name assoc :tag `widgets/TickerProvider) state#]
+         (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))))
 
 (deftype SpyWidget [k child f]
   :extends (widgets/StatelessWidget .key k)
