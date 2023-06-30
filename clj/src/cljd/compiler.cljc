@@ -3176,6 +3176,9 @@
             (symbol? x) (emit-symbol x env)
             #?@(:clj [(char? x) (str x)])
             (or (number? x) (boolean? x) (string? x)) x
+            (instance? java.util.Date x)
+            (let [[_ s] (re-matches #"#inst *\"(.*)\"" (pr-str x))]
+              (emit (list 'dart:core/DateTime.parse s) env))
             (instance? java.util.regex.Pattern x)
             (emit (list 'new 'dart:core/RegExp
                         #_(list '. 'dart:core/RegExp 'escape (.pattern ^java.util.regex.Pattern x))

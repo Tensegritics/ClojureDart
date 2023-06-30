@@ -812,3 +812,6 @@
            "hello"
            .bar "world")))
     (is (= #dart ("hey" .bar "foo") (.method2 obj #dart ("hey" .bar "foo"))))))
+
+(deftest inst-literals-in-code
+  (is (= 1978 (.-year #inst "1978-10-11"))))
