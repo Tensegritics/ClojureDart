@@ -228,7 +228,7 @@
         ; or even for key names) so we must take this into account
         destructuring-refresh-on
         (refresh-on-expr nil &env `(let [~binding nil]
-                                     ~(or binding (vec destructured-locals))))
+                                     ~(if (symbol? binding) binding  (vec destructured-locals))))
         refresh-on
         (cond
           (not (and destructuring-refresh-on refresh-on))
