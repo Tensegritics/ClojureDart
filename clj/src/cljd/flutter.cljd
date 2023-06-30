@@ -224,6 +224,23 @@
                               (destructuring-bound-locals binding))
         dispose (if (true? dispose) '.dispose dispose)
         refresh-on (refresh-on-expr opts &env expr)
+        ; destructuring may depend on existing locals (for defaults
+        ; or even for key names) so we must take this into account
+        destructuring-refresh-on
+        (refresh-on-expr nil &env `(let [~binding nil]
+                                     ~(or binding (vec destructured-locals))))
+        refresh-on
+        (cond
+          (not (and destructuring-refresh-on refresh-on))
+          (or destructuring-refresh-on refresh-on)
+          (vector? refresh-on)
+          (if (vector? destructuring-refresh-on)
+            (into refresh-on destructuring-refresh-on)
+            (conj refresh-on destructuring-refresh-on))
+          (vector? destructuring-refresh-on)
+          (conj destructuring-refresh-on refresh-on)
+          :else
+          [refresh-on destructuring-refresh-on])
         opts (dissoc opts :refresh-on :> :dispose :as)
         state `state#
         subscribable `subscribable#
