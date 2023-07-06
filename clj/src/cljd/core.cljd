@@ -2669,7 +2669,7 @@
          ~ret))))
 
 (defmacro ^:private def-list-for-type [fn-name doc-str class-name default-value]
-  `(defn ~fn-name ~doc-str
+  `(defn ~(with-meta fn-name {:tag (with-meta 'List {:type-params [class-name]})}) ~doc-str
      ([~'size-or-seq]
       (if (int? ~'size-or-seq)
         (.filled ^{:type-params (~class-name)} List ~'size-or-seq ~default-value)
@@ -2703,10 +2703,10 @@
 
 ;; TODO: only arity 1
 ;; TODO: hesitate between dynamic and Object?
-(def-list-for-type object-array
+(def-list-for-type ^List object-array
   "Creates an array of objects"
-  Object
-  dynamic)
+  Object?
+  nil)
 
 (defn ^#/(List int) ints
   "Casts to List<int>"
@@ -6902,7 +6902,7 @@
       (let [r (f x y)]
         (cond
           (dart/is? r dart:core/num)
-          (-> ^dart:core/num r .toInt)
+          (-> ^dart:core/num r .-sign .toInt)
           r -1 ; should we enforce r to be a boolean?
           (f y x) 1
           :else 0)))))
