@@ -796,7 +796,8 @@
         (case (first opt-params)
           (... nil) opt-params
           .& (do
-               (println "DEPRECATION WARNING: named parameters should now be declared like this: .name1 .name2 and no more like that .& name1 .name2 -- old syntax will not be actively maintained anymore. ")
+               (when-not (:cljd/compiler (meta (first opt-params))) ; don't warn users on internal sauce 🤫
+                 (println "DEPRECATION WARNING: named parameters should now be declared like this: .name1 .name2 and no more like that .& name1 .name2 -- old syntax will not be actively maintained anymore. "))
                opt-params)
           ; new syntax for named params
           (cons '.&
@@ -854,7 +855,11 @@
 
 (defn resolve-protocol-method [protocol mname args type-env]
   (some-> (resolve-protocol-mname-to-dart-mname* protocol mname (count args) type-env)
-    (vector (into [] (map #(cond-> % (symbol? %) (vary-meta dissoc :tag))) args))))
+    (vector (into []
+              (map-indexed #(if (symbol? %2)
+                              (vary-meta %2 dissoc :tag)
+                              (gensym (str "arg" %1))))
+              args))))
 
 (defn dart-method-sig
   "Returns either nil or [[fixed params types] opts type-parameters]
@@ -1036,7 +1041,7 @@
         [(vary-meta mname assoc :tag (unresolve-type (:return-type member-info)))
          (cond-> actual-fixeds
            (seq actual-opts)
-           (-> (conj (case opt-kind :named '.& '...))
+           (-> (conj (case opt-kind :named '^:cljd/compiler .& '...))
              (into actual-opts)))]))
     #_(TODO WARN)))
 
@@ -2505,13 +2510,48 @@
                     (or
                       (resolve-dart-method (:dart/type t) mname arglist type-env)
                       (throw (Exception. (str "In class " class-name ", can't resolve method " mname (vec arglist) " on class " (:element-name (:dart/type t)) " from lib " (:lib (:dart/type t)) (source-info)))))))
-                mname (vary-meta mname' merge (meta mname))]
-            (list* mname (parse-dart-params arglist')
+                mname (vary-meta mname' merge (meta mname))
+                parsed-arglist' (parse-dart-params arglist')
+                parsed-arglist (parse-dart-params arglist)]
+            #_{:fixed-params fixed-params
+               :opt-kind (case delim .& :named :positional)
+               :opt-params
+               (for [[p d] (partition-all 2 1 opt-params)
+                     :when (symbol? p)]
+                 [p (when-not (symbol? d) d)])}
+            (list* mname parsed-arglist'
               (when (seq body) ; don't emit a body if no explicit body
-                [`(let [~@(mapcat (fn [a a']
-                                    (when-some [t (:tag (meta a))]
-                                      (when-not (= t (:tag (meta a')))
-                                        [a a']))) arglist arglist')]
+                [`(let [; a bunch of rebinding to take into account disagreeing type hints
+                        ; and/or destructuring
+                        ; first, fixed args, they may be destrctured
+                        ~@(mapcat (fn [a a']
+                                    (if (symbol? a)
+                                      (when-some [t (:tag (meta a))]
+                                        (when-not (= t (:tag (meta a')))
+                                          [a a']))
+                                      ; destructuring case
+                                      [a a']))
+                            (:fixed-params parsed-arglist)
+                            (:fixed-params parsed-arglist'))
+                        ; second, optionals which can't be destructured because it would be syntactically
+                        ; ambiguous, so only checking for types disagreement
+                        ~@(case (:opt-kind parsed-arglist')
+                            :named
+                            ; named may appear out of order
+                            (let [names' (into #{} (map first) (:opt-params parsed-arglist'))]
+                              (mapcat (fn [[a]]
+                                        (when-some [t (:tag (meta a))]
+                                          (let [a' (names' a)]
+                                            (when-not (= t (:tag (meta a')))
+                                              [a a']))))
+                                (:opt-params parsed-arglist)))
+                            :positional
+                            (mapcat (fn [[a] [a']]
+                                      (when-some [t (:tag (meta a))]
+                                        (when-not (= t (:tag (meta a')))
+                                          [a a'])))
+                              (:opt-params parsed-arglist)
+                              (:opt-params parsed-arglist')))]
                     ~@body)])))
           (:mixin (meta spec)) (do (reset! last-seen-type
                                      {:type :class

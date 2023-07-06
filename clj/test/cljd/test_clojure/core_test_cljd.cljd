@@ -815,3 +815,12 @@
 
 (deftest inst-literals-in-code
   (is (= 1978 (.-year #inst "1978-10-11"))))
+
+(defprotocol IMethodsSupportDestructuring
+  (-method-destructuring [this arg]))
+
+(deftest methods-implementing-protocols-can-use-destructuring
+  (is (= (-method-destructuring (reify IMethodsSupportDestructuring
+                                  (-method-destructuring [this [one two]] (str one two)))
+           ["Hello " "World!"])
+        "Hello World!")))
