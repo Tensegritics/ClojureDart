@@ -122,11 +122,6 @@
                     :lib "dart:core"
                     :canon-qname pseudo.super})
 
-(def pseudo-never '{:kind :class
-                    :qname       dc.dynamic
-                    :lib "dart:core"
-                    :canon-qname pseudo.never})
-
 (def cljd-ifn '{:kind :class
                 :qname lcoc_core.IFn$iface
                 :canon-qname lcoc_core.IFn$iface
@@ -637,7 +632,7 @@
 
 (defn dart-type-truthiness [type]
   (case (:canon-qname type)
-    (nil dc.Object dc.dynamic dc.Never pseudo.never) nil
+    (nil dc.Object dc.dynamic dc.Never) nil
     (dc.Null void) :falsy
     pseudo.not-bool :some
     dc.bool (when-not (:nullable type) :boolean)
@@ -2230,7 +2225,7 @@
           [env []] opt-params)
         function-type
         (assoc dc-Function
-          :return-type (cond-> (or ret-type pseudo-never) async ensure-future)
+          :return-type (cond-> (or ret-type dc-dynamic) async ensure-future)
           :parameters (-> []
                         (into (map (fn [n]
                                      {:name n
@@ -2283,7 +2278,6 @@
         ret-type (let [ret-type' (or ret-type body-type dc-dynamic)]
                    (cond-> ret-type'
                      ;; We don't want to emit a fn with dc.Never type as it would lead to subtle bugs
-                     (and (nil? ret-type) (= (:canon-qname ret-type') (:canon-qname pseudo-never))) (do dc-dynamic)
                      async ensure-future))
         dart-fn
         (-> (list 'dart/fn dart-fixed-params opt-kind dart-opt-params async dart-body)
@@ -3720,8 +3714,6 @@
                                 :type-parameters
                                 (into []
                                   (map merge-types (:type-parameters a) (:type-parameters b))))
-                  (= 'pseudo.never qna) b
-                  (= 'pseudo.never qnb) a
                   (= 'dc.Never qna) b
                   (= 'dc.Never qnb) a
                   (= 'dc.dynamic qna) dc-dynamic

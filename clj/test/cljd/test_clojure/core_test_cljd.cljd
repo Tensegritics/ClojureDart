@@ -824,3 +824,6 @@
                                   (-method-destructuring [this [one two]] (str one two)))
            ["Hello " "World!"])
         "Hello World!")))
+
+(deftest for-cons-is-not-a-subtype-of-type-null
+  (= 32686752 (reduce + (for [i (range 128) j (range i)] (* i j)))))
