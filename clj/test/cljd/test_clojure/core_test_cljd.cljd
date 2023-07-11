@@ -827,3 +827,8 @@
 
 (deftest for-cons-is-not-a-subtype-of-type-null
   (= 32686752 (reduce + (for [i (range 128) j (range i)] (* i j)))))
+
+(deftest workaround-dartlang-52904
+  (is (= :ok (let [x (identity 42)]
+               (> x 0)
+               :ok))))

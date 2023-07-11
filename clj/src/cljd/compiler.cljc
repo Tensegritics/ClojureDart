@@ -3413,8 +3413,9 @@
 
 (def statement-locus
   {:statement true
-   :pre ""
-   :post ";\n"})
+   ; Add extra parens https://github.com/dart-lang/sdk/issues/52904
+   :pre "("
+   :post ");\n"})
 
 (defn named-fn-locus [name]
   {:pre (str (or (-> name meta :dart/ret-type type-str) "dc.dynamic") " " name)
