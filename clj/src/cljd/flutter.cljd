@@ -7,62 +7,60 @@
    (:require [clojure.string :as str])))
 
 (defprotocol Subscribable
-  (-subscribe [x f! opts]
+  (-subscribe [x f!]
     "Subscribe to updates on x.
-     opts is a map of keyword-keyed options
-     (keywords must be namespaced except for :default)
-     f! is a side-effecting function of one argument.
-     Returns a subscription.
-     MUST call f! during subscription.")
-  (-unsubscribe [x sub] "Cancels the provided subscription."))
+     f! is a side-effecting function of one argument which will be called
+     for every FUTURE value yielded by x.
+     f! MUST NOT BE CALLED with current value of x (if it makes sense for x).
+     As such f! MUST NEVER BE CALLED during the -subscribe call.
+     Returns a subscription token.")
+  (-call-with-immediate-value [x sub f!]
+    "If x under subscription (identified by token sub) has a current value, pass it to f!.
+     Returns a boolean indicating if there was a current value.
+     Must be called right after -subscribe. Later calls have no specified
+     behavior.")
+  (-unsubscribe [x sub] "Cancels the provided subscription token."))
 
 (extend-protocol Subscribable
   Null
-  (-subscribe [n f! opts] (f! (:default opts)) nil)
+  (-subscribe [n f!] nil)
+  (-call-with-immediate-value [n sub f!] false)
   (-unsubscribe [n _] nil)
   cljd.core/Atom
-  (-subscribe [a f _]
+  (-subscribe [a f]
     (let [cb (fn [_ _ _ new-state] (f new-state))]
-      (f @a)
       (add-watch a cb cb)
       cb))
+  (-call-with-immediate-value [a sub f!] (f! @a) true)
   (-unsubscribe [a cb]
     (remove-watch a cb))
   Stream
-  (-subscribe [s f opts]
-    (f (:default opts))
+  (-subscribe [s f]
     (.listen s (fn [x] (f x) nil) .cancelOnError true))
+  (-call-with-immediate-value [s sub f!] false)
   (-unsubscribe [s sub]
     (.cancel ^dart:async/StreamSubscription sub))
   Future
-  (-subscribe [future f opts]
-    (let [sub (volatile! true)
-          {:keys [default :future/on-error]} opts]
-      (f default)
-      (.then future
-        #(when @sub (f %))
-        .onError
-        (when on-error
-          (fn [e ... st]
-            (when @sub
-              (let [v (await (on-error default e st))]
-                (when-not (identical? v default) (f v)))))))
+  (-subscribe [future f]
+    (let [sub (volatile! true)]
+      (.then future #(when @sub (f %)))
       sub))
-  (-unsubscribe [s sub]
+  (-call-with-immediate-value [future sub f!] false)
+  (-unsubscribe [future sub]
     (vreset! sub false))
   ; TODO & check if we handle partial order on protocols dispatch
   foundation/ValueListenable
-  (-subscribe [vl f _]
-    (f (.-value vl))
+  (-subscribe [vl f]
     (doto #(f (.-value vl))
       (->> (.addListener vl))))
+  (-call-with-immediate-value [vl sub f!] (f! (.-value vl)) true)
   (-unsubscribe [vl listener]
     (.removeListener vl listener))
   foundation/Listenable
-  (-subscribe [l f opts]
-    (f true)
+  (-subscribe [l f]
     (doto #(f true)
       (->> (.addListener l))))
+  (-call-with-immediate-value [l sub f!] (f! true) true)
   (-unsubscribe [l listener]
     (.removeListener l listener)))
 
@@ -77,15 +75,12 @@
    Values are the result of (apply f v args) for all values v yielded by the
    upstream subscribable (in the case of a vector of subscribable,yielded values are
    vectors of each subscribable most recent value).
-   Subscription options can be passed to the upstream subscribable(s) by using the :sup/opts
-   option which must be a map of subscription options (like :default) or a vector of
-   such maps in the case of multiple subscribables.
    This subscribable generates events only when the resulting value changes."
   [s f & args]
   (if (vector? s)
     (reify
       Subscribable
-      (-subscribe [self f! opts]
+      (-subscribe [self f!]
         (let [v (volatile! nil)
               _ (vreset! v v)
               n (count s)
@@ -101,39 +96,38 @@
                                  (let [r (apply f ins args)]
                                    (when (not= r prev)
                                      (vreset! v r)
-                                     (f! r))))))
-                           (get (:sub/opts opts) i {}))))
+                                     (f! r)))))))))
                      s)]
           (f! (vreset! v (apply f @ins args)))
           subs))
+      (-call-with-immediate-value [self subs f!]
+        (let [vtv (volatile! (transient []))
+              push! #(vswap! vtv conj! %)
+              all-immediates
+              (reduce-kv (fn [_ i s]
+                           (or (-call-with-immediate-value s (nth subs i) push!)
+                             (reduced false)))
+                true s)]
+          (when all-immediates
+            ; TODO take immediate value as seed for deduping
+            (f! (persistent! @vtv)))
+          all-immediates))
       (-unsubscribe [self subs]
         (dorun (map -unsubscribe s subs))))
     (reify
       Subscribable
-      (-subscribe [self f! opts]
-        (let [v (volatile! nil)
-              has-default (contains? opts :default)
-              default (:default opts)
-              sub-opts (cond-> (:sub/opts opts)
-                         has-default (assoc :default v))]
+      (-subscribe [self f!]
+        (let [v (volatile! nil)]
           (vreset! v v)
           (-subscribe s
-            (if has-default
-              (fn [x]
-                (if (identical? x v)
-                  (do
-                    (vreset! v default)
-                    (f! default))
-                  (let [x (apply f x args)]
-                    (when (not= x @v)
-                      (vreset! v x)
-                      (f! x)))))
-              (fn [x]
-                (let [x (apply f x args)]
-                  (when (not= x @v)
-                    (vreset! v x)
-                    (f! x)))))
-            (:sub/opts opts))))
+            (fn [x]
+              (let [x (apply f x args)]
+                (when (not= x @v)
+                  (vreset! v x)
+                  (f! x)))))))
+      (-call-with-immediate-value [self sub f!]
+        ; TODO take immediate value as seed for deduping
+        (-call-with-immediate-value s sub #(f! (apply f % args))))
       (-unsubscribe [self sub]
         (-unsubscribe s sub)))))
 
@@ -241,7 +235,6 @@
           (conj destructuring-refresh-on refresh-on)
           :else
           [refresh-on destructuring-refresh-on])
-        opts (dissoc opts :refresh-on :> :dispose :as)
         state `state#
         subscribable `subscribable#
         update-state (if (or accessor destructured-locals)
@@ -256,7 +249,11 @@
                                `(~state ~vexpr))))
                        state)
         subscribe-call
-        `(-subscribe ~subscribable ~update-state ~opts)]
+        `(let [update# ~update-state
+               sub# (-subscribe ~subscribable update#)]
+           (or (-call-with-immediate-value ~subscribable sub# update#)
+             (update# ~(:default opts)))
+           sub#)]
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (WatchState nil nil nil nil))
@@ -304,24 +301,22 @@
   (let [accessor (:> opts)
         dispose (if (true? dispose) '.dispose dispose)
         refresh-on (refresh-on-expr opts &env expr)
-        opts (dissoc opts :refresh-on :> :dispose)
         state `state#
         subscribable `subscribable#
-        subscribe-call
-        `(-subscribe ~subscribable
-                     ~(if accessor
-                        `(fn [_#]
-                           (let [x# (-> ~subscribable ~accessor)]
-                             (when-not (identical? x# ~state)
-                               (let [~binding x#]
-                                 ~@body
-                                 nil))))
-                        `(fn [x#]
-                           (when-not (identical? x# ~state)
+        update-state (if accessor
+                       `(fn [_#]
+                          (let [~binding (-> ~subscribable ~accessor)]
+                            ~@body
+                            nil))
+                       `(fn [x#]
                              (let [~binding x#]
                                ~@body
-                               nil))))
-                     ~(assoc opts :default state))]
+                               nil)))
+        subscribe-call
+        `(let [update# ~update-state
+               sub# (-subscribe ~subscribable update#)]
+           (-call-with-immediate-value ~subscribable sub# update#)
+           sub#)]
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (WatchState nil nil nil nil))
@@ -458,7 +453,8 @@
   `(-widget-cont ~env
      :context ctx#
      :let [bindings# ~bindings-map
-           elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx#)         prev-bindings# (some-> elt# ^InheritedBindings (.-widget) .-bindings)
+           elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx#)
+           prev-bindings# (some-> elt# ^InheritedBindings (.-widget) .-bindings)
            non-shadowed-keys#
            (remove (fn [k#] (contains? bindings# k#)) (keys prev-bindings#))
            _ (when (seq non-shadowed-keys#)
@@ -657,38 +653,75 @@
   `(widgets/runApp
      ~(stateless-flush {} widget-body)))
 
-(deftype Cell []
-  (subto [self s opts]))
+(deftype Cell [^Map subs]
+  (subto [self s])
+  (update [self s x]))
 
 (def ^:private ^:dynamic ^Map *old-deps* (Map))
 (def ^:private ^:dynamic ^Map *new-deps* (Map))
 (def ^:private ^:dynamic ^Cell? *cell* nil)
 
-(defn <! [s & {:as opts}]
-  (if-some [v (. *new-deps* "[]" s)]
-    v
-    (if (.containsKey *new-deps* s)
-      nil
-      (if-some [v (. *old-deps* "[]" s)]
-        (do ; move to new gen
-          (.remove *old-deps* s)
-          (. *new-deps* "[]=" s v)
-          v)
-        (if (.containsKey *old-deps* s)
-          (do ; move to new gen
-            (.remove *old-deps* s)
-            (. *new-deps* "[]=" s nil)
-            nil)
-          ; a new subscription!
-          (do
-            (.subto *cell* s opts) ; subscription is going to fill new-deps
-            (. *new-deps* "[]" s)))))))
+(defn <!
+  ([s]
+   (if-some [v (. *new-deps* "[]" s)]
+     v
+     (if (.containsKey *new-deps* s)
+       nil
+       (if-some [v (. *old-deps* "[]" s)]
+         (do ; move to new gen
+           (.remove *old-deps* s)
+           (. *new-deps* "[]=" s v)
+           v)
+         (cond
+           (.containsKey *old-deps* s)
+           (do ; move to new gen
+             (.remove *old-deps* s)
+             (. *new-deps* "[]=" s nil)
+             nil)
+           (-> *cell* .-subs (.containsKey s)) ; subscription which hasn't delivered a value yet and no immediate value
+           (throw "no value yet!")
+           :else
+           ; a new subscription!
+           (let [update! (fn [x] (.update *cell* s x))
+                 sub (.subto *cell* s)]
+             ; subscription is going to fill new-deps
+             (if (-call-with-immediate-value s sub update!)
+               (. *new-deps* "[]" s)
+               (throw "no value yet!"))))))))
+  ([s & {:keys [default]}]
+   (if-some [v (. *new-deps* "[]" s)]
+     v
+     (if (.containsKey *new-deps* s)
+       nil
+       (if-some [v (. *old-deps* "[]" s)]
+         (do ; move to new gen
+           (.remove *old-deps* s)
+           (. *new-deps* "[]=" s v)
+           v)
+         (if (.containsKey *old-deps* s)
+           (do ; move to new gen
+             (.remove *old-deps* s)
+             (. *new-deps* "[]=" s nil)
+             nil)
+           (-> *cell* .-subs (.containsKey s)) ; subscription which hasn't delivered a value yet and no immediate value
+           default
+           ; a new subscription!
+           (let [update! (fn [x] (.update *cell* s x))
+                 sub (.subto *cell* s)]
+             ; subscription is going to fill new-deps
+             (if (-call-with-immediate-value s sub update!)
+               (. *new-deps* "[]" s)
+               default))))))))
+
+(def ^:private NO-VALUE ^:unique (Object))
 
 (deftype Cell [f ^:mutable v ^Map subscribers
                ^:mutable ^int refreshing ^:mutable ^Map deps ^Map subs
                ^:mutable ^Map spare-map]
-  (subto [self s opts]
-    (. subs "[]=" s (-subscribe s (fn [x] (.update self s x)) opts)))
+  (subto [self s]
+    (let [sub (-subscribe s (fn [x] (.update self s x)))]
+      (. subs "[]=" s sub)
+      sub))
   (refresh [self]
     (assert (zero? refreshing))
     ; deps=mapA, spare-map=mapB and mapB is empty
@@ -733,19 +766,24 @@
       ; broadcasting new value
       2 (throw (ex-info "Circular dependency" {:cell self}))))
   Subscribable
-  (-subscribe [self f! opts]
+  (-subscribe [self f!]
     (case refreshing
+      ; not refreshing
       0 (let [sub ^:unique (Object)]
           (when (zero? (.-length subscribers))
             (.refresh self))
           (. subscribers "[]=" sub f!)
-          (f! v)
           sub)
+      ; recomputing
       1 (throw (ex-info "Circular dependency" {:cell self}))
+      ; broadcasting new value
       2 (let [sub ^:unique (Object)]
           (. spare-map "[]=" sub f!)
-          (f! v)
           sub)))
+  (-call-with-immediate-value [self sub f!]
+    (if (identical? NO-VALUE v)
+      false
+      (f! v)))
   (-unsubscribe [self sub]
     (case refreshing
       0 (do
@@ -759,7 +797,7 @@
       2 (. spare-map "[]=" sub sub))))
 
 (defn cell [f]
-  (Cell f nil (Map/identity) 0 (Map) (Map) (Map)))
+  (Cell f NO-VALUE (Map/identity) 0 (Map) (Map) (Map)))
 
 (defmacro $ [expr]
   `(cell (fn [] ~expr)))
