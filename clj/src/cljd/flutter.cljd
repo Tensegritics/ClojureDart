@@ -783,7 +783,7 @@
   (-call-with-immediate-value [self sub f!]
     (if (identical? NO-VALUE v)
       false
-      (f! v)))
+      (do (f! v) true)))
   (-unsubscribe [self sub]
     (case refreshing
       0 (do
