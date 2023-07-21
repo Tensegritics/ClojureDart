@@ -411,7 +411,7 @@
         (is (instance? PersistentHashMap b)))))
 
 
-#_(deftest read-namespaced-map
+(deftest read-namespaced-map
   (binding [r/*resolver* fake-resolver]
     (is (= {:foo/bar 1 :baz 2} (r/read-string "#:foo{:bar 1 :_/baz 2}")))
     (is (= '{foo/bar 1 :baz 2} (r/read-string "#:foo{bar 1 :_/baz 2}")))

@@ -399,6 +399,62 @@
     (.add stack do-read-meta)
     (do-read-meta state s from to)))
 
+
+(defn do-namespace [m ns]
+  (persistent!
+    (reduce-kv
+      (fn [tm k v]
+        (if-some [k' (cond
+                       (keyword? k)
+                       (case (namespace k)
+                         nil (keyword ns (name k))
+                         "_" (keyword (name k))
+                         nil)
+                       (symbol? k)
+                       (case (namespace k)
+                         nil (symbol ns (name k))
+                         "_" (symbol (name k))
+                         nil))]
+          (-> tm (dissoc! k) (assoc! k' v))
+          tm))
+      (transient m) m)))
+
+(defn do-read-namespaced-map
+  ([^ReaderState {:flds [stack] :as state}]
+   (throw (Exception "EOF while reading a namespaced map.")))
+  ([^ReaderState {:flds [stack q] :as state} ^String s ^int from ^int to]
+   (let [n-2 (- (.-length stack) 2)]
+     (loop [from from]
+       (if-some [ns (aget stack n-2)]
+         (let [from (read state s from to)]
+           (if (neg? from)
+             from
+             (let [m (.removeFirst q)]
+               (.-length! stack n-2)
+               (when-not (map? m)
+                 (throw (Exception "Only maps can be namespaced.")))
+               (.addFirst q (do-namespace m ns))
+               from)))
+         (let [from (read-token state s from to)]
+           (if (neg? from)
+             from
+             (let [x (.removeFirst q)
+                   ns (case x
+                        "::" (name (currentNS *resolver*))
+                        (let [k (interpret-token x)]
+                          (when-not (simple-keyword? k)
+                            (throw (Exception "Only simple keywords can be used as namespaces in namespaced maps.")))
+                          (name k)))]
+               (aset stack n-2 ns)
+               (recur from)))))))))
+
+(defn read-namespaced-map
+  [^ReaderState {:flds [stack] :as state} ^String s ^int from ^int to]
+  (do
+    (.add stack nil)
+    (.add stack do-read-namespaced-map)
+    (do-read-namespaced-map state s (dec from) to)))
+
 (defn get-binding [^List stack k]
   (let [i (inc (.lastIndexOf stack k))]
     (when (pos? i) (aget stack i))))
@@ -680,7 +736,8 @@
     (aset (int "(") read-fn)
     (aset (int "{") (mk-read-coll "}" set))
     (aset (int \") read-regexp)
-    (aset (int \') (mk-read-wrapped 'var))))
+    (aset (int \') (mk-read-wrapped 'var))
+    (aset (int \:) read-namespaced-map)))
 
 (defn read-string
   "Synchronous, takes a string and returns the value of the first form."
