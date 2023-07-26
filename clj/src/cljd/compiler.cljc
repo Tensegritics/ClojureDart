@@ -2880,18 +2880,20 @@
       (swap! nses assoc-in [*current-ns* :imports the-lib] {}))
     dart-alias))
 
-(defn ensure-contrib-ns [protocol-ns contrib-ns]
-  (let [all-nses @nses
-        contrib-lib (:lib (all-nses contrib-ns))]
-    (swap! nses assoc-in [protocol-ns :contribs contrib-lib] contrib-lib)))
+(defn ensure-contrib [to-ns from-ns path]
+  (swap! nses
+    #(let [contrib-lib (:lib (% from-ns))]
+       (-> %
+         (assoc-in [to-ns :contribs contrib-lib] contrib-lib)
+         (assoc-in [from-ns :contributions-paths path] path)))))
 
 (defn emit-extend-type-protocol* [[_ class-name protocol-ns protocol-name extension-instance] env]
-  (ensure-contrib-ns protocol-ns (-> extension-instance namespace symbol))
-  (let [class-name (relocatable-class-name class-name env)
-        _ (when (= "CustomScrollView" (name class-name))
-            (prn 'OOOOPS class-name))
+  (let [contrib-ns (-> extension-instance namespace symbol)
+        class-name (relocatable-class-name class-name env)
+        contrib-path [protocol-ns protocol-name :extensions class-name]
         {{proto-map protocol-name} protocol-ns}
-        (swap! nses assoc-in [protocol-ns protocol-name :extensions class-name] extension-instance)]
+        (swap! nses assoc-in contrib-path extension-instance)]
+    (ensure-contrib protocol-ns contrib-ns contrib-path)
     (binding [*current-ns* protocol-ns]
       (emit (expand-protocol-impl proto-map) env))))
 
@@ -4388,8 +4390,27 @@
           nses-to-recompile
           (transitive-closure nses-to-recompile dependants)]
       (try
-        ; remove nses to be recompiled -- but not their libs to keep aliases stable
-        (apply swap! nses dissoc nses-to-recompile)
+
+        (let [contributions
+              (for [ns nses-to-recompile
+                    path (keys (:contributions-paths (nses-before ns)))]
+                path)]
+          ; undo contributions
+          (run! (fn [path]
+                  (assert (vector? path))
+                  (swap! nses update-in (pop path) dissoc (peek path)))
+            contributions)
+
+          ; remove nses to be recompiled -- but not their libs to keep aliases stable
+          (apply swap! nses dissoc nses-to-recompile)
+
+          (doseq [[protocol-ns protocol-name tag] contributions]
+            (case tag
+              :extensions
+              (when-some [proto-map (get-in @nses [protocol-ns protocol-name])]
+                (binding [*current-ns* protocol-ns
+                          *locals-gen* {}]
+                  (emit (expand-protocol-impl proto-map) {}))))))
         (binding [*recompile-count* recompile-count]
           (doseq [ns nses-to-recompile
                 ; the ns may already have been transitively reloaded
