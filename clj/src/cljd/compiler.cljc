@@ -348,8 +348,9 @@
      ArgumentError dart:core/ArgumentError,
      List dart:core/List}})
 
-(def nses (atom {:current-ns nil #_'user
-                 :libs {"dart:core" {:dart-alias "dc" :ns nil}
+(declare ^:dynamic *current-ns*)
+
+(def nses (atom {:libs {"dart:core" {:dart-alias "dc" :ns nil}
                         "dart:async" {:dart-alias "da" :ns nil}} ; dc can't clash with user aliases because they go through dart-global
                  ; map from dart aliases to libs
                  :dart-aliases {"dc" "dart:core"
@@ -383,14 +384,14 @@
    of this element."
   [clj-alias]
   (when clj-alias
-    (let [{:keys [libs current-ns dart-aliases] :as all-nses} @nses
-          {:keys [clj-aliases imports]} (all-nses current-ns)]
+    (let [{:keys [libs dart-aliases] :as all-nses} @nses
+          {:keys [clj-aliases imports]} (all-nses *current-ns*)]
       (or (get clj-aliases clj-alias)
         (some-> (re-matches #"\$lib:(.*)" clj-alias) second dart-aliases)))))
 
 (defn- resolve-dart-type
   [clj-sym type-vars]
-  (let [{:keys [libs current-ns] :as nses} @nses
+  (let [{:keys [libs] :as nses} @nses
         typename (name clj-sym)
         typens (namespace clj-sym)]
     (else->>
@@ -474,8 +475,8 @@
       (str "cljd." sub-ns))))
 
 (defn- resolve-non-local-symbol [sym type-vars]
-  (let [{:keys [libs] :as nses} @nses
-        {:keys [mappings clj-aliases] :as current-ns} (nses (:current-ns nses))
+  (let [{:keys [libs dart-aliases] :as nses} @nses
+        {:keys [mappings clj-aliases] :as current-ns} (nses *current-ns*)
         ensure-class (fn [v] (when (= :class (:type v)) v))
         resolve (fn [sym ensure-right-type]
                   (else->>
@@ -483,8 +484,11 @@
                     (if-some [v (get mappings sym)]
                       (recur (with-meta v (meta sym)) ensure-right-type))
                     (let [sym-ns (namespace sym)
-                          lib-ns (or (cljdize sym-ns)
-                                   (some-> (get clj-aliases sym-ns) libs :ns name))])
+                          lib-ns (when sym-ns
+                                   (or (cljdize sym-ns)
+                                     (some-> (get clj-aliases sym-ns) libs :ns name)
+                                     (some-> (re-matches #"\$lib:(.*)" sym-ns)
+                                       second dart-aliases libs :ns name)))])
                     (if (some-> lib-ns (not= sym-ns))
                       (recur (with-meta (symbol lib-ns (name sym)) (meta sym))
                         ensure-right-type))
@@ -518,7 +522,7 @@
       (resolve-non-local-symbol sym (:type-vars env)))))
 
 (defn dart-alias-for-ns [ns]
-  (let [{:keys [current-ns] :as nses} @nses
+  (let [nses @nses
         lib (get-in nses [ns :lib])]
     (-> nses :libs (get lib) :dart-alias)))
 
@@ -582,12 +586,12 @@
   [{:keys [is-param lib qname canon-qname element-name type-parameters nullable] :as x}]
   (if is-param
     (symbol (cond-> qname nullable (str "?")))
-    (let [{:keys [current-ns] :as nses} @nses]
+    (let [nses @nses]
       (when (nil? element-name)
         (throw (ex-info (pr-str x) {:x x})))
       (with-meta
         (symbol
-          (or (get-in nses [current-ns :imports lib :clj-alias])
+          (or (get-in nses [*current-ns* :imports lib :clj-alias])
             (some-> lib (global-lib-alias nil) (->> (str "$lib:"))))
           (cond-> element-name nullable (str "?")))
         (let [m {:type-params (mapv unresolve-type type-parameters)}]
@@ -882,7 +886,7 @@
              named-fields)))
        fci)))
   ([lib element-name]
-   (let [{:keys [libs current-ns] :as all-nses} @nses]
+   (let [{:keys [libs] :as all-nses} @nses]
      (when-some [ci (or
                       (some-> (get all-nses (-> lib libs :ns)) (get (symbol element-name)) :dart/type)
                       (analyzer-info lib element-name))]
@@ -1058,7 +1062,7 @@
         iext (with-meta iext {:dart/name iext})
         impl (munge proto "iprot" {})
         impl (with-meta impl {:dart/name impl})
-        the-ns (name (:current-ns @nses))
+        the-ns (name *current-ns*)
         full-iface (symbol the-ns (name iface))
         full-iext (symbol the-ns (name iext))
         full-proto (symbol the-ns (name proto))
@@ -1136,7 +1140,7 @@
                                                        [(vary-meta this assoc :tag type) this])] ~@body))))
             (list 'def extension-instance (list 'new extension-name))
             (list 'extend-type-protocol* type (:ns info) (:name info)
-              (symbol (name (:current-ns @nses)) (name extension-instance)))))))))
+              (symbol (name *current-ns*) (name extension-instance)))))))))
 
 (defn create-host-ns [ns-sym directives]
   (let [sym (symbol (str ns-sym "$host"))]
@@ -1222,7 +1226,7 @@
          (or (= 'cljd.core/extend-type f) (= 'extend-type f)) (apply expand-extend-type args)
          (= '. f) form
          macro-fn
-         (apply macro-fn form (assoc env :nses @nses
+         (apply macro-fn form (assoc env :nses (assoc @nses :current-ns *current-ns*)
                                 :closed-overs #(cljd-closed-overs % env))
            (next form))
          (.endsWith f-name ".")
@@ -2095,18 +2099,17 @@
                     (concat
                       (for [args+1 (next (reductions conj [] base-args))]
                         [args+1 `(throw (dart:core/ArgumentError. "No matching arity"))])
-                      fixed-arities-expr)))))))
-        [{:keys [current-ns]}] (swap-vals! nses assoc :current-ns 'cljd.core)]
-    (emit
-      `(deftype ~(vary-meta (dont-munge mixin-name nil) assoc :mixin true) []
-         cljd.core/IFn
-         ~@fixed-invokes
-         ~@invoke-exts
-         ~@vararg-invokes
-         ~@(some-> invoke-more list)
-         ~@call+apply)
-      {})
-    (swap! nses assoc :current-ns current-ns)
+                      fixed-arities-expr)))))))]
+    (binding [*current-ns* 'cljd.core]
+      (emit
+        `(deftype ~(vary-meta (dont-munge mixin-name nil) assoc :mixin true) []
+           cljd.core/IFn
+           ~@fixed-invokes
+           ~@invoke-exts
+           ~@vararg-invokes
+           ~@(some-> invoke-more list)
+           ~@call+apply)
+        {}))
     mixin-name))
 
 (defn- ensure-ifn-arities-mixin [fixed-arities base-vararg-arity]
@@ -2455,7 +2458,7 @@
 (declare write-class)
 
 (defn do-def [nses sym m]
-  (let [the-ns (:current-ns nses)
+  (let [the-ns *current-ns*
         m (assoc m :ns the-ns :name sym)
         msym (meta sym)]
     (cond
@@ -2482,8 +2485,7 @@
       (assoc-in nses [the-ns sym] (assoc m :meta (merge msym (:meta m)))))))
 
 (defn alter-def [nses sym f & args]
-  (let [the-ns (:current-ns nses)]
-    (apply update-in nses [the-ns sym] f args)))
+  (apply update-in nses [*current-ns* sym] f args))
 
 (defn- resolve-methods-specs [class-name specs type-env]
   (let [last-seen-type (atom nil)]
@@ -2606,15 +2608,15 @@
   ([mclass-name clj-type-params dart-fields env]
    (new-dart-type mclass-name clj-type-params dart-fields nil env))
   ([mclass-name clj-type-params dart-fields parsed-class-specs env]
-   (let [{:keys [current-ns] :as all-nses} @nses
+   (let [all-nses @nses
          ctor-params (into []
                        (map (fn [field]
                               {:name field
                                :kind :positional
                                :type (or (:dart/type (meta field)) dc-dynamic)}))
                        dart-fields)
-         qname (symbol (str (dart-alias-for-ns current-ns) "." mclass-name))
-         lib (-> current-ns all-nses :lib)
+         qname (symbol (str (dart-alias-for-ns *current-ns*) "." mclass-name))
+         lib (-> *current-ns* all-nses :lib)
          bare-type {:kind :class
                     :qname qname
                     :canon-qname qname
@@ -2782,7 +2784,7 @@
 (declare write-top-dartfn write-top-field write-dynamic-var-top-field write-annotations)
 
 (defn dart-qualify [dartname]
-  (with-meta (symbol (str (dart-alias-for-ns (:current-ns @nses)) "." dartname))
+  (with-meta (symbol (str (dart-alias-for-ns *current-ns*) "." dartname))
     (meta dartname)))
 
 (defn emit-defprotocol* [[_ pname spec] env]
@@ -2860,18 +2862,22 @@
   [class-name env]
   (case class-name
     fallback class-name
-    (let [relocatable-type (unresolve-type (resolve-type class-name #{}))]
+    (let [dart-type (resolve-type class-name #{})
+          relocatable-type
+          (binding [*current-ns* nil]
+            ; no ns to force global aliases
+            (unresolve-type dart-type))]
       (assert (qualified-symbol? relocatable-type) (str "oh noes " relocatable-type (resolve-type class-name #{})))
       relocatable-type)))
 
 (defn ensure-import-ns [the-ns]
-  (let [{:keys [current-ns] :as all-nses} @nses
+  (let [all-nses @nses
         the-lib (:lib (all-nses the-ns))
         dart-alias (some-> all-nses :libs (get the-lib) :dart-alias)]
     (when-not dart-alias
       (throw (ex-info (str "Namespace not required: " the-ns) {:ns the-ns})))
-    (when-not (some-> current-ns all-nses :imports (get the-lib))
-      (swap! nses assoc-in [current-ns :imports the-lib] {}))
+    (when-not (some-> *current-ns* all-nses :imports (get the-lib))
+      (swap! nses assoc-in [*current-ns* :imports the-lib] {}))
     dart-alias))
 
 (defn ensure-contrib-ns [protocol-ns contrib-ns]
@@ -2882,11 +2888,12 @@
 (defn emit-extend-type-protocol* [[_ class-name protocol-ns protocol-name extension-instance] env]
   (ensure-contrib-ns protocol-ns (-> extension-instance namespace symbol))
   (let [class-name (relocatable-class-name class-name env)
-        {:keys [current-ns] {proto-map protocol-name} protocol-ns}
+        _ (when (= "CustomScrollView" (name class-name))
+            (prn 'OOOOPS class-name))
+        {{proto-map protocol-name} protocol-ns}
         (swap! nses assoc-in [protocol-ns protocol-name :extensions class-name] extension-instance)]
-    (swap! nses assoc :current-ns protocol-ns)
-    (emit (expand-protocol-impl proto-map) env)
-    (swap! nses assoc :current-ns current-ns)))
+    (binding [*current-ns* protocol-ns]
+      (emit (expand-protocol-impl proto-map) env))))
 
 (defn- fn-kind [x]
   (when (and (seq? x) (= 'fn* (first x)))
@@ -2975,7 +2982,7 @@
             (write-annotations dart-annotations)
             (cond
               (:dynamic (meta sym))
-              (let [k (symbol (name (:current-ns @nses)) (name sym))]
+              (let [k (symbol (name *current-ns*) (name sym))]
                 (write-dynamic-var-top-field k dartname dart-fn))
               (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
               (write-top-dartfn dartname
@@ -3147,7 +3154,8 @@
           ns-map (cond-> ns-map
                    *host-eval* (assoc :host-ns (create-host-ns ns-sym host-ns-directives)))]
       (global-lib-alias ns-lib ns-sym)
-      (swap! nses assoc ns-sym ns-map :current-ns ns-sym))))
+      (set! *current-ns* ns-sym)
+      (swap! nses assoc ns-sym ns-map))))
 
 (defn- emit-no-recur [expr env]
   (let [dart-expr (emit expr env)]
@@ -3352,14 +3360,14 @@
 (defn write-type
   [{:keys [lib qname type-parameters nullable] :as t}]
   (when lib ; lib may be empty for parameters or void
-    (let [{:keys [current-ns libs] :as all-nses} @nses]
+    (let [{:keys [libs] :as all-nses} @nses]
       (when-not (-> lib libs :dart-alias)
         (let [dart-alias (global-lib-alias lib nil)]
           (swap! nses #(-> %
                          (assoc-in [:libs lib :dart-alias] dart-alias)
                          (assoc-in [:dart-aliases dart-alias] lib)))))
-      (when-not (-> current-ns all-nses :imports (get lib))
-        (swap! nses assoc-in [current-ns :imports lib] {}))))
+      (when-not (-> *current-ns* all-nses :imports (get lib))
+        (swap! nses assoc-in [*current-ns* :imports lib] {}))))
   (case qname
     nil (throw (ex-info "Invalid type representation" {:dart-type t}))
     dc.Function
@@ -3548,10 +3556,10 @@
     (nil? x) (dart-print "null")
     (symbol? x) (let [x (name x)]
                   (when-some [[_ dart-alias] (re-matches #"(.+?)\..+" x)]
-                    (let [{:keys [dart-aliases current-ns libs] :as all-nses} @nses
+                    (let [{:keys [dart-aliases libs] :as all-nses} @nses
                           lib (dart-aliases dart-alias)]
-                      (when-not (-> current-ns all-nses :imports (get lib))
-                        (swap! nses assoc-in [current-ns :imports lib] {}))))
+                      (when-not (-> *current-ns* all-nses :imports (get lib))
+                        (swap! nses assoc-in [*current-ns* :imports lib] {}))))
                   (dart-print x))
     :else (dart-print (str x))))
 
@@ -4154,9 +4162,6 @@
 
 ;; Compile clj -> dart file
 (defn dump-ns [ns-name {ns-lib :lib :as ns-map}]
-  (tap> {::msg-kind :dump-ns
-         :ns ns-name
-         :lib ns-lib})
   (doseq [lib (keys (:imports ns-map))
           :let [dart-alias (-> @nses :libs (get lib) :dart-alias)]]
     (dart-print "import ")
@@ -4222,13 +4227,12 @@
 (def cljd-resolver
   (reify #?(:clj clojure.lang.LispReader$Resolver
             :cljd cljd.reader/IResolver)
-    (currentNS [_] (:current-ns @nses))
+    (currentNS [_] *current-ns*)
     (resolveClass [_ sym]
-      (let [{:keys [current-ns] :as nses} @nses]
-         (get-in nses [current-ns :mappings sym])))
+      (get-in @nses [*current-ns* :mappings sym]))
     (resolveAlias [_ sym]
-      (let [{:keys [current-ns libs] :as nses} @nses
-            {:keys [clj-aliases]} (nses current-ns)]
+      (let [{:keys [libs] :as nses} @nses
+            {:keys [clj-aliases]} (nses *current-ns*)]
         (when-some [lib (some-> sym name clj-aliases libs)]
           (or (:ns lib)
             (symbol (str "$lib:" (:dart-alias lib)))))))
@@ -4286,8 +4290,7 @@
 (defn compile-input [in]
   (binding [*host-eval* false]
     (load-input in)
-    (let [{:keys [current-ns] :as all-nses} @nses
-          the-ns (all-nses current-ns)
+    (let [the-ns (@nses *current-ns*)
           libname (:lib the-ns)
           is-test-ns (-> 'main the-ns :meta :dart/test)
           libname' (if is-test-ns
@@ -4314,23 +4317,22 @@
     (when *hosted*
       (with-open [in (.openStream url)]
         (host-load-input (java.io.InputStreamReader. in "UTF-8")))
-      (let [{:keys [current-ns] :as all-nses} @nses]
-        (doseq [{:keys [refresh! name]} (sort-by (fn [{:keys [name]}] (case name (IProtocol SeqListMixin) 0 1)) (vals (all-nses current-ns)))
-                :when refresh!]
-          (refresh!))))
+      (doseq [{:keys [refresh! name]} (sort-by (fn [{:keys [name]}] (case name (IProtocol SeqListMixin) 0 1)) (vals (@nses *current-ns*)))
+              :when refresh!]
+        (refresh!)))
     (with-open [in (.openStream url)]
       (compile-input (java.io.InputStreamReader. in "UTF-8")))))
 
 (defn compile-namespace [ns-name]
   ;; iterate first on file variants then on paths, not the other way!
-  (tap> {::msg-kind :compile-ns :ns ns-name})
-  (let [file-paths (ns-to-paths ns-name)
-        cljd-core (when-not (= ns-name 'cljd-core) (get @nses 'cljd.core))]
-    (if-some [[file-path url] (some (fn [p] (some->> (find-resource p) (vector p))) file-paths)]
-      (compile-url file-path url)
-      (throw (ex-info (str "Could not locate "
-                        (str/join " or " file-paths))
-               {:ns ns-name})))))
+  (binding [*current-ns* ns-name]
+      (let [file-paths (ns-to-paths ns-name)
+            cljd-core (when-not (= ns-name 'cljd-core) (get @nses 'cljd.core))]
+        (if-some [[file-path url] (some (fn [p] (some->> (find-resource p) (vector p))) file-paths)]
+          (compile-url file-path url)
+          (throw (ex-info (str "Could not locate "
+                            (str/join " or " file-paths))
+                   {:ns ns-name}))))))
 
 (defmacro with-dump-modified-files
   "Dump modified Dart files upon succesful execution of the body."
