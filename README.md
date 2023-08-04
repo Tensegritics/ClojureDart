@@ -1,36 +1,35 @@
 <img src="logo1024.png" width="100%">
 
 # What is ClojureDart?
-ClojureDart is a Clojure dialect for Dart (2.13+ and 3) and Flutter.
+ClojureDart is a recent Clojure dialect to make native mobile and desktop apps using Flutter and the Dart ecosystem.
 
-It's production-ready: you can ship applications with it right now.
+It's production-ready: applications are being built with it.
 
-Its primary goal is to leverage Dart and Flutter to extend Clojure's reach to
-mobile and desktop apps.
+# Funding and Support
+Clojuredart is developed by [Baptiste Dupuch](https://github.com/dupuchba)[🐦](https://twitter.com/BaptisteDupuch) and [Christophe Grand](https://github.com/cgrand)[🐦](https://twitter.com/cgrand) by taking time off of their consultancy -- it's grueling at times.
 
-# Status
-We stay true to Clojure philosophy and we will avoid breaking changes at all cost.
+How can you help?
 
-Work is not complete, some features are missing:
-- no REPL yet, but we have excellent hot-reload so for UI work you get instant feedback
-- multi-method (WIP)
-
-# Support
-Stop by the [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart) or open an issue.
-
-If you are betting the farm on ClojureDart, **we can offer you paid support and assistance**.
-
-You can help us spend more time on ClojureDart by sponsoring [:heart: Baptiste](https://github.com/sponsors/dupuchba) or [:heart: Christophe](https://github.com/sponsors/cgrand).
+* **Sponsor us** (individual sponsorship is nice but corporate sponshorship is great). You can sponsor any of us or both, it doesn't matter, we split ([:heart: Baptiste](https://github.com/sponsors/dupuchba)  [:heart: Christophe](https://github.com/sponsors/cgrand)).
+* **Contract us** for assistance, training, consulting or dev (can be as mundane as requesting to port a clj/cljs lib to cljd)
 
 # Cheatsheet
 
 We have a [cheatsheet](doc/ClojureDart%20Cheatsheet.pdf) covering ClojureDart specifics on one side and Flutter programming on the other side.
 
-# Conj 2023
+# Conj 2023 talk and demo
 
-Want to see what's the workflow like? Our talk at Clojure/Conj 2023 is mostly a live-coding session, starting from scratch and assuming no prior knowledge of Dart or Flutter!
+Want to see what's the workflow like? Our talk at Clojure/Conj 2023 is mostly a live-coding session, starting from scratch and assuming no prior knowledge of Dart or Flutter! [Click here or on the image 👇](https://www.youtube.com/watch?v=dqBeGpuedf0)
 
-https://www.youtube.com/watch?v=dqBeGpuedf0&list=PLZdCLR02grLpIQQkyGLgIyt0eHE56aJqd&index=24
+[<img src="https://i.ytimg.com/vi/dqBeGpuedf0/maxresdefault.jpg" width="80%">](https://www.youtube.com/watch?v=dqBeGpuedf0 "ClojureDart demo at Conj 2023")
+
+# Where to find help?
+Stop by the [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart) or open an issue.
+
+# Completeness Status
+The two missing big features are:
+- no REPL yet (WIP), but we have excellent hot-reload during UI work to get instant feedback
+- multi-method (WIP)
 
 # Links dump
 
@@ -101,16 +100,6 @@ clj -M:cljd flutter
 In most environments this will spawn a desktop app.
 
 More details [there](doc/flutter-quick-start.md)
-
-# Who is behind it?
-
-Tensegritics, an itty-bitty Clojure consultancy by [Baptiste Dupuch](https://github.com/dupuchba)[🐦](https://twitter.com/BaptisteDupuch) and [Christophe Grand](https://github.com/cgrand)[🐦](https://twitter.com/cgrand).
-
-ClojureDart is not a revenue source for us, even if we build it for fun and hopefully profit -- by being the proverbial rising tide which lifts all boats.
-
-Sponsoring us is a good way to get the project moves faster. In the past sponsorship money allowed us to have an intern on the project writing samples and producing videos.
-
-Obviously you can contract us for assistance or development with ClojureDart.
 
 # Quick starts
 
