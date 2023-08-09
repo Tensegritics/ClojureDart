@@ -832,3 +832,15 @@
   (is (= :ok (let [x (identity 42)]
                (> x 0)
                :ok))))
+
+(deftype MutableBox [^:mutable fld])
+
+(deftest set!-eval-once
+  (let [obj (MutableBox nil)
+        x (.-fld! obj (MutableBox nil))]
+    (is (identical? x (.-fld obj)))))
+
+(deftest deep-set!
+  (let [obj (MutableBox (MutableBox (MutableBox nil)))]
+    (-> obj .-fld .-fld (.-fld! 1))
+    (is (= 1 (-> obj .-fld .-fld .-fld)))))

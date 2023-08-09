@@ -1320,14 +1320,17 @@
     (let [[tmp :as binding] (dart-binding (first x) x env)]
       [[binding]
        tmp])
+    dart/set!
+    (let [[_ target [tmp :as binding]] x]
+      [[binding [nil (list 'dart/set! target [nil tmp])]] tmp])
     dart/assert
     [[nil x] nil]
     dart/as
-    (let [[_ _ dart-type :as dart-expr] x
-          must-lift (loop [x (second dart-expr)]
+    (let [[_ dart-expr dart-type] x
+          must-lift (loop [x dart-expr]
                       (case (when (seq? x) (first x))
-                        dart/let (seq (second x))
-                        (dart/if dart/try dart/case dart/loop dart/assert) true
+                        dart/let (seq (second x)) ; must-lift when let has bindings
+                        (dart/if dart/try dart/case dart/loop dart/assert dart/set!) true
                         dart/as (recur (second x))
                         false))]
       (when must-lift
@@ -1336,7 +1339,7 @@
     nil))
 
 (defmacro ^:private with-lifted
-  "CAUTION: with-lifted is NOT appropriate for preventing double evaluation.
+  "CAUTION: with-lifted is NOT appropriate for preventing double evaluation. See with-once.
    Its purpose is to turn expressions which are not suitable dart expressions
    into statement."
   [[name expr] env wrapped-expr]
@@ -1344,6 +1347,14 @@
      (if-some [[bindings# ~name] (liftable ~name ~env)]
        (list 'dart/let bindings# ~wrapped-expr)
        ~wrapped-expr)))
+
+(defmacro ^:private with-once
+  [[name expr] env wrapped-expr]
+  `(let [~name ~expr]
+     (if (symbol? ~name)
+       ~wrapped-expr
+       (let [[~name :as binding#] (dart-binding "once" ~name ~env)]
+         (list 'dart/let [binding#] ~wrapped-expr)))))
 
 (defn- lift-arg [must-lift dart-expr hint env]
   (or (liftable dart-expr env)
@@ -1517,17 +1528,12 @@
      (is-assignable? expected-type actual-type) dart-expr ; <1>
      (and (nullable-type? expected-type) (nullable-type? actual-type))
      (if-some [expected-type+ (positive-type expected-type)]
-       (let [[tmp :as binding] (when-not (symbol? dart-expr)
-                         (dart-binding 'maybe dart-expr env))
-             tmp (or tmp dart-expr)
-             dart-expr
-             `(dart/if (dart/. nil "!=" ~tmp)
-                ; by construction expected-type can't be dynamic or FutureOr<dynamic>, otherwise
-                ; it would have matched the assignability test <1> above
-                ~(magicast tmp expected-type+ actual-type env)
-                nil)]
-         (cond->> dart-expr
-           binding (list 'dart/let [binding])))
+       (with-once [dart-expr dart-expr] env
+         `(dart/if (dart/. nil "!=" ~dart-expr)
+            ; by construction expected-type can't be dynamic or FutureOr<dynamic>, otherwise
+            ; it would have matched the assignability test <1> above
+            ~(magicast dart-expr expected-type+ actual-type env)
+            nil))
        (list 'dart/let [[nil dart-expr]] nil))
      ;; When inlined #dart[], we keep it inlines
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
@@ -1856,25 +1862,15 @@
                  (throw (ex-info (str "Cannot assign: " target) {:target target})))
           :dart (when-not (and (= :field (:kind info)) (:setter info))
                   (throw (ex-info (str "Cannot assign: " target) {:target target}))))
-        (list 'dart/let
-              [[nil (list 'dart/set! dart-sym (emit expr env))]]
-              dart-sym))
+        (list 'dart/set! dart-sym
+          (dart-binding 'setval (emit expr env) env)))
       (and (seq? target) (= '. (first target)))
       (let [[_ obj member] target
-            [_ fld] (re-matches #"-?(.+)" (name member))
-            #_(dart-member-lookup type! fld nil env)
+            [_ fld] (re-matches #"-?(.+)" (name member))]
             ; TODO actual field resolution + simple-cast
-            [bindings [dart-obj dart-val]] (lift-args true (split-args [obj expr] nil env) env)
-            ; only dart/as supported by the writer, this forcibly lift everything
-            ; else even if "lift-safe".
-            dart-obj-binding (when (and (seq? dart-obj) (not= 'dart/as (first dart-obj)))
-                               (dart-binding "obj" dart-obj env))
-            dart-obj (or (first dart-obj-binding) dart-obj)
-            bindings (cond->> bindings dart-obj-binding (cons dart-obj-binding))]
-        (list 'dart/let
-              (conj (vec bindings)
-                    [nil (list 'dart/set! (list 'dart/.- dart-obj fld) dart-val)])
-              dart-val))
+        (with-lifted [dart-obj (emit obj env)] env
+          (list 'dart/set! (list 'dart/.- dart-obj fld)
+            (dart-binding 'setval (emit expr env) env))))
       :else
       (throw (ex-info (str "Unsupported target for assignment: " target) {:target target})))))
 
@@ -1890,7 +1886,7 @@
         dart-bindings
         (into dart-bindings (for [x (butlast body)] [nil (emit x env)]))]
     (cond->> (emit (last body) env)
-      ; wrap only when ther are actual bindings
+      ; wrap only when there are actual bindings
       (seq dart-bindings) (list 'dart/let dart-bindings))))
 
 (defn emit-do [[_ & body] env]
@@ -2350,10 +2346,10 @@
           (vec
             (concat
              (for [[v] bindings] [:late v])
-             (for [[v e] bindings] [nil (list 'dart/set! v e)])
+             (for [[v e] bindings] [nil (list 'dart/set! v [nil e])])
              (for [[obj deps] wirings
                    dep deps]
-               [nil (list 'dart/set! (list 'dart/.- obj dep) dep)])))
+               [nil (list 'dart/set! (list 'dart/.- obj dep) [nil dep])])))
           (emit (list* 'let* [] body) env))))
 
 (defn emit-method [class-name [mname {[this-param & fixed-params] :fixed-params :keys [opt-kind opt-params]} & body] env]
@@ -2413,13 +2409,16 @@
                    (cond->> (cons dart-fn-name params)
                      (seq bindings) (list 'dart/let bindings))]))
               dart/set!
-              (when-some [fld (when-some [[op o fld] (when (seq? (second x)) (second x))]
-                                (when (and (= 'dart/.- op) (= o this-super))
-                                  fld))]
-                (let [dart-fn-name (dart-local (with-meta (symbol (str "super-set-" fld)) {:dart true}) {})
-                      dart-fn (list 'dart/fn '[v] :positional () false
-                                (list 'dart/set! (list 'dart/.- 'super fld) 'v))]
-                  [dart-fn-name dart-fn (list dart-fn-name (nth x 2))]))
+              (let [[_ target [_ dart-expr]] x]
+                (when-some [fld (when-some [[op o fld] (when (seq? target) target)]
+                                  (when (and (= 'dart/.- op) (= o this-super))
+                                    fld))]
+                  (let [dart-fn-name (dart-local (with-meta (symbol (str "super-set-" fld)) {:dart true}) {})
+                        dart-fn (list 'dart/fn '[v] :positional () false
+                                  (list 'dart/let
+                                    [[nil (list 'dart/set! ('dart/.- 'super fld) [nil 'v])]]
+                                    'v))]
+                    [dart-fn-name dart-fn (list dart-fn-name dart-expr)])))
               nil)))
         extract
         (fn extract [form]
@@ -3745,6 +3744,14 @@
                                           (first (:type-parameters a))
                                           a))]
                     :nullable (or (:nullable a) (:nullable b)))
+                  (= 'pseudo.not-bool qna)
+                  (case qnb
+                    (dc.Object dc.bool) dc-dynamic
+                    a)
+                  (= 'pseudo.not-bool qnb)
+                  (case qna
+                    (dc.Object dc.bool) dc-dynamic
+                    b)
                   :else (assoc (single-common-type a b)
                           :nullable (or (:nullable a) (:nullable b))))))]
       (merge-types a b))))
@@ -4025,21 +4032,24 @@
           (dart-print "continue;\n")
           true))
       dart/set!
-      (let [[_ target val] x]
-        ;; locus isn't used here because set! should always be lifted
-        ;; into a side-effecting (nil-bound) let binding
-        (write val (assignment-locus
-                    (if (symbol? target)
-                      target
-                      (let [[op obj fld] target]
-                        (case op
-                          dart/.-
-                          (if (symbol? obj)
-                            (str obj "." fld)
-                            (case (first obj)
-                              dart/as
-                              (let [[_ obj type] obj]
-                                (str "(" obj " as " (type-str type) ")." fld))))))))))
+      (let [[_ target [tmp val :as tmp-binding]] x]
+        ; dart/set! like clojure set! evaluates to the set value
+        ; when it occurs in non-lifted expression contexts (return, lhr of lets...)
+        ; we have to avoid double evaluation of val, that's why dart/set! provides an
+        ; "emergency binding" to provide a name for the resulting value.
+        (cond
+          (:statement locus)
+          (write val
+            (assignment-locus
+              (binding [*dart-out* (java.io.StringWriter.)]
+                (write target expr-locus)
+                (str *dart-out*))))
+          (nil? tmp) (throw (ex-info "dart/set! without temp in expression position"))
+          :else
+          (recur
+            (list 'dart/let [tmp-binding
+                             [nil (list 'dart/set! target [nil tmp])]]
+              tmp) locus)))
       dart/.-
       (let [[_ obj fld] x]
         (print-pre locus)
