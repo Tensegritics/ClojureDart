@@ -817,12 +817,8 @@
    Meant to be used for user-initiated retries, not automatic retries."
   [^Retriable retriable]
   (let [this-fut (.-fut! retriable (Future (.-thunk retriable)))]
-    (dart:core/print (pr-str 'CHECK this-fut (.-fut retriable)
-       (identical? this-fut (.-fut retriable))))
     (.then this-fut
       (fn [x]
-        (dart:core/print (pr-str 'FUTFUT this-fut (.-fut retriable)
-                           (identical? this-fut (.-fut retriable))))
         (try
           (when (identical? this-fut (.-fut retriable))
             (run! #(% x) (-> retriable .-subscriptions .-values)))
