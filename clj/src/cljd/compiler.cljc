@@ -3807,6 +3807,8 @@
                 dart/as (let [[_ _ type] x]
                           {:dart/type type
                            :dart/const false})
+                dart/set! (let [[_ target [_ expr]] x]
+                            (infer-type expr))
                 (let [{:keys [dart/ret-type]} (infer-type (first x))]
                   (when ret-type
                     {:dart/type ret-type})))
