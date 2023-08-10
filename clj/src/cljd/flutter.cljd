@@ -801,3 +801,36 @@
 
 (defmacro $ [expr]
   `(cell (fn [] ~expr)))
+
+(deftype Retriable [thunk ^:mutable ^Future? fut ^Map subscriptions]
+  Subscribable
+  (-subscribe [retriable f!]
+    (let [sub ^:unique (Object)]
+      (. subscriptions "[]=" sub f!)
+      sub))
+  (-call-with-immediate-value [x sub f!] false)
+  (-unsubscribe [x sub] (.remove subscriptions sub)))
+
+(defn retry!
+  "Retries the retrieable, returns a future which will yield a value
+   when the current try is over.
+   Meant to be used for user-initiated retries, not automatic retries."
+  [^Retriable retriable]
+  (let [this-fut (.-fut! retriable (Future (.-thunk retriable)))]
+    (dart:core/print (pr-str 'CHECK this-fut (.-fut retriable)
+       (identical? this-fut (.-fut retriable))))
+    (.then this-fut
+      (fn [x]
+        (dart:core/print (pr-str 'FUTFUT this-fut (.-fut retriable)
+                           (identical? this-fut (.-fut retriable))))
+        (try
+          (when (identical? this-fut (.-fut retriable))
+            (run! #(% x) (-> retriable .-subscriptions .-values)))
+          (catch Object e (dart:core/print e)))))))
+
+(defmacro retriable
+  "Returns a retriable: a future-like which can be retried.
+   Meant to be used for user-initiated retries, not automatic retries."
+  [& async-try-body]
+  `(doto (Retriable (fn [] (try ~@async-try-body)) nil (Map))
+     retry!))
