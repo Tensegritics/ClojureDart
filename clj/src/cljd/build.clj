@@ -201,7 +201,11 @@
                             :dart2 "2"
                             :dart3 "3"))))
         (compile-core)
-        (let [dirs (into #{} (map #(java.io.File. %)) (:paths *deps*))
+        (let [dirs (into #{} (map #(java.io.File. %))
+                     (concat (:paths *deps*)
+                       (mapcat (fn [{:keys [local/root paths]}]
+                                 (when root paths))
+                         (vals (:libs *deps*)))))
               dirty-nses (volatile! #{})
               recompile-count (volatile! 0)
               compile-nses
