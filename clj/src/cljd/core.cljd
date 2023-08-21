@@ -8167,7 +8167,7 @@
   function of no arguments. Returns true if successful, false otherwise." :dynamic true}
   *exec-tap-fn*
   [f]
-  (dart-async/Timer. (Duration. .milliseconds 0) f)
+  (dart-async/scheduleMicrotask f)
   true)
 
 (defonce ^{:private true}
