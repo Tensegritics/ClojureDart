@@ -176,7 +176,10 @@
   (build [state ctx]
     (-build (.-widget state) state ctx))
   cljd.core/IFn
-  (-invoke [state x] (set! latest x) (.setState state (fn []))))
+  (-invoke [state x]
+    (set! latest x)
+    (when (.-mounted state)
+      (.setState state (fn [])))))
 
 (defn ^:macro-support refresh-on-expr [opts &env expr]
   (if (contains? opts :refresh-on)
