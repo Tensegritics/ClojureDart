@@ -1152,7 +1152,11 @@
                 (flush [])
                 (write ([_]) ([_ _ _])))
               #_(java.io.Writer/nullWriter)]
-      (eval (list* 'ns sym directives))
+      (binding [*reader-resolver* nil]
+        ; all nses required are already loaded except thiose
+        ; specified by :host-ns which should be read with the
+        ; default resolver
+        (eval (list* 'ns sym directives)))
       ;; NOTE: big trick here...
       (require '[clojure.core :as cljd.core])
       *ns*)))
