@@ -790,6 +790,7 @@
 
 (def ^:dynamic *print-readably* true)
 (def ^:dynamic *print-dup* false)
+(def ^:dynamic *print-meta* false)
 
 (defprotocol IPrint
   (-print [o string-sink]))
@@ -1828,6 +1829,10 @@
   ^:mixin EqualsEquivMixin
   IPrint
   (-print [o ^StringSink sink]
+    (when-let [m (and *print-meta* meta)]
+      (.write sink "^")
+      (.write sink m)
+      (.write sink " "))
     (when ns (.write sink ns) (.write sink "/"))
     (.write sink name))
   IMeta
@@ -3073,6 +3078,10 @@
                   (.write w sep)
                   (recur xs)))))
           (.write w end))))
+  (when-let [m (and *print-meta* (meta sequence))]
+    (.write sink "^")
+    (.write sink m)
+    (.write sink " "))
   (.write sink begin)
   (reduce (fn [need-sep x]
             (when need-sep
@@ -4839,6 +4848,10 @@
                   (.write w sep)
                   (recur xs)))))
           (.write w end))))
+  (when-let [m (and *print-meta* (meta m))]
+    (.write sink "^")
+    (.write sink m)
+    (.write sink " "))
   (.write sink "{")
   (if (satisfies? IKVReduce m)
     (reduce-kv (fn [need-sep k v]

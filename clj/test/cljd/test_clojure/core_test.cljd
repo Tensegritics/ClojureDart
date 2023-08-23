@@ -1912,3 +1912,13 @@
     (is (= (subvec (first {0 1}) 0) [0 1]))
     (is (= (subvec (first {0 1}) 2) []))
     (is (= (subvec (first {0 1}) 1 1) []))))
+
+(defn- pr-meta [x] (binding [*print-meta* true] (pr-str x)))
+
+(deftest print-meta
+  (testing "print values with meta"
+    (is (= "^{:hello :world} []" (pr-meta ^{:hello :world} [])))
+    (is (= "^{:hello :world} #{}" (pr-meta ^{:hello :world} #{})))
+    (is (= "^{:hello :world} {}" (pr-meta ^{:hello :world} {})))
+    (is (= "^{:hello :world} hi" (pr-meta (with-meta 'hi {:hello :world}))))
+    (is (= "^{:hello :world} ()" (pr-meta (with-meta (list) {:hello :world}))))))
