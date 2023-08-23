@@ -8162,3 +8162,43 @@
   handled as if by repeated uses of conj."
   ([& keys]
    (apply sorted-set-by compare keys)))
+
+(defn ^{:doc "Arranges to have tap functions executed via the supplied f, a
+  function of no arguments. Returns true if successful, false otherwise." :dynamic true}
+  *exec-tap-fn*
+  [f]
+  (dart-async/scheduleMicrotask f)
+  true)
+
+(defonce ^{:private true}
+  tapset nil)
+
+(defn- maybe-init-tapset []
+  (when (nil? tapset)
+    (set! tapset (atom #{}))))
+
+(defn add-tap
+  "Adds f, a fn of one argument, to the tap set. This function will be called with
+  anything sent via tap>. Remember f in order to remove-tap"
+  [f]
+  (maybe-init-tapset)
+  (swap! tapset conj f)
+  nil)
+
+(defn remove-tap
+  "Remove f from the tap set."
+  [f]
+  (maybe-init-tapset)
+  (swap! tapset disj f)
+  nil)
+
+(defn ^bool tap>
+  "Sends x to any taps. Returns the result of *exec-tap-fn*, a Boolean value."
+  [x]
+  (maybe-init-tapset)
+  (*exec-tap-fn*
+    (fn []
+      (doseq [tap @tapset]
+        (try
+          (tap x)
+          (catch Exception ex))))))
