@@ -2068,6 +2068,12 @@
   (-equiv [o other] (identical? o other))
   IDeref
   (-deref [_] state)
+  IPrint
+  (-print [o sink]
+    (doto ^StringSink sink
+      (.write "#object[cljd.core.Atom ")
+      (.write {:val state})
+      (.write "]")))
   IMeta
   (-meta [_] meta)
   IWatchable
@@ -2238,7 +2244,15 @@
       (set! f nil))
     val)
   IPending
-  (-realized? [this] (nil? f)))
+  (-realized? [this] (nil? f))
+  IPrint
+  (-print [o sink]
+    (doto ^StringSink sink
+      (.write "#object[cljd.core.Delay ")
+      (.write (if (nil? f)
+                {:status :ready :val val}
+                {:status :pending :val nil}))
+      (.write "]"))))
 
 (defn delay?
   "returns true if x is a Delay created with delay"
@@ -2298,7 +2312,13 @@
   (-vreset! [_ new-state]
     (set! state new-state))
   IDeref
-  (-deref [_] state))
+  (-deref [_] state)
+  IPrint
+  (-print [o sink]
+    (doto ^StringSink sink
+      (.write "#object[cljd.core.Volatile ")
+      (.write {:val state})
+      (.write "]"))))
 
 (defn ^Volatile volatile!
   "Creates and returns a Volatile with an initial value of val."
