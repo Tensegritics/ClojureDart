@@ -1495,11 +1495,10 @@
   (let [a (atom :usual-value)]
     (is (= :usual-value (reset! a (first (reset-vals! a :almost-never-seen-value)))))))
 
-;; TODO
-#_(deftest test-cljs-2374
-  (is (= "##NaN" (pr-str js/NaN)))
-  (is (= "##Inf" (pr-str js/Infinity)))
-    (is (= "##-Inf" (pr-str js/-Infinity))))
+(deftest test-cljs-2374
+  (is (= "##NaN" (pr-str double/nan)))
+  (is (= "##Inf" (pr-str double/infinity)))
+  (is (= "##-Inf" (pr-str double/negativeInfinity))))
 
 (deftest test-cljs-2449
   (is (= 1 (let [catch identity] (catch 1))))
