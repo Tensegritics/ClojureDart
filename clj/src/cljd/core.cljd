@@ -2323,7 +2323,19 @@
   (^:getter message [_] msg)
   (^:getter cause [_] ex)
   IExceptionInfo
-  (-ex-data [_] data))
+  (-ex-data [_] data)
+  ^:mixin ToStringMixin
+  IPrint
+  (-print [o ^StringSink sink]
+    (.write sink "#error {:message ")
+    (.write sink (pr-str msg))
+    (when data
+      (.write sink ", :data ")
+      (.write sink (pr-str data)))
+    (when ex
+      (.write sink ", :cause ")
+      (.write sink (pr-str ex)))
+    (.write sink "}")))
 
 (defn ex-info
   "Create an instance of ExceptionInfo, a RuntimeException subclass

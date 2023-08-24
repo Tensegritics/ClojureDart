@@ -655,18 +655,17 @@
         (is (kvr-test data expect)))
       (is (= {:init :val} (reduce-kv assoc {:init :val} nil))))))
 
-;; TODO
-#_(deftest test-data-conveying-exceptions
+(deftest test-data-conveying-exceptions
   (is (= {:foo 1}
         (try (throw (ex-info "asdf" {:foo 1}))
-             (catch ExceptionInfo e
+             (catch cljd.core/ExceptionInfo e
                (ex-data e)))))
-  (is (instance? js/Error (ex-info "asdf" {:foo 1})))
+  (is (dart/is? (ex-info "asdf" {:foo 1}) cljd.core/ExceptionInfo))
   (is (= (pr-str (ex-info "abc" {:x 1})) "#error {:message \"abc\", :data {:x 1}}"))
   (is (= (pr-str (ex-info "abc" {:x 1} "def")) "#error {:message \"abc\", :data {:x 1}, :cause \"def\"}"))
   (is (= (.toString (ex-info "abc" {:x 1} "def")) "#error {:message \"abc\", :data {:x 1}, :cause \"def\"}"))
   (is (= (str (ex-info "abc" {:x 1} "def")) "#error {:message \"abc\", :data {:x 1}, :cause \"def\"}"))
-  (is (not (instance? cljs.core.ExceptionInfo (js/Error.)))))
+  #_(is (not (instance? cljs.core.ExceptionInfo (js/Error.)))))
 
 (deftest test-2067
   (is (= 0 (reduce-kv
