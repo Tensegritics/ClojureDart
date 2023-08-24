@@ -817,7 +817,7 @@
     (cond
       (and (.-isInfinite o) (.-isNegative o)) (.write ^StringSink sink "##-Inf")
       (.-isInfinite o) (.write ^StringSink sink "##Inf")
-      (.-isNaN o) (.write ^StringSink sink "##Nan")
+      (.-isNaN o) (.write ^StringSink sink "##NaN")
       :else (.write ^StringSink sink (.toString o)))))
 
 (defn ^bool string?
