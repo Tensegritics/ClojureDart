@@ -1697,12 +1697,11 @@
   (is (zero? (count [])))
   (is (== 1 (count [1]))))
 
-;; TODO
-#_(deftest test-cljs-2934
+(deftest test-cljs-2934
   (let [x (delay 1)]
-    (is (= "#object[cljs.core.Delay {:status :pending, :val nil}]" (pr-str x)))
+    (is (= "#object[cljd.core.Delay {:status :pending, :val nil}]" (pr-str x)))
     (force x)
-    (is (= "#object[cljs.core.Delay {:status :ready, :val 1}]" (pr-str x)))))
+    (is (= "#object[cljd.core.Delay {:status :ready, :val 1}]" (pr-str x)))))
 
 (deftest test-cljs-2943
   (let [m1 {:a 2, :b 3, :c 5}
@@ -1716,10 +1715,9 @@
     (is (= m4 (merge-with + m1 (sorted m2) m3)))
     (is (= m4 (merge-with + m1 (sorted m2) (sorted m3))))))
 
-;; TODO
-#_(deftest test-cljs-2933
-  (is (= "#object[cljs.core.Atom {:val 1}]" (pr-str (atom 1))))
-  (is (= "#object[cljs.core.Volatile {:val 2}]" (pr-str (volatile! 2)))))
+(deftest test-cljs-2933
+  (is (= "#object[cljd.core.Atom {:val 1}]" (pr-str (atom 1))))
+  (is (= "#object[cljd.core.Volatile {:val 2}]" (pr-str (volatile! 2)))))
 
 (deftest test-cljs-2944
   (is (= (symbol :foo/bar) 'foo/bar))
