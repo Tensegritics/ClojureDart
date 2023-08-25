@@ -7207,8 +7207,9 @@
 
   IHash
   (-hash [this]
-    (+ (* 31 (hash tag))
-       (hash form)))
+    (u32-add
+     (* 31 (hash tag))
+     (hash form)))
   (-hash-realized? [o] true)
 
   ILookup
