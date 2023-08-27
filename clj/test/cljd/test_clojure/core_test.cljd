@@ -478,17 +478,14 @@
         (is (.-done (.next iter)))))
     ))
 
-;; TODO
-#_(deftest test-reader-literals
+(deftest test-reader-literals
   (testing "Testing reader literals"
-    (is (= queue [1] (into cljs.core.PersistentQueue.EMPTY [1])))
-    (is (not= queue [1 2] (into cljs.core.PersistentQueue.EMPTY [1])))
-    (is (= inst "2010-11-12T18:14:15.666-00:00"
-          inst "2010-11-12T13:14:15.666-05:00"))
-    (is (= uuid "550e8400-e29b-41d4-a716-446655440000"
-          uuid "550e8400-e29b-41d4-a716-446655440000"))
-
-    ))
+    #_(is (= queue [1] (into cljs.core.PersistentQueue.EMPTY [1])))
+    #_(is (not= queue [1 2] (into cljs.core.PersistentQueue.EMPTY [1])))
+    (is (= #inst "2010-11-12T18:14:15.666-00:00"
+           #inst "2010-11-12T13:14:15.666-05:00"))
+    (is (= #uuid "550e8400-e29b-41d4-a716-446655440000"
+           #uuid "550e8400-e29b-41d4-a716-446655440000"))))
 
 (deftest test-uuid
   (testing "Testing UUID"
