@@ -490,32 +490,32 @@
 
     ))
 
-;; TODO
-#_(deftest test-uuid
+(deftest test-uuid
   (testing "Testing UUID"
-    (is (= (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
-          (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")))
-    (is (not (identical? (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
-               (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000"))))
-    (is (= 42 (get {(cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000") 42}
-                (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
-                :not-at-all-found)))
+    (is (= (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+           (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")))
+    (is (not (identical? (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+                         (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000"))))
+    (is (= 42 (get {(cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000") 42}
+                   (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+                   :not-at-all-found)))
     (is (= :not-at-all-found
-          (get {(cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000") 42}
-            (cljs.core/uuid "666e8400-e29b-41d4-a716-446655440000")
-            :not-at-all-found)))
-    (is (= -1 (compare (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
-                (cljs.core/uuid "666e8400-e29b-41d4-a716-446655440000"))))
-    (is (=  1 (compare (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
-                (cljs.core/uuid "550e8400-a29b-41d4-a716-446655440000"))))
-    (is (=  0 (compare (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")
-                (cljs.core/uuid "550e8400-e29b-41d4-a716-446655440000")))))
+           (get {(cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000") 42}
+                (cljd.core/uuid "666e8400-e29b-41d4-a716-446655440000")
+                :not-at-all-found)))
+    (is (= -1 (compare (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+                       (cljd.core/uuid "666e8400-e29b-41d4-a716-446655440000"))))
+    (is (=  1 (compare (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+                       (cljd.core/uuid "550e8400-a29b-41d4-a716-446655440000"))))
+    (is (=  0 (compare (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
+                       (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")))))
   (testing "UUID hashing"
     (let [id   "550e8400-e29b-41d4-a716-446655440000"
-          uuid (cljs.core/uuid id)
+          uuid (cljd.core/uuid id)
           expected (hash id)]
       (is (= expected (hash uuid)))
-      (is (= expected (.-__hash uuid))))))
+      (is (= expected (hash #uuid "550e8400-e29b-41d4-a716-446655440000")))
+      (is (true? (-hash-realized? uuid))))))
 
 (def constantly-nil (constantly nil))
 
@@ -896,10 +896,9 @@
       (is (vector? x))
       (is (= x [1 2 3])))) )
 
-;; TODO
-#_(deftest test-782
+(deftest test-782
   (testing "Testing CLJS-782, UUID toString"
-    (is (= (.toString #_uuid "550e8400-e29b-41d4-a716-446655440000")
+    (is (= (.toString #uuid "550e8400-e29b-41d4-a716-446655440000")
           "550e8400-e29b-41d4-a716-446655440000"))))
 
 (deftest test-case-keyword
@@ -1809,9 +1808,8 @@
   (is (= "a" (get "abc" -0.5)))
   (is (nil? (get "abc" -1))))
 
-;; TODO
-#_(deftest test-cljs-3130
-  (is (thrown-with-msg? js/Error #"Cannot compare f151d12d-7bd5-4409-9352-5900ee07baf7 to a"
+(deftest test-cljs-3130
+  (is (thrown-with-msg? ArgumentError #"Cannot compare f151d12d-7bd5-4409-9352-5900ee07baf7 to a"
         (compare (uuid "f151d12d-7bd5-4409-9352-5900ee07baf7") "a"))))
 
 (deftest test-cljs-3202

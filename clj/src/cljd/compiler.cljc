@@ -3234,6 +3234,8 @@
             (keyword? x)
             (emit (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) env)
             (nil? x) nil
+            (uuid? x)
+            (emit (list 'cljd.core/UUID. (str x) (cljd-hash (str x))) env)
             (and (seq? x) (seq x)) ; non-empty seqs only
             (let [f (first x)
                   emit (if (symbol? f)
