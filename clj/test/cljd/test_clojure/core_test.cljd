@@ -12,7 +12,8 @@
 ;;  Created Dec 2008
 
 (ns cljd.test-clojure.core-test
-  (:require [cljd.string :as s])
+  (:require [cljd.set :as set]
+            [cljd.string :as s])
   (:use [cljd.test :only [deftest is testing are]]))
 
 (deftest test-metadata
@@ -919,8 +920,7 @@
   (testing "Testing CLJS-812, case with recur"
     (is (= (case-recur :a) 0))))
 
-;; TODO
-#_(deftest test-816
+(deftest test-816
   (testing "Testing CLJS-816, rename-keys"
     (is (= (set/rename-keys {:a "one" :b "two"} {:a :z}) {:z "one" :b "two"}))
     (is (= (set/rename-keys {:a "one" :b "two"} {:a :z :c :y}) {:z "one" :b "two"}))
@@ -1780,8 +1780,7 @@
   (testing "`into` behaves the same as Clojure"
     (is (nil? (into nil #{})))
     (is (= '(3 2 1) (into nil [1 2 3]))))
-  ; TODO
-  #_(testing "calling `set/union` with nilable sets returns a nilable set"
+  (testing "calling `set/union` with nilable sets returns a nilable set"
     (is (nil? (set/union #{} nil nil)))))
 
 (deftest test-cljs-3092
