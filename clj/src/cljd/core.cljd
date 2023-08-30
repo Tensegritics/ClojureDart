@@ -7141,7 +7141,7 @@
 ;; UUID
 (defprotocol IUUID "A marker protocol for UUIDs")
 
-(deftype UUID [uuid ^:mutable __hash]
+(deftype UUID [^String uuid ^:mutable ^int __hash]
   IUUID
 
   Object
@@ -7149,44 +7149,34 @@
 
   IEquiv
   (-equiv [_ other]
-    (and (satisfies? IUUID other) (identical? uuid (.-uuid other))))
+    (and (satisfies? IUUID other) (identical? uuid (str other))))
 
   IPrint
   (-print [o ^StringSink sink]
     (.write sink (str "#uuid \"" uuid "\"")))
 
   IHash
-  (-hash [this]
-    (when (nil? __hash)
-      (set! __hash (hash uuid)))
-    __hash)
-  (-hash-realized? [this]
-    (some? __hash))
+  (-hash [this] (ensure-hash __hash (-hash uuid)))
+  (-hash-realized? [this] (.!= -1 __hash))
 
   IComparable
   (-compare [this other]
-    (if (dart/is? other UUID)
-      (compare uuid (.-uuid other))
+    (if (satisfies? IUUID other)
+      (compare uuid (str other))
       (throw (ArgumentError. (str "Cannot compare " this " to " other))))))
 
 (defn uuid
   "Returns a UUID consistent with the string s."
-  [s]
-  (assert (string? s))
-  (UUID. (.toLowerCase s) nil))
+  [^String s]
+  (UUID. (.toLowerCase s) -1))
 
 (defn random-uuid
   "Returns a pseudo-randomly generated UUID instance (i.e. type 4)."
   []
-  (letfn [(^String quad-hex []
-            (let [unpadded-hex ^String (.toRadixString (rand-int 65536) 16)]
-              (case (count unpadded-hex)
-                1 (str "000" unpadded-hex)
-                2 (str "00" unpadded-hex)
-                3 (str "0" unpadded-hex)
-                unpadded-hex)))]
-    (let [ver-tripple-hex ^String (.toRadixString (bit-or 0x4000 (bit-and 0x0fff (rand-int 65536))) 16)
-          res-tripple-hex ^String (.toRadixString (bit-or 0x8000 (bit-and 0x3fff (rand-int 65536))) 16)]
+  (letfn [(quad-hex []
+            (subs (.toRadixString (+ 65536 (rand-int 65536)) 16) 1))]
+    (let [ver-tripple-hex (.toRadixString (bit-or 0x4000 (bit-and 0x0fff (rand-int 65536))) 16)
+          res-tripple-hex (.toRadixString (bit-or 0x8000 (bit-and 0x3fff (rand-int 65536))) 16)]
       (uuid
         (str (quad-hex) (quad-hex) "-" (quad-hex) "-"
              ver-tripple-hex "-" res-tripple-hex "-"
