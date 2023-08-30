@@ -7139,17 +7139,13 @@
   (Eduction. (apply comp (butlast xforms)) (last xforms) -1))
 
 ;; UUID
-(defprotocol IUUID "A marker protocol for UUIDs")
-
 (deftype UUID [^String uuid ^:mutable ^int __hash]
-  IUUID
-
   Object
   (toString [_] uuid)
 
   IEquiv
   (-equiv [_ other]
-    (and (satisfies? IUUID other) (identical? uuid (str other))))
+    (and (dart/is? other UUID) (identical? uuid (.-uuid ^UUID other))))
 
   IPrint
   (-print [o ^StringSink sink]
@@ -7161,8 +7157,8 @@
 
   IComparable
   (-compare [this other]
-    (if (satisfies? IUUID other)
-      (compare uuid (str other))
+    (if (dart/is? other UUID)
+      (compare uuid (.-uuid ^UUID other))
       (throw (ArgumentError. (str "Cannot compare " this " to " other))))))
 
 (defn uuid
@@ -7184,7 +7180,7 @@
 
 (defn uuid?
   "Return true if x is a UUID."
-  [x] (satisfies? IUUID x))
+  [x] (dart/is? x UUID))
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; data readers ;;;;;;;;;;;;;;;;;;
 
