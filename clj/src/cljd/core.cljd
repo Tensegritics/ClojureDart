@@ -8247,3 +8247,39 @@
         (try
           (tap x)
           (catch Exception ex))))))
+
+(defprotocol IInst
+  (-inst-ms [inst]))
+
+(extend-type DateTime
+  IInst
+  (-inst-ms [inst] (.-millisecond inst))
+
+  IPrint
+  (-print [obj sink]
+    (let [normalize (fn [n len]
+                      (loop [ns (str n)]
+                        (if (< (count ns) len)
+                          (recur (str "0" ns))
+                          ns)))]
+      (.write ^StringSink sink
+              (str
+               "#inst \""
+               (normalize (.-year obj) 4)        "-"
+               (normalize (.-month obj) 2)       "-"
+               (normalize (.-day obj) 2)         "T"
+               (normalize (.-hour obj) 2)        ":"
+               (normalize (.-minute obj) 2)      ":"
+               (normalize (.-second obj) 2)      "."
+               (normalize (.-millisecond obj) 3) "-"
+               "00:00\"")))))
+
+(defn inst-ms
+  "Return the number of milliseconds since January 1, 1970, 00:00:00 GMT"
+  [inst]
+  (-inst-ms inst))
+
+(defn inst?
+  "Return true if x satisfies Inst"
+  [x]
+  (satisfies? IInst x))
