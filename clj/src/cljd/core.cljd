@@ -7194,7 +7194,46 @@
       ([] (gensym "G__"))
       ([prefix-string] (symbol (str prefix-string (swap! id inc)))))))
 
-(def tagged-literal nil) ; TODO hack for macros but agged-literal will have to be implemented in cljd
+(deftype TaggedLiteral [tag form ^:mutable ^int __hash]
+  Object
+  (toString [coll]
+    (pr-str coll))
+
+  IEquiv
+  (-equiv [this other]
+    (and (dart/is? other TaggedLiteral)
+         (= tag (.-tag ^TaggedLiteral other))
+         (= form (.-form ^TaggedLiteral other))))
+
+  IHash
+  (-hash [this] (ensure-hash __hash (u32-add (* 31 (hash tag)) (hash form))))
+  (-hash-realized? [this] (.!= -1 __hash))
+
+  ILookup
+  (-lookup [this v]
+    (-lookup this v nil))
+  (-lookup [this v not-found]
+    (case v
+      :tag tag
+      :form form
+      not-found))
+
+  IPrint
+  (-print [o ^StringSink sink]
+    (.write sink (str "#" tag " "))
+    (.write sink form)))
+
+(defn tagged-literal?
+  "Return true if the value is the data representation of a tagged literal"
+  [value]
+  (dart/is? value TaggedLiteral))
+
+(defn tagged-literal
+  "Construct a data representation of a tagged literal from a
+  tag symbol and a form."
+  [tag form]
+  {:pre [(symbol? tag)]}
+  (TaggedLiteral. tag form -1))
 
 (defmacro defrecord [name [& fields] & opts+specs]
   (let [key (gensym "key")

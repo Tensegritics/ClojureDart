@@ -1074,7 +1074,7 @@
           "foo!"))))
 
 ;; TODO
-#_#_(deftest test-var-arglists
+#_(deftest test-var-arglists
   (is (= (-> #'first meta :arglists) '([coll])))
   (is (= (-> #'hash-map meta :arglists) '([& keyvals])))
   (is (= (-> #'map meta :arglists)
