@@ -85,7 +85,7 @@
                        pre (:pre conds)
                        post (:post conds)
                        body (if post
-                              `((let [~'% ~(if (.< 1 (count body))
+                              `((let [~'% ~(if (< 1 (count body))
                                              `(do ~@body)
                                              (first body))]
                                   ~@(map (fn* [c] `(assert ~c)) post)
