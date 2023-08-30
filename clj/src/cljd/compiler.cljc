@@ -4098,7 +4098,9 @@
           "-" (if args
                 (do
                   (write obj expr-locus)
+                  (dart-print " ")
                   (dart-print meth)
+                  (dart-print " ")
                   (write (first args) expr-locus))
                 (do
                   (assert false "DEAD BRANCH")
@@ -4106,20 +4108,24 @@
                   (write obj expr-locus)))
           "unary-" (do
                      (dart-print "(")
-                     (dart-print "-")
+                     (dart-print "- ")
                      (write obj expr-locus)
                      (dart-print ")"))
           ("&&" "||" "^^" "+" "*" "&" "|" "^")
           (do
             (write obj expr-locus)
             (doseq [arg args]
+              (dart-print " ")
               (dart-print meth)
+              (dart-print " ")
               (write arg expr-locus)))
           ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" #_">>>")
           (do
             (assert (= (count args) 1))
             (write obj expr-locus)
+            (dart-print " ")
             (dart-print meth)
+            (dart-print " ")
             (write (first args) expr-locus))
           ;; else plain method
           (do
