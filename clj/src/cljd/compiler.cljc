@@ -1750,6 +1750,7 @@
 
 (defn emit-dot [[_ obj member & args :as form] env]
   (if (seq? member)
+    ;; legacy syntax of Clojure early days (. obj (meth arg1 arg2)))
     (recur (list* '. obj member) env)
     (let [[_ prop member-name] (re-matches #"(-)?(.+)" (name member))
           _ (when (and prop args) (throw (ex-info (str "Can't pass arguments to a property access" (pr-str form)) {:form form})))
@@ -1852,6 +1853,45 @@
       (cond->> expr
         (seq bindings) (list 'dart/let bindings)))))
 
+(defn resolve-field-for-set! [obj member env]
+  (let [[_ prop member-name] (re-matches #"(-)?(.+)" (name member))
+        [dart-obj-bindings dart-obj]  (lift-arg nil (emit obj env) "obj" env)
+        static (:dart/class (meta dart-obj))
+        type (or static (:dart/type (infer-type dart-obj)))
+        type! (dissoc type :nullable)
+        member-info (some->
+                      (else->>
+                        (let [[_ member-info :as mi]
+                              (dart-member-lookup type! member-name (meta member) env)])
+                        ;; in case a property/method has the same name of a named constructor
+                        (or (when-not (and static (not (:static member-info))) mi))
+                        (if static (dart-member-lookup type! (str (:element-name static) "." member-name) env))
+                        (dart-member-lookup dc-Object member-name env))
+                      actual-member)
+        dart-obj (cond
+                   (:type-params (meta obj)) ; static only
+                   (emit-type obj env)
+                   member-info
+                   (simple-cast dart-obj type! type)
+                   :else
+                   (loop [dart-obj dart-obj]
+                     (cond
+                       (and (seq? dart-obj) (= 'dart/as (first dart-obj)))
+                       (recur (second dart-obj))
+                       (= 'dc.dynamic (:canon-qname (or (:dart/type (infer-type dart-obj)) dc-dynamic)))
+                       dart-obj
+                       :else
+                       (list 'dart/as dart-obj dc-dynamic))))]
+    (when (and static (not (:static member-info)))
+      (throw (Exception. (str member-name " is not a static member of " (:element-name type!) " " (source-info)))))
+    (cond
+      (not member-info)
+      (binding [*out* *err*]
+        (println "DYNAMIC WARNING: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info)))
+      (not= (:kind member-info) :field)
+      (throw (Exception. (str member-name " is not a field of " (:element-name type!) " " (source-info)))))
+    [dart-obj-bindings dart-obj member-name (or (:type member-info) dc-dynamic)]))
+
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
     (cond
@@ -1870,11 +1910,10 @@
           (dart-binding 'setval (emit expr env) env)))
       (and (seq? target) (= '. (first target)))
       (let [[_ obj member] target
-            [_ fld] (re-matches #"-?(.+)" (name member))]
-            ; TODO actual field resolution + simple-cast
-        (with-lifted [dart-obj (emit obj env)] env
-          (list 'dart/set! (list 'dart/.- dart-obj fld)
-            (dart-binding 'setval (emit expr env) env))))
+            [bindings dart-obj member dart-type] (resolve-field-for-set! obj member env)]
+        (cond->> (list 'dart/set! (list 'dart/.- dart-obj member)
+                   (dart-binding 'setval (emit expr env) env))
+          bindings (list 'dart/let bindings)))
       :else
       (throw (ex-info (str "Unsupported target for assignment: " target) {:target target})))))
 
@@ -4462,14 +4501,33 @@
 
   (binding [analyzer-info li
             *dart-out* *out*
-            *locals-gen* {}]
+            *locals-gen* {}
+            *current-ns* 'cljd.core]
     #_(write
         (emit-test `~(tagged-literal 'dart '[1 2]) {})
         return-locus)
-    (write (emit `(fn [~(with-meta 'a
-                          {:tag (dart-type-params-reader '[String .foo int? .bar String])})]
-                    (.toString ~'a)) {})
+    (write (emit-test `(fn [~(with-meta 'ss
+                               {:tag (dart-type-params-reader '(dart:core/Set dart:core/List))})]
+                         (let [v (.lookup ss "key")]
+                           (.-first! "val"))) {})
       return-locus))
+
+  (binding [analyzer-info li
+            *dart-out* *out*
+            *locals-gen* {}
+            *current-ns* 'cljd.core]
+    (let [c `c#]
+      (write (emit `(fn [~(with-meta 'ss {:tag (dart-type-params-reader '(dart:core/Set dart:core/List))})
+                         f#]
+                      (let [~c (.lookup ~'ss "key")]
+                        (.-first! (let [x# ~(with-meta `(identity ~c) {:tag 'List})]
+                                    x#) (let [v# (str "val")]
+                                          (f#)
+                                          (str v# "kiki")))
+                        ;;(set! (.-first v#) "val")
+                        )) {})
+        return-locus)))
+
 
   (binding [analyzer-info li]
     (do

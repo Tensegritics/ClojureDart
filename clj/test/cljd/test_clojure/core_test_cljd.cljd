@@ -844,3 +844,10 @@
   (let [obj (MutableBox (MutableBox (MutableBox nil)))]
     (-> obj .-fld .-fld (.-fld! 1))
     (is (= 1 (-> obj .-fld .-fld .-fld)))))
+
+(deftest testing-set!-prop-not-properly-casted-265
+  (let [f (fn [^#/(Map String List) m]
+            (let [v (. m "[]" "key")]
+              (.-first! v "val")
+              (.-first v)))]
+    (is (= "val" (f (doto (#/(Map String List)) (. "[]=" "key" #dart ["hey"])))))))
