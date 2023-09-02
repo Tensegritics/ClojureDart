@@ -39,7 +39,7 @@
     .routes       (into {}
                         (keep (fn [[k v]]
                                 {k (fn ^m/Widget k [ctx]
-                                     v)}))
+                                     (v ctx))}))
                         {"/"       first-screen
                          "/second" second-screen}))))
 
