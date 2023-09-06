@@ -58,9 +58,10 @@
     (.removeListener vl listener))
   foundation/Listenable
   (-subscribe [l f]
-    (doto #(f true)
-      (->> (.addListener l))))
-  (-call-with-immediate-value [l sub f!] (f! true) true)
+    (let [vn (volatile! 0)]
+      (doto #(f (vswap! vn inc))
+        (->> (.addListener l)))))
+  (-call-with-immediate-value [l sub f!] false)
   (-unsubscribe [l listener]
     (.removeListener l listener)))
 
@@ -249,7 +250,9 @@
                                       tuple# [~@destructured-locals]]
                                   (when-not (= tuple# (.-latest ~state))
                                     (~state tuple#)))
-                               `(~state ~vexpr))))
+                               `(let [v# ~vexpr]
+                                  (when-not (= v# (.-latest ~state))
+                                    (~state v#))))))
                        state)
         subscribe-call
         `(let [update# ~update-state
