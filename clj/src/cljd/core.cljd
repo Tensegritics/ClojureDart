@@ -7140,11 +7140,55 @@
 
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; data readers ;;;;;;;;;;;;;;;;;;
 
+(def ^:private timestamp
+  #"(\d\d\d\d)(?:-(\d\d)(?:-(\d\d)(?:[T](\d\d)(?::(\d\d)(?::(\d\d)(?:[.](\d+))?)?)?)?)?)?(?:[Z]|([-+])(\d\d):(\d\d))?")
+
+(defn parse-timestamp
+     "Parse a string containing an RFC3339-like like timestamp.
+
+Grammar (of s):
+
+  date-fullyear   = 4DIGIT
+  date-month      = 2DIGIT  ; 01-12
+  date-mday       = 2DIGIT  ; 01-28, 01-29, 01-30, 01-31 based on
+                            ; month/year
+  time-hour       = 2DIGIT  ; 00-23
+  time-minute     = 2DIGIT  ; 00-59
+  time-second     = 2DIGIT  ; 00-58, 00-59, 00-60 based on leap second
+                            ; rules
+  time-secfrac    = '.' 1*DIGIT
+  time-numoffset  = ('+' / '-') time-hour ':' time-minute
+  time-offset     = 'Z' / time-numoffset
+
+  time-part       = time-hour [ ':' time-minute [ ':' time-second
+                    [time-secfrac] [time-offset] ] ]
+
+  timestamp       = date-year [ '-' date-month [ '-' date-mday
+                    [ 'T' time-part ] ] ]
+
+Unlike RFC3339:
+
+  - we only parse the timestamp format
+  - timestamp can elide trailing components
+  - time-offset is optional (defaults to +00:00)
+
+Though time-offset is syntactically optional, a missing time-offset
+will be treated as if the time-offset zero (+00:00) had been
+specified.
+"
+  [s]
+  (if-some [[_ y m d hh mm ss frac sign ho mo] (re-matches timestamp s)]
+    (DateTime.parse
+      (str y "-" (or m "01") "-" (or d "01")
+        "T" (or hh "00") ":" (or mm "00") ":" (or ss " 00") "." (or frac ".000")
+        (or sign "-") (or ho "00") (or mo "00")))
+    (throw (Exception (str "Unrecognized date/time syntax: " s)))))
+
 (def default-data-readers
   "Default map of data reader functions provided by Clojure. May be
   overridden by binding *data-readers*."
-  {'inst (fn [form] (throw (ex-info "Not implemented yet" {:form form})))
-   'dart (fn [form] (throw (ex-info "Not implemented yet" {:form form})))})
+  {'inst parse-timestamp
+   #_#_'dart (fn [form] (throw (ex-info "Not implemented yet" {:form form})))})
 
 (def ^:dynamic  *data-readers*
   "Map from reader tag symbols to data reader Vars.

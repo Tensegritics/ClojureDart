@@ -680,22 +680,54 @@
   (.add stack do-read-comment)
   (do-read-comment state s from to))
 
-#_(defn ctor-reader [out!]
-  (fn
-    ([] (throw (Exception "EOF while reading")))
-    ([^String s ^int from ^int to]
-     (throw (Exception "TODO ctor-reader or only taglit")))))
+(defn do-read-ctor
+  ([^ReaderState {:flds [stack] :as state}]
+   (throw (Exception "EOF while reading a tagged literal.")))
+  ([^ReaderState {:flds [stack q] :as state} ^String s ^int from ^int to]
+   (let [n-2 (- (.-length stack) 2)]
+     (loop [from from]
+       (if-some [data-reader (aget stack n-2)]
+         (let [from (read state s from to)]
+           (if (neg? from)
+             from
+             (let [data (.removeFirst q)]
+               (.-length! stack n-2)
+               (.addFirst q (data-reader data))
+               from)))
+         (let [from (read state s from to)]
+           (if (neg? from)
+             from
+             (let [x (.removeFirst q)
+                   data-reader
+                   (cond
+                     (not (symbol? x))
+                     (throw (Exception "Reader tag must be a symbol"))
+                     (.contains (name x) ".")
+                     (throw (Exception "Reader tag name can't contain a dot (reserved for compatibility and future use)."))
+                     :else
+                     (or
+                       (*data-readers* x)
+                       (default-data-readers x)
+                       (when-some [df *default-data-reader-fn*]
+                         #(df x %))
+                       (throw (str "No reader function for tag " x))))]
+               (aset stack n-2 data-reader)
+               (recur from)))))))))
+
+(defn read-ctor [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (.add stack nil)
+  (.add stack do-read-ctor)
+  (do-read-ctor state s from to))
 
 (defn do-read-dispatch-macro
   ([^ReaderState state] (throw (Exception "EOF encoutered after a #.")))
   ([^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
    (if (< from to)
      (let [cu (.codeUnitAt s from)]
+       (.removeLast stack)
        (if-some [rd (when (< cu 128) (aget dispatch-macros cu))]
-         (do
-           (.removeLast stack)
-           (rd state s (inc from) to))
-         (throw "TODO ctor"))))))
+         (rd state s (inc from) to)
+         (read-ctor state s from to))))))
 
 (defn read-dispatch-macro
   [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]

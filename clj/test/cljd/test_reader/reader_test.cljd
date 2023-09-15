@@ -350,27 +350,23 @@
         (rename-syms (r/read-string "#(inc %4)")
           '#{fn* inc}))))
 
+(deftest read-tagged
+  (binding [#_#_*data-readers* {'inst inst 'uuid uuid}]
+    (is (= #inst "2010-11-12T13:14:15.666"
+          (r/read-string "#inst \"2010-11-12T13:14:15.666\"")))
+    (is (= #inst "2010-11-12T13:14:15.666"
+          (r/read-string "#inst\"2010-11-12T13:14:15.666\"")))
+    #_(is (= (uuid "550e8400-e29b-41d4-a716-446655440000")
+          (r/read-string "#uuid \"550e8400-e29b-41d4-a716-446655440000\"")))
+    #_(is (= (uuid "550e8400-e29b-41d4-a716-446655440000")
+          (r/read-string "#uuid\"550e8400-e29b-41d4-a716-446655440000\"")))
+    #_(when *default-data-reader-fn*
+        (let [my-unknown (fn [tag val] {:unknown-tag tag :value val})]
+          (is (= {:unknown-tag 'foo :value 'bar}
+                (binding [*default-data-reader-fn* my-unknown]
+                  (r/read-string "#foo bar"))))))))
+
 (comment
-
-  #_(defn inst [s]
-      (js/Date. s))
-
-  #_(deftest read-tagged
-      (binding [*data-readers* {'inst inst 'uuid uuid}]
-        (is (= #inst "2010-11-12T13:14:15.666"
-              (r/read-string "#inst \"2010-11-12T13:14:15.666\"")))
-        (is (= #inst "2010-11-12T13:14:15.666"
-              (r/read-string "#inst\"2010-11-12T13:14:15.666\"")))
-        (is (= (uuid "550e8400-e29b-41d4-a716-446655440000")
-              (r/read-string "#uuid \"550e8400-e29b-41d4-a716-446655440000\"")))
-        (is (= (uuid "550e8400-e29b-41d4-a716-446655440000")
-              (r/read-string "#uuid\"550e8400-e29b-41d4-a716-446655440000\"")))
-        (when *default-data-reader-fn*
-          (let [my-unknown (fn [tag val] {:unknown-tag tag :value val})]
-            (is (= {:unknown-tag 'foo :value 'bar}
-                  (binding [*default-data-reader-fn* my-unknown]
-                    (r/read-string "#foo bar"))))))))
-
   #_(defrecord ^:export foo [])
   #_(defrecord ^:export bar [baz buz])
 
