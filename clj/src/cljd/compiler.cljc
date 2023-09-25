@@ -1996,6 +1996,7 @@
       (nil? x) 0
       (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (hash x) ; safe between -2^31 to 2^32-1 both inclusive (TODO check in dartjs)
       (string? x) (hash x) ; cljd hashes string like clj/jvm
+      (boolean? x) (case x true 1231 false 1237)
       (char? x) (hash (str x))
       (symbol? x) (cljd-hash-combine
                     (cljd-u32 (clojure.lang.Murmur3/hashUnencodedChars (name x)))

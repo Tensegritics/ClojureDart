@@ -851,3 +851,13 @@
               (.-first! v "val")
               (.-first v)))]
     (is (= "val" (f (doto (#/(Map String List)) (. "[]=" "key" #dart ["hey"])))))))
+
+(deftest testing-case-on-bool-working
+  (let [t (identity true)
+        f (identity false)]
+    (is (false? (case t
+                  true false
+                  false true)))
+    (is (true? (case f
+                 true false
+                 false true)))))
