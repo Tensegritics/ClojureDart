@@ -1758,6 +1758,9 @@
           static (:dart/class (meta dart-obj))
           type (or static (:dart/type (infer-type dart-obj)))
           type! (dissoc type :nullable)
+          member-name (cond-> member-name
+                        (and prop (not (re-matches #"[a-zA-Z_$]+" member-name)))
+                        munge-str)
           num-only-member-name (when (.startsWith member-name "num:") (subs member-name 4))
           type! (cond-> type! num-only-member-name num-type)
           member-name (or num-only-member-name member-name)
@@ -2531,33 +2534,36 @@
   (apply update-in nses [*current-ns* sym] f args))
 
 (defn- resolve-methods-specs [class-name specs type-env]
-  (let [last-seen-type (atom nil)]
-    (map
-      (fn [spec]
-        (cond
-          (= class-name spec) (do (reset! last-seen-type {:type :self}) spec)
-          (seq? spec)
-          (let [[mname arglist & body] spec
-                mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
-                [mname' arglist']
-                (let [t @last-seen-type]
-                  (case (:type t)
-                    nil (throw (Exception. (str "Encountered method " mname  " in type " class-name " without having encountered a class or protocol name before" (source-info))))
-                    :self [mname arglist]
-                    :protocol (resolve-protocol-method t mname arglist type-env)
-                    :class
-                    (or
-                      (resolve-dart-method (:dart/type t) mname arglist type-env)
-                      (throw (Exception. (str "In class " class-name ", can't resolve method " mname (vec arglist) " on class " (:element-name (:dart/type t)) " from lib " (:lib (:dart/type t)) (source-info)))))))
-                mname (vary-meta mname' merge (meta mname))
-                parsed-arglist' (parse-dart-params arglist')
-                parsed-arglist (parse-dart-params arglist)]
+  (loop [last-seen-type nil resolved-specs [] [spec & more-specs :as specs] (seq specs)]
+    (cond
+      (nil? specs) resolved-specs
+      (= class-name spec)
+      (recur {:type :self} (conj resolved-specs spec) more-specs)
+      (seq? spec)
+      (let [[mname arglist & body] spec
+            mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
+            [mname' arglist']
+            (case (:type last-seen-type)
+              nil (throw (Exception. (str "Encountered method " mname  " in type " class-name " without having encountered a class or protocol name before" (source-info))))
+              :self [mname arglist]
+              :protocol (resolve-protocol-method last-seen-type mname arglist type-env)
+              :class
+              (let [dart-type (:dart/type last-seen-type)]
+                (or
+                  (resolve-dart-method dart-type mname arglist type-env)
+                  (throw (Exception. (str "In class " class-name ", can't resolve method " mname (vec arglist) " on class " (:element-name dart-type) " from lib " (:lib dart-type) (source-info)))))))
+            mname (vary-meta mname' merge (meta mname))
+            parsed-arglist' (parse-dart-params arglist')
+            parsed-arglist (parse-dart-params arglist)
+
+
             #_{:fixed-params fixed-params
                :opt-kind (case delim .& :named :positional)
                :opt-params
                (for [[p d] (partition-all 2 1 opt-params)
                      :when (symbol? p)]
                  [p (when-not (symbol? d) d)])}
+            spec
             (list* mname parsed-arglist'
               (when (seq body) ; don't emit a body if no explicit body
                 [`(let [; a bunch of rebinding to take into account disagreeing type hints
@@ -2591,23 +2597,25 @@
                                           [a a'])))
                               (:opt-params parsed-arglist)
                               (:opt-params parsed-arglist')))]
-                    ~@body)])))
-          (:mixin (meta spec)) (do (reset! last-seen-type
-                                     {:type :class
-                                      :dart/type (resolve-type spec type-env)}) spec)
-          :else
-          (let [[tag x] (resolve-non-local-symbol spec type-env)]
-            (case tag
-              :def (do
-                     (reset! last-seen-type x)
+                    ~@body)]))]
+        (recur last-seen-type (conj resolved-specs spec) more-specs))
+      (:mixin (meta spec)) (recur
+                             {:type :class
+                              :dart/type (resolve-type spec type-env)}
+                             (conj resolved-specs spec) more-specs)
+      :else
+      (let [[tag x] (resolve-non-local-symbol spec type-env)]
+        (case tag
+          :def
+          (recur x (conj resolved-specs
                      (case (:type x)
-                       :class spec
-                       :protocol (symbol (name (:ns x)) (name (:iface x)))))
-              :dart (do
-                      (reset! last-seen-type {:type :class :dart/type x})
-                      spec)
-              (throw (Exception. (str "Can't resolve " spec (source-info))))))))
-      specs)))
+                   :class spec
+                   :protocol (symbol (name (:ns x)) (name (:iface x)))))
+            more-specs)
+          :dart
+          (recur {:type :class :dart/type x}
+            (conj resolved-specs spec) more-specs)
+          (throw (Exception. (str "Can't resolve " spec (source-info)))))))))
 
 (defn- parse-class-specs [class-name opts specs env]
   (let [{:keys [extends]} opts
