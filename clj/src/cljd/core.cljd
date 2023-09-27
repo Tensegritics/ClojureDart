@@ -8338,7 +8338,140 @@ specified.
               (if (reduced? acc)
                 (unreduced acc)
                 (recur acc))))))
-      (f))))
+      (f)))
+  IReversible
+  (-rseq [coll]
+    (let [c (.-cnt root)]
+      (when (pos? c)
+        (iterator-seq
+          (TreapReverseIterator root (alength (.-arr root)) top-rank
+            (.filled #/(List int) top-rank 0)
+            (.filled #/(List TreapNode) top-rank root)
+            (fn [k _] k)
+            nil 0)))))
+  ISorted
+  (-sorted-seq [coll from to flags]
+    (let [flags ^int flags
+          nodes (.filled #/(List TreapNode) top-rank root)
+          idxs (.filled #/(List int) top-rank 0)
+          vnode (volatile! root)
+          from-idx
+          (if (zero? (bit-and 8 flags))
+            0 ; no lower-bound
+            (loop [^int rank top-rank ^TreapNode node root]
+              (if (zero? rank)
+                (let [i (.tnode_leaf_search node from cmp)]
+                  (vreset! vnode node)
+                  (cond
+                    (odd? i) (inc i) ; not-found, next key at (inc i)
+                    (zero? (bit-and 4 flags)) (+ 2 i) ; lower bound excluded
+                    :else i))
+                (let [i (.tnode_branch_search node from cmp)
+                      rank-1 (dec rank)
+                      arr (.-arr node)]
+                  (aset nodes rank-1 node)
+                  (if (odd? i)
+                    (do
+                      (aset idxs rank-1 (+ 3 i))
+                      (recur rank-1 (aget arr (inc i))))
+                    (if-some [child (aget arr i)]
+                      (do
+                        (aset idxs rank-1 (+ 2 i))
+                        (recur rank-1 child))
+                      (do
+                        ; if child is nil it means it's the leftmost child
+                        ; thus there's a key at i+1 and a non-nil sibling at i+2
+                        (aset idxs rank-1 (+ 4 i))
+                        (recur rank-1 (aget arr (+ 2 i))))))))))
+          from-node @vnode
+          from-rank (if (identical? from-node root) top-rank 0)
+          _ (vreset! vnode nil)
+          to-idx
+          (if (zero? (bit-and 2 flags))
+            0 ; no upper bound
+            (loop [^int rank top-rank ^TreapNode node root]
+              (if (zero? rank)
+                (let [i (.tnode_leaf_search node to cmp)]
+                  (vreset! vnode node)
+                  (cond
+                    (odd? i) (inc i) ; not-found, prev key at (dec i) may be in
+                    (zero? (bit-and 1 flags)) i ; upper bound excluded
+                    :else (inc i)))
+                (let [i (.tnode_branch_search node to cmp)
+                      rank-1 (dec rank)
+                      arr (.-arr node)]
+                  (if (odd? i)
+                    (recur rank-1 (aget arr (inc i))) ; found
+                    (if-some [child (aget arr i)]
+                      (recur rank-1 child)
+                      ; if child is nil it means it's the leftmost child
+                      ; thus there's a key at i+1 and a non-nil sibling at i+2
+                      (recur rank-1 (aget arr (+ 2 i)))))))))]
+      (iterator-seq
+        (TreapIterator from-node from-idx from-rank
+          idxs nodes (fn [k _] k)
+          @vnode to-idx))))
+  (-sorted-rseq [coll from to flags]
+    (let [flags ^int flags
+          nodes (.filled #/(List TreapNode) top-rank root)
+          idxs (.filled #/(List int) top-rank 0)
+          vnode (volatile! root)
+          to-idx
+          (if (zero? (bit-and 2 flags))
+            (alength (.-arr root)) ; no upper bound
+            (loop [^int rank top-rank ^TreapNode node root]
+              (if (zero? rank)
+                (let [i (.tnode_leaf_search node to cmp)]
+                  (vreset! vnode node)
+                  (cond
+                    (odd? i) (inc i) ; not-found, next key at (dec i), add 2 for init
+                    (zero? (bit-and 1 flags)) i ; upper bound excluded
+                    :else (+ 2 i)))
+                (let [i (.tnode_branch_search node to cmp)
+                      rank-1 (dec rank)
+                      arr (.-arr node)]
+                  (aset nodes rank-1 node)
+                  (if (odd? i)
+                    (do
+                      (aset idxs rank-1 i)
+                      (recur rank-1 (aget arr (inc i))))
+                    (if-some [child (aget arr i)]
+                      (do
+                        (aset idxs rank-1 (- i 1))
+                        (recur rank-1 child))
+                      (do
+                        ; if child is nil it means it's the leftmost child
+                        ; thus there's a key at i+1 and a non-nil sibling at i+2
+                        (aset idxs rank-1 i) ; i == 0
+                        (recur rank-1 (aget arr (+ 2 i))))))))))
+          to-node @vnode
+          to-rank (if (identical? to-node root) top-rank 0)
+          _ (vreset! vnode nil)
+          from-idx
+          (if (zero? (bit-and 8 flags))
+            0 ; no lower bound
+            (loop [^int rank top-rank ^TreapNode node root]
+              (if (zero? rank)
+                (let [i (.tnode_leaf_search node from cmp)]
+                  (vreset! vnode node)
+                  (cond
+                    (odd? i) (inc i) ; not-found, next key at (inc i) may be in
+                    (zero? (bit-and 4 flags)) (+ 2 i) ; lower bound excluded
+                    :else i))
+                (let [i (.tnode_branch_search node from cmp)
+                      rank-1 (dec rank)
+                      arr (.-arr node)]
+                  (if (odd? i)
+                    (recur rank-1 (aget arr (inc i))) ; found
+                    (if-some [child (aget arr i)]
+                      (recur rank-1 child)
+                      ; if child is nil it means it's the leftmost child
+                      ; thus there's a key at i+1 and a non-nil sibling at i+2
+                      (recur rank-1 (aget arr (+ 2 i)))))))))]
+      (iterator-seq
+        (TreapReverseIterator to-node to-idx to-rank
+          idxs nodes (fn [k _] k)
+          @vnode from-idx)))))
 
 (defn sorted-set-by
   "Returns a new sorted set with supplied keys, using the supplied
