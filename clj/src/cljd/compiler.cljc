@@ -3134,15 +3134,17 @@
           (->>
            (concat
             (map refer-clojure-to-require refer-clojures)
-            (for [[directive & specs]
-                  ns-clauses
+            (for [[directive & specs :as clause] ns-clauses
+                  :when clause ; allow nils produced by conditionals
                   :let [f (case directive
                             :require #(if (sequential? %) % [%])
                             :import import-to-require
                             :use use-to-require
                             (:refer-clojure :host-ns) nil)]
                   :when f
-                  spec specs]
+                  spec specs
+                  ; allow nils produced by conditionals
+                  :when spec]
               (f spec)))
            (map (fn [[lib & more :as spec]]
                   (or (some-> (cljdize lib) (cons more))
