@@ -808,7 +808,9 @@
 (extend-type RegExp
   IPrint
   (-print [o sink]
-    (.write ^StringSink sink (.-pattern o))))
+    (.write ^StringSink sink "#\"")
+    (.write ^StringSink sink (.-pattern o))
+    (.write ^StringSink sink "\"")))
 
 ;; TODO js does define infinite but not native & VM, handle theses cases
 (extend-type num
@@ -828,18 +830,27 @@
   (dart/is? x String))
 
 (defn ^bool number?
-  "Returns true if x is a Number"
+  "Return true if x is a Number"
   {:inline (fn [x] `(dart/is? ~x num))
    :inline-arities #{1}}
   [x]
   (dart/is? x num))
 
 (defn ^bool int?
-  "Returns true if x is an int?"
+  "Return true if x is an int"
   {:inline (fn [x] `(dart/is? ~x int))
    :inline-arities #{1}}
   [x]
   (dart/is? x int))
+
+(defn integer?
+  "Return true if n is an integer"
+  {:inline (fn [n] `(or (int? ~n) (dart/is? ~n BigInt)))
+   :inline-arities #{1}}
+  [n]
+  (or
+    (int? n)
+    (dart/is? n BigInt)))
 
 (defn ^int int
   "Coerce to int"
@@ -854,6 +865,13 @@
   (if (string? x)
     (. ^String x "[]" 0)
     (String/fromCharCode x)))
+
+(defn ^bool char?
+  "Returns true if x is a Dart string of length one."
+  {:inline (fn [x] `(and (string? ~x) (== 1 (.-length ~x))))
+   :inline-arities #{1}}
+  [x]
+  (and (string? x) (== 1 (.-length x))))
 
 (extend-type String
   IPrint
@@ -1896,6 +1914,7 @@
   ([name]
    (cond
      (symbol? name) name
+     (= "/" name) (symbol nil "/")
      (string? name) (let [name ^String name
                           idx (.indexOf name "/")]
                       (if (< idx 0)
@@ -2871,11 +2890,11 @@
             (bit-and lo 0x33333333) (bit-and (bit-shift-right lo 2) 0x33333333))]
     (bit-and 127 (bit-shift-right (* (+ (bit-and 0xF0F0F0F v) (bit-and 0xF0F0F0F (bit-shift-right v 4))) 0x1010101) 24))))
 
-(defn ^int mod
+(defn ^num mod
   "Modulus of num and div. Truncates toward negative infinity."
-  {:inline (fn [num div] `(. ~(hint-as num `int) "%" ~(hint-as div `int)))
+  {:inline (fn [num div] `(. ~(hint-as num `num) "%" ~(hint-as div `num)))
    :inline-arities #{2}}
-  [^int num ^int div]
+  [^num num ^num div]
   (. num "%" div))
 
 (defn ^int u32
@@ -3564,6 +3583,13 @@
    which doesn't implement dc.Comparable."
   (-compare [o other]))
 
+(extend-type bool
+  IComparable
+  (-compare [x y]
+    (if (boolean? y)
+      (if (== x y) 0 (case x true 1 -1) )
+      (throw (ArgumentError. (str "Cannot compare " x " to " y))))))
+
 (defn ^int compare [x y]
   (cond
     (identical? x y) 0
@@ -3706,6 +3732,10 @@
     (-nth coll k))
   (-invoke [coll k not-found]
     (-nth coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-nth coll (first more))
+      2 (-nth coll (first more) (second more))))
   IEditableCollection
   (-as-transient [coll]
     (TransientVector. cnt shift ^:unique (Object.) root (aresize tail (.-length tail) 32 nil)))
@@ -3934,6 +3964,10 @@
     (-nth coll k))
   (-invoke [coll k not-found]
     (-nth coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   Comparable
   (compareTo [x y]
     (if (vector? y)
@@ -4316,7 +4350,11 @@
   (-invoke [coll k]
     (-lookup coll k))
   (-invoke [coll k not-found]
-    (-lookup coll k not-found)))
+    (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more)))))
 
 ;;;
 
@@ -4383,6 +4421,10 @@
     (-nth node k))
   (-invoke [node k not-found]
     (-nth node k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-nth coll (first more))
+      2 (-nth coll (first more) (second more))))
   IComparable
   (-compare [x y]
     (if (vector? y)
@@ -4854,7 +4896,11 @@
   (-invoke [tcoll k]
     (-lookup tcoll k))
   (-invoke [tcoll k not-found]
-    (-lookup tcoll k not-found)))
+    (-lookup tcoll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more)))))
 
 ;; TODO *configs*
 (defn- print-map [m ^StringSink sink]
@@ -5032,6 +5078,10 @@
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   IEditableCollection
   (-as-transient [coll]
     (let [bitmap-hi (.-bitmap_hi root)
@@ -5155,6 +5205,10 @@
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   IEditableCollection
   (-as-transient [coll] (TransientHashSet. (-as-transient hm))))
 
@@ -5185,7 +5239,11 @@
   (-invoke [tcoll k]
     (-lookup tcoll k nil))
   (-invoke [tcoll k not-found]
-    (-lookup tcoll k not-found)))
+    (-lookup tcoll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more)))))
 
 (def ^PersistentHashSet -EMPTY-SET
   (PersistentHashSet. nil {} -1))
@@ -7993,6 +8051,10 @@ specified.
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   IReversible
   (-rseq [coll]
     (let [c (.-cnt root)]
@@ -8235,6 +8297,10 @@ specified.
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   #_#_IReversible
   (-rseq [coll]
     (when (pos? (-count tmap))

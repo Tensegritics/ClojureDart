@@ -3209,17 +3209,20 @@
     dart-expr))
 
 (defn emit-try [[_ & body] env]
-  (let [{body nil catches 'catch [[_ & finally-body]] 'finally}
-        (group-by #(when (seq? %) (#{'finally 'catch} (first %))) body)]
-    (list 'dart/try
-           (emit-no-recur (cons 'do body) env)
-           (for [[_ classname e & [maybe-st & exprs :as body]] catches
-                 :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
-                       exprs (if st exprs body)
-                       env (cond-> (assoc env e (dart-local e env))
-                             st (assoc st (dart-local st env)))]]
-             [(emit-type classname env) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
-           (some-> finally-body (conj 'do) (emit-no-recur env)))))
+  (let [{body nil catches 'catch [[_ & finally-body] :as finallies] 'finally}
+        (group-by #(when (seq? %) (#{'finally 'catch} (first %))) body)
+        dart-expr (emit-no-recur (cons 'do body) env)]
+    (if (or (seq catches) (seq finallies))
+      (list 'dart/try
+        dart-expr
+        (for [[_ classname e & [maybe-st & exprs :as body]] catches
+              :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
+                    exprs (if st exprs body)
+                    env (cond-> (assoc env e (dart-local e env))
+                          st (assoc st (dart-local st env)))]]
+          [(emit-type classname env) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
+        (some-> finally-body (conj 'do) (emit-no-recur env)))
+      dart-expr)))
 
 (defn emit-throw [[_ expr] env]
   ;; always emit throw as a statement (in case it gets promoted to rethrow)
