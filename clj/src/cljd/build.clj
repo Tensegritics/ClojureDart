@@ -123,8 +123,9 @@
                  out (.redirectOutput out)
                  dir (.directory (io/file dir))))
         os-is-windows (.startsWith (System/getProperty "os.name") "Windows")
-        PATH (if os-is-windows "Path" "PATH")
-        path (-> pb .environment (get PATH))
+        path (if os-is-windows
+               (or (-> pb .environment (get "Path")) (-> pb .environment (get "PATH")))
+               (-> pb .environment (get "PATH")))
         bins (if os-is-windows [(str bin ".exe") (str bin ".bat")] [bin])
         full-bin
         (or
@@ -320,7 +321,7 @@
         entry-point (case bin
                       "flutter" (java.io.File. libdir "main.dart")
                       "dart" (java.io.File. "bin" (str project_name ".dart")))
-        lib (compiler/relativize-lib (.getPath entry-point) (compiler/ns-to-lib main-ns))]
+        lib (compiler/relativize-lib (str/join "/" (map #(.toString %) (.toPath entry-point))) (compiler/ns-to-lib main-ns))]
     (spit entry-point (str "export " (compiler/with-dart-str (compiler/write-string-literal lib)) " show main;\n"))))
 
 (defn init-project [bin-opts]
