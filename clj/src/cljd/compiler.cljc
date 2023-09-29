@@ -2533,89 +2533,97 @@
 (defn alter-def [nses sym f & args]
   (apply update-in nses [*current-ns* sym] f args))
 
-(defn- resolve-methods-specs [class-name specs type-env]
-  (loop [last-seen-type nil resolved-specs [] [spec & more-specs :as specs] (seq specs)]
+(defn- resolve-method-spec [owner-spec type spec type-env]
+  (let [[mname arglist & body] spec
+        mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
+        [mname' arglist']
+        (case (:type type)
+          :self [mname arglist]
+          :protocol (resolve-protocol-method type mname arglist type-env)
+          :class
+          (let [dart-type (:dart/type type)]
+            (or
+              (resolve-dart-method dart-type mname arglist type-env)
+              (throw (Exception. (str "In class " owner-spec ", can't resolve method " mname (vec arglist) " on class " (:element-name dart-type) " from lib " (:lib dart-type) (source-info)))))))
+        mname (vary-meta mname' merge (meta mname))
+        parsed-arglist' (parse-dart-params arglist')
+        parsed-arglist (parse-dart-params arglist)
+        #_{:fixed-params fixed-params
+           :opt-kind (case delim .& :named :positional)
+           :opt-params
+           (for [[p d] (partition-all 2 1 opt-params)
+                 :when (symbol? p)]
+             [p (when-not (symbol? d) d)])}]
+    (list* mname parsed-arglist'
+      (when (seq body) ; don't emit a body if no explicit body
+        [`(let [; a bunch of rebinding to take into account disagreeing type hints
+                ; and/or destructuring
+                ; first, fixed args, they may be destrctured
+                ~@(mapcat (fn [a a']
+                            (if (symbol? a)
+                              (when-some [t (:tag (meta a))]
+                                (when-not (= t (:tag (meta a')))
+                                  [a a']))
+                              ; destructuring case
+                              [a a']))
+                    (:fixed-params parsed-arglist)
+                    (:fixed-params parsed-arglist'))
+                ; second, optionals which can't be destructured because it would be syntactically
+                ; ambiguous, so only checking for types disagreement
+                ~@(case (:opt-kind parsed-arglist')
+                    :named
+                    ; named may appear out of order
+                    (let [names' (into #{} (map first) (:opt-params parsed-arglist'))]
+                      (mapcat (fn [[a]]
+                                (when-some [t (:tag (meta a))]
+                                  (let [a' (names' a)]
+                                    (when-not (= t (:tag (meta a')))
+                                      [a a']))))
+                        (:opt-params parsed-arglist)))
+                    :positional
+                    (mapcat (fn [[a] [a']]
+                              (when-some [t (:tag (meta a))]
+                                (when-not (= t (:tag (meta a')))
+                                  [a a'])))
+                      (:opt-params parsed-arglist)
+                      (:opt-params parsed-arglist')))]
+            ~@body)]))))
+
+(defn resolve-conflicting-meths [[ma :as a] [mb :as b]]
+  (let [oa (-> ma meta :override boolean)
+        ob (-> mb meta :override boolean)]
     (cond
-      (nil? specs) resolved-specs
-      (= class-name spec)
-      (recur {:type :self} (conj resolved-specs spec) more-specs)
-      (seq? spec)
-      (let [[mname arglist & body] spec
-            mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
-            [mname' arglist']
-            (case (:type last-seen-type)
-              nil (throw (Exception. (str "Encountered method " mname  " in type " class-name " without having encountered a class or protocol name before" (source-info))))
-              :self [mname arglist]
-              :protocol (resolve-protocol-method last-seen-type mname arglist type-env)
-              :class
-              (let [dart-type (:dart/type last-seen-type)]
-                (or
-                  (resolve-dart-method dart-type mname arglist type-env)
-                  (throw (Exception. (str "In class " class-name ", can't resolve method " mname (vec arglist) " on class " (:element-name dart-type) " from lib " (:lib dart-type) (source-info)))))))
-            mname (vary-meta mname' merge (meta mname))
-            parsed-arglist' (parse-dart-params arglist')
-            parsed-arglist (parse-dart-params arglist)
+      (= oa ob) (throw (Exception. (str "Conflicting method implementations for " ma ".")))
+      oa a
+      :else b)))
 
-
-            #_{:fixed-params fixed-params
-               :opt-kind (case delim .& :named :positional)
-               :opt-params
-               (for [[p d] (partition-all 2 1 opt-params)
-                     :when (symbol? p)]
-                 [p (when-not (symbol? d) d)])}
-            spec
-            (list* mname parsed-arglist'
-              (when (seq body) ; don't emit a body if no explicit body
-                [`(let [; a bunch of rebinding to take into account disagreeing type hints
-                        ; and/or destructuring
-                        ; first, fixed args, they may be destrctured
-                        ~@(mapcat (fn [a a']
-                                    (if (symbol? a)
-                                      (when-some [t (:tag (meta a))]
-                                        (when-not (= t (:tag (meta a')))
-                                          [a a']))
-                                      ; destructuring case
-                                      [a a']))
-                            (:fixed-params parsed-arglist)
-                            (:fixed-params parsed-arglist'))
-                        ; second, optionals which can't be destructured because it would be syntactically
-                        ; ambiguous, so only checking for types disagreement
-                        ~@(case (:opt-kind parsed-arglist')
-                            :named
-                            ; named may appear out of order
-                            (let [names' (into #{} (map first) (:opt-params parsed-arglist'))]
-                              (mapcat (fn [[a]]
-                                        (when-some [t (:tag (meta a))]
-                                          (let [a' (names' a)]
-                                            (when-not (= t (:tag (meta a')))
-                                              [a a']))))
-                                (:opt-params parsed-arglist)))
-                            :positional
-                            (mapcat (fn [[a] [a']]
-                                      (when-some [t (:tag (meta a))]
-                                        (when-not (= t (:tag (meta a')))
-                                          [a a'])))
-                              (:opt-params parsed-arglist)
-                              (:opt-params parsed-arglist')))]
-                    ~@body)]))]
-        (recur last-seen-type (conj resolved-specs spec) more-specs))
-      (:mixin (meta spec)) (recur
-                             {:type :class
-                              :dart/type (resolve-type spec type-env)}
-                             (conj resolved-specs spec) more-specs)
-      :else
-      (let [[tag x] (resolve-non-local-symbol spec type-env)]
-        (case tag
-          :def
-          (recur x (conj resolved-specs
-                     (case (:type x)
-                   :class spec
-                   :protocol (symbol (name (:ns x)) (name (:iface x)))))
-            more-specs)
-          :dart
-          (recur {:type :class :dart/type x}
-            (conj resolved-specs spec) more-specs)
-          (throw (Exception. (str "Can't resolve " spec (source-info)))))))))
+(defn- resolve-methods-specs [class-name specs type-env]
+  (loop [specs-order [] resolved-specs {} specs specs]
+    (if-some [[spec & more-specs :as specs] (seq specs)]
+      (if (nil? spec) ; cgrand: I don't know why we have a leading nil
+        (recur specs-order resolved-specs more-specs)
+        (let [_ (when-not (symbol? spec)
+                  (throw (Exception. (str "Encountered " (pr-str spec) " while expecting a symbol denoting a type or a protocol. " (source-info)))))
+              [type spec] (cond
+                            (= class-name spec) [{:type :self} spec]
+                            (:mixin (meta spec)) [{:type :class
+                                                   :dart/type (resolve-type spec type-env)}
+                                                  spec]
+                            :else
+                            (let [[tag x] (resolve-non-local-symbol spec type-env)]
+                              (case tag
+                                :def [x (case (:type x)
+                                          :class spec
+                                          :protocol (symbol (name (:ns x)) (name (:iface x))))]
+                                :dart [{:type :class :dart/type x} spec]
+                                (throw (Exception. (str "Can't resolve " spec (source-info)))))))
+              [meths more-specs] (split-with seq? more-specs)
+              meths (into {} (comp (map #(resolve-method-spec spec type % type-env)) (map (fn [[mname :as meth]] [mname meth])))meths)]
+          (recur
+            (cond-> specs-order (not (resolved-specs spec)) (conj spec))
+            (update resolved-specs spec #(merge-with resolve-conflicting-meths % meths))
+            more-specs)))
+      (mapcat (fn [spec] (cons spec (vals (resolved-specs spec)))) specs-order))))
 
 (defn- parse-class-specs [class-name opts specs env]
   (let [{:keys [extends]} opts
