@@ -187,12 +187,16 @@
                     (assoc m :inline (cons ifn (cons (symbol (str (name fname) "__inliner"))
                                                      (next inline))))
                     m))
+              tag (or (when-not (next fdecl)
+                        ; when one arity, look at meta
+                        (-> fdecl ffirst meta :tag))
+                    (:tag (meta fname)))
+              m (assoc m :tag tag :schroupt (list 'quote (first fdecl)))
               m (conj (if (meta fname) (meta fname) {}) m)]
           (list 'def (with-meta fname m)
                 ;;todo - restore propagation of fn name
                 ;;must figure out how to convey primitive hints to self calls first
-								;;(cons `fn fdecl)
-								(with-meta (cons `fn fdecl) {:rettag (:tag m) :async (:async m)})))))
+ 								(with-meta (cons `fn fdecl) {:rettag (:tag m) :async (:async m)})))))
 
 (def
  ^{:macro true
