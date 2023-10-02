@@ -875,7 +875,7 @@
   {:inline (fn [x] `(and (string? ~x) (== 1 (.-length ~x))))
    :inline-arities #{1}}
   [x]
-  (and (string? x) (== 1 (.-length x))))
+  (and (string? x) (== 1 (.-length ^String x))))
 
 (extend-type String
   IPrint
