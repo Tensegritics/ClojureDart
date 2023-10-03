@@ -401,6 +401,12 @@
            [~@fields]
            (new ~(vary-meta class-name dissoc :type-params) ~@fields))))))
 
+(defn instance?
+  {:inline (fn [class x] `(dart/is? ~x ~class))
+   :inline-arities #{2}}
+  [class x]
+  (throw (UnsupportedError. "instance? can't be used as a function due to Dart design. See https://github.com/Tensegritics/ClojureDart/issues/11 to track progress.")))
+
 (defmacro definterface [iface & meths]
   `(deftype ~(vary-meta iface assoc :abstract true) []
      :type-only true
@@ -6894,6 +6900,18 @@
   [& more]
   (binding [*print-readably* nil]
     (apply prn more)))
+
+(defn ^String print-str
+  "print to a string, returning it"
+  [& xs]
+  (with-out-str
+    (apply print xs)))
+
+(defn ^String println-str
+  "println to a string, returning it"
+  [& xs]
+    (with-out-str
+     (apply println xs)))
 
 (defn re-groups
   "Returns the groups from a match. If there are no
