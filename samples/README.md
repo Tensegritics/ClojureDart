@@ -4,6 +4,7 @@ You will find listed below in the `Sample` section all of the current samples, a
 ## Run a sample
 
 ```sh
+clj -M:cljd init
 clj -M:cljd flutter
 ```
 A native application will be created. If you want to test it on mobile, please follow [those instructions.](https://github.com/Tensegritics/ClojureDart/blob/main/doc/flutter-quick-start.md#7-start-a-simulator)

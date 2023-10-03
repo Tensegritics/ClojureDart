@@ -4,7 +4,7 @@
    ["package:flutter/material.dart" :as m]
    [cljd.flutter :as f]))
 
-(defn first-screen
+(defn ^m/Widget first-screen
   [ctx]
   (f/widget
     :get [m/Navigator]
@@ -19,7 +19,7 @@
                             .child     (m/Text "Launch Screen"))))))
 
 
-(defn second-screen
+(defn ^m/Widget second-screen
   [ctx]
   (f/widget
     :get [m/Navigator]
@@ -36,10 +36,5 @@
    (m/MaterialApp
     .title "Navigation Basics"
     .initialRoute "/"
-    .routes       (into {}
-                        (keep (fn [[k v]]
-                                {k (fn ^m/Widget k [ctx]
-                                     v)}))
-                        {"/"       first-screen
-                         "/second" second-screen}))))
-
+    .routes {"/"       first-screen
+             "/second" second-screen})))

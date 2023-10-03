@@ -12,6 +12,12 @@
 /*/test/*
 /*/web/*
 /*/windows/*
+/*/bin/*
+/*/CHANGELOG.md
 !/ffi/hello_library/
 !/ffi/README.md
 !/ffi/pubspec.yaml
+!/fficjson/third_party/
+!/fficjson/README.md
+!/fficjson/config.yaml
+!/fficjson/example.json

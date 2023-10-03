@@ -385,7 +385,7 @@
   [clj-alias]
   (when clj-alias
     (let [{:keys [libs dart-aliases] :as all-nses} @nses
-          {:keys [clj-aliases imports]} (all-nses *current-ns*)]
+          {:keys [clj-aliases]} (all-nses *current-ns*)]
       (or (get clj-aliases clj-alias)
         (some-> (re-matches #"\$lib:(.*)" clj-alias) second dart-aliases)))))
 
@@ -1750,6 +1750,7 @@
 
 (defn emit-dot [[_ obj member & args :as form] env]
   (if (seq? member)
+    ;; legacy syntax of Clojure early days (. obj (meth arg1 arg2)))
     (recur (list* '. obj member) env)
     (let [[_ prop member-name] (re-matches #"(-)?(.+)" (name member))
           _ (when (and prop args) (throw (ex-info (str "Can't pass arguments to a property access" (pr-str form)) {:form form})))
@@ -1757,6 +1758,9 @@
           static (:dart/class (meta dart-obj))
           type (or static (:dart/type (infer-type dart-obj)))
           type! (dissoc type :nullable)
+          member-name (cond-> member-name
+                        (and prop (not (re-matches #"[a-zA-Z_$]+" member-name)))
+                        munge-str)
           num-only-member-name (when (.startsWith member-name "num:") (subs member-name 4))
           type! (cond-> type! num-only-member-name num-type)
           member-name (or num-only-member-name member-name)
@@ -1852,6 +1856,45 @@
       (cond->> expr
         (seq bindings) (list 'dart/let bindings)))))
 
+(defn resolve-field-for-set! [obj member env]
+  (let [[_ prop member-name] (re-matches #"(-)?(.+)" (name member))
+        [dart-obj-bindings dart-obj]  (lift-arg nil (emit obj env) "obj" env)
+        static (:dart/class (meta dart-obj))
+        type (or static (:dart/type (infer-type dart-obj)))
+        type! (dissoc type :nullable)
+        member-info (some->
+                      (else->>
+                        (let [[_ member-info :as mi]
+                              (dart-member-lookup type! member-name (meta member) env)])
+                        ;; in case a property/method has the same name of a named constructor
+                        (or (when-not (and static (not (:static member-info))) mi))
+                        (if static (dart-member-lookup type! (str (:element-name static) "." member-name) env))
+                        (dart-member-lookup dc-Object member-name env))
+                      actual-member)
+        dart-obj (cond
+                   (:type-params (meta obj)) ; static only
+                   (emit-type obj env)
+                   member-info
+                   (simple-cast dart-obj type! type)
+                   :else
+                   (loop [dart-obj dart-obj]
+                     (cond
+                       (and (seq? dart-obj) (= 'dart/as (first dart-obj)))
+                       (recur (second dart-obj))
+                       (= 'dc.dynamic (:canon-qname (or (:dart/type (infer-type dart-obj)) dc-dynamic)))
+                       dart-obj
+                       :else
+                       (list 'dart/as dart-obj dc-dynamic))))]
+    (when (and static (not (:static member-info)))
+      (throw (Exception. (str member-name " is not a static member of " (:element-name type!) " " (source-info)))))
+    (cond
+      (not member-info)
+      (binding [*out* *err*]
+        (println "DYNAMIC WARNING: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info)))
+      (not= (:kind member-info) :field)
+      (throw (Exception. (str member-name " is not a field of " (:element-name type!) " " (source-info)))))
+    [dart-obj-bindings dart-obj member-name (or (:type member-info) dc-dynamic)]))
+
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
     (cond
@@ -1870,11 +1913,10 @@
           (dart-binding 'setval (emit expr env) env)))
       (and (seq? target) (= '. (first target)))
       (let [[_ obj member] target
-            [_ fld] (re-matches #"-?(.+)" (name member))]
-            ; TODO actual field resolution + simple-cast
-        (with-lifted [dart-obj (emit obj env)] env
-          (list 'dart/set! (list 'dart/.- dart-obj fld)
-            (dart-binding 'setval (emit expr env) env))))
+            [bindings dart-obj member dart-type] (resolve-field-for-set! obj member env)]
+        (cond->> (list 'dart/set! (list 'dart/.- dart-obj member)
+                   (dart-binding 'setval (emit expr env) env))
+          bindings (list 'dart/let bindings)))
       :else
       (throw (ex-info (str "Unsupported target for assignment: " target) {:target target})))))
 
@@ -1957,6 +1999,7 @@
       (nil? x) 0
       (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (hash x) ; safe between -2^31 to 2^32-1 both inclusive (TODO check in dartjs)
       (string? x) (hash x) ; cljd hashes string like clj/jvm
+      (boolean? x) (case x true 1231 false 1237)
       (char? x) (hash (str x))
       (symbol? x) (cljd-hash-combine
                     (cljd-u32 (clojure.lang.Murmur3/hashUnencodedChars (name x)))
@@ -2490,84 +2533,97 @@
 (defn alter-def [nses sym f & args]
   (apply update-in nses [*current-ns* sym] f args))
 
+(defn- resolve-method-spec [owner-spec type spec type-env]
+  (let [[mname arglist & body] spec
+        mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
+        [mname' arglist']
+        (case (:type type)
+          :self [mname arglist]
+          :protocol (resolve-protocol-method type mname arglist type-env)
+          :class
+          (let [dart-type (:dart/type type)]
+            (or
+              (resolve-dart-method dart-type mname arglist type-env)
+              (throw (Exception. (str "In class " owner-spec ", can't resolve method " mname (vec arglist) " on class " (:element-name dart-type) " from lib " (:lib dart-type) (source-info)))))))
+        mname (vary-meta mname' merge (meta mname))
+        parsed-arglist' (parse-dart-params arglist')
+        parsed-arglist (parse-dart-params arglist)
+        #_{:fixed-params fixed-params
+           :opt-kind (case delim .& :named :positional)
+           :opt-params
+           (for [[p d] (partition-all 2 1 opt-params)
+                 :when (symbol? p)]
+             [p (when-not (symbol? d) d)])}]
+    (list* mname parsed-arglist'
+      (when (seq body) ; don't emit a body if no explicit body
+        [`(let [; a bunch of rebinding to take into account disagreeing type hints
+                ; and/or destructuring
+                ; first, fixed args, they may be destrctured
+                ~@(mapcat (fn [a a']
+                            (if (symbol? a)
+                              (when-some [t (:tag (meta a))]
+                                (when-not (= t (:tag (meta a')))
+                                  [a a']))
+                              ; destructuring case
+                              [a a']))
+                    (:fixed-params parsed-arglist)
+                    (:fixed-params parsed-arglist'))
+                ; second, optionals which can't be destructured because it would be syntactically
+                ; ambiguous, so only checking for types disagreement
+                ~@(case (:opt-kind parsed-arglist')
+                    :named
+                    ; named may appear out of order
+                    (let [names' (into #{} (map first) (:opt-params parsed-arglist'))]
+                      (mapcat (fn [[a]]
+                                (when-some [t (:tag (meta a))]
+                                  (let [a' (names' a)]
+                                    (when-not (= t (:tag (meta a')))
+                                      [a a']))))
+                        (:opt-params parsed-arglist)))
+                    :positional
+                    (mapcat (fn [[a] [a']]
+                              (when-some [t (:tag (meta a))]
+                                (when-not (= t (:tag (meta a')))
+                                  [a a'])))
+                      (:opt-params parsed-arglist)
+                      (:opt-params parsed-arglist')))]
+            ~@body)]))))
+
+(defn resolve-conflicting-meths [[ma :as a] [mb :as b]]
+  (let [oa (-> ma meta :override boolean)
+        ob (-> mb meta :override boolean)]
+    (cond
+      (= oa ob) (throw (Exception. (str "Conflicting method implementations for " ma ".")))
+      oa a
+      :else b)))
+
 (defn- resolve-methods-specs [class-name specs type-env]
-  (let [last-seen-type (atom nil)]
-    (map
-      (fn [spec]
-        (cond
-          (= class-name spec) (do (reset! last-seen-type {:type :self}) spec)
-          (seq? spec)
-          (let [[mname arglist & body] spec
-                mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
-                [mname' arglist']
-                (let [t @last-seen-type]
-                  (case (:type t)
-                    nil (throw (Exception. (str "Encountered method " mname  " in type " class-name " without having encountered a class or protocol name before" (source-info))))
-                    :self [mname arglist]
-                    :protocol (resolve-protocol-method t mname arglist type-env)
-                    :class
-                    (or
-                      (resolve-dart-method (:dart/type t) mname arglist type-env)
-                      (throw (Exception. (str "In class " class-name ", can't resolve method " mname (vec arglist) " on class " (:element-name (:dart/type t)) " from lib " (:lib (:dart/type t)) (source-info)))))))
-                mname (vary-meta mname' merge (meta mname))
-                parsed-arglist' (parse-dart-params arglist')
-                parsed-arglist (parse-dart-params arglist)]
-            #_{:fixed-params fixed-params
-               :opt-kind (case delim .& :named :positional)
-               :opt-params
-               (for [[p d] (partition-all 2 1 opt-params)
-                     :when (symbol? p)]
-                 [p (when-not (symbol? d) d)])}
-            (list* mname parsed-arglist'
-              (when (seq body) ; don't emit a body if no explicit body
-                [`(let [; a bunch of rebinding to take into account disagreeing type hints
-                        ; and/or destructuring
-                        ; first, fixed args, they may be destrctured
-                        ~@(mapcat (fn [a a']
-                                    (if (symbol? a)
-                                      (when-some [t (:tag (meta a))]
-                                        (when-not (= t (:tag (meta a')))
-                                          [a a']))
-                                      ; destructuring case
-                                      [a a']))
-                            (:fixed-params parsed-arglist)
-                            (:fixed-params parsed-arglist'))
-                        ; second, optionals which can't be destructured because it would be syntactically
-                        ; ambiguous, so only checking for types disagreement
-                        ~@(case (:opt-kind parsed-arglist')
-                            :named
-                            ; named may appear out of order
-                            (let [names' (into #{} (map first) (:opt-params parsed-arglist'))]
-                              (mapcat (fn [[a]]
-                                        (when-some [t (:tag (meta a))]
-                                          (let [a' (names' a)]
-                                            (when-not (= t (:tag (meta a')))
-                                              [a a']))))
-                                (:opt-params parsed-arglist)))
-                            :positional
-                            (mapcat (fn [[a] [a']]
-                                      (when-some [t (:tag (meta a))]
-                                        (when-not (= t (:tag (meta a')))
-                                          [a a'])))
-                              (:opt-params parsed-arglist)
-                              (:opt-params parsed-arglist')))]
-                    ~@body)])))
-          (:mixin (meta spec)) (do (reset! last-seen-type
-                                     {:type :class
-                                      :dart/type (resolve-type spec type-env)}) spec)
-          :else
-          (let [[tag x] (resolve-non-local-symbol spec type-env)]
-            (case tag
-              :def (do
-                     (reset! last-seen-type x)
-                     (case (:type x)
-                       :class spec
-                       :protocol (symbol (name (:ns x)) (name (:iface x)))))
-              :dart (do
-                      (reset! last-seen-type {:type :class :dart/type x})
-                      spec)
-              (throw (Exception. (str "Can't resolve " spec (source-info))))))))
-      specs)))
+  (loop [specs-order [] resolved-specs {} specs specs]
+    (if-some [[spec & more-specs :as specs] (seq specs)]
+      (if (nil? spec) ; cgrand: I don't know why we have a leading nil
+        (recur specs-order resolved-specs more-specs)
+        (let [_ (when-not (symbol? spec)
+                  (throw (Exception. (str "Encountered " (pr-str spec) " while expecting a symbol denoting a type or a protocol. " (source-info)))))
+              [type spec] (cond
+                            (= class-name spec) [{:type :self} spec]
+                            (:mixin (meta spec)) [{:type :class
+                                                   :dart/type (resolve-type spec type-env)}
+                                                  spec]
+                            :else
+                            (let [[tag x] (resolve-non-local-symbol spec type-env)]
+                              (case tag
+                                :def [x (case (:type x)
+                                          :class spec
+                                          :protocol (symbol (name (:ns x)) (name (:iface x))))]
+                                :dart [{:type :class :dart/type x} spec]
+                                (throw (Exception. (str "Can't resolve " spec (source-info)))))))
+              [meths more-specs] (split-with seq? more-specs)
+              meths (into {} (comp (map #(resolve-method-spec spec type % type-env)) (map (fn [[mname :as meth]] [mname meth])))meths)]
+          (recur
+            (cond-> specs-order (not (resolved-specs spec)) (conj spec))
+            (update resolved-specs spec #(merge-with resolve-conflicting-meths % meths))
+            more-specs)))
+      (mapcat (fn [spec] (cons spec (vals (resolved-specs spec)))) specs-order))))
 
 (defn- parse-class-specs [class-name opts specs env]
   (let [{:keys [extends]} opts
@@ -2802,7 +2858,7 @@
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
   (assert (and (re-matches #"[_$a-zA-Z][_$a-zA-Z0-9]*" (name class-name))
             (not (reserved-words (name class-name))))
-    "class-names must be valid dart ids")
+    (str "class-names must be valid dart ids; infringing class name: " (name class-name)))
   (let [abstract (:abstract (meta class-name))
         mixin (:mixin (meta class-name))
         [class-name & type-params] (cons class-name (:type-params (meta class-name)))
@@ -3094,15 +3150,17 @@
           (->>
            (concat
             (map refer-clojure-to-require refer-clojures)
-            (for [[directive & specs]
-                  ns-clauses
+            (for [[directive & specs :as clause] ns-clauses
+                  :when clause ; allow nils produced by conditionals
                   :let [f (case directive
                             :require #(if (sequential? %) % [%])
                             :import import-to-require
                             :use use-to-require
                             (:refer-clojure :host-ns) nil)]
                   :when f
-                  spec specs]
+                  spec specs
+                  ; allow nils produced by conditionals
+                  :when spec]
               (f spec)))
            (map (fn [[lib & more :as spec]]
                   (or (some-> (cljdize lib) (cons more))
@@ -3169,17 +3227,20 @@
     dart-expr))
 
 (defn emit-try [[_ & body] env]
-  (let [{body nil catches 'catch [[_ & finally-body]] 'finally}
-        (group-by #(when (seq? %) (#{'finally 'catch} (first %))) body)]
-    (list 'dart/try
-           (emit-no-recur (cons 'do body) env)
-           (for [[_ classname e & [maybe-st & exprs :as body]] catches
-                 :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
-                       exprs (if st exprs body)
-                       env (cond-> (assoc env e (dart-local e env))
-                             st (assoc st (dart-local st env)))]]
-             [(emit-type classname env) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
-           (some-> finally-body (conj 'do) (emit-no-recur env)))))
+  (let [{body nil catches 'catch [[_ & finally-body] :as finallies] 'finally}
+        (group-by #(when (seq? %) (#{'finally 'catch} (first %))) body)
+        dart-expr (emit-no-recur (cons 'do body) env)]
+    (if (or (seq catches) (seq finallies))
+      (list 'dart/try
+        dart-expr
+        (for [[_ classname e & [maybe-st & exprs :as body]] catches
+              :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
+                    exprs (if st exprs body)
+                    env (cond-> (assoc env e (dart-local e env))
+                          st (assoc st (dart-local st env)))]]
+          [(emit-type classname env) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
+        (some-> finally-body (conj 'do) (emit-no-recur env)))
+      dart-expr)))
 
 (defn emit-throw [[_ expr] env]
   ;; always emit throw as a statement (in case it gets promoted to rethrow)
@@ -4100,7 +4161,9 @@
           "-" (if args
                 (do
                   (write obj expr-locus)
+                  (dart-print " ")
                   (dart-print meth)
+                  (dart-print " ")
                   (write (first args) expr-locus))
                 (do
                   (assert false "DEAD BRANCH")
@@ -4108,20 +4171,24 @@
                   (write obj expr-locus)))
           "unary-" (do
                      (dart-print "(")
-                     (dart-print "-")
+                     (dart-print "- ")
                      (write obj expr-locus)
                      (dart-print ")"))
           ("&&" "||" "^^" "+" "*" "&" "|" "^")
           (do
             (write obj expr-locus)
             (doseq [arg args]
+              (dart-print " ")
               (dart-print meth)
+              (dart-print " ")
               (write arg expr-locus)))
           ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" #_">>>")
           (do
             (assert (= (count args) 1))
             (write obj expr-locus)
+            (dart-print " ")
             (dart-print meth)
+            (dart-print " ")
             (write (first args) expr-locus))
           ;; else plain method
           (do
@@ -4458,14 +4525,33 @@
 
   (binding [analyzer-info li
             *dart-out* *out*
-            *locals-gen* {}]
+            *locals-gen* {}
+            *current-ns* 'cljd.core]
     #_(write
         (emit-test `~(tagged-literal 'dart '[1 2]) {})
         return-locus)
-    (write (emit `(fn [~(with-meta 'a
-                          {:tag (dart-type-params-reader '[String .foo int? .bar String])})]
-                    (.toString ~'a)) {})
+    (write (emit-test `(fn [~(with-meta 'ss
+                               {:tag (dart-type-params-reader '(dart:core/Set dart:core/List))})]
+                         (let [v (.lookup ss "key")]
+                           (.-first! "val"))) {})
       return-locus))
+
+  (binding [analyzer-info li
+            *dart-out* *out*
+            *locals-gen* {}
+            *current-ns* 'cljd.core]
+    (let [c `c#]
+      (write (emit `(fn [~(with-meta 'ss {:tag (dart-type-params-reader '(dart:core/Set dart:core/List))})
+                         f#]
+                      (let [~c (.lookup ~'ss "key")]
+                        (.-first! (let [x# ~(with-meta `(identity ~c) {:tag 'List})]
+                                    x#) (let [v# (str "val")]
+                                          (f#)
+                                          (str v# "kiki")))
+                        ;;(set! (.-first v#) "val")
+                        )) {})
+        return-locus)))
+
 
   (binding [analyzer-info li]
     (do
