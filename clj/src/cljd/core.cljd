@@ -7218,6 +7218,50 @@
   [& xforms]
   (Eduction. (apply comp (butlast xforms)) (last xforms) -1))
 
+;; UUID
+(deftype UUID [^String uuid ^:mutable ^int __hash]
+  Object
+  (toString [_] uuid)
+
+  IEquiv
+  (-equiv [_ other]
+    (and (dart/is? other UUID) (identical? uuid (.-uuid ^UUID other))))
+
+  IPrint
+  (-print [o ^StringSink sink]
+    (.write sink (str "#uuid \"" uuid "\"")))
+
+  IHash
+  (-hash [this] (ensure-hash __hash (-hash uuid)))
+  (-hash-realized? [this] (.!= -1 __hash))
+
+  IComparable
+  (-compare [this other]
+    (if (dart/is? other UUID)
+      (compare uuid (.-uuid ^UUID other))
+      (throw (ArgumentError. (str "Cannot compare " this " to " other))))))
+
+(defn uuid
+  "Returns a UUID consistent with the string s."
+  [^String s]
+  (UUID. (.toLowerCase s) -1))
+
+(defn random-uuid
+  "Returns a pseudo-randomly generated UUID instance (i.e. type 4)."
+  []
+  (letfn [(quad-hex []
+            (subs (.toRadixString (+ 65536 (rand-int 65536)) 16) 1))]
+    (let [ver-tripple-hex (.toRadixString (bit-or 0x4000 (bit-and 0x0fff (rand-int 65536))) 16)
+          res-tripple-hex (.toRadixString (bit-or 0x8000 (bit-and 0x3fff (rand-int 65536))) 16)]
+      (uuid
+        (str (quad-hex) (quad-hex) "-" (quad-hex) "-"
+             ver-tripple-hex "-" res-tripple-hex "-"
+             (quad-hex) (quad-hex) (quad-hex))))))
+
+(defn uuid?
+  "Return true if x is a UUID."
+  [x] (dart/is? x UUID))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; data readers ;;;;;;;;;;;;;;;;;;
 
 (def ^:private timestamp
@@ -7268,7 +7312,8 @@ specified.
   "Default map of data reader functions provided by Clojure. May be
   overridden by binding *data-readers*."
   {'inst parse-timestamp
-   #_#_'dart (fn [form] (throw (ex-info "Not implemented yet" {:form form})))})
+   #_#_'dart (fn [form] (throw (ex-info "Not implemented yet" {:form form})))
+   'uuid uuid})
 
 (def ^:dynamic  *data-readers*
   "Map from reader tag symbols to data reader Vars.
