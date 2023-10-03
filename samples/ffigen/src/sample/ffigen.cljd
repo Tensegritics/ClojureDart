@@ -1,0 +1,73 @@
+(ns sample.ffigen
+  (:require ["dart:convert" :as dart:convert]
+            ["dart:ffi" :as dart:ffi]
+            ["dart:io" :as dart:io]
+            ["package:ffi/ffi.dart" :as ffi]
+            ["package:path/path.dart" :as path]
+            ;; TODO: change this when bug #275
+            ;;["cjson_generated_bindings.dart" :as cjson]
+            ["package:cljdffigen/cjson_generated_bindings.dart" :as cjson]))
+
+(defn get-path []
+  (let [cjson-example-path dart:io/Directory.current.absolute.path
+        p (path/join cjson-example-path "third_party/cjson_library/")]
+    (cond
+      dart:io/Platform.isMacOS
+      (path/join p "libcjson.dylib")
+      dart:io/Platform.isWindows
+      (path/join p "Debug" "cjson.dll")
+      :else (path/join p "libcjson.so"))))
+
+;; Holds bindings to cJSON.
+(def ^cjson/CJson json (cjson/CJson (dart:ffi/DynamicLibrary.open (get-path))))
+
+;; UTILS
+;; All 3 functions take a pointer of cJSON struct and manipulate the cJSON struct
+(defn- ^cjson/cJSON cjson-ptr->cjson-struct [^#/(dart:ffi/Pointer cjson/cJSON) ptr]
+  (-> ptr dart:ffi/StructPointer .-ref))
+
+(defn ^String string-ptr->dart-string [^#/(dart:ffi/Pointer dart:ffi/Char) ptr]
+  (-> ptr (. #/(cast ffi/Utf8)) ffi/Utf8Pointer .toDartString))
+
+(defn- ^#/(dart:ffi/Pointer? cjson/cJSON) cjson-ptr->child-ptr [^#/(dart:ffi/Pointer cjson/cJSON) ptr]
+  (-> ptr cjson-ptr->cjson-struct .-child))
+
+;; Serialization function
+(defn cjson->cljd [^#/(dart:ffi/Pointer cjson/cJSON) parsedcjson-ptr]
+  (cond
+    (== 1 (.cJSON_IsObject json (.cast parsedcjson-ptr)))
+    (let [m (transient {})]
+      (loop [^#/(dart:ffi/Pointer? cjson/cJSON) ptr (cjson-ptr->child-ptr parsedcjson-ptr)]
+        (if-not (= ptr dart:ffi/nullptr)
+          (do
+            (conj! m [(-> ptr cjson-ptr->cjson-struct .-string string-ptr->dart-string)
+                      (cjson->cljd ptr)])
+            (recur (-> ptr cjson-ptr->cjson-struct .-next)))
+          (persistent! m))))
+    (== 1 (.cJSON_IsArray json (.cast parsedcjson-ptr)))
+    (let [v (transient [])]
+      (loop [^#/(dart:ffi/Pointer? cjson/cJSON) ptr (cjson-ptr->child-ptr parsedcjson-ptr)]
+        (if-not (= ptr dart:ffi/nullptr)
+          (do
+            (conj! v (cjson->cljd ptr))
+            (recur (-> ptr cjson-ptr->cjson-struct .-next)))
+          (persistent! v))))
+    (== 1 (.cJSON_IsString json (.cast parsedcjson-ptr)))
+    (-> parsedcjson-ptr cjson-ptr->cjson-struct .-valuestring string-ptr->dart-string)
+    (== 1 (.cJSON_IsNumber json (.cast parsedcjson-ptr)))
+    (let [i (-> parsedcjson-ptr cjson-ptr->cjson-struct .-valueint)
+          d (-> parsedcjson-ptr cjson-ptr->cjson-struct .-valuedouble)]
+      (if (== i d) i d))))
+
+
+(defn main []
+  (let [json-string (-> (dart:io/File "./example.json") .readAsStringSync)
+        cjson-parsed-json (.cJSON_Parse json (->
+                                               json-string
+                                               ffi/StringUtf8Pointer
+                                               .toNativeUtf8
+                                               .cast))]
+    (when (= dart:ffi/nullptr cjson-parsed-json)
+      (throw (Exception "Error parsing cjson")))
+    (prn (cjson->cljd cjson-parsed-json))
+    (.cJSON_Delete json cjson-parsed-json)))

@@ -12,6 +12,8 @@
 /*/test/*
 /*/web/*
 /*/windows/*
+/*/bin/*
+/*/CHANGELOG.md
 !/ffi/hello_library/
 !/ffi/README.md
 !/ffi/pubspec.yaml
