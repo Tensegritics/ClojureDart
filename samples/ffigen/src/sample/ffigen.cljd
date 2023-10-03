@@ -1,4 +1,5 @@
 (ns sample.ffigen
+  "Source example: https://github.com/dart-lang/ffigen/tree/main/example/c_json"
   (:require ["dart:convert" :as dart:convert]
             ["dart:ffi" :as dart:ffi]
             ["dart:io" :as dart:io]
