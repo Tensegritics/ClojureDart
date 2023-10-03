@@ -28,5 +28,5 @@ This will generate bindings in a file: lib/cjson_generated_bindings.dart
 ## Running the example
 ```
 clj -M:cljd compile
-dart run bin/ffigen.dart
+dart run
 ```
