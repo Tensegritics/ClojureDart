@@ -385,7 +385,7 @@
   [clj-alias]
   (when clj-alias
     (let [{:keys [libs dart-aliases] :as all-nses} @nses
-          {:keys [clj-aliases imports]} (all-nses *current-ns*)]
+          {:keys [clj-aliases]} (all-nses *current-ns*)]
       (or (get clj-aliases clj-alias)
         (some-> (re-matches #"\$lib:(.*)" clj-alias) second dart-aliases)))))
 
@@ -2858,7 +2858,7 @@
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
   (assert (and (re-matches #"[_$a-zA-Z][_$a-zA-Z0-9]*" (name class-name))
             (not (reserved-words (name class-name))))
-    "class-names must be valid dart ids")
+    (str "class-names must be valid dart ids; infringing class name: " (name class-name)))
   (let [abstract (:abstract (meta class-name))
         mixin (:mixin (meta class-name))
         [class-name & type-params] (cons class-name (:type-params (meta class-name)))
