@@ -7,7 +7,7 @@
             ["package:path/path.dart" :as path]
             ;; TODO: change this when bug #275
             ;;["cjson_generated_bindings.dart" :as cjson]
-            ["package:cljdffigen/cjson_generated_bindings.dart" :as cjson]))
+            ["package:fficjson/cjson_generated_bindings.dart" :as cjson]))
 
 (defn get-path []
   (let [cjson-example-path dart:io/Directory.current.absolute.path
