@@ -17,7 +17,7 @@
 !/ffi/hello_library/
 !/ffi/README.md
 !/ffi/pubspec.yaml
-!/ffigen/third_party/
-!/ffigen/README.md
-!/ffigen/config.yaml
-!/ffigen/example.json
+!/fficjson/third_party/
+!/fficjson/README.md
+!/fficjson/config.yaml
+!/fficjson/example.json
