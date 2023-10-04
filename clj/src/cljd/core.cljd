@@ -8630,3 +8630,10 @@ specified.
   "Return true if x satisfies Inst"
   [x]
   (satisfies? IInst x))
+
+(defn into-array
+  "Returns an fixed List<dynamic> with components set to the values in aseq.   Optional type argument accepted for compatibility with Clojure but unused
+  because of Dart lack of reflexivity."
+  ([aseq]
+   (.from #/(List dynamic) aseq .growable false))
+  ([type aseq] (into-array aseq)))
