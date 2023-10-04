@@ -4249,6 +4249,8 @@
 
 ;; Compile clj -> dart file
 (defn dump-ns [ns-name {ns-lib :lib :as ns-map}]
+  ;; used to silence the analyzer when people are using VS Code or other tools
+  (dart-print "// ignore_for_file: type=lint, unnecessary_cast, unnecessary_type_check, unused_import, unused_local_variable, unused_label, unnecessary_question_mark, unused_catch_clause, type_check_with_null, dead_code\n")
   (doseq [lib (keys (:imports ns-map))
           :let [dart-alias (-> @nses :libs (get lib) :dart-alias)]]
     (dart-print "import ")

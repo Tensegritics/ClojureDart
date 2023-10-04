@@ -215,7 +215,7 @@ Design notes for clojure.string:
   "Removes all trailing newline \\n or return \\r characters from
   string.  Similar to Perl's chomp."
   [^String s]
-  (loop [index (.-length s)]
+  (loop [^int index (.-length s)]
     (if (zero? index)
       ""
       (let [ch (. s "[]" (dec index))]
