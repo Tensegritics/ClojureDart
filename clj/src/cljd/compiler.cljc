@@ -1395,6 +1395,7 @@
           named-args (cond-> named-args (= '.& (first named-args)) next)]
       (-> [] (into (map #(vector nil (emit % env) dc-dynamic) positional-args))
         (into (comp (partition-all 2) (map (fn [[name x]] [(ensure-kw name) (emit x env) dc-dynamic]))) named-args)))
+    ; named parameters
     (map? opts-types)
     (let [args (remove '#{.&} args) ; temporary as .& in args is redundant with args starting by a dot and the fact that we know the expected params. It's just some cpmpatibility feature with some very early cljd code
           positional-args (mapv #(vector nil (emit %1 env) (or %2 dc-dynamic)) args fixed-types)
@@ -1411,9 +1412,12 @@
       (when-not (= (count positional-args) (count fixed-types))
         (throw (Exception. (str "Not enough positional arguments: expected " (count fixed-types) " got " (count positional-args)))))
       (when-not (even? (count rem-args))
-        (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))
+        (case (count rem-args)
+          1 (throw (Exception. (str "Positional argument encountered: " (pr-str (last rem-args)) ", while expecting a parameter name amongst " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))
+          (when-not (even? (count rem-args))
+            (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))))
       all-args)
-    :else
+    :else ; positional parameters
     (let [all-args (mapv #(vector nil (emit %1 env) (or %2 dc-dynamic)) args (concat fixed-types opts-types))]
       (when-not (<= 0 (- (count args) (count fixed-types)) (count opts-types))
         (throw (Exception. (str "Wrong argument count: expecting between " (count fixed-types) " and " (+ (count fixed-types) (count opts-types)) " but got " (count args)))))
