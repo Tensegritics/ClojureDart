@@ -3633,6 +3633,13 @@
                       (when-not (-> *current-ns* all-nses :imports (get lib))
                         (swap! nses assoc-in [*current-ns* :imports lib] {}))))
                   (dart-print x))
+    (double? x)
+    (cond
+      (Double/isNaN x) (dart-print "dc.double.nan")
+      (Double/isInfinite x) (dart-print (if (pos? x)
+                                          "dc.double.infinity"
+                                          "dc.double.negativeInfinity"))
+      :else (dart-print (str x)))
     :else (dart-print (str x))))
 
 (defn write-params [fixed-params opt-kind opt-params]
