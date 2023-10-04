@@ -7481,19 +7481,17 @@ specified.
          (let [coll (gensym "coll")]
            `(~(with-meta 'keys {:tag (with-meta 'Iterable {:type-params '(K)})}) [~coll]
              (-> ~(tagged-literal 'dart
-                    (with-meta (into [] (map (fn [field]
-                                               (let [k (gensym "k")]
-                                                 `(let [~(with-meta k {:tag 'K}) ~(keyword field)] ~k))) fields))
-                      {:fixed true
-                       :tag 'K}))
-               (.followedBy (.-keys ~extmap)))))
+                    (with-meta (into [] (map keyword) fields)
+                      {:fixed true}))
+               (.followedBy (.-keys ~extmap))
+               ^{:type-params [~'K]} .cast)))
          (let [coll (gensym "coll")]
            `(~'values [~coll]
              (-> ~(tagged-literal 'dart
                     (with-meta (vec fields)
-                      {:fixed true
-                       :tag 'V}))
-               (.followedBy (.-values ~extmap)))))
+                      {:fixed true}))
+               (.followedBy (.-values ~extmap))
+               ^{:type-params [~'V]} .cast)))
          `("[]" [coll# k#]
            (-lookup coll# k# nil))
          `("[]=" [coll# key# val#]
