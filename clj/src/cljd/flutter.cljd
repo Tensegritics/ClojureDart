@@ -243,16 +243,20 @@
         subscribable `subscribable#
         update-state (if (or accessor destructured-locals)
                        (let [vsym `v#
-                             vexpr (if accessor `(-> ~subscribable ~accessor) vsym)]
+                             vexpr (if accessor `(-> ~subscribable ~accessor) vsym)
+                             vval `vval#
+                             set-state-expr
+                             (if (:dedup opts true)
+                               `(when-not (= ~vval (.-latest ~state))
+                                  (~state ~vval))
+                               `(~state ~vval))]
                          `(fn [~vsym]
                             ~(if destructured-locals
                                `(let [~binding ~vexpr
-                                      tuple# [~@destructured-locals]]
-                                  (when-not (= tuple# (.-latest ~state))
-                                    (~state tuple#)))
-                               `(let [v# ~vexpr]
-                                  (when-not (= v# (.-latest ~state))
-                                    (~state v#))))))
+                                      ~vval [~@destructured-locals]]
+                                  ~set-state-expr)
+                               `(let [~vval ~vexpr]
+                                  ~set-state-expr))))
                        state)
         subscribe-call
         `(let [update# ~update-state
@@ -549,19 +553,23 @@
        Use `:refresh-on :never` to avoid refreshing (or any other constant
        instead of :never).
    :watch [bindings] -- for each \"binding expr\" pair, subscribe to expr and
-     use binding to bind each value received under the subscription. Each change
-     triggers a rebuild EXCEPT when binding is a destructuring form, in which case
-     the rebuild is triggered only when locals bound by the destructuring do change
-     (according to equality).
-     Any object to which the Subscribable protocol has been extended can be watched.
+     use binding to bind each value received under the subscription. A rebuild
+     is triggered only when bound values change (according to equality).
+     So when binding is a destructuring form, the rebuild is triggered only
+     when locals bound by the destructuring do change, allowing to watch only
+     parts of the value.
+     Any object to which the Subscribable protocol has been extended can be
+     watched.
      Out of the box it means: atoms, Streams, Futures, Listenables,
      ValueListenable and... nil.
      These bindings can take options (in the same way as :managed bindings do).
-     Supported options are  :refresh-on, :dispose and :>
+     Supported options are  :refresh-on, :dispose, :dedup and :>
      - :refresh-on expr -- see :managed
      - :dispose form -- if the object under watch also needs to be managed use
        this option. Works like :dispose for :managed except for \":dispose true\"
        which is a shortcut for \":dispose .dispose\".
+     - :dedup boolean -- defaults to true, set it to false to rebuild on every
+       change
      - :> form -- this one is meant to be used with Listenable instances because
        they don't produce values, just a change notification. So if this option
        is not used you only get trues from the subscription.
