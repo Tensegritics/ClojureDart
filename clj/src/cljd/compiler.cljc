@@ -1763,7 +1763,7 @@
           type (or static (:dart/type (infer-type dart-obj)))
           type! (dissoc type :nullable)
           member-name (cond-> member-name
-                        (and prop (not (re-matches #"[a-zA-Z_$]+" member-name)))
+                        (and prop (not (re-matches #"[a-zA-Z_$0-9]+" member-name)))
                         munge-str)
           num-only-member-name (when (.startsWith member-name "num:") (subs member-name 4))
           type! (cond-> type! num-only-member-name num-type)
