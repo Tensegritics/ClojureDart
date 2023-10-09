@@ -479,6 +479,7 @@
            :defaults {:target "flutter"}}
    "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart."}
    "clean" {:doc "When there's something wrong with compilation, erase all ClojureDart build artifacts.\nConsider running flutter clean too."}
+   "help" {:doc (:doc help-spec)}
    "upgrade" {:doc "Upgrade cljd to latest version."}
    "watch" {:doc "Like compile but keep recompiling in response to file updates."}
    "flutter" {:options false
@@ -492,6 +493,7 @@
       (let [[options cmd cmd-opts & args] (parse-args commands args)]
         (case cmd
           :help (print-help commands)
+          "help" (print-help commands)
           "init" (init-project args)
           ("compile" "watch")
           (compile-cli
