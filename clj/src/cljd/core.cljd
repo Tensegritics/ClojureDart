@@ -7404,10 +7404,11 @@ specified.
   {:pre [(symbol? tag)]}
   (TaggedLiteral. tag form -1))
 
-(defmacro defrecord [name [& fields] & opts+specs]
-  (let [key (gensym "key")
-        extmap (with-meta 'extmap {:tag (with-meta 'dart:core/Map
-                                          {:type-params '(K V)})})
+(defmacro defrecord [name fields & opts+specs]
+  (let [key `key#
+        extmap-sym (with-meta `extmap# {:tag 'dart:core/Map})
+        meta-sym `meta#
+        hash-sym `hash#
         record-body
         ['^:mixin cljd.core/EqualsEquivMixin
          'cljd.core/IRecord
@@ -7417,42 +7418,48 @@ specified.
            `(~'-equiv [~this ~other]
              (or (identical? ~this ~other)
                (and (dart/is? ~other ~name)
-                 ~@(map (fn [field]
-                          `(= ~field (~(keyword field) ~other) ; TODO direct field access
-                             #_~(list (symbol (str ".-" field)) (with-meta other {:tag name})))) fields)
-                 (= ~extmap
-                   (.-extmap ~(with-meta other {:tag name})))))))
+                 (let [~(with-meta other {:tag name}) ~other]
+                   (and
+                     (or
+                       (.== -1 ~hash-sym)
+                       (.== -1 (. ~other ~(str "-" hash-sym)))
+                       (.== ~hash-sym (. ~other ~(str "-" hash-sym))))
+                     ~@(map (fn [field]
+                              `(= ~field (~(keyword field) ~other) ; TODO direct field access
+                                 #_~(list (symbol (str ".-" field)) (with-meta other {:tag name})))) fields)
+                     (= ~extmap-sym
+                       (. ~other ~(str "-" extmap-sym)))))))))
          'cljd.core/IMap
          `(~'-dissoc [coll# k#]
            (if (contains? #{~@(map keyword fields)} k#)
-             (dissoc (with-meta (into {} coll#) ~'meta) k#)
-             (new ~name ~@(conj (vec fields) 'meta) (or (dissoc ~extmap k#) {}) -1)))
+             (dissoc (with-meta (into {} coll#) ~meta-sym) k#)
+             (new ~name ~@(conj (vec fields) meta-sym) (or (dissoc ~extmap-sym k#) {}) -1)))
          'cljd.core/ISeqable
          `(~'-seq [coll#]
            ;; TODO: cast ME to K & V
-           (seq (concat [~@(map #(list 'new 'dart:core/MapEntry (keyword %) %) fields)]  ~extmap)))
+           (seq (concat [~@(map #(list 'new 'dart:core/MapEntry (keyword %) %) fields)]  ~extmap-sym)))
          'cljd.core/IAssociative
          (let [v (gensym "val")]
            `(~'-assoc [coll# k# ~v]
              (case k#
                ~@(mapcat (fn [fld]
-                           [(keyword fld) (list* `new name (replace {fld v} (conj (vec fields) 'meta extmap -1)))])
+                           [(keyword fld) (list* `new name (replace {fld v} (conj (vec fields) meta-sym extmap-sym -1)))])
                    fields)
-               (new ~name ~@fields ~'meta (assoc ~extmap k# ~v) -1))))
+               (new ~name ~@fields ~meta-sym (assoc ~extmap-sym k# ~v) -1))))
          'cljd.core/ILookup
          `(~'-contains-key? [o# ~key]
            ~(if (seq fields)
               `(case ~key
                  ~(map keyword fields) true
-                 (contains? ~extmap ~key))
-              `(contains? ~extmap ~key)))
+                 (contains? ~extmap-sym ~key))
+              `(contains? ~extmap-sym ~key)))
          `(~'-lookup [o# ~key] (~'-lookup o# ~key nil))
          `(~'-lookup [o# ~key not-found#]
            (case ~key
              ~@(mapcat (fn [f] [(keyword f) f]) fields)
-             (get ~extmap ~key not-found#)))
+             (get ~extmap-sym ~key not-found#)))
          'cljd.core/ICounted
-         `(~'-count [coll#] (+ ~(count fields) (.-length ~extmap)))
+         `(~'-count [coll#] (+ ~(count fields) (.-length ~extmap-sym)))
          'cljd.core/ICollection
          `(~'-conj [coll# o#]
            (if (and (vector? o#) (== (-count o#) 2))
@@ -7460,10 +7467,10 @@ specified.
              (reduce -conj coll# o#)))
          'cljd.core/IWithMeta
          (let [meta (gensym "meta")]
-           `(~'-with-meta [o# ~meta]
-             (new ~name ~@(conj (vec fields) meta extmap -1))))
+           `(~'-with-meta [o# meta#]
+             (new ~name ~@fields meta# ~extmap-sym ~hash-sym)))
          'cljd.core/IMeta
-         `(~'-meta [o#] ~'meta)
+         `(~'-meta [o#] ~meta-sym)
          'cljd.core/IKVReduce
          `(~'-kv-reduce [coll# f# init#]
            (reduce (fn [ret# [k# v#]] (f# ret# k# v#)) init# coll#))
@@ -7474,7 +7481,7 @@ specified.
                     ;; TODO: cast ME to K V
                     (with-meta (into [] (map #(list 'new 'dart:core/MapEntry (keyword %) %) fields))
                       {:fixed true}))
-               (.followedBy (.-entries ~extmap))
+               (.followedBy (.-entries ~extmap-sym))
                ~(with-meta
                   '.cast {:type-params [(with-meta 'dart:core/MapEntry
                                          {:type-params '(K V)})]}))))
@@ -7483,14 +7490,14 @@ specified.
              (-> ~(tagged-literal 'dart
                     (with-meta (into [] (map keyword) fields)
                       {:fixed true}))
-               (.followedBy (.-keys ~extmap))
+               (.followedBy (.-keys ~extmap-sym))
                ^{:type-params [~'K]} .cast)))
          (let [coll (gensym "coll")]
            `(~'values [~coll]
              (-> ~(tagged-literal 'dart
                     (with-meta (vec fields)
                       {:fixed true}))
-               (.followedBy (.-values ~extmap))
+               (.followedBy (.-values ~extmap-sym))
                ^{:type-params [~'V]} .cast)))
          `("[]" [coll# k#]
            (-lookup coll# k# nil))
@@ -7503,11 +7510,10 @@ specified.
          `(~(with-meta 'cast {:tag (with-meta name {:type-params '(RK RV)})
                               :type-params '(RK RV)}) [coll#]
            (new ~(with-meta name  {:type-params '(RK RV)})
-             ~@(conj (vec fields) 'meta
-                 (list '. extmap (with-meta 'cast {:type-params '(RK RV)})) '__hash)))
+             ~@fields ~meta-sym ~extmap-sym ~hash-sym))
          'cljd.core/IHash
          `(~'-hash [coll#]
-           (ensure-hash ~'__hash
+           (ensure-hash ~hash-sym
              (bit-xor
                ~(bit-xor
                   (hash (get-in &env [:nses :current-ns]))
@@ -7518,11 +7524,13 @@ specified.
          ;; TODO print-dup
          `(~'-print [o# sink#]
            (print-map o# sink#))]
-        m (gensym "m")]
+        kws (map keyword fields)
+        m `m#]
     `(do (deftype ~(with-meta name {:type-params '(K V)})
-             ~(conj (vec fields) 'meta
-                extmap
-                (with-meta '__hash {:mutable true :tag `int}))
+             [~@(map #(vary-meta % dissoc :mutable) fields)
+              ~meta-sym
+              ~extmap-sym
+              ~(with-meta hash-sym {:mutable true :tag `int})]
            :type-only true
            ~@(concat opts+specs record-body))
          (defn ~(with-meta (symbol (str "->" name)) {:tag name})
@@ -7530,11 +7538,15 @@ specified.
            (new ~name ~@fields nil {} -1))
          (defn ~(with-meta (symbol (str "map->" name)) {:tag name})
            [~m]
-           (new ~name
-             ~@(map (fn [k] (list (keyword k) m)) fields)
-             nil
-             (reduce dissoc (into {} ~m) ~(into [] (map keyword) fields))
-             -1)))))
+           (let [~m (cond->> ~m
+                      (not (dart/is? ~m PersistentHashMap)) (into {}))]
+             (new ~name
+               ~@(for [k kws] `(~k ~m))
+               nil
+               ~(if (<= (count fields) 1)
+                  `(-> ~m ~@(for [k kws] `(dissoc ~k)))
+                  `(-> ~m transient ~@(for [k kws] `(dissoc! ~k)) persistent!))
+               -1))))))
 
 (defmacro extend-protocol [protocol & types+impls]
   (when-some [[type & more] (seq types+impls)]
