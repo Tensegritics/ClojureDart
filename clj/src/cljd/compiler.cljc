@@ -1779,6 +1779,13 @@
                           (if static (dart-member-lookup type! (str (:element-name static) "." member-name) env))
                           (dart-member-lookup dc-Object member-name+ env))
                         actual-member)
+          ; trying to munge name, just in case (and for records etc.)
+          member-name' (when-not member-info (munge member-name {}))
+          member-info (or member-info
+                        (some-> (dart-member-lookup type! member-name' (meta member) env) actual-member))
+          member-name (if (and member-name' member-info) member-name' member-name)
+          ; end of trying to munge name
+          member-name (:member-name member-info member-name)
           dart-obj (cond
                      (= "==" member-name+) dart-obj
                      (:type-params (meta obj)) ; static only
