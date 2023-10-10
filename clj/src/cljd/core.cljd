@@ -7760,6 +7760,7 @@ specified.
           [:copy arr 1])))) ; ok: odd + 2 + (odd-1) = odd
   (^TreapNode tnode_zip [rnode ^TreapNode lnode ^int rank]
     (assert (= (zero? rank) (even? (alength arr))))
+    (assert (pos? (alength arr)))
     ; fully rezipping for dissoc
     (TreapNode (dec cnt)
       (if (zero? rank)
@@ -7819,15 +7820,15 @@ specified.
    (assert (<= krank rank))
    (if (zero? rank)
      (let [i (.tnode_leaf_search node k cmp)]
-       (if (even? i)
+       (if (even? i) ; found
          (TreapNode (dec cnt) (new-array [:copy arr 0 i] [:copy arr (+ 2 i)])) ; ok: even  + (even-2-even) = even
          node))
      (let [i (.tnode_branch_search node k cmp)]
-       (if (odd? i)
+       (if (odd? i) ; found, merge neighboring nodes
          (TreapNode (dec cnt)
            (new-array
              [:copy arr 0 (dec i)]
-             [:insert (.tnode_zip ^TreapNode (aget arr (dec i)) (aget arr (inc i)) (dec rank))]
+             [:insert (.tnode_zip ^TreapNode (aget arr (inc i)) (aget arr (dec i)) (dec rank))]
              [:copy arr (+ 2 i)])) ; ok: (odd-1) + 1 + (odd-2-odd) = odd
          (let [child (aget arr i)
                child' (.tnode_without ^TreapNode child (dec rank) krank k cmp)]
