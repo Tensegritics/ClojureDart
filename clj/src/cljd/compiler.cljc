@@ -4008,7 +4008,7 @@
         (write condition expr-locus)
         (dart-print ", ")
         (write msg-expr expr-locus)
-        (dart-print ");\n"))
+        (dart-print "); // assert\n\n"))
       dart/await
       (let [[_ expr] x]
         (print-pre locus)
