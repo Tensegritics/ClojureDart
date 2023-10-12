@@ -4762,7 +4762,7 @@
                 child-cnt (.-cnt child)
                 ^BitmapNode? child'
                 (if (zero? hi)
-                  (let [child' (.inode_without child shift h k)]
+                  (let [child' (.inode_without child (+ shift 5) h k)]
                     (when-not (identical? child child') child'))
                   (.inode_without_transient child (+ shift 5) h k))]
             (when child'
@@ -4775,10 +4775,10 @@
                       from-arr arr]
                   (when (< (.-length arr) net-size)
                     (set! arr (aresize arr idx gross-size nil)))
-                  (loop [^int j (inc idx) ^int i (inc j)]
-                    (when (< i net-size)
-                      (aset arr i (aget from-arr j))
-                      (recur (inc j) (inc i))))
+                  (loop [^int i (dec net-size) ^int i-1 (dec i)]
+                    (when (< idx i-1)
+                      (aset arr i (aget from-arr i-1))
+                      (recur i-1 (dec i-1))))
                 (aset arr idx k)
                 (aset arr (inc idx) v)
                 (set! cnt (dec cnt))
