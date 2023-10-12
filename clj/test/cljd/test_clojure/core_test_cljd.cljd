@@ -861,3 +861,10 @@
     (is (true? (case f
                  true false
                  false true)))))
+
+(deftest test-dissoc!-on-datascript-record-extension-failure
+  (let [m {:as :aka, :default nil, :name :aka, :pattern nil, :recursion-limit nil, :recursive? nil, :reverse? nil,
+           :xform nil, :multival? true, :ref? nil, :component? nil, :limit 1000}]
+    (is (= {:as :aka, :default nil, :name :aka, :pattern nil, :recursion-limit nil, :recursive? nil, :reverse? nil,
+            :xform nil, :multival? true, :ref? nil, :component? nil}
+          (-> m transient (dissoc! :limit) persistent!)))))
