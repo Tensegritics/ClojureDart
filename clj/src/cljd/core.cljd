@@ -5493,7 +5493,7 @@
 
 (defn not-empty
   "If coll is empty, returns nil, else coll"
-  {:inline (fn [coll] `(when (seq ~coll) ~coll))
+  {:inline (fn [coll] `(let [coll# ~coll] (when (seq coll#) coll#)))
    :inline-arities #{1}}
   [coll]
   (when (seq coll) coll))
