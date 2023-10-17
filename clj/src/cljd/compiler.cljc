@@ -933,7 +933,7 @@
       (update analyzer-type :type-parameters (fn [ps] (map #(actual-type % type-env) ps))))))
 
 (defn actual-parameters [parameters type-env]
-  (map #(update % :type actual-type type-env) parameters))
+  (some->> parameters (map #(update % :type actual-type type-env))))
 
 (defn actual-member [[type-env member-info]]
   (case (:kind member-info)
@@ -1563,7 +1563,10 @@
                 (list 'dart/as dart-expr expected-type)
                 (list 'dart/. (list 'dart/as dart-expr (dissoc expected-type :type-parameters :nullable)) (into ["cast"] (:type-parameters expected-type)))))])
          casted))
-     (= (:canon-qname expected-type) 'dc.Function) ; TODO : generics
+     (and
+       (= (:canon-qname expected-type) 'dc.Function)
+       (:parameters expected-type))
+     ; TODO : generics
      (let [{:keys [return-type parameters]} expected-type
            [fixed-types optionals] (dart-method-sig expected-type)
            fixed-params (into [] (map (fn [_] (dart-local env))) fixed-types)

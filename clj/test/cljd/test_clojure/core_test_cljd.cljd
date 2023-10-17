@@ -868,3 +868,14 @@
     (is (= {:as :aka, :default nil, :name :aka, :pattern nil, :recursion-limit nil, :recursive? nil, :reverse? nil,
             :xform nil, :multival? true, :ref? nil, :component? nil}
           (-> m transient (dissoc! :limit) persistent!)))))
+
+(deftest magicasting-to-function-types-with-parameters []
+  (is (= "y" (.replaceAllMapped "x" "x" (constantly "y")))))
+
+(deftest dont-magicast-to-function-types-without-parameters []
+  (is (try
+        (Function.apply (identity str) ["abc" "def"])
+        false
+        (catch TypeError e
+          (or (.contains (str e) #" is not a subtype of type 'Function' in type cast")
+            (throw e))))))
