@@ -879,3 +879,15 @@
         (catch TypeError e
           (or (.contains (str e) #" is not a subtype of type 'Function' in type cast")
             (throw e))))))
+
+(deftest test-reify-type-properly-inferred
+  ;; check that this form compiles correctly
+  ;; the inference of the type of this if used to create a compilation error
+  (is (do (.write (if (identity true)
+                    (reify :no-meta true StringSink (write [_ _]))
+                    (StringBuffer "i")) "tactac")
+          true))
+  (is (do (.write (if (identity true)
+                    (reify StringSink (write [_ _]))
+                    (StringBuffer "i")) "tactac")
+          true)))

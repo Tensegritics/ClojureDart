@@ -2813,12 +2813,14 @@
                                      (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs)))
                                    env-for-ctor-call)]
             [parsed-class-meta-specs (emit-class-specs 'dart:core/Object parsed-class-meta-specs env-for-ctor-call)]))
-        all-fields
-        (cond->> closed-overs meta-field (cons meta-field))
-        dart-type (let [const-meta-dart-type (new-dart-type mclass-name (:type-vars env) all-fields (when meta-field parsed-class-meta-specs) env)]
-                    (-> dart-type
-                      (update :interfaces (fnil conj []) (:interfaces const-meta-dart-type))
-                      (update :members merge (:members const-meta-dart-type))))
+        all-fields (cond->> closed-overs meta-field (cons meta-field))
+        dart-type (if meta-field
+                    (let [meta-members (:members (new-dart-type mclass-name (:type-vars env) all-fields parsed-class-meta-specs env))]
+                      (-> dart-type
+                        ; no mixins, no super, only interfaces
+                        (update-in [:members :interfaces] (fnil into []) (:interfaces meta-members))
+                        (update :members into (filter (fn [[k]] (string? k))) meta-members)))
+                    dart-type)
         _ (swap! nses alter-def class-name assoc :dart/type dart-type)
         class (-> class
                   (assoc
