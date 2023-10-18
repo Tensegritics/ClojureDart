@@ -3287,6 +3287,12 @@
         {:dart/type (no-future ret-type)
          :dart/inferred true}))))
 
+(defn emit-dart-async-barrier [form env]
+  (let [dart-expr (emit-do form env)]
+    (if (has-await? dart-expr)
+      (list (list 'dart/fn () :positional () true dart-expr))
+      dart-expr)))
+
 (defn emit-dart-type-like [[_ x like] env]
   (simple-cast (emit x env) (:dart/type (infer-type (emit like env)))))
 
@@ -3321,6 +3327,7 @@
                            set! emit-set!
                            dart/is? emit-dart-is ;; local inference done
                            dart/await emit-dart-await
+                           dart/async-barrier emit-dart-async-barrier
                            dart/assert emit-dart-assert
                            dart/type-like emit-dart-type-like
                            throw emit-throw

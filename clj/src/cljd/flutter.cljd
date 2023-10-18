@@ -217,7 +217,8 @@
 
 (defn ^:macro-support expand-watch
   [&env env binding expr {:keys [dispose] subscribable-binding :as :as opts} forms]
-  (let [accessor (:> opts)
+  (let [expr (list 'dart/async-barrier expr)
+        accessor (:> opts)
         destructured-locals (when-not (symbol? binding)
                               (destructuring-bound-locals binding))
         dispose (if (true? dispose) '.dispose dispose)
