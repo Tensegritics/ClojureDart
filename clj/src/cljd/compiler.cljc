@@ -3190,6 +3190,8 @@
                   (for [[lib & {:keys [as refer rename]}] require-specs
                         :let [_ (when (and (string? lib) (nil? (analyzer-info lib)))
                                   (throw (Exception. (str "Can't find Dart lib: " lib))))
+                              _ (when-not (or (nil? refer) (and (coll? refer) (every? symbol? refer)))
+                                  (throw (ex-info ":refer expects a collection of symbols; :refer :all is not supported." {:refer refer})))
                               clj-ns (when-not (string? lib) lib)
                               dartlib (else->>
                                        (if (string? lib) lib)
