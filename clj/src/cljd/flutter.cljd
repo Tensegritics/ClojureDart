@@ -501,6 +501,28 @@
        (let [~(vary-meta name assoc :tag `widgets/TickerProvider) state#]
          (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))))
 
+
+(defn ^widgets/EdgeInsetsGeometry edge-insets-geometry [x]
+  (cond
+    (instance? widgets/EdgeInsetsGeometry x)
+    x
+    (number? x) (widgets/EdgeInsets.all x)
+    :else
+    (let [{:keys [top bottom left right start end horizontal vertical]} x
+          horizontal (or horizontal 0.0)
+          vertical (or vertical 0.0)]
+      (if (or start end)
+        (widgets/EdgeInsetsDirectional.fromSTEB
+          (or start horizontal) (or top vertical) (or end horizontal) (or bottom vertical))
+        (widgets/EdgeInsets.fromLTRB
+          (or left horizontal) (or top vertical) (or right horizontal) (or bottom vertical))))))
+
+(defn ^:macro-support expand-padding [env padding forms]
+  `(widgets/Padding
+     .key ~(:env key)
+     .padding (edge-insets-geometry ~padding)
+     .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))
+
 (deftype SpyWidget [k child f]
   :extends (widgets/StatelessWidget .key k)
   (build [_ _] child)
@@ -598,7 +620,12 @@
      - bindings are only visible in the body of the watcher, not to the rest of
        the widget.
    :spy expr -- make expr's value available into Flutter DevTools.
-   :context name -- bind name to the current BuildContext."
+   :context name -- bind name to the current BuildContext.
+   :padding -- padding can be either: a EdgeInsetsGeometry instance, a number
+     (applied to all four directions) or a map with keys :left :right :top
+     :bottom :start :end :horizontal :vertical. If either :start or :end are
+     non-nil then :left and :right are ignored. :vertical and :horizontal have
+     e lesser precedence than the others."
   [& body]
   `(-widget-cont {} ~@body))
 
@@ -642,7 +669,8 @@
         `(let [~v ~closest-context] (-widget-cont ~env ~@forms))
         (stateless-flush env (list* :context v forms)))
       :spy (expand-spy env v forms)
-      :vsync (expand-vsync env v forms))))
+      :vsync (expand-vsync env v forms)
+      :padding (expand-padding env v forms))))
 
 (defmacro -widget-cont
   "PRIVATE DONT USE"
