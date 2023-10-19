@@ -523,6 +523,22 @@
      .padding (edge-insets-geometry ~padding)
      .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))
 
+(defn ^:macro-support expand-color [env color forms]
+  `(widgets/ColoredBox
+     .key ~(:env key)
+     .color ~color
+     .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))
+
+(defn ^:macro-support expand-height-width [env forms]
+  (let [dims (take-while (fn [[k]] (case k (:height :width) true false)) (partition 2 forms))
+        forms (drop (* 2 (count dims)) forms)
+        {:keys [height width]} (reduce (fn [m [k v]] (assoc m k v)) {} dims)]
+    `(widgets/SizedBox
+       .key ~(:env key)
+       .width ~width
+       .height ~height
+       .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
+
 (deftype SpyWidget [k child f]
   :extends (widgets/StatelessWidget .key k)
   (build [_ _] child)
@@ -621,11 +637,14 @@
        the widget.
    :spy expr -- make expr's value available into Flutter DevTools.
    :context name -- bind name to the current BuildContext.
-   :padding -- padding can be either: a EdgeInsetsGeometry instance, a number
+   :padding p -- p can be either: a EdgeInsetsGeometry instance, a number
      (applied to all four directions) or a map with keys :left :right :top
      :bottom :start :end :horizontal :vertical. If either :start or :end are
      non-nil then :left and :right are ignored. :vertical and :horizontal have
-     e lesser precedence than the others."
+     e lesser precedence than the others.
+   :color c -- specify the background color; shorthand for (ColoredBox .color c ...)
+   :width w
+   :height h -- specify width and and height shorthands for SizedBox"
   [& body]
   `(-widget-cont {} ~@body))
 
@@ -670,7 +689,9 @@
         (stateless-flush env (list* :context v forms)))
       :spy (expand-spy env v forms)
       :vsync (expand-vsync env v forms)
-      :padding (expand-padding env v forms))))
+      :padding (expand-padding env v forms)
+      :color (expand-color env v forms)
+      (:height :width) (expand-height-width env (list* k v forms)))))
 
 (defmacro -widget-cont
   "PRIVATE DONT USE"
