@@ -9,7 +9,7 @@
 (ns cljd.build
   (:require [cljd.compiler :as compiler]
             [clojure.edn :as edn]
-            [clojure.tools.cli.api :as deps]
+            [clojure.tools.deps.alpha :as deps]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
             [clojure.java.io :as io]))
@@ -485,12 +485,68 @@
    "flutter" {:options false
               :doc "Like watch but hot reload the application in the simulator or device. All options are passed to flutter run."}})
 
+(defn sha256 [string]
+  (let [digest (.digest (java.security.MessageDigest/getInstance "SHA-256") (.getBytes string "UTF-8"))]
+    (apply str (map (partial format "%02x") digest))))
+
+(defn find-pubspec [{:keys [:deps/root paths]}]
+  (if root
+    (let [f (java.io.File. root "pubspec.yaml")]
+      (when (.exists f)
+        (slurp f)))
+    (some
+      (fn [path]
+        (let [f (java.io.File. path)]
+          (if (.isDirectory f)
+            (let [f (java.io.File. f "pubspec.yaml")]
+              (when (.exists f)
+                (slurp f)))
+            (with-open [in (-> f io/input-stream java.util.jar.JarInputStream.)]
+              (loop []
+                (when-some [e (.getNextJarEntry in)]
+                  (if (= "pubspec.yaml" (.getName e))
+                    (slurp in) ; slurp closes `in` but it's ok it's the last action
+                    (recur))))))))
+      paths)))
+
+(defn sync-pubspec! []
+  (let [parser (org.yaml.snakeyaml.Yaml.)
+        existing-deps (into #{}
+                        (for [[name {:strs [path]}] (get (.load parser (slurp "pubspec.yaml")) "dependencies")
+                              :let [[_ sha] (some->> path (re-matches #"^\.clojuredart/deps/(.+)"))]
+                              :when sha]
+                          [name sha]))
+        declared-deps (into {}
+                        (for [pubspec (keep find-pubspec (vals (deps/resolve-deps *deps* {})))
+                              :let [{:strs [name]} (.load parser pubspec)
+                                    sha (sha256 pubspec)]]
+                          [[name sha] pubspec]))
+        deps-to-remove (reduce disj existing-deps (keys declared-deps))
+        deps-to-add (reduce dissoc declared-deps existing-deps)]
+
+       (when-some [names (seq (map first deps-to-remove))]
+         (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "remove"
+           names)
+         (run! #(del-tree (java.io.File. ".clojuredart/deps" (second %))) deps-to-remove))
+
+       (when-some [coords (seq (for [[name sha] (keys deps-to-add)]
+                                 (str name ":{\"path\":\".clojuredart/deps/" sha "\"}")))]
+         (doseq [[[name sha] pubspec] deps-to-add
+                 :let [f (java.io.File. ".clojuredart/deps" sha)]]
+           (.mkdirs f)
+           (spit (java.io.File. f "pubspec.yaml") pubspec))
+         (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--directory=."
+           coords))))
+
 (defn -main [& args]
   (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
             compiler/*lib-path*
             (str (.getPath (java.io.File. "lib")) "/")]
-    (binding [*deps* (:basis (deps/basis nil))]
+    (binding [*deps* (deps/create-basis nil)]
       (let [[options cmd cmd-opts & args] (parse-args commands args)]
+        (case cmd
+          ("compile" "watch" "flutter") (sync-pubspec!)
+          nil)
         (case cmd
           :help (print-help commands)
           "help" (print-help commands)
@@ -516,6 +572,7 @@
             (del-tree (java.io.File. "lib/cljd-out"))
             (del-tree (java.io.File. "test/cljd-out"))
             (del-tree (java.io.File. ".clojuredart"))
+            (sync-pubspec!)
             (println "ClojureDart build state succesfully cleaned!")
             (case (some-> *deps* :cljd/opts :kind)
               :flutter (println "If problems persist, try" (bright "flutter clean"))
