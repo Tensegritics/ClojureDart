@@ -6801,6 +6801,27 @@
     (vreset! box v)
     (throw (Exception. (str "Can't change/establish root binding of: " k " with set!.")))))
 
+(def ^:dynamic *async-error-handler*
+  "nil or unction of two arguments: exception and stack trace.
+   When not nil, will be called whenever an async operation initiated
+   under this binding throws an uncaught exception."
+  nil)
+
+(def ^dart-async/ZoneSpecification -async-error-handler-zone-spec
+  (dart-async/ZoneSpecification
+    .handleUncaughtError
+    (fn [^dart-async/Zone self parent zone e st]
+      (let [f (when-some [vself (. self "[]" (var *async-error-handler*))]
+                (let [vparent (some->
+                                (.-parent self)
+                                (. "[]" (var *async-error-handler*)))]
+                  (when-not (identical? vparent vself)
+                    @vself)))]
+        (if (nil? f)
+          (throw e)
+          ; run in self so that bindings are visible
+          (.run self #(f e st)))))))
+
 (defmacro binding
   "binding => var-symbol init-expr
 
@@ -6811,9 +6832,10 @@
   before the vars are bound to their new values."
   [bindings & body]
   `(dart/run-zoned
-     {:values ~(into {}
-                 (map (fn [[sym v]] [(list 'var sym) (list `volatile! v)]))
-                 (partition 2 bindings))}
+     :values ~(into {}
+               (map (fn [[sym v]] [(list 'var sym) (list `volatile! v)]))
+               (partition 2 bindings))
+     :spec -async-error-handler-zone-spec
      ~@body))
 
 (defmacro await [expr]

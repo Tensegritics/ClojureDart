@@ -2252,6 +2252,7 @@
                 (and (seq? dart-expr) (= 'dart/as (first dart-expr)))
                 (recur [k (second dart-expr)])
                 (:dart/const (infer-type dart-expr)) nil
+                (and (seq? dart-expr) (= 'dart/fn (first dart-expr))) nil
                 :else (throw (ex-info (str "Unexpected dart value in environment for key " k ": " (pr-str dart-expr)) {:dart-expr dart-expr})))))
           env)]
     (into #{} (comp (filter symbol?) (keep dart-locals))
@@ -3295,8 +3296,11 @@
       (list (list 'dart/fn () :positional () true dart-expr))
       dart-expr)))
 
-(defn emit-dart-run-zoned [[_ {:keys [values spec]} & body] env]
-  (let [dart-expr (emit-no-recur (cons 'do body) env)
+(defn emit-dart-run-zoned [[_ & opts+body] env]
+  (let [opts (take-while (fn [[k v]] (keyword? k)) (partition 2 (butlast opts+body)))
+        body (drop (* 2 (count opts)) opts+body)
+        {:keys [values spec]} (into {} (map vec) opts)
+        dart-expr (emit-no-recur (cons 'do body) env)
         async (has-await? dart-expr)
         thunk (list 'dart/fn () :positional () async dart-expr)
         thunksym (gensym "dart-run-zoned-thunk")]

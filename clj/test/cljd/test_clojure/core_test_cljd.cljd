@@ -10,7 +10,8 @@
 ;;
 
 (ns cljd.test-clojure.core-test-cljd
-  (:require ["dart:developer" :as dev]
+  (:require ["dart:async" :as dart:async]
+            ["dart:developer" :as dev]
             ["dart:io" :as io]
             ["dart:typed_data" :as typed-data]
             [cljd.string :as str])
@@ -891,3 +892,12 @@
                     (reify StringSink (write [_ _]))
                     (StringBuffer "i")) "tactac")
           true)))
+
+(deftest test-async-error-handler
+  (let [completer (dart:async/Completer)
+        fut (binding [*async-error-handler*
+                      (fn [e st]
+                        (.complete completer e))]
+              (Future/microtask #(throw :from-async)))]
+    (is (not (.-isCompleted completer)))
+    (is (= :from-async (await (.-future completer))))))
