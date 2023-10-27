@@ -417,8 +417,6 @@
   (extensions [x])
   (satisfies [x]))
 
-(def -DYNAMIC-BINDINGS {})
-
 (defprotocol Fn
   "Marker protocol, used to mark multiple/variable arities cljd functions.")
 
@@ -6794,22 +6792,14 @@
           (persistent! tv))))))
 
 (defn get-dynamic-binding [k else]
-  (if-some [binding (get -DYNAMIC-BINDINGS k)]
-    @binding
+  (if-some [box (. dart-async/Zone.current "[]" k)]
+    @box
     else))
 
 (defn set-dynamic-binding! [k v]
-  (if-some [binding (get -DYNAMIC-BINDINGS k)]
-    (vreset! binding v)
+  (if-some [box (. dart-async/Zone.current "[]" k)]
+    (vreset! box v)
     (throw (Exception. (str "Can't change/establish root binding of: " k " with set!.")))))
-
-(defn push-dynamic-bindings [bindings]
-  (let [old -DYNAMIC-BINDINGS]
-    (set! -DYNAMIC-BINDINGS (into old (map (fn [[k v]] [k (volatile! v)])) bindings))
-    old))
-
-(defn restore-dynamic-bindings [bindings]
-  (set! -DYNAMIC-BINDINGS bindings))
 
 (defmacro binding
   "binding => var-symbol init-expr
@@ -6820,21 +6810,14 @@
   are made in parallel (unlike let); all init-exprs are evaluated
   before the vars are bound to their new values."
   [bindings & body]
-  `(let [prev-bindings# (push-dynamic-bindings
-                          ~(into {}
-                             (map (fn [[sym v]] [(list 'var sym) v]))
-                             (partition 2 bindings)))]
-     (try
-       ~@body
-       (finally
-         (restore-dynamic-bindings prev-bindings#)))))
+  `(dart/run-zoned
+     {:values ~(into {}
+                 (map (fn [[sym v]] [(list 'var sym) (list `volatile! v)]))
+                 (partition 2 bindings))}
+     ~@body))
 
 (defmacro await [expr]
-  `(let [bindings# -DYNAMIC-BINDINGS]
-     (try
-       (dart/await ~expr)
-       (finally
-         (set! -DYNAMIC-BINDINGS bindings#)))))
+  `(dart/await ~expr))
 
 (def ^:dynamic ^StringSink *out* dart-io/stdout)
 
@@ -7648,8 +7631,8 @@ specified.
   "Takes a body of expressions (including awaits) and yields
   a dart:async Future.
   Use await, not deref to get the result (or the exception)."
-  [& body] `(let [bindings# -DYNAMIC-BINDINGS]
-              (Future/microtask (fn [] (set! -DYNAMIC-BINDINGS bindings#) ~@body))))
+  [& body]
+  `(Future/microtask (fn [] ~@body)))
 
 (defn- ^int hashrank
   "0x"

@@ -3295,6 +3295,19 @@
       (list (list 'dart/fn () :positional () true dart-expr))
       dart-expr)))
 
+(defn emit-dart-run-zoned [[_ {:keys [values spec]} & body] env]
+  (let [dart-expr (emit-no-recur (cons 'do body) env)
+        async (has-await? dart-expr)
+        thunk (list 'dart/fn () :positional () async dart-expr)
+        thunksym (gensym "dart-run-zoned-thunk")]
+    (emit
+      (cond->>
+          (list '$lib:da/runZoned
+            thunksym '.zoneValues values '.zoneSpecification spec)
+        async
+        (list 'await))
+      (assoc env thunksym thunk))))
+
 (defn emit-dart-type-like [[_ x like] env]
   (simple-cast (emit x env) (:dart/type (infer-type (emit like env)))))
 
@@ -3330,6 +3343,7 @@
                            dart/is? emit-dart-is ;; local inference done
                            dart/await emit-dart-await
                            dart/async-barrier emit-dart-async-barrier
+                           dart/run-zoned emit-dart-run-zoned
                            dart/assert emit-dart-assert
                            dart/type-like emit-dart-type-like
                            throw emit-throw
