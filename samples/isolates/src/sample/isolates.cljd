@@ -1,0 +1,104 @@
+(ns sample.isolates
+  "An example following https://blog.codemagic.io/understanding-flutter-isolates/"
+  (:require ["package:flutter/material.dart" :as m]
+            ["dart:isolate" :as di]
+            ["dart:core" :as dc]
+            [cljd.flutter :as f]))
+
+(defn heavy-computation-task
+  [my-send-port]
+  (let [mike-receive-port (di/ReceivePort.)]
+    (->> mike-receive-port
+         .-sendPort
+         (.send ^di/SendPort my-send-port))
+    (-> mike-receive-port
+        (.forEach
+          (fn [[my-message
+                coffee-type
+                mike-response-send-port]]
+            (.send ^di/SendPort
+                   mike-response-send-port
+                   (str [my-message
+                         coffee-type])))))))
+
+(defn isolate-trigger!
+  [receive-port
+   response-receive-port
+   {::keys [message-box
+            type]}]
+  (let [mike-send-port (await (.-first ^di/ReceivePort receive-port))]
+    (.send ^di/SendPort
+           mike-send-port
+           [message-box
+            type
+            (.-sendPort ^di/ReceivePort response-receive-port)])))
+
+
+(defn isolate-test-ui
+  []
+  (f/widget
+    :let [mike-response-receive-port (di/ReceivePort.)]
+    :watch [mike-response (-> mike-response-receive-port
+                              .-first)]
+    :managed [text-controller0 (m/TextEditingController)
+              text-controller1 (m/TextEditingController)]
+    m/Center
+    m/IntrinsicWidth
+    (m/Column
+      .crossAxisAlignment m/CrossAxisAlignment.stretch
+      .mainAxisAlignment m/MainAxisAlignment.center)
+    .children [(f/widget
+                 (m/Card
+                   .shape (m/RoundedRectangleBorder
+                            .borderRadius (m/BorderRadius.circular 0.0)))
+                 (m/InkWell
+                   .onTap (fn []
+                            (let [text0 (.-text text-controller0)
+                                  text1 (.-text text-controller1)
+                                  my-receive-port (di/ReceivePort.)
+                                  my-isolate (di/Isolate.spawn heavy-computation-task
+                                                               (.-sendPort my-receive-port))]
+                              (dc/print (await my-isolate))
+                              (isolate-trigger! my-receive-port
+                                                mike-response-receive-port
+                                                {::type        text0
+                                                 ::message-box text1}))))
+                 (m/Container .width 100
+                              .height 80
+                              .color (m/Colors.blue.shade200))
+                 (m/Center)
+                 (m/Text "Test Isolates!"))
+               (m/Card
+                 .shape (m/RoundedRectangleBorder
+                          .borderRadius (m/BorderRadius.circular 0.0))
+                 .color (m/Colors.lightGreenAccent.shade700)
+                 .child (if mike-response
+                          (m/Text mike-response)
+                          (m/Text "Waiting for Response")))
+               (m/SizedBox
+                 .height 30)
+               (m/TextField
+                 .controller text-controller1
+                 .decoration (m/InputDecoration
+                               .border (m/OutlineInputBorder
+                                         .borderRadius (m/BorderRadius.circular 0.0))
+                               .labelText "Enter a message"))
+               (m/SizedBox
+                 .height 10)
+               (m/TextField
+                 .controller text-controller0
+                 .decoration (m/InputDecoration
+                               .border (m/OutlineInputBorder
+                                         .borderRadius (m/BorderRadius.circular 0.0))
+                               .labelText "Enter a type"))]))
+
+(defn main []
+  (f/run
+    (m/MaterialApp
+      .title "Test Isolates!"
+      .theme (m/ThemeData
+               .useMaterial3 true)
+      .home (m/Scaffold
+              .appBar (m/AppBar
+                        .title (m/Text "Test Isolates!"))
+              .body (isolate-test-ui)))))
