@@ -1,4 +1,4 @@
-(ns main
+(ns sample.first-flutter-app-codelabs
   (:require
     ["package:flutter/material.dart" :as m]
     ["package:english_words/english_words.dart" :as english]
