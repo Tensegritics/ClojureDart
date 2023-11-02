@@ -217,7 +217,8 @@
 
 (defn ^:macro-support expand-watch
   [&env env binding expr {:keys [dispose] subscribable-binding :as :as opts} forms]
-  (let [accessor (:> opts)
+  (let [expr (list 'dart/async-barrier expr)
+        accessor (:> opts)
         destructured-locals (when-not (symbol? binding)
                               (destructuring-bound-locals binding))
         dispose (if (true? dispose) '.dispose dispose)
@@ -243,16 +244,20 @@
         subscribable `subscribable#
         update-state (if (or accessor destructured-locals)
                        (let [vsym `v#
-                             vexpr (if accessor `(-> ~subscribable ~accessor) vsym)]
+                             vexpr (if accessor `(-> ~subscribable ~accessor) vsym)
+                             vval `vval#
+                             set-state-expr
+                             (if (:dedup opts true)
+                               `(when-not (= ~vval (.-latest ~state))
+                                  (~state ~vval))
+                               `(~state ~vval))]
                          `(fn [~vsym]
                             ~(if destructured-locals
                                `(let [~binding ~vexpr
-                                      tuple# [~@destructured-locals]]
-                                  (when-not (= tuple# (.-latest ~state))
-                                    (~state tuple#)))
-                               `(let [v# ~vexpr]
-                                  (when-not (= v# (.-latest ~state))
-                                    (~state v#))))))
+                                      ~vval [~@destructured-locals]]
+                                  ~set-state-expr)
+                               `(let [~vval ~vexpr]
+                                  ~set-state-expr))))
                        state)
         subscribe-call
         `(let [update# ~update-state
@@ -408,6 +413,20 @@
                (.-k! k#)
                (.-resource! ~expr))))))))
 
+(defn get-of
+  "Takes a BuildContext, a keyword and optionally a default value.
+   Returns the value bound (via :bind) to this keyword."
+  ([ctx k] (get-of ctx k nil))
+  ([^widgets/BuildContext ctx k not-found]
+   (if-some [inherited-elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)]
+     (do
+       (.dependOnInheritedElement ctx inherited-elt .aspect [k])
+       (get (some-> inherited-elt
+              ^InheritedBindings (.-widget)
+              .-bindings)
+         k not-found))
+     not-found)))
+
 (defn ^:macro-support expand-get-inherited [env v forms]
   (if-not (:closest-ctx env)
     `(-widget-cont ~env :context ~closest-context :get ~v ~@forms)
@@ -482,6 +501,44 @@
        (let [~(vary-meta name assoc :tag `widgets/TickerProvider) state#]
          (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))))
 
+
+(defn ^widgets/EdgeInsetsGeometry edge-insets-geometry [x]
+  (cond
+    (instance? widgets/EdgeInsetsGeometry x)
+    x
+    (number? x) (widgets/EdgeInsets.all x)
+    :else
+    (let [{:keys [top bottom left right start end horizontal vertical]} x
+          horizontal (or horizontal 0.0)
+          vertical (or vertical 0.0)]
+      (if (or start end)
+        (widgets/EdgeInsetsDirectional.fromSTEB
+          (or start horizontal) (or top vertical) (or end horizontal) (or bottom vertical))
+        (widgets/EdgeInsets.fromLTRB
+          (or left horizontal) (or top vertical) (or right horizontal) (or bottom vertical))))))
+
+(defn ^:macro-support expand-padding [env padding forms]
+  `(widgets/Padding
+     .key ~(:env key)
+     .padding (edge-insets-geometry ~padding)
+     .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))
+
+(defn ^:macro-support expand-color [env color forms]
+  `(widgets/ColoredBox
+     .key ~(:env key)
+     .color ~color
+     .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))
+
+(defn ^:macro-support expand-height-width [env forms]
+  (let [dims (take-while (fn [[k]] (case k (:height :width) true false)) (partition 2 forms))
+        forms (drop (* 2 (count dims)) forms)
+        {:keys [height width]} (reduce (fn [m [k v]] (assoc m k v)) {} dims)]
+    `(widgets/SizedBox
+       .key ~(:env key)
+       .width ~width
+       .height ~height
+       .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
+
 (deftype SpyWidget [k child f]
   :extends (widgets/StatelessWidget .key k)
   (build [_ _] child)
@@ -549,19 +606,23 @@
        Use `:refresh-on :never` to avoid refreshing (or any other constant
        instead of :never).
    :watch [bindings] -- for each \"binding expr\" pair, subscribe to expr and
-     use binding to bind each value received under the subscription. Each change
-     triggers a rebuild EXCEPT when binding is a destructuring form, in which case
-     the rebuild is triggered only when locals bound by the destructuring do change
-     (according to equality).
-     Any object to which the Subscribable protocol has been extended can be watched.
+     use binding to bind each value received under the subscription. A rebuild
+     is triggered only when bound values change (according to equality).
+     So when binding is a destructuring form, the rebuild is triggered only
+     when locals bound by the destructuring do change, allowing to watch only
+     parts of the value.
+     Any object to which the Subscribable protocol has been extended can be
+     watched.
      Out of the box it means: atoms, Streams, Futures, Listenables,
      ValueListenable and... nil.
      These bindings can take options (in the same way as :managed bindings do).
-     Supported options are  :refresh-on, :dispose and :>
+     Supported options are  :refresh-on, :dispose, :dedup and :>
      - :refresh-on expr -- see :managed
      - :dispose form -- if the object under watch also needs to be managed use
        this option. Works like :dispose for :managed except for \":dispose true\"
        which is a shortcut for \":dispose .dispose\".
+     - :dedup boolean -- defaults to true, set it to false to rebuild on every
+       change
      - :> form -- this one is meant to be used with Listenable instances because
        they don't produce values, just a change notification. So if this option
        is not used you only get trues from the subscription.
@@ -575,7 +636,15 @@
      - bindings are only visible in the body of the watcher, not to the rest of
        the widget.
    :spy expr -- make expr's value available into Flutter DevTools.
-   :context name -- bind name to the current BuildContext."
+   :context name -- bind name to the current BuildContext.
+   :padding p -- p can be either: a EdgeInsetsGeometry instance, a number
+     (applied to all four directions) or a map with keys :left :right :top
+     :bottom :start :end :horizontal :vertical. If either :start or :end are
+     non-nil then :left and :right are ignored. :vertical and :horizontal have
+     e lesser precedence than the others.
+   :color c -- specify the background color; shorthand for (ColoredBox .color c ...)
+   :width w
+   :height h -- specify width and and height shorthands for SizedBox"
   [& body]
   `(-widget-cont {} ~@body))
 
@@ -619,7 +688,10 @@
         `(let [~v ~closest-context] (-widget-cont ~env ~@forms))
         (stateless-flush env (list* :context v forms)))
       :spy (expand-spy env v forms)
-      :vsync (expand-vsync env v forms))))
+      :vsync (expand-vsync env v forms)
+      :padding (expand-padding env v forms)
+      :color (expand-color env v forms)
+      (:height :width) (expand-height-width env (list* k v forms)))))
 
 (defmacro -widget-cont
   "PRIVATE DONT USE"

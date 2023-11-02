@@ -13,7 +13,7 @@
         .body
         (m/Padding .padding (m/EdgeInsets.all 16.0))
         :managed [text-controller (m/TextEditingController)]
-        :bg-watcher ([^m/TextEditingValue {second-input-text .-text} text-controller]
+        :bg-watcher ([^m/TextEditingValue {second-input-text .-text} text-controller ]
                      (dart:core/print (str "Second text field: " second-input-text)))
         m/Column
         .children

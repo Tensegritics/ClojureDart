@@ -187,12 +187,16 @@
                     (assoc m :inline (cons ifn (cons (symbol (str (name fname) "__inliner"))
                                                      (next inline))))
                     m))
+              tag (or (when-not (next fdecl)
+                        ; when one arity, look at meta
+                        (-> fdecl ffirst meta :tag))
+                    (:tag (meta fname)))
+              m (assoc m :tag tag :schroupt (list 'quote (first fdecl)))
               m (conj (if (meta fname) (meta fname) {}) m)]
           (list 'def (with-meta fname m)
                 ;;todo - restore propagation of fn name
                 ;;must figure out how to convey primitive hints to self calls first
-								;;(cons `fn fdecl)
-								(with-meta (cons `fn fdecl) {:rettag (:tag m) :async (:async m)})))))
+ 								(with-meta (cons `fn fdecl) {:rettag (:tag m) :async (:async m)})))))
 
 (def
  ^{:macro true
@@ -397,6 +401,12 @@
            [~@fields]
            (new ~(vary-meta class-name dissoc :type-params) ~@fields))))))
 
+(defn instance?
+  {:inline (fn [class x] `(dart/is? ~x ~class))
+   :inline-arities #{2}}
+  [class x]
+  (throw (UnsupportedError. "instance? can't be used as a function due to Dart design. See https://github.com/Tensegritics/ClojureDart/issues/11 to track progress.")))
+
 (defmacro definterface [iface & meths]
   `(deftype ~(vary-meta iface assoc :abstract true) []
      :type-only true
@@ -406,8 +416,6 @@
 (definterface IProtocol
   (extensions [x])
   (satisfies [x]))
-
-(def -DYNAMIC-BINDINGS {})
 
 (defprotocol Fn
   "Marker protocol, used to mark multiple/variable arities cljd functions.")
@@ -808,7 +816,9 @@
 (extend-type RegExp
   IPrint
   (-print [o sink]
-    (.write ^StringSink sink (.-pattern o))))
+    (.write ^StringSink sink "#\"")
+    (.write ^StringSink sink (.-pattern o))
+    (.write ^StringSink sink "\"")))
 
 ;; TODO js does define infinite but not native & VM, handle theses cases
 (extend-type num
@@ -828,18 +838,27 @@
   (dart/is? x String))
 
 (defn ^bool number?
-  "Returns true if x is a Number"
+  "Return true if x is a Number"
   {:inline (fn [x] `(dart/is? ~x num))
    :inline-arities #{1}}
   [x]
   (dart/is? x num))
 
 (defn ^bool int?
-  "Returns true if x is an int?"
+  "Return true if x is an int"
   {:inline (fn [x] `(dart/is? ~x int))
    :inline-arities #{1}}
   [x]
   (dart/is? x int))
+
+(defn integer?
+  "Return true if n is an integer"
+  {:inline (fn [n] `(or (int? ~n) (dart/is? ~n BigInt)))
+   :inline-arities #{1}}
+  [n]
+  (or
+    (int? n)
+    (dart/is? n BigInt)))
 
 (defn ^int int
   "Coerce to int"
@@ -854,6 +873,13 @@
   (if (string? x)
     (. ^String x "[]" 0)
     (String/fromCharCode x)))
+
+(defn ^bool char?
+  "Returns true if x is a Dart string of length one."
+  {:inline (fn [x] `(and (string? ~x) (== 1 (.-length ~x))))
+   :inline-arities #{1}}
+  [x]
+  (and (string? x) (== 1 (.-length ^String x))))
 
 (extend-type String
   IPrint
@@ -1896,6 +1922,7 @@
   ([name]
    (cond
      (symbol? name) name
+     (= "/" name) (symbol nil "/")
      (string? name) (let [name ^String name
                           idx (.indexOf name "/")]
                       (if (< idx 0)
@@ -2871,11 +2898,11 @@
             (bit-and lo 0x33333333) (bit-and (bit-shift-right lo 2) 0x33333333))]
     (bit-and 127 (bit-shift-right (* (+ (bit-and 0xF0F0F0F v) (bit-and 0xF0F0F0F (bit-shift-right v 4))) 0x1010101) 24))))
 
-(defn ^int mod
+(defn ^num mod
   "Modulus of num and div. Truncates toward negative infinity."
-  {:inline (fn [num div] `(. ~(hint-as num `int) "%" ~(hint-as div `int)))
+  {:inline (fn [num div] `(. ~(hint-as num `num) "%" ~(hint-as div `num)))
    :inline-arities #{2}}
-  [^int num ^int div]
+  [^num num ^num div]
   (. num "%" div))
 
 (defn ^int u32
@@ -3564,6 +3591,13 @@
    which doesn't implement dc.Comparable."
   (-compare [o other]))
 
+(extend-type bool
+  IComparable
+  (-compare [x y]
+    (if (boolean? y)
+      (if (== x y) 0 (case x true 1 -1) )
+      (throw (ArgumentError. (str "Cannot compare " x " to " y))))))
+
 (defn ^int compare [x y]
   (cond
     (identical? x y) 0
@@ -3706,6 +3740,10 @@
     (-nth coll k))
   (-invoke [coll k not-found]
     (-nth coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-nth coll (first more))
+      2 (-nth coll (first more) (second more))))
   IEditableCollection
   (-as-transient [coll]
     (TransientVector. cnt shift ^:unique (Object.) root (aresize tail (.-length tail) 32 nil)))
@@ -3934,6 +3972,10 @@
     (-nth coll k))
   (-invoke [coll k not-found]
     (-nth coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   Comparable
   (compareTo [x y]
     (if (vector? y)
@@ -4316,7 +4358,11 @@
   (-invoke [coll k]
     (-lookup coll k))
   (-invoke [coll k not-found]
-    (-lookup coll k not-found)))
+    (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more)))))
 
 ;;;
 
@@ -4383,6 +4429,10 @@
     (-nth node k))
   (-invoke [node k not-found]
     (-nth node k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-nth coll (first more))
+      2 (-nth coll (first more) (second more))))
   IComparable
   (-compare [x y]
     (if (vector? y)
@@ -4710,7 +4760,7 @@
                 child-cnt (.-cnt child)
                 ^BitmapNode? child'
                 (if (zero? hi)
-                  (let [child' (.inode_without child shift h k)]
+                  (let [child' (.inode_without child (+ shift 5) h k)]
                     (when-not (identical? child child') child'))
                   (.inode_without_transient child (+ shift 5) h k))]
             (when child'
@@ -4723,10 +4773,10 @@
                       from-arr arr]
                   (when (< (.-length arr) net-size)
                     (set! arr (aresize arr idx gross-size nil)))
-                  (loop [^int j (inc idx) ^int i (inc j)]
-                    (when (< i net-size)
-                      (aset arr i (aget from-arr j))
-                      (recur (inc j) (inc i))))
+                  (loop [^int i (dec net-size) ^int i-1 (dec i)]
+                    (when (< idx i-1)
+                      (aset arr i (aget from-arr i-1))
+                      (recur i-1 (dec i-1))))
                 (aset arr idx k)
                 (aset arr (inc idx) v)
                 (set! cnt (dec cnt))
@@ -4854,7 +4904,11 @@
   (-invoke [tcoll k]
     (-lookup tcoll k))
   (-invoke [tcoll k not-found]
-    (-lookup tcoll k not-found)))
+    (-lookup tcoll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more)))))
 
 ;; TODO *configs*
 (defn- print-map [m ^StringSink sink]
@@ -5032,6 +5086,10 @@
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   IEditableCollection
   (-as-transient [coll]
     (let [bitmap-hi (.-bitmap_hi root)
@@ -5155,6 +5213,10 @@
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   IEditableCollection
   (-as-transient [coll] (TransientHashSet. (-as-transient hm))))
 
@@ -5185,7 +5247,11 @@
   (-invoke [tcoll k]
     (-lookup tcoll k nil))
   (-invoke [tcoll k not-found]
-    (-lookup tcoll k not-found)))
+    (-lookup tcoll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more)))))
 
 (def ^PersistentHashSet -EMPTY-SET
   (PersistentHashSet. nil {} -1))
@@ -5425,7 +5491,7 @@
 
 (defn not-empty
   "If coll is empty, returns nil, else coll"
-  {:inline (fn [coll] `(when (seq ~coll) ~coll))
+  {:inline (fn [coll] `(let [coll# ~coll] (when (seq coll#) coll#)))
    :inline-arities #{1}}
   [coll]
   (when (seq coll) coll))
@@ -6726,22 +6792,35 @@
           (persistent! tv))))))
 
 (defn get-dynamic-binding [k else]
-  (if-some [binding (get -DYNAMIC-BINDINGS k)]
-    @binding
+  (if-some [box (. dart-async/Zone.current "[]" k)]
+    @box
     else))
 
 (defn set-dynamic-binding! [k v]
-  (if-some [binding (get -DYNAMIC-BINDINGS k)]
-    (vreset! binding v)
+  (if-some [box (. dart-async/Zone.current "[]" k)]
+    (vreset! box v)
     (throw (Exception. (str "Can't change/establish root binding of: " k " with set!.")))))
 
-(defn push-dynamic-bindings [bindings]
-  (let [old -DYNAMIC-BINDINGS]
-    (set! -DYNAMIC-BINDINGS (into old (map (fn [[k v]] [k (volatile! v)])) bindings))
-    old))
+(def ^:dynamic *async-error-handler*
+  "nil or unction of two arguments: exception and stack trace.
+   When not nil, will be called whenever an async operation initiated
+   under this binding throws an uncaught exception."
+  nil)
 
-(defn restore-dynamic-bindings [bindings]
-  (set! -DYNAMIC-BINDINGS bindings))
+(def ^dart-async/ZoneSpecification -async-error-handler-zone-spec
+  (dart-async/ZoneSpecification
+    .handleUncaughtError
+    (fn [^dart-async/Zone self parent zone e st]
+      (let [f (when-some [vself (. self "[]" (var *async-error-handler*))]
+                (let [vparent (some->
+                                (.-parent self)
+                                (. "[]" (var *async-error-handler*)))]
+                  (when-not (identical? vparent vself)
+                    @vself)))]
+        (if (nil? f)
+          (throw e)
+          ; run in self so that bindings are visible
+          (.run self #(f e st)))))))
 
 (defmacro binding
   "binding => var-symbol init-expr
@@ -6752,21 +6831,15 @@
   are made in parallel (unlike let); all init-exprs are evaluated
   before the vars are bound to their new values."
   [bindings & body]
-  `(let [prev-bindings# (push-dynamic-bindings
-                          ~(into {}
-                             (map (fn [[sym v]] [(list 'var sym) v]))
-                             (partition 2 bindings)))]
-     (try
-       ~@body
-       (finally
-         (restore-dynamic-bindings prev-bindings#)))))
+  `(dart/run-zoned
+     :values ~(into {}
+               (map (fn [[sym v]] [(list 'var sym) (list `volatile! v)]))
+               (partition 2 bindings))
+     :spec -async-error-handler-zone-spec
+     ~@body))
 
 (defmacro await [expr]
-  `(let [bindings# -DYNAMIC-BINDINGS]
-     (try
-       (dart/await ~expr)
-       (finally
-         (set! -DYNAMIC-BINDINGS bindings#)))))
+  `(dart/await ~expr))
 
 (def ^:dynamic ^StringSink *out* dart-io/stdout)
 
@@ -6832,6 +6905,18 @@
   [& more]
   (binding [*print-readably* nil]
     (apply prn more)))
+
+(defn ^String print-str
+  "print to a string, returning it"
+  [& xs]
+  (with-out-str
+    (apply print xs)))
+
+(defn ^String println-str
+  "println to a string, returning it"
+  [& xs]
+    (with-out-str
+     (apply println xs)))
 
 (defn re-groups
   "Returns the groups from a match. If there are no
@@ -7138,6 +7223,50 @@
   [& xforms]
   (Eduction. (apply comp (butlast xforms)) (last xforms) -1))
 
+;; UUID
+(deftype UUID [^String uuid ^:mutable ^int __hash]
+  Object
+  (toString [_] uuid)
+
+  IEquiv
+  (-equiv [_ other]
+    (and (dart/is? other UUID) (identical? uuid (.-uuid ^UUID other))))
+
+  IPrint
+  (-print [o ^StringSink sink]
+    (.write sink (str "#uuid \"" uuid "\"")))
+
+  IHash
+  (-hash [this] (ensure-hash __hash (-hash uuid)))
+  (-hash-realized? [this] (.!= -1 __hash))
+
+  IComparable
+  (-compare [this other]
+    (if (dart/is? other UUID)
+      (compare uuid (.-uuid ^UUID other))
+      (throw (ArgumentError. (str "Cannot compare " this " to " other))))))
+
+(defn uuid
+  "Returns a UUID consistent with the string s."
+  [^String s]
+  (UUID. (.toLowerCase s) -1))
+
+(defn random-uuid
+  "Returns a pseudo-randomly generated UUID instance (i.e. type 4)."
+  []
+  (letfn [(quad-hex []
+            (subs (.toRadixString (+ 65536 (rand-int 65536)) 16) 1))]
+    (let [ver-tripple-hex (.toRadixString (bit-or 0x4000 (bit-and 0x0fff (rand-int 65536))) 16)
+          res-tripple-hex (.toRadixString (bit-or 0x8000 (bit-and 0x3fff (rand-int 65536))) 16)]
+      (uuid
+        (str (quad-hex) (quad-hex) "-" (quad-hex) "-"
+             ver-tripple-hex "-" res-tripple-hex "-"
+             (quad-hex) (quad-hex) (quad-hex))))))
+
+(defn uuid?
+  "Return true if x is a UUID."
+  [x] (dart/is? x UUID))
+
 ;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;; data readers ;;;;;;;;;;;;;;;;;;
 
 (def ^:private timestamp
@@ -7188,7 +7317,8 @@ specified.
   "Default map of data reader functions provided by Clojure. May be
   overridden by binding *data-readers*."
   {'inst parse-timestamp
-   #_#_'dart (fn [form] (throw (ex-info "Not implemented yet" {:form form})))})
+   #_#_'dart (fn [form] (throw (ex-info "Not implemented yet" {:form form})))
+   'uuid uuid})
 
 (def ^:dynamic  *data-readers*
   "Map from reader tag symbols to data reader Vars.
@@ -7279,10 +7409,11 @@ specified.
   {:pre [(symbol? tag)]}
   (TaggedLiteral. tag form -1))
 
-(defmacro defrecord [name [& fields] & opts+specs]
-  (let [key (gensym "key")
-        extmap (with-meta 'extmap {:tag (with-meta 'dart:core/Map
-                                          {:type-params '(K V)})})
+(defmacro defrecord [name fields & opts+specs]
+  (let [key `key#
+        extmap-sym (with-meta `extmap# {:tag 'dart:core/Map})
+        meta-sym `meta#
+        hash-sym `hash#
         record-body
         ['^:mixin cljd.core/EqualsEquivMixin
          'cljd.core/IRecord
@@ -7292,42 +7423,48 @@ specified.
            `(~'-equiv [~this ~other]
              (or (identical? ~this ~other)
                (and (dart/is? ~other ~name)
-                 ~@(map (fn [field]
-                          `(= ~field (~(keyword field) ~other) ; TODO direct field access
-                             #_~(list (symbol (str ".-" field)) (with-meta other {:tag name})))) fields)
-                 (= ~extmap
-                   (.-extmap ~(with-meta other {:tag name})))))))
+                 (let [~(with-meta other {:tag name}) ~other]
+                   (and
+                     (or
+                       (.== -1 ~hash-sym)
+                       (.== -1 (. ~other ~(str "-" hash-sym)))
+                       (.== ~hash-sym (. ~other ~(str "-" hash-sym))))
+                     ~@(map (fn [field]
+                              `(= ~field (~(keyword field) ~other) ; TODO direct field access
+                                 #_~(list (symbol (str ".-" field)) (with-meta other {:tag name})))) fields)
+                     (= ~extmap-sym
+                       (. ~other ~(str "-" extmap-sym)))))))))
          'cljd.core/IMap
          `(~'-dissoc [coll# k#]
            (if (contains? #{~@(map keyword fields)} k#)
-             (dissoc (with-meta (into {} coll#) ~'meta) k#)
-             (new ~name ~@(conj (vec fields) 'meta) (or (dissoc ~extmap k#) {}) -1)))
+             (dissoc (with-meta (into {} coll#) ~meta-sym) k#)
+             (new ~name ~@(conj (vec fields) meta-sym) (or (dissoc ~extmap-sym k#) {}) -1)))
          'cljd.core/ISeqable
          `(~'-seq [coll#]
            ;; TODO: cast ME to K & V
-           (seq (concat [~@(map #(list 'new 'dart:core/MapEntry (keyword %) %) fields)]  ~extmap)))
+           (seq (concat [~@(map #(list 'new 'dart:core/MapEntry (keyword %) %) fields)]  ~extmap-sym)))
          'cljd.core/IAssociative
          (let [v (gensym "val")]
            `(~'-assoc [coll# k# ~v]
              (case k#
                ~@(mapcat (fn [fld]
-                           [(keyword fld) (list* `new name (replace {fld v} (conj (vec fields) 'meta extmap -1)))])
+                           [(keyword fld) (list* `new name (replace {fld v} (conj (vec fields) meta-sym extmap-sym -1)))])
                    fields)
-               (new ~name ~@fields ~'meta (assoc ~extmap k# ~v) -1))))
+               (new ~name ~@fields ~meta-sym (assoc ~extmap-sym k# ~v) -1))))
          'cljd.core/ILookup
          `(~'-contains-key? [o# ~key]
            ~(if (seq fields)
               `(case ~key
                  ~(map keyword fields) true
-                 (contains? ~extmap ~key))
-              `(contains? ~extmap ~key)))
+                 (contains? ~extmap-sym ~key))
+              `(contains? ~extmap-sym ~key)))
          `(~'-lookup [o# ~key] (~'-lookup o# ~key nil))
          `(~'-lookup [o# ~key not-found#]
            (case ~key
              ~@(mapcat (fn [f] [(keyword f) f]) fields)
-             (get ~extmap ~key not-found#)))
+             (get ~extmap-sym ~key not-found#)))
          'cljd.core/ICounted
-         `(~'-count [coll#] (+ ~(count fields) (.-length ~extmap)))
+         `(~'-count [coll#] (+ ~(count fields) (.-length ~extmap-sym)))
          'cljd.core/ICollection
          `(~'-conj [coll# o#]
            (if (and (vector? o#) (== (-count o#) 2))
@@ -7335,10 +7472,10 @@ specified.
              (reduce -conj coll# o#)))
          'cljd.core/IWithMeta
          (let [meta (gensym "meta")]
-           `(~'-with-meta [o# ~meta]
-             (new ~name ~@(conj (vec fields) meta extmap -1))))
+           `(~'-with-meta [o# meta#]
+             (new ~name ~@fields meta# ~extmap-sym ~hash-sym)))
          'cljd.core/IMeta
-         `(~'-meta [o#] ~'meta)
+         `(~'-meta [o#] ~meta-sym)
          'cljd.core/IKVReduce
          `(~'-kv-reduce [coll# f# init#]
            (reduce (fn [ret# [k# v#]] (f# ret# k# v#)) init# coll#))
@@ -7349,26 +7486,24 @@ specified.
                     ;; TODO: cast ME to K V
                     (with-meta (into [] (map #(list 'new 'dart:core/MapEntry (keyword %) %) fields))
                       {:fixed true}))
-               (.followedBy (.-entries ~extmap))
+               (.followedBy (.-entries ~extmap-sym))
                ~(with-meta
                   '.cast {:type-params [(with-meta 'dart:core/MapEntry
                                          {:type-params '(K V)})]}))))
          (let [coll (gensym "coll")]
            `(~(with-meta 'keys {:tag (with-meta 'Iterable {:type-params '(K)})}) [~coll]
              (-> ~(tagged-literal 'dart
-                    (with-meta (into [] (map (fn [field]
-                                               (let [k (gensym "k")]
-                                                 `(let [~(with-meta k {:tag 'K}) ~(keyword field)] ~k))) fields))
-                      {:fixed true
-                       :tag 'K}))
-               (.followedBy (.-keys ~extmap)))))
+                    (with-meta (into [] (map keyword) fields)
+                      {:fixed true}))
+               (.followedBy (.-keys ~extmap-sym))
+               ^{:type-params [~'K]} .cast)))
          (let [coll (gensym "coll")]
            `(~'values [~coll]
              (-> ~(tagged-literal 'dart
                     (with-meta (vec fields)
-                      {:fixed true
-                       :tag 'V}))
-               (.followedBy (.-values ~extmap)))))
+                      {:fixed true}))
+               (.followedBy (.-values ~extmap-sym))
+               ^{:type-params [~'V]} .cast)))
          `("[]" [coll# k#]
            (-lookup coll# k# nil))
          `("[]=" [coll# key# val#]
@@ -7380,11 +7515,10 @@ specified.
          `(~(with-meta 'cast {:tag (with-meta name {:type-params '(RK RV)})
                               :type-params '(RK RV)}) [coll#]
            (new ~(with-meta name  {:type-params '(RK RV)})
-             ~@(conj (vec fields) 'meta
-                 (list '. extmap (with-meta 'cast {:type-params '(RK RV)})) '__hash)))
+             ~@fields ~meta-sym ~extmap-sym ~hash-sym))
          'cljd.core/IHash
          `(~'-hash [coll#]
-           (ensure-hash ~'__hash
+           (ensure-hash ~hash-sym
              (bit-xor
                ~(bit-xor
                   (hash (get-in &env [:nses :current-ns]))
@@ -7395,11 +7529,13 @@ specified.
          ;; TODO print-dup
          `(~'-print [o# sink#]
            (print-map o# sink#))]
-        m (gensym "m")]
+        kws (map keyword fields)
+        m `m#]
     `(do (deftype ~(with-meta name {:type-params '(K V)})
-             ~(conj (vec fields) 'meta
-                extmap
-                (with-meta '__hash {:mutable true :tag `int}))
+             [~@(map #(vary-meta % dissoc :mutable) fields)
+              ~meta-sym
+              ~extmap-sym
+              ~(with-meta hash-sym {:mutable true :tag `int})]
            :type-only true
            ~@(concat opts+specs record-body))
          (defn ~(with-meta (symbol (str "->" name)) {:tag name})
@@ -7407,11 +7543,15 @@ specified.
            (new ~name ~@fields nil {} -1))
          (defn ~(with-meta (symbol (str "map->" name)) {:tag name})
            [~m]
-           (new ~name
-             ~@(map (fn [k] (list (keyword k) m)) fields)
-             nil
-             (reduce dissoc (into {} ~m) ~(into [] (map keyword) fields))
-             -1)))))
+           (let [~m (cond->> ~m
+                      (not (dart/is? ~m PersistentHashMap)) (into {}))]
+             (new ~name
+               ~@(for [k kws] `(~k ~m))
+               nil
+               ~(if (<= (count fields) 1)
+                  `(-> ~m ~@(for [k kws] `(dissoc ~k)))
+                  `(-> ~m transient ~@(for [k kws] `(dissoc! ~k)) persistent!))
+               -1))))))
 
 (defmacro extend-protocol [protocol & types+impls]
   (when-some [[type & more] (seq types+impls)]
@@ -7513,8 +7653,8 @@ specified.
   "Takes a body of expressions (including awaits) and yields
   a dart:async Future.
   Use await, not deref to get the result (or the exception)."
-  [& body] `(let [bindings# -DYNAMIC-BINDINGS]
-              (Future/microtask (fn [] (set! -DYNAMIC-BINDINGS bindings#) ~@body))))
+  [& body]
+  `(Future/microtask (fn [] ~@body)))
 
 (defn- ^int hashrank
   "0x"
@@ -7625,6 +7765,7 @@ specified.
           [:copy arr 1])))) ; ok: odd + 2 + (odd-1) = odd
   (^TreapNode tnode_zip [rnode ^TreapNode lnode ^int rank]
     (assert (= (zero? rank) (even? (alength arr))))
+    (assert (pos? (alength arr)))
     ; fully rezipping for dissoc
     (TreapNode (dec cnt)
       (if (zero? rank)
@@ -7684,15 +7825,15 @@ specified.
    (assert (<= krank rank))
    (if (zero? rank)
      (let [i (.tnode_leaf_search node k cmp)]
-       (if (even? i)
+       (if (even? i) ; found
          (TreapNode (dec cnt) (new-array [:copy arr 0 i] [:copy arr (+ 2 i)])) ; ok: even  + (even-2-even) = even
          node))
      (let [i (.tnode_branch_search node k cmp)]
-       (if (odd? i)
+       (if (odd? i) ; found, merge neighboring nodes
          (TreapNode (dec cnt)
            (new-array
              [:copy arr 0 (dec i)]
-             [:insert (.tnode_zip ^TreapNode (aget arr (dec i)) (aget arr (inc i)) (dec rank))]
+             [:insert (.tnode_zip ^TreapNode (aget arr (inc i)) (aget arr (dec i)) (dec rank))]
              [:copy arr (+ 2 i)])) ; ok: (odd-1) + 1 + (odd-2-odd) = odd
          (let [child (aget arr i)
                child' (.tnode_without ^TreapNode child (dec rank) krank k cmp)]
@@ -7993,6 +8134,10 @@ specified.
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   IReversible
   (-rseq [coll]
     (let [c (.-cnt root)]
@@ -8235,6 +8380,10 @@ specified.
     (-lookup coll k))
   (-invoke [coll k not-found]
     (-lookup coll k not-found))
+  (-apply [coll more]
+    (case (bounded-count 3 more)
+      1 (-lookup coll (first more))
+      2 (-lookup coll (first more) (second more))))
   #_#_IReversible
   (-rseq [coll]
     (when (pos? (-count tmap))
@@ -8272,7 +8421,140 @@ specified.
               (if (reduced? acc)
                 (unreduced acc)
                 (recur acc))))))
-      (f))))
+      (f)))
+  IReversible
+  (-rseq [coll]
+    (let [c (.-cnt root)]
+      (when (pos? c)
+        (iterator-seq
+          (TreapReverseIterator root (alength (.-arr root)) top-rank
+            (.filled #/(List int) top-rank 0)
+            (.filled #/(List TreapNode) top-rank root)
+            (fn [k _] k)
+            nil 0)))))
+  ISorted
+  (-sorted-seq [coll from to flags]
+    (let [flags ^int flags
+          nodes (.filled #/(List TreapNode) top-rank root)
+          idxs (.filled #/(List int) top-rank 0)
+          vnode (volatile! root)
+          from-idx
+          (if (zero? (bit-and 8 flags))
+            0 ; no lower-bound
+            (loop [^int rank top-rank ^TreapNode node root]
+              (if (zero? rank)
+                (let [i (.tnode_leaf_search node from cmp)]
+                  (vreset! vnode node)
+                  (cond
+                    (odd? i) (inc i) ; not-found, next key at (inc i)
+                    (zero? (bit-and 4 flags)) (+ 2 i) ; lower bound excluded
+                    :else i))
+                (let [i (.tnode_branch_search node from cmp)
+                      rank-1 (dec rank)
+                      arr (.-arr node)]
+                  (aset nodes rank-1 node)
+                  (if (odd? i)
+                    (do
+                      (aset idxs rank-1 (+ 3 i))
+                      (recur rank-1 (aget arr (inc i))))
+                    (if-some [child (aget arr i)]
+                      (do
+                        (aset idxs rank-1 (+ 2 i))
+                        (recur rank-1 child))
+                      (do
+                        ; if child is nil it means it's the leftmost child
+                        ; thus there's a key at i+1 and a non-nil sibling at i+2
+                        (aset idxs rank-1 (+ 4 i))
+                        (recur rank-1 (aget arr (+ 2 i))))))))))
+          from-node @vnode
+          from-rank (if (identical? from-node root) top-rank 0)
+          _ (vreset! vnode nil)
+          to-idx
+          (if (zero? (bit-and 2 flags))
+            0 ; no upper bound
+            (loop [^int rank top-rank ^TreapNode node root]
+              (if (zero? rank)
+                (let [i (.tnode_leaf_search node to cmp)]
+                  (vreset! vnode node)
+                  (cond
+                    (odd? i) (inc i) ; not-found, prev key at (dec i) may be in
+                    (zero? (bit-and 1 flags)) i ; upper bound excluded
+                    :else (inc i)))
+                (let [i (.tnode_branch_search node to cmp)
+                      rank-1 (dec rank)
+                      arr (.-arr node)]
+                  (if (odd? i)
+                    (recur rank-1 (aget arr (inc i))) ; found
+                    (if-some [child (aget arr i)]
+                      (recur rank-1 child)
+                      ; if child is nil it means it's the leftmost child
+                      ; thus there's a key at i+1 and a non-nil sibling at i+2
+                      (recur rank-1 (aget arr (+ 2 i)))))))))]
+      (iterator-seq
+        (TreapIterator from-node from-idx from-rank
+          idxs nodes (fn [k _] k)
+          @vnode to-idx))))
+  (-sorted-rseq [coll from to flags]
+    (let [flags ^int flags
+          nodes (.filled #/(List TreapNode) top-rank root)
+          idxs (.filled #/(List int) top-rank 0)
+          vnode (volatile! root)
+          to-idx
+          (if (zero? (bit-and 2 flags))
+            (alength (.-arr root)) ; no upper bound
+            (loop [^int rank top-rank ^TreapNode node root]
+              (if (zero? rank)
+                (let [i (.tnode_leaf_search node to cmp)]
+                  (vreset! vnode node)
+                  (cond
+                    (odd? i) (inc i) ; not-found, next key at (dec i), add 2 for init
+                    (zero? (bit-and 1 flags)) i ; upper bound excluded
+                    :else (+ 2 i)))
+                (let [i (.tnode_branch_search node to cmp)
+                      rank-1 (dec rank)
+                      arr (.-arr node)]
+                  (aset nodes rank-1 node)
+                  (if (odd? i)
+                    (do
+                      (aset idxs rank-1 i)
+                      (recur rank-1 (aget arr (inc i))))
+                    (if-some [child (aget arr i)]
+                      (do
+                        (aset idxs rank-1 (- i 1))
+                        (recur rank-1 child))
+                      (do
+                        ; if child is nil it means it's the leftmost child
+                        ; thus there's a key at i+1 and a non-nil sibling at i+2
+                        (aset idxs rank-1 i) ; i == 0
+                        (recur rank-1 (aget arr (+ 2 i))))))))))
+          to-node @vnode
+          to-rank (if (identical? to-node root) top-rank 0)
+          _ (vreset! vnode nil)
+          from-idx
+          (if (zero? (bit-and 8 flags))
+            0 ; no lower bound
+            (loop [^int rank top-rank ^TreapNode node root]
+              (if (zero? rank)
+                (let [i (.tnode_leaf_search node from cmp)]
+                  (vreset! vnode node)
+                  (cond
+                    (odd? i) (inc i) ; not-found, next key at (inc i) may be in
+                    (zero? (bit-and 4 flags)) (+ 2 i) ; lower bound excluded
+                    :else i))
+                (let [i (.tnode_branch_search node from cmp)
+                      rank-1 (dec rank)
+                      arr (.-arr node)]
+                  (if (odd? i)
+                    (recur rank-1 (aget arr (inc i))) ; found
+                    (if-some [child (aget arr i)]
+                      (recur rank-1 child)
+                      ; if child is nil it means it's the leftmost child
+                      ; thus there's a key at i+1 and a non-nil sibling at i+2
+                      (recur rank-1 (aget arr (+ 2 i)))))))))]
+      (iterator-seq
+        (TreapReverseIterator to-node to-idx to-rank
+          idxs nodes (fn [k _] k)
+          @vnode from-idx)))))
 
 (defn sorted-set-by
   "Returns a new sorted set with supplied keys, using the supplied
@@ -8366,3 +8648,10 @@ specified.
   "Return true if x satisfies Inst"
   [x]
   (satisfies? IInst x))
+
+(defn into-array
+  "Returns an fixed List<dynamic> with components set to the values in aseq.   Optional type argument accepted for compatibility with Clojure but unused
+  because of Dart lack of reflexivity."
+  ([aseq]
+   (.from #/(List dynamic) aseq .growable false))
+  ([type aseq] (into-array aseq)))

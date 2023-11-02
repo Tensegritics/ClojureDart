@@ -37,6 +37,8 @@ The two missing big features are:
 [Youtube](https://www.youtube.com/channel/UCCkvOkh6pXzYqkFKDgoyWRg)
 [Twitter](https://twitter.com/clojuredart)
 
+Don't forget to subscribe to [Curiosities -- our newsletter on ClojureDart and more](https://buttondown.email/tensegritics-curiosities)!
+
 # Your first app!
 
 Prerequisites: Clojure and Flutter installed and on your path.

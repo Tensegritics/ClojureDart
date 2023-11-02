@@ -63,7 +63,7 @@
                                                 mike-response-receive-port
                                                 {::type        text0
                                                  ::message-box text1}))))
-                 (m/Container .width 100
+                 (m/Container .width 150
                               .height 80
                               .color (m/Colors.blue.shade200))
                  (m/Center)
@@ -76,7 +76,7 @@
                           (m/Text mike-response)
                           (m/Text "Waiting for Response")))
                (m/SizedBox
-                 .height 30)
+                 .height 15)
                (m/TextField
                  .controller text-controller1
                  .decoration (m/InputDecoration
@@ -84,7 +84,7 @@
                                          .borderRadius (m/BorderRadius.circular 0.0))
                                .labelText "Enter a message"))
                (m/SizedBox
-                 .height 10)
+                 .height 5)
                (m/TextField
                  .controller text-controller0
                  .decoration (m/InputDecoration

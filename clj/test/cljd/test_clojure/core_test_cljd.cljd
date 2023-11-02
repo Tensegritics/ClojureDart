@@ -10,7 +10,8 @@
 ;;
 
 (ns cljd.test-clojure.core-test-cljd
-  (:require ["dart:developer" :as dev]
+  (:require ["dart:async" :as dart:async]
+            ["dart:developer" :as dev]
             ["dart:io" :as io]
             ["dart:typed_data" :as typed-data]
             [cljd.string :as str])
@@ -851,3 +852,52 @@
               (.-first! v "val")
               (.-first v)))]
     (is (= "val" (f (doto (#/(Map String List)) (. "[]=" "key" #dart ["hey"])))))))
+
+(deftest testing-case-on-bool-working
+  (let [t (identity true)
+        f (identity false)]
+    (is (false? (case t
+                  true false
+                  false true)))
+    (is (true? (case f
+                 true false
+                 false true)))))
+
+(deftest test-dissoc!-on-datascript-record-extension-failure
+  (let [m {:as :aka, :default nil, :name :aka, :pattern nil, :recursion-limit nil, :recursive? nil, :reverse? nil,
+           :xform nil, :multival? true, :ref? nil, :component? nil, :limit 1000}]
+    (is (= {:as :aka, :default nil, :name :aka, :pattern nil, :recursion-limit nil, :recursive? nil, :reverse? nil,
+            :xform nil, :multival? true, :ref? nil, :component? nil}
+          (-> m transient (dissoc! :limit) persistent!)))))
+
+(deftest magicasting-to-function-types-with-parameters []
+  (is (= "y" (.replaceAllMapped "x" "x" (constantly "y")))))
+
+(deftest dont-magicast-to-function-types-without-parameters []
+  (is (try
+        (Function.apply (identity str) ["abc" "def"])
+        false
+        (catch TypeError e
+          (or (.contains (str e) #" is not a subtype of type 'Function' in type cast")
+            (throw e))))))
+
+(deftest test-reify-type-properly-inferred
+  ;; check that this form compiles correctly
+  ;; the inference of the type of this if used to create a compilation error
+  (is (do (.write (if (identity true)
+                    (reify :no-meta true StringSink (write [_ _]))
+                    (StringBuffer "i")) "tactac")
+          true))
+  (is (do (.write (if (identity true)
+                    (reify StringSink (write [_ _]))
+                    (StringBuffer "i")) "tactac")
+          true)))
+
+(deftest test-async-error-handler
+  (let [completer (dart:async/Completer)
+        fut (binding [*async-error-handler*
+                      (fn [e st]
+                        (.complete completer e))]
+              (Future/microtask #(throw :from-async)))]
+    (is (not (.-isCompleted completer)))
+    (is (= :from-async (await (.-future completer))))))

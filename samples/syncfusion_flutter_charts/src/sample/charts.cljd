@@ -1,0 +1,47 @@
+(ns sample.charts
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:syncfusion_flutter_charts/charts.dart" :as syncfusion_charts]
+            ["package:syncfusion_flutter_charts/sparkcharts.dart" :as syncfusion_sparkcharts]
+            [cljd.flutter :as f]))
+
+(defn main []
+  (f/run
+    m/MaterialApp
+    .home
+    (m/Scaffold .appBar (m/AppBar .title (m/Text "Syncfusion Cljd charts")))
+    .body
+    :let [data [{:year "Jan" :sales 35}
+                {:year "Feb" :sales 28}
+                {:year "Mar"  :sales 34}
+                {:year "Apr"  :sales 32}
+                {:year "May"  :sales 40}]]
+    m/Column
+    .children
+    [(syncfusion_charts/SfCartesianChart
+       .primaryXAxis (syncfusion_charts/CategoryAxis)
+       .title (syncfusion_charts/ChartTitle .text "Half yearly sales analysis")
+       .legend (syncfusion_charts/Legend .isVisible true)
+       .tooltipBehavior (syncfusion_charts/TooltipBehavior .enable true)
+       .series
+       ;; here type hint is needed since syncfusion defined it as `dynamic` in their doc but
+       ;; for some reason they are still waiting for a List<ChartSeries>
+       #dart ^syncfusion_charts/ChartSeries
+       [(syncfusion_charts/LineSeries
+          .dataSource data
+          .xValueMapper (fn [d _] (:year d))
+          .yValueMapper (fn [d _] (:sales d))
+          .name "Sales"
+          .dataLabelSettings (syncfusion_charts/DataLabelSettings .isVisible true))])
+     (f/widget
+       m/Expanded
+       (m/Padding .padding (m/EdgeInsets.all 8))
+       (syncfusion_sparkcharts/SfSparkLineChart.custom
+         .trackball
+         (syncfusion_sparkcharts/SparkChartTrackball
+           .activationMode syncfusion_sparkcharts/SparkChartActivationMode.tap)
+         .marker (syncfusion_sparkcharts/SparkChartMarker
+                   .displayMode syncfusion_sparkcharts/SparkChartMarkerDisplayMode.all)
+         .labelDisplayMode syncfusion_sparkcharts/SparkChartLabelDisplayMode.all
+         .xValueMapper #(get-in data [% :year])
+         .yValueMapper #(get-in data [% :sales])
+         .dataCount (count data)))]))
