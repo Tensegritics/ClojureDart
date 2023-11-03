@@ -1552,7 +1552,7 @@
   IMap
   (-dissoc [coll k]
     (when-not (nil? coll)
-      (throw (Exception. (str "Dissoc not supported on " (.-runtimeType coll)))))))
+      (throw (Exception. (str "dissoc not supported on " (.-runtimeType coll)))))))
 
 (defn dissoc
   "dissoc[iate]. Returns a new map of the same (hashed/sorted) type,
@@ -2029,9 +2029,11 @@
   [x]
   (satisfies? ISet x))
 
-(extend-type Null
+(extend-type fallback
   ISet
-  (-disjoin [coll v] nil))
+  (-disjoin [coll v]
+    (when-not (nil? coll)
+      (throw (Exception. (str "disj not supported on " (.-runtimeType coll)))))))
 
 (defn disj
   "disj[oin]. Returns a new set of the same (hashed/sorted) type, that
