@@ -47,7 +47,14 @@
     (m/Column
       .crossAxisAlignment m/CrossAxisAlignment.stretch
       .mainAxisAlignment m/MainAxisAlignment.center)
-    .children [(f/widget
+    .children [(m/Card
+                 .shape (m/RoundedRectangleBorder
+                          .borderRadius (m/BorderRadius.circular 0.0))
+                 .color (m/Colors.lightGreenAccent.shade700)
+                 .child (if mike-response
+                          (m/Text mike-response)
+                          (m/Text "Waiting for Response")))
+               (f/widget
                  (m/Card
                    .shape (m/RoundedRectangleBorder
                             .borderRadius (m/BorderRadius.circular 0.0)))
@@ -56,9 +63,8 @@
                             (let [text0 (.-text text-controller0)
                                   text1 (.-text text-controller1)
                                   my-receive-port (di/ReceivePort.)
-                                  my-isolate (di/Isolate.spawn heavy-computation-task
-                                                               (.-sendPort my-receive-port))]
-                              (dc/print (await my-isolate))
+                                  _my-isolate (di/Isolate.spawn heavy-computation-task
+                                                                (.-sendPort my-receive-port))]
                               (isolate-trigger! my-receive-port
                                                 mike-response-receive-port
                                                 {::type        text0
@@ -68,13 +74,6 @@
                               .color (m/Colors.blue.shade200))
                  (m/Center)
                  (m/Text "Test Isolates!"))
-               (m/Card
-                 .shape (m/RoundedRectangleBorder
-                          .borderRadius (m/BorderRadius.circular 0.0))
-                 .color (m/Colors.lightGreenAccent.shade700)
-                 .child (if mike-response
-                          (m/Text mike-response)
-                          (m/Text "Waiting for Response")))
                (m/SizedBox
                  .height 15)
                (m/TextField
