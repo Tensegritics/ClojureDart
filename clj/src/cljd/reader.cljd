@@ -331,6 +331,26 @@
       from
       (post-regexp state s from to))))
 
+(def post-symbolic-value
+  (post-read (fn [x]
+               (case x
+                 Inf double/infinity
+                 -Inf double/negativeInfinity
+                 NaN double/nan
+                 (if (symbol? x)
+                   (throw (Exception (str "Unknown symbolic value: ##" x)))
+                   (throw (Exception (str "Unknown token: ##" x))))))))
+
+(defn read-symbolic-value
+  [^ReaderState {:flds [q stack] :as state} ^String s ^int from ^int to]
+  (doto stack
+    (.add post-symbolic-value)
+    (.add do-read))
+  (let [from (do-read state s from to)]
+    (if (neg? from)
+      from
+      (post-symbolic-value state s from to))))
+
 (def post-char-token
   (post-read
     (fn [^String token]
@@ -567,8 +587,9 @@
 
 ;; TODO: should not be in reader.cljd
 (defn special-form? [form]
-  (contains? '#{. set! dart/is? dart/await dart/assert throw new ns try case* quote do var let* loop* recur
-                if fn* letfn def reify* deftype* defprotocol* extend-type-protocol*} form))
+  (contains? '#{. set! dart/is? dart/await dart/async-barrier dart/run-zoned dart/assert dart/type-like
+                throw new ns try case* quote do var let* loop* recur if fn* letfn def reify* deftype*
+                defprotocol* extend-type-protocol*} form))
 
 (defn- syntax-quote [form]
   (cond
@@ -769,7 +790,8 @@
     (aset (int "{") (mk-read-coll "}" set))
     (aset (int \") read-regexp)
     (aset (int \') (mk-read-wrapped 'var))
-    (aset (int \:) read-namespaced-map)))
+    (aset (int \:) read-namespaced-map)
+    (aset (int \#) read-symbolic-value)))
 
 (defn read-string
   "Synchronous, takes a string and returns the value of the first form."
