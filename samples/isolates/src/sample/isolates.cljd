@@ -7,17 +7,17 @@
 
 (defn heavy-computation-task
   [my-send-port]
-  (let [mike-receive-port (di/ReceivePort.)]
-    (->> mike-receive-port
+  (let [my-receive-port (di/ReceivePort)]
+    (->> my-receive-port
          .-sendPort
          (.send ^di/SendPort my-send-port))
-    (-> mike-receive-port
+    (-> my-receive-port
         (.forEach
           (fn [[my-message
                 coffee-type
-                mike-response-send-port]]
+                my-response-send-port]]
             (.send ^di/SendPort
-                   mike-response-send-port
+                   my-response-send-port
                    (str [my-message
                          coffee-type])))))))
 
@@ -26,20 +26,19 @@
    response-receive-port
    {::keys [message-box
             type]}]
-  (let [mike-send-port (await (.-first ^di/ReceivePort receive-port))]
+  (let [my-send-port (await (.-first ^di/ReceivePort receive-port))]
     (.send ^di/SendPort
-           mike-send-port
+           my-send-port
            [message-box
             type
             (.-sendPort ^di/ReceivePort response-receive-port)])))
 
 
-(defn isolate-test-ui
-  []
+(def isolate-test-ui
   (f/widget
-    :let [mike-response-receive-port (di/ReceivePort.)]
-    :watch [mike-response (-> mike-response-receive-port
-                              .-first)]
+    :let [my-response-receive-port (di/ReceivePort)]
+    :watch [my-response (.-first my-response-receive-port)]
+
     :managed [text-controller0 (m/TextEditingController)
               text-controller1 (m/TextEditingController)]
     m/Center
@@ -51,8 +50,8 @@
                  .shape (m/RoundedRectangleBorder
                           .borderRadius (m/BorderRadius.circular 0.0))
                  .color (m/Colors.lightGreenAccent.shade700)
-                 .child (if mike-response
-                          (m/Text mike-response)
+                 .child (if my-response
+                          (m/Text my-response)
                           (m/Text "Waiting for Response")))
                (f/widget
                  (m/Card
@@ -62,11 +61,11 @@
                    .onTap (fn []
                             (let [text0 (.-text text-controller0)
                                   text1 (.-text text-controller1)
-                                  my-receive-port (di/ReceivePort.)
+                                  my-receive-port (di/ReceivePort)
                                   _my-isolate (di/Isolate.spawn heavy-computation-task
                                                                 (.-sendPort my-receive-port))]
                               (isolate-trigger! my-receive-port
-                                                mike-response-receive-port
+                                                my-response-receive-port
                                                 {::type        text0
                                                  ::message-box text1}))))
                  (m/Container .width 150
@@ -100,4 +99,4 @@
       .home (m/Scaffold
               .appBar (m/AppBar
                         .title (m/Text "Test Isolates!"))
-              .body (isolate-test-ui)))))
+              .body isolate-test-ui))))
