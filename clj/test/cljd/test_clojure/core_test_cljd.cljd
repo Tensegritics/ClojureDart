@@ -905,3 +905,6 @@
 (deftest nil-is-not-a-set-but-disj-must-work
   (is (not (set? nil)))
   (is (nil? (disj nil :a))))
+
+(deftest dart-lists-obey-print-readably
+  (is (= "[\"hello\"]" (pr-str #dart ["hello"]))))

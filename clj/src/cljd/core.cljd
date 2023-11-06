@@ -830,6 +830,10 @@
       (.-isNaN o) (.write ^StringSink sink "##NaN")
       :else (.write ^StringSink sink (.toString o)))))
 
+(extend-type List
+  IPrint
+  (-print [o sink] (print-sequential "[" "]" o sink)))
+
 (defn ^bool string?
   "Return true if x is a String"
   {:inline (fn [x] `(dart/is? ~x String))
@@ -1689,7 +1693,7 @@
     (cond
       (.== double/negativeInfinity o) -1048576
       (.== double/infinity o) 2146435072
-      (.== double/nan o) 2146959360
+      (-> ^double o .-isNaN) 2146959360
       true (m3-hash-int (.-hashCode o))))
   (-hash-realized? [o] true))
 
