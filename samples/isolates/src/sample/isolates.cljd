@@ -1,5 +1,5 @@
 (ns sample.isolates
-  "An example following https://blog.codemagic.io/understanding-flutter-isolates/"
+  "An example following https://stackoverflow.com/questions/36500139/encapsulate-repeated-send-responses-to-the-same-dart-isolate-within-a-single-asy"
   (:require ["package:flutter/material.dart" :as m]
             ["dart:isolate" :as di]
             ["dart:core" :as dc]
@@ -14,12 +14,12 @@
     (-> my-receive-port
         (.forEach
           (fn [[my-message
-                coffee-type
+                my-message-type
                 my-response-send-port]]
             (.send ^di/SendPort
                    my-response-send-port
                    (str [my-message
-                         coffee-type])))))))
+                         my-message-type])))))))
 
 (defn isolate-trigger!
   [receive-port
@@ -33,62 +33,63 @@
             type
             (.-sendPort ^di/ReceivePort response-receive-port)])))
 
-
 (def isolate-test-ui
   (f/widget
-    :let [my-response-receive-port (di/ReceivePort)]
-    :watch [my-response (.-first my-response-receive-port)]
-
+    :watch [my-response (atom nil) :as *my-response]
     :managed [text-controller0 (m/TextEditingController)
               text-controller1 (m/TextEditingController)]
     m/Center
     m/IntrinsicWidth
-    (m/Column
-      .crossAxisAlignment m/CrossAxisAlignment.stretch
-      .mainAxisAlignment m/MainAxisAlignment.center)
-    .children [(m/Card
-                 .shape (m/RoundedRectangleBorder
-                          .borderRadius (m/BorderRadius.circular 0.0))
-                 .color (m/Colors.lightGreenAccent.shade700)
-                 .child (if my-response
-                          (m/Text my-response)
-                          (m/Text "Waiting for Response")))
-               (f/widget
-                 (m/Card
-                   .shape (m/RoundedRectangleBorder
-                            .borderRadius (m/BorderRadius.circular 0.0)))
-                 (m/InkWell
-                   .onTap (fn []
-                            (let [text0 (.-text text-controller0)
-                                  text1 (.-text text-controller1)
-                                  my-receive-port (di/ReceivePort)
-                                  _my-isolate (di/Isolate.spawn heavy-computation-task
-                                                                (.-sendPort my-receive-port))]
-                              (isolate-trigger! my-receive-port
-                                                my-response-receive-port
-                                                {::type        text0
-                                                 ::message-box text1}))))
-                 (m/Container .width 150
-                              .height 80
-                              .color (m/Colors.blue.shade200))
-                 (m/Center)
-                 (m/Text "Test Isolates!"))
-               (m/SizedBox
-                 .height 15)
-               (m/TextField
-                 .controller text-controller1
-                 .decoration (m/InputDecoration
-                               .border (m/OutlineInputBorder
-                                         .borderRadius (m/BorderRadius.circular 0.0))
-                               .labelText "Enter a message"))
-               (m/SizedBox
-                 .height 5)
-               (m/TextField
-                 .controller text-controller0
-                 .decoration (m/InputDecoration
-                               .border (m/OutlineInputBorder
-                                         .borderRadius (m/BorderRadius.circular 0.0))
-                               .labelText "Enter a type"))]))
+    (f/widget
+      (m/Column
+        .crossAxisAlignment m/CrossAxisAlignment.stretch
+        .mainAxisAlignment m/MainAxisAlignment.center
+        .children [(f/widget
+                     (m/Card .shape (m/RoundedRectangleBorder
+                                      .borderRadius (m/BorderRadius.circular 0.0))
+                             .color (m/Colors.lightGreenAccent.-shade700))
+                     (if my-response
+                       (m/Text my-response)
+                       (m/Text "Waiting for Isolate response!")))
+                   (f/widget
+                     (m/Card
+                       .shape (m/RoundedRectangleBorder
+                                .borderRadius (m/BorderRadius.circular 0.0)))
+                     (m/InkWell
+                       .onTap (fn []
+                                (let [text0 (.-text text-controller0)
+                                      text1 (.-text text-controller1)
+                                      my-response-receive-port (di/ReceivePort)]
+                                  (isolate-trigger! (await (let [my-receive-port (di/ReceivePort)]
+                                                             (di/Isolate.spawn heavy-computation-task
+                                                                               (.-sendPort my-receive-port))
+                                                             my-receive-port))
+                                                    my-response-receive-port
+                                                    {::type        text0
+                                                     ::message-box text1})
+                                  (when-let [response-from-port  (await (.-first my-response-receive-port))]
+                                    (reset! *my-response response-from-port)))))
+                     (m/Container .width 150
+                                  .height 80
+                                  .color (m/Colors.blue.-shade200))
+                     (m/Center)
+                     (m/Text "Test Isolates!"))
+                   (m/SizedBox
+                     .height 15)
+                   (m/TextField
+                     .controller text-controller1
+                     .decoration (m/InputDecoration
+                                   .border (m/OutlineInputBorder
+                                             .borderRadius (m/BorderRadius.circular 0.0))
+                                   .labelText "Enter a message"))
+                   (m/SizedBox
+                     .height 5)
+                   (m/TextField
+                     .controller text-controller0
+                     .decoration (m/InputDecoration
+                                   .border (m/OutlineInputBorder
+                                             .borderRadius (m/BorderRadius.circular 0.0))
+                                   .labelText "Enter a type"))]))))
 
 (defn main []
   (f/run
