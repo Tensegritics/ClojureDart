@@ -130,7 +130,7 @@
         (or
           (first
             (for [bin bins
-                  dir (.split path java.io.File/pathSeparator)
+                  dir (cons ".fvm/flutter_sdk/bin" (.split path java.io.File/pathSeparator))
                   :let [file (java.io.File. dir bin)]
                   :when (and (.isFile file) (.canExecute file))]
               (.getAbsolutePath file)))
