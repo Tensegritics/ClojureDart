@@ -511,32 +511,34 @@
 
 (defn sync-pubspec! []
   (let [parser (org.yaml.snakeyaml.Yaml.)
-        existing-deps (into #{}
+        existing-deps (into {}
                         (for [[name {:strs [path]}] (get (.load parser (slurp "pubspec.yaml")) "dependencies")
                               :let [[_ sha] (some->> path (re-matches #"^\.clojuredart/deps/(.+)"))]
                               :when sha]
-                          [name sha]))
+                          [[name sha] (-> path java.io.File. .exists)]))
         declared-deps (into {}
                         (for [pubspec (keep find-pubspec (vals (deps/resolve-deps *deps* {})))
                               :let [{:strs [name]} (.load parser pubspec)
                                     sha (sha256 pubspec)]]
                           [[name sha] pubspec]))
-        deps-to-remove (reduce disj existing-deps (keys declared-deps))
-        deps-to-add (reduce dissoc declared-deps existing-deps)]
+        ; the (filter existing-deps) is to remove "bridge" deps which don't exist on disk
+        ; typically when getting an updated pubspec.yaml from scm (git)
+        deps-to-remove (keys (transduce (filter existing-deps) dissoc existing-deps (keys declared-deps)))
+        deps-to-add (transduce (filter existing-deps) dissoc declared-deps existing-deps)]
 
-       (when-some [names (seq (map first deps-to-remove))]
-         (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "remove"
-           names)
-         (run! #(del-tree (java.io.File. ".clojuredart/deps" (second %))) deps-to-remove))
+    (when-some [names (seq (map first deps-to-remove))]
+      (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "remove"
+        names)
+      (run! #(del-tree (java.io.File. ".clojuredart/deps" (second %))) deps-to-remove))
 
-       (when-some [coords (seq (for [[name sha] (keys deps-to-add)]
-                                 (str name ":{\"path\":\".clojuredart/deps/" sha "\"}")))]
-         (doseq [[[name sha] pubspec] deps-to-add
-                 :let [f (java.io.File. ".clojuredart/deps" sha)]]
-           (.mkdirs f)
-           (spit (java.io.File. f "pubspec.yaml") pubspec))
-         (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--directory=."
-           coords))))
+    (when-some [coords (seq (for [[name sha] (keys deps-to-add)]
+                              (str name ":{\"path\":\".clojuredart/deps/" sha "\"}")))]
+      (doseq [[[name sha] pubspec] deps-to-add
+              :let [f (java.io.File. ".clojuredart/deps" sha)]]
+        (.mkdirs f)
+        (spit (java.io.File. f "pubspec.yaml") pubspec))
+      (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--directory=."
+        coords))))
 
 (defn -main [& args]
   (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
