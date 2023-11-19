@@ -521,13 +521,13 @@
   `(widgets/Padding
      .key ~(:env key)
      .padding (edge-insets-geometry ~padding)
-     .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))
+     .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms)))
 
 (defn ^:macro-support expand-color [env color forms]
   `(widgets/ColoredBox
      .key ~(:env key)
      .color ~color
-     .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))
+     .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms)))
 
 (defn ^:macro-support expand-height-width [env forms]
   (let [dims (take-while (fn [[k]] (case k (:height :width) true false)) (partition 2 forms))
@@ -537,7 +537,7 @@
        .key ~(:env key)
        .width ~width
        .height ~height
-       .child (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
+       .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))
 
 (deftype SpyWidget [k child f]
   :extends (widgets/StatelessWidget .key k)
