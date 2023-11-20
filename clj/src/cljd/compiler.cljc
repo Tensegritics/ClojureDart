@@ -1565,7 +1565,7 @@
          casted))
      (and
        (= (:canon-qname expected-type) 'dc.Function)
-       (:parameters expected-type))
+       (:return-type expected-type))
      ; TODO : generics
      (let [{:keys [return-type parameters]} expected-type
            [fixed-types optionals] (dart-method-sig expected-type)

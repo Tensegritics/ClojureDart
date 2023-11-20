@@ -870,10 +870,14 @@
             :xform nil, :multival? true, :ref? nil, :component? nil}
           (-> m transient (dissoc! :limit) persistent!)))))
 
-(deftest magicasting-to-function-types-with-parameters []
+(deftest magicasting-to-function-types-with-parameters
   (is (= "y" (.replaceAllMapped "x" "x" (constantly "y")))))
 
-(deftest dont-magicast-to-function-types-without-parameters []
+(deftest dont-magicast-to-function-types-with-empty-parameters-list
+  (is (= "Hello"
+        (await (Future.delayed (Duration .microseconds 1) (constantly "Hello"))))))
+
+(deftest dont-magicast-to-function-types-without-parameters
   (is (try
         (Function.apply (identity str) ["abc" "def"])
         false
