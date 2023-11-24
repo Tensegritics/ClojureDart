@@ -436,9 +436,7 @@
      :no-meta true
      (~'createState [_#] (KeepAliveState nil))
      cljd.flutter/StateLifecycle
-     (~'-init-state [_# ^KeepAliveState state#]
-      (.-handle! state# (when ~expr
-                          (foundation/ChangeNotifier))))
+     (~'-init-state [_# ^KeepAliveState state#])
      (~'-dispose-state [_# ^KeepAliveState state#]
       (when-some [handle (.-handle state#)]
         (.dispose handle)

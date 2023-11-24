@@ -8,55 +8,30 @@
     .home
     m/Scaffold
     .body
-    (f/widget
-      :managed [controller (m/PageController)]
-
-      (m/PageView
-        .controller controller
-        .children
-        [(f/widget
-           m/Center
-           :managed [now (DateTime.now) :dispose nil]
-           (m/Text (str "hey 1 - created at: "
-                     (.-hour now) "h"
-                     (.-minute now) "m"
-                     (.-second now) "s")))
-         (f/widget
-           m/Center
-           :managed [now (DateTime.now) :dispose nil]
-           (m/Text (str "hey 1 - created at: "
-                     (.-hour now) "h"
-                     (.-minute now) "m"
-                     (.-second now) "s")))
-         (f/widget
-           m/Center
-           :managed [now (DateTime.now) :dispose nil]
-           (m/Text (str "hey 1 - created at: "
-                     (.-hour now) "h"
-                     (.-minute now) "m"
-                     (.-second now) "s")))]))))
-
-#_(defn main []
-  (f/run
-    m/MaterialApp
-    .home
-    m/Scaffold
-    .body
-    (m/ListView
-      .addAutomaticKeepAlives true
-      .children
-      (map-indexed
-        (fn [idx _]
-          (f/widget
-            :keep-alive true
-            :height 80
-            :color (if (odd? idx) m/Colors.red.shade200 m/Colors.blue.shade200)
-            :managed [now (DateTime.now) :dispose nil]
-            m/Center
-            (m/Text (str idx " created at: "
-                      (.-hour now) "h"
-                      (.-minute now) "m"
-                      (.-second now) "s")
-              .style (m/TextStyle .fontSize 18 .fontWeight m/FontWeight.w700)
-              .textAlign m/TextAlign.center)))
-        (range 100)))))
+    (m/ListView.builder
+      .itemCount 100
+      .itemBuilder
+      (f/build [idx]
+        :key idx
+        :height 80
+        :let [kept-alive (odd? idx)]
+        :color (cond
+                 (zero? idx) m/Colors.white
+                 kept-alive m/Colors.red.shade200
+                 :else m/Colors.blue.shade200)
+        :keep-alive kept-alive
+        :let [now (DateTime.now)]
+        m/Center
+        (m/Text
+          (if (zero? idx)
+            "Scroll back and forth and you should see ephemeral items being rebuilt while kept-alive items are reused."
+            (print-str idx
+              (if kept-alive
+                "KEPT ALIVE"
+                "EPHEMERAL")
+              " rebuilt at: "
+              (.-hour now) "h"
+              (.-minute now) "m"
+              (.-second now) "s"))
+          .style (m/TextStyle .fontSize 18 .fontWeight m/FontWeight.w700)
+          .textAlign m/TextAlign.center)))))
