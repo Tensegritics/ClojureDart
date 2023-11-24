@@ -443,7 +443,7 @@
       (when-some [handle (.-handle state#)]
         (.dispose handle)
         (.-handle! state# nil)))
-     (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
+     (~'-build [_# ^KeepAliveState state# ^widgets/BuildContext ctx#]
       (if ~expr
         (when-not (.-handle state#)
           (-> (.-handle! state# (foundation/ChangeNotifier))

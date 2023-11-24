@@ -1,0 +1,116 @@
+(ns sample.form
+  "Faithful port of https://docs.flutter.dev/cookbook/forms/validation"
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]
+            [cljd.string :as str]))
+
+(defonce app-state (atom {}))
+
+#_(defn main []
+  (f/run
+    m/MaterialApp
+    .home
+    m/Scaffold
+    .body
+    m/Center
+    ;;(m/Container .height 400)
+    (m/Padding .padding (m/EdgeInsets.symmetric .horizontal 12))
+    ;;(m/Container .color m/Colors.green.shade700)
+    ;; enforce ratio 14+6spx / 5+4spy
+    (m/CustomPaint
+      .painter
+      (reify :extends m/CustomPainter
+        (paint [_ canvas size]
+          ;; 1/ dessiner sur toute la largeur
+          (let [width (.-width size)
+                height (.-height size)
+                space-x-factor 0.3
+                circle-radius (/ width (+ 14 (* 6 space-x-factor)))
+                space-between-circles (* circle-radius (+ 1 space-x-factor))
+                paint (doto (m/Paint)
+                        (.-color! m/Colors.red)
+                        (.-style! m/PaintingStyle.fill))]
+            (loop [^int week 0]
+              (when (< week 5)
+                (loop [^int day 0]
+                  (when (< day 7)
+                    (let [x (+ (* (+ circle-radius space-between-circles) day) circle-radius)
+                          y (+ (* (+ circle-radius space-between-circles) week) circle-radius)]
+                      (.drawCircle canvas (m/Offset x y) circle-radius paint)
+                      (recur (inc day)))))
+                (recur (inc week))))))
+        (shouldRepaint [_ _] false)))
+    (m/SizedBox .height 300 .width double/infinity)))
+
+(defn main []
+  (f/run
+    m/MaterialApp
+    .home
+    m/Scaffold
+    .body
+    m/Center
+    ;;(m/Container .height 400)
+    (m/Padding .padding (m/EdgeInsets.symmetric .horizontal 12))
+    :let [now (DateTime.now)]
+    ;;(m/Container .color m/Colors.green.shade700)
+    ;; enforce ratio 14+6spx / 5+4spy
+    (m/CustomPaint
+      .painter
+      (reify :extends m/CustomPainter
+        (paint [_ canvas size]
+          ;; 1/ dessiner sur toute la largeur
+          (let [width (.-width size)
+                height (.-height size)
+                space-x-factor 0.3
+                circle-radius (/ width (+ 14 (* 6 space-x-factor)))
+                space-between-circles (* circle-radius (+ 1 space-x-factor))
+                paint (doto (m/Paint)
+                        (.-color! m/Colors.red)
+                        (.-style! m/PaintingStyle.fill))]
+            (loop [^int week 0]
+              (when (< week 5)
+                (loop [^int day 0]
+                  (when (< day 7)
+                    (let [x (+ (* (+ circle-radius space-between-circles) day) circle-radius)
+                          y (+ (* (+ circle-radius space-between-circles) week) circle-radius)]
+                      (when (and (== week 2) (== day 3))
+                        (.drawRect canvas
+                          (m/Rect.fromPoints
+                            (m/Offset x (- y circle-radius))
+                            (m/Offset
+                              (+ (* (+ circle-radius space-between-circles) (+ 3 day)) circle-radius)
+                              (+ y circle-radius)))
+                          (doto paint
+                            (.-color! (.withAlpha m/Colors.red 100))))
+                        (doto paint
+                          (.-color! m/Colors.red)))
+                      (.drawCircle canvas (m/Offset x y) circle-radius paint)
+
+                      (recur (inc day)))))
+                (recur (inc week))))))
+        (shouldRepaint [_ _] false)))
+    (m/SizedBox .height 300 .width double/infinity)))
+
+
+(defn- date->first-day-for-month-and-first-day-next-month
+  [^DateTime month]
+  (let [{:flds [year month]} month
+        first-day (DateTime year month)
+        {y+1 .-year m+1 .-month} (.add first-day (Duration .days 32))
+        first-day-next-month (DateTime y+1 m+1)]
+    [first-day first-day-next-month]))
+
+(defn main []
+  (f/run
+    m/MaterialApp
+    .home
+    m/Scaffold
+    .body
+    m/Center
+    :bind {:hey (atom nil)}
+    :color m/Colors.red
+    :padding {:top 40}
+    ;;context ctx
+    ;;:bind {:h 1}
+    :get [:hey]
+    (m/Text "hey")))
