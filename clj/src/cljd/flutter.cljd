@@ -403,15 +403,59 @@
                ~closest-context ctx#]
            (-widget-cont ~(assoc env :key nil :closest-ctx true)
              ~@forms)))
-       (~'-update-state [_# state#]
-         (let [state# ^ResourceState state#
-               k# ~refresh-on]
+       (~'-update-state [_# ^ResourceState state#]
+         (let [k# ~refresh-on]
            (when-not (= k# (.-k state#))
              (doto state#
                ~@(when dispose
                    [`(-> .-resource (dart/type-like ~expr) ~dispose)])
                (.-k! k#)
                (.-resource! ~expr))))))))
+
+;; Shoulde we merge ResourceState and KeepAliveState in a single
+;; map-holding generic class?
+(deftype KeepAliveState [^:mutable ^foundation/ChangeNotifier? handle]
+  :extends widgets/State
+  (initState [state]
+    (.initState ^super state)
+    (-init-state (.-widget state) state)
+    nil)
+  (didUpdateWidget [state old-widget]
+    (.didUpdateWidget ^super state old-widget)
+    (-update-state (.-widget state) state)
+    nil)
+  (dispose [state]
+    (-dispose-state (.-widget state) state)
+    (.dispose ^super state))
+  (build [state ctx]
+    (-build (.-widget state) state ctx)))
+
+(defn ^:macro-support expand-keep-alive
+  [&env env expr forms]
+  `(reify :extends (widgets/StatefulWidget .key ~(:key env))
+     :no-meta true
+     (~'createState [_#] (KeepAliveState nil))
+     cljd.flutter/StateLifecycle
+     (~'-init-state [_# ^KeepAliveState state#]
+      (.-handle! state# (when ~expr
+                          (foundation/ChangeNotifier))))
+     (~'-dispose-state [_# ^KeepAliveState state#]
+      (when-some [handle (.-handle state#)]
+        (.dispose handle)
+        (.-handle! state# nil)))
+     (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
+      (if ~expr
+        (when-not (.-handle state#)
+          (-> (.-handle! state# (foundation/ChangeNotifier))
+            widgets/KeepAliveNotification
+            (.dispatch ctx#)))
+        (when-some [handle (.-handle state#)]
+          (doto handle .notifyListeners .dispose)
+          (.-handle! state# nil)))
+      (let [~closest-context ctx#]
+        (-widget-cont ~(assoc env :key nil :closest-ctx true)
+          ~@forms)))
+     (~'-update-state [_# state#])))
 
 (defn get-of
   "Takes a BuildContext, a keyword and optionally a default value.
@@ -557,7 +601,8 @@
    The body is made of forms, dotted parameter names and directives.
    A directive is a keyword followed by a form.
    The following directives are supported:
-   :key, :let, :get, :bind, :vsync, :managed, :watch, :bg-watcher, :spy and :context.
+   :key, :let, :get, :bind, :vsync, :managed, :keep-alive, :watch, :bg-watcher,
+   :spy and :context.
    Forms and directives are threaded (a bit like with ->>) to nest them.
    The outermost form comes first.
    For example:
@@ -635,6 +680,11 @@
      - does not trigger rebuilds
      - bindings are only visible in the body of the watcher, not to the rest of
        the widget.
+   :keep-alive expr -- when expr is true, notify the AutomaticKeepAlive ancestor
+     that it must keep the widget tree alive.
+     See https://api.flutter.dev/flutter/widgets/KeepAlive-class.html for more
+     information and the contexts in which an AutomaticKeepAlive ancestor is
+     implicitely created.
    :spy expr -- make expr's value available into Flutter DevTools.
    :context name -- bind name to the current BuildContext.
    :padding p -- p can be either: a EdgeInsetsGeometry instance, a number
@@ -673,6 +723,8 @@
         (let [[opts & more] (collect-options more  #{:dispose :refresh-on})]
           (expand-resource &env env binding expr opts (list* :managed more forms)))
         `(-widget-cont ~env ~@forms))
+      :keep-alive
+      (expand-keep-alive &env env v forms)
       :bg-watcher
       (let [[[binding expr & more] & body] (seq v)
             [opts & more] (collect-options more
