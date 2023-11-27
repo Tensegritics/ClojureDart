@@ -1533,7 +1533,7 @@
   ([dart-expr expected-type actual-type env]
    (cond
      (= 'dc.dynamic (:canon-qname expected-type)) dart-expr ; TODO: should be covered by is-assignable?
-     (is-assignable? expected-type actual-type) dart-expr ; <1>
+     (is-assignable? expected-type actual-type) dart-expr   ; <1>
      (and (nullable-type? expected-type) (nullable-type? actual-type))
      (if-some [expected-type+ (positive-type expected-type)]
        (with-once [dart-expr dart-expr] env
@@ -2654,7 +2654,7 @@
                 (:type-vars env #{}))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
-        methods (into [] (filter seq?) specs)  ; crude
+        methods (into [] (filter seq?) specs) ; crude
         base-type (emit-type base env)
         classes (sequence
                   (comp (filter symbol?) (remove #{class-name})
@@ -2767,6 +2767,7 @@
                           fingerprint)))
         mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
         dart-type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env)
+
         ;; it's ok to predecl the class without fields because in a closure you don't have direct access to them nor to the constructor.
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (emit-class-specs mclass-name parsed-class-specs env)
@@ -3325,6 +3326,10 @@
           (cond
             (symbol? x) (emit-symbol x env)
             #?@(:clj [(char? x) (str x)])
+            ;; (and (number? x) (= x java.lang.Double/POSITIVE_INFINITY))
+            ;; (emit 'double/infinity env)
+            ;; (and (number? x) (= x java.lang.Double/NEGATIVE_INFINITY))
+            ;; (emit 'double/negativeInfinity env)
             (or (number? x) (boolean? x) (string? x)) x
             (instance? java.util.Date x)
             (let [[_ s] (re-matches #"#inst *\"(.*)\"" (pr-str x))]
@@ -4586,11 +4591,16 @@
     #_(write
         (emit-test `~(tagged-literal 'dart '[1 2]) {})
         return-locus)
-    (write (emit-test `(fn [~(with-meta 'ss
+    #_(write (emit-test `(fn [~(with-meta 'ss
                                {:tag (dart-type-params-reader '(dart:core/Set dart:core/List))})]
                          (let [v (.lookup ss "key")]
                            (.-first! "val"))) {})
-      return-locus))
+      return-locus)
+
+    (get (analyzer-info "dart:core" "Function") "apply")
+
+    #_(write (emit '(Future.delayed (Duration .seconds 1) (constantly "h")) {})
+        return-locus))
 
   (binding [analyzer-info li
             *dart-out* *out*

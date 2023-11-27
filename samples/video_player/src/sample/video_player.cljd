@@ -4,10 +4,102 @@
             ["package:video_player/video_player.dart" :as vp]
             [cljd.flutter :as f]))
 
+(def link "https://firebasestorage.googleapis.com/v0/b/firescript-577a2.appspot.com/o/imgs%2Fapp%2Froamteam%2FkJfCSpPCqL.MOV?alt=media&token=e44c3b26-d9cc-4869-bb1a-ea1b3fadf881" #_"https://firebasestorage.googleapis.com/v0/b/firescript-577a2.appspot.com/o/imgs%2Fapp%2Froamteam%2FZuod3u1o3-.MOV?alt=media&token=a7f069a8-5221-4a71-890f-d1cce6f539bd")
+
+(defn controls [^vp/VideoPlayerController controller]
+  (f/widget
+    :vsync vsync
+    :watch [^vp/VideoPlayerValue  {:flds [duration]} controller]
+    :let [milli-duration (.-inMilliseconds ^Duration duration)]
+    :managed [anim-controller (m/AnimationController
+                                .value 0.0
+                                .duration duration
+                                .lowerBound 0.0
+                                .upperBound milli-duration
+                                .vsync vsync)]
+    (m/Row
+      .mainAxisAlignment m/MainAxisAlignment.center
+      .children
+      [(f/widget
+         (m/IconButton
+           .splashRadius 24
+           .padding m/EdgeInsets.zero
+           .constraints (m/BoxConstraints.tightFor .width 24, .height 24),
+           .onPressed (fn []
+                        (let [{:flds [isPlaying isCompleted]} (-> controller .-value)]
+                          (if isPlaying
+                            (do (.pause controller)
+                                (.stop anim-controller))
+                            (do (.play controller)
+                                (when isCompleted
+                                  (.reset anim-controller))
+                                (.forward anim-controller))))
+                        nil))
+         .icon
+         :watch [^vp/VideoPlayerValue  {:flds [isPlaying]} controller]
+         (m/Icon (if isPlaying
+                   m/Icons.pause
+                   m/Icons.play_arrow)))
+       (f/widget
+         (m/IconButton
+           .splashRadius 24
+           .padding m/EdgeInsets.zero
+           .constraints (m/BoxConstraints.tightFor .width 24, .height 24),
+           .onPressed
+           (fn []
+             (let [volume (-> controller .-value .-volume)]
+               (if (zero? volume)
+                 (.setVolume controller 1.0)
+                 (.setVolume controller 0.0)))
+             nil))
+         .icon
+         :watch [^vp/VideoPlayerValue  {:flds [volume]} controller]
+         :let [_ (dart:core/print volume)]
+         (m/Icon (if (zero? volume) m/Icons.volume_off m/Icons.volume_up)))
+       (f/widget
+         :watch [anim anim-controller]
+         (m/Slider
+           .value anim
+           .onChanged (fn [m]
+                        (.-value! anim-controller m)
+                        (.seekTo controller (Duration .milliseconds (int m)))
+                        nil)
+           .min 0.0
+           .max (max milli-duration 1)
+           .divisions (max milli-duration 1)
+           .activeColor m/Colors.red
+           .inactiveColor (.withOpacity m/Colors.red 0.3)))])))
+
+
+
 (def video-player-widget
   (f/widget
+    :context ctx
+    :managed [controller (doto (vp/VideoPlayerController.network
+                                 link)
+                           .initialize)]
+    :watch [init (f/$ (let [^vp/VideoPlayerValue v (f/<! controller)]
+                        (and (.-isInitialized v) (-> v .-buffered .-isNotEmpty)))) :as init!]
+    (m/Column
+      .children
+      (cond-> [(if init
+                 (f/widget
+                   (m/ConstrainedBox .constraints (m/BoxConstraints.tightFor .height 400))
+                   m/Center
+                   (m/AspectRatio .aspectRatio (doto (-> controller .-value .-aspectRatio) dart:core/print))
+                   (vp/VideoPlayer controller))
+                 (f/widget
+                   (m/ConstrainedBox .constraints (m/BoxConstraints.tightFor .height 400))
+                   m/Center
+                   (m/CircularProgressIndicator)))]
+        init (conj (controls controller))))))
+
+#_(def video-player-widget
+  (f/widget
     :managed [controller (vp/VideoPlayerController.network
-                           "https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4")]
+                           "https://firebasestorage.googleapis.com/v0/b/firescript-577a2.appspot.com/o/imgs%2Fapp%2Froamteam%2FZuod3u1o3-.MOV?alt=media&token=a7f069a8-5221-4a71-890f-d1cce6f539bd"
+                           ;;"https://flutter.github.io/assets-for-api-docs/assets/videos/bee.mp4"
+                           )]
     :watch [_initialization! (.initialize controller)
             ^vp/VideoPlayerValue
             {:flds [isPlaying
@@ -18,20 +110,25 @@
       (f/widget
         (m/FloatingActionButton
           .onPressed (fn []
-                         (if isPlaying
-                           (.pause controller)
-                           (.play controller))
-                         nil))
+                       (if isPlaying
+                         (.pause controller)
+                         (.play controller))
+                       nil))
         (m/Icon (if isPlaying m/Icons.pause m/Icons.play_arrow))))
     .body
     m/Center
     (if isInitialized
       (f/widget
+        (m/ConstrainedBox .constraints (m/BoxConstraints.tightFor .height 400))
         (m/AspectRatio .aspectRatio aspectRatio)
         (vp/VideoPlayer controller))
       (m/Container))))
 
+
 (defn main []
   (f/run
     m/MaterialApp
-    .home video-player-widget))
+    .home
+    m/Scaffold
+    .body
+    video-player-widget))

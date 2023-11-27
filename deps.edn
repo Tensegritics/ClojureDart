@@ -4,4 +4,5 @@
         org.clojure/tools.cli {:mvn/version "1.0.206"}
         org.clojure/tools.deps.alpha {:mvn/version "0.12.1162"}
         org.slf4j/slf4j-simple {:mvn/version "1.7.36"}
-        org.yaml/snakeyaml {:mvn/version "2.2"}}}
+        org.yaml/snakeyaml {:mvn/version "2.2"}
+        vvvvalvalval/scope-capture {:mvn/version "0.3.3"}}}
