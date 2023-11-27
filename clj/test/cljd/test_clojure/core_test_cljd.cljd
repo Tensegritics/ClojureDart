@@ -912,3 +912,10 @@
 
 (deftest dart-lists-obey-print-readably
   (is (= "[\"hello\"]" (pr-str #dart ["hello"]))))
+
+(deftest nested-case-dart-closure-case-dont-throw-becasue-of-over-captured-default-label
+  (is (case (rand)
+        :a false
+        :b (fn []
+             (case (rand) :c false false))
+        true)))

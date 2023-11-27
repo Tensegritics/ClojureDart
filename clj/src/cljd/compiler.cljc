@@ -2029,16 +2029,17 @@
     (empty? clauses) (emit default env)
     (or (every? #(or (char? % ) (string? %)) (mapcat first clauses))
       (every? int? (mapcat first clauses)))
-    (list 'dart/case (emit expr env)
+    (list 'dart/case (emit expr env) nil
       (for [[vs e] clauses]
         [(map #(emit % {}) vs) (emit e env)])
       (emit default env))
     :else
     (let [dart-local (env expr)
           by-hashes (group-by (fn [[v e]] (cljd-hash v)) (for [[vs e] clauses, v vs] [v e]))
-          [tmp :as binding] (dart-binding 'hash (emit (list 'cljd.core/hash expr) env) env)]
+          [tmp :as binding] (dart-binding 'hash (emit (list 'cljd.core/hash expr) env) env)
+          default-label (gensym "_default")]
       (list 'dart/let [binding]
-        (list 'dart/case tmp
+        (list 'dart/case tmp default-label
           (for [[h groups] by-hashes]
             (list
               [h]
@@ -2047,7 +2048,7 @@
                         (list 'dart/if (emit (list 'cljd.core/= (list 'quote v) expr) env)
                           (emit e env)
                           else))
-                '(dart/continue _default) (rseq groups))))
+                (list 'dart/continue default-label) (rseq groups))))
           (emit default env))))))
 
 (defn- variadic? [[params]] (some #{'&} params))
@@ -4062,7 +4063,7 @@
           (write expr throw-locus))
         true)
       dart/case
-      (let [[_ expr clauses default-expr] x
+      (let [[_ expr default-label clauses default-expr] x
             decl (declaration locus)
             locus (declared locus)
             _ (some-> decl dart-print)
@@ -4077,7 +4078,10 @@
                       (dart-print "break;\n")))
                   true
                   clauses)
-            _ (dart-print "_default: default:\n")
+            _ (when default-label
+                (dart-print default-label)
+                (dart-print ": "))
+            _ (dart-print "default:\n")
             exit (and (write default-expr locus) exit)]
         (dart-print "}\n")
         exit)
