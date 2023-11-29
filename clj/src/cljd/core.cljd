@@ -6847,7 +6847,42 @@
 (defmacro await [expr]
   `(dart/await ~expr))
 
-(def ^:dynamic ^StringSink *out* dart-io/stdout)
+(defn ^StringSink print-sink [print]
+  (let [sb (StringBuffer)]
+    (reify
+      StringSink
+      (write [_ x]
+        (let [s (.toString x)]
+          (if (.contains s "\n")
+            (let [chunks (.split s "\n")
+                  last (.removeLast chunks)]
+              (if (.-isEmpty sb)
+                (do
+                  (.forEach chunks print))
+                (do
+                  (print (str sb (.-first chunks)))
+                  (.clear sb)
+                  (-> chunks (.getRange 1 (count chunks)) (.forEach print))))
+              (.write sb last))
+            (.write sb s)))
+        nil)
+      (writeAll [this xs ... sep ""]
+        (when-some [[x & xs] (seq xs)]
+          (.write this x)
+          (doseq [x xs]
+            (.write this sep)
+            (.write this x)))
+        nil)
+      (writeCharCode [this char-code]
+        (.write this (String/fromCharCode char-code))
+        nil)
+      (writeln [this ... x ""]
+        (doto this
+          (.write x)
+          (.write "\n"))
+        nil))))
+
+(def ^:dynamic ^StringSink *out* (print-sink dart:core/print) #_dart-io/stdout)
 
 (defmacro with-out-str
   "Evaluates exprs in a context in which *out* is bound to a fresh
