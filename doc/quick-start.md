@@ -27,7 +27,7 @@ cat << EOF > deps.edn
         tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDart.git"
          ; or  "https://github.com/tensegritics/ClojureDart.git"
-         :sha "39137a89169abe2f288d256cf7a014e45741aaa4"}}
+         :sha "303e2621391abaf52a7179efb848bf6d73ebb2e8"}}
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
  :cljd/opts {:kind :dart
              :main quickstart.helloworld}}
