@@ -600,11 +600,12 @@
      (nil? oldform) "1 or 2 forms after binding vector"
      (= 2 (count bindings)) "exactly 2 forms in binding vector")
    (let [form (bindings 0) tst (bindings 1)
-         temp `some#]
-     `(let [~temp ~(vary-meta tst dissoc :tag)]
+         temp `some#
+         tag (:tag (meta tst))]
+     `(let [~temp ~(cond-> tst tag (vary-meta dissoc :tag))]
         (if (nil? ~temp)
           ~else
-          (let [~form ~(vary-meta temp assoc :tag (:tag (meta tst)))]
+          (let [~form ~(vary-meta temp assoc :tag tag)]
             ~then))))))
 
 (defmacro when-some
