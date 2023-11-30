@@ -919,3 +919,6 @@
         :b (fn []
              (case (rand) :c false false))
         true)))
+
+(deftest nil-as-test-expression-in-when-some
+  (is (nil? (when-some [x nil] 42))))
