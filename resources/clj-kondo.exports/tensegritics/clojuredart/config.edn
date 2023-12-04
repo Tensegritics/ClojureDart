@@ -2,15 +2,20 @@
            :flutter/widget {:level :error}
            :clojure-lsp/unused-public-var {:exclude #{main}}
            :unresolved-namespace {:exclude [dart dart:core]}
-           :unresolved-symbol 
-           {:exclude [AbstractClassInstantiationError ArgumentError AssertionError BidirectionalIterator 
-                      BigIntbool bool CastError Comparable Comparator ConcurrentModificationError 
-                      CyclicInitializationError DateTime double Duration Error Exception Expando  
-                      FallThroughError Finalizer FormatException Function IndexError IntegerDivisionByZeroException
-                      Invocation Iterable Iterator List Map MapEntry Match NoSuchMethodError Null NullThrownError
-                      Object OutOfMemoryError Pattern pragma RangeError RegExp RegExpMatch Runes RuneIterator Set 
-                      Sink StackOverflowError StackTrace StateError Stopwatch String StringBuffer StringSink
-                      Symbol Type TypeError UnimplementedError UnsupportedError Uri WeakReference]}} 
+           :unresolved-symbol
+           {:exclude
+            [AbstractClassInstantiationError ArgumentError AssertionError
+             BidirectionalIterator BigInt bool Comparable Comparator
+             ConcurrentModificationError CyclicInitializationError DateTime
+             Deprecated double Duration dynamic Error Exception Expando
+             FallThroughError FormatException Function Future IndexError int
+             IntegerDivisionByZeroException Invocation Iterable Iterator
+             LateInitializationError List Map MapEntry Match NoSuchMethodError
+             Null NullThrownError num Object OutOfMemoryError Pattern pragma
+             RangeError Record RegExp RegExpMatch RuneIterator Runes Set Sink
+             StackOverflowError StackTrace StateError Stopwatch Stream String
+             StringBuffer StringSink Symbol Type TypeError UnimplementedError
+             UnsupportedError Uri UriData]}}
  :hooks {:analyze-call {cljd.flutter.alpha/widget hooks.flutter/widget
                         cljd.flutter/build hooks.flutter2/analyze-build
                         cljd.flutter/run hooks.flutter2/widget
