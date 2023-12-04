@@ -308,3 +308,26 @@
             (m/ElevatedButton .onPressed #(swap! counters update k inc))
             (m/Text +))
           ")}))))
+
+(defn analyze-build
+  "Rewrite build into an fn with a f/widget call as the body"
+  [{:keys [node]}]
+  (let [[argsvec? & body :as children] (-> node :children rest)
+        widget-node
+        (->> (api/list-node
+              (list*
+               (api/token-node 'cljd.flutter/widget)
+               (if (api/vector-node? argsvec?)
+                 body
+                 children)))
+             (assoc {} :node)
+             widget :node)
+        result
+        (api/list-node
+         (list
+          (api/token-node 'fn)
+          (if (api/vector-node? argsvec?)
+            argsvec?
+            (api/vector-node []))
+          widget-node))]
+    {:node result}))

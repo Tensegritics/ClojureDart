@@ -12,5 +12,6 @@
                       Sink StackOverflowError StackTrace StateError Stopwatch String StringBuffer StringSink
                       Symbol Type TypeError UnimplementedError UnsupportedError Uri WeakReference]}} 
  :hooks {:analyze-call {cljd.flutter.alpha/widget hooks.flutter/widget
+                        cljd.flutter/build hooks.flutter2/analyze-build
                         cljd.flutter/run hooks.flutter2/widget
                         cljd.flutter/widget hooks.flutter2/widget}}}
