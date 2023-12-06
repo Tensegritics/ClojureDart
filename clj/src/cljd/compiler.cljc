@@ -1534,7 +1534,7 @@
    (cond
      (= 'dc.dynamic (:canon-qname expected-type)) dart-expr ; TODO: should be covered by is-assignable?
      (is-assignable? expected-type actual-type) dart-expr   ; <1>
-     (and (nullable-type? expected-type) (nullable-type? actual-type))
+     (and (nullable-type? expected-type) (nullable-type? actual-type)) ; <2>
      (if-some [expected-type+ (positive-type expected-type)]
        (with-once [dart-expr dart-expr] env
          `(dart/if (dart/. nil "!=" ~dart-expr)
@@ -1543,6 +1543,13 @@
             ~(magicast dart-expr expected-type+ actual-type env)
             nil))
        (list 'dart/let [[nil dart-expr]] nil))
+     (and
+       (not= 'dc.dynamic (:canon-qname actual-type))
+       (nullable-type? actual-type))
+     ; expected-type is not nullable because of the previous check <2>
+     (if-some [actual-type+ (positive-type actual-type)]
+       (recur (list 'dart/as dart-expr actual-type+) expected-type actual-type+ env)
+       (throw (Exception. "Can't cast a null expression to something non-nullable.")))
      ;; When inlined #dart[], we keep it inlines
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
      (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))

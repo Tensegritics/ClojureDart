@@ -923,7 +923,8 @@
 (deftest nil-as-test-expression-in-when-some
   (is (nil? (when-some [x nil] 42))))
 
-(deftest nametobedefined
-  (let [f (fn [^Function? f ^Iterable l]
+(deftest throw-when-passing-a-nullable-fn-instead-of-a-non-nullable-fn
+  (let [f (fn [^^{:fn-type {:fixed-params-types [dynamic]
+                            :ret-type bool}} Function? f ^Iterable l]
             (.any l f))]
-    (is (thrown? Exception (f nil [1])))))
+    (is (thrown? Error (f nil [1])))))
