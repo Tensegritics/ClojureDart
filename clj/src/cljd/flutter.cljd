@@ -571,6 +571,12 @@
      .color ~color
      .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms)))
 
+(defn ^:macro-support expand-visible [env visible forms]
+  `(widgets/Visibility
+     .key ~(:env key)
+     .visible ~visible
+     .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms)))
+
 (defn ^:macro-support expand-height-width [env forms]
   (let [dims (take-while (fn [[k]] (case k (:height :width) true false)) (partition 2 forms))
         forms (drop (* 2 (count dims)) forms)
@@ -692,7 +698,8 @@
      e lesser precedence than the others.
    :color c -- specify the background color; shorthand for (ColoredBox .color c ...)
    :width w
-   :height h -- specify width and and height shorthands for SizedBox"
+   :height h -- specify width and and height shorthands for SizedBox
+   :visible v -- when v is false the subsequent widget is replace by an empty widget (m/SizedBox.shrink)"
   [& body]
   `(-widget-cont {} ~@body))
 
@@ -741,7 +748,8 @@
       :vsync (expand-vsync env v forms)
       :padding (expand-padding env v forms)
       :color (expand-color env v forms)
-      (:height :width) (expand-height-width env (list* k v forms)))))
+      (:height :width) (expand-height-width env (list* k v forms))
+      :visible (expand-visible env v forms))))
 
 (defmacro -widget-cont
   "PRIVATE DONT USE"

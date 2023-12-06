@@ -200,7 +200,7 @@
   (case (sexpr node-key)
     :get (get-node->let-binding-nodes node-val)
     :bind (bind-node->let-binding-nodes node-val)
-    (:key :keep-alive :spy :padding :color :width :height) [[(token-node '_) node-val]]
+    (:key :keep-alive :spy :padding :color :width :height :visible) [[(token-node '_) node-val]]
     (:vsync :context) (vector [(with-meta (token-node (sexpr node-val)) (meta node-val))
                                (token-node 'identity)])
     :let (vector-node->let-binding-nodes node-val)
