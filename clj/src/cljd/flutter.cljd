@@ -226,8 +226,9 @@
         ; destructuring may depend on existing locals (for defaults
         ; or even for key names) so we must take this into account
         destructuring-refresh-on
-        (refresh-on-expr nil &env `(let [~binding nil]
-                                     ~(if (symbol? binding) binding  (vec destructured-locals))))
+        (when (seq destructured-locals)
+          (refresh-on-expr nil &env `(fn [~binding]
+                                       ~(vec destructured-locals))))
         refresh-on
         (cond
           (not (and destructuring-refresh-on refresh-on))
