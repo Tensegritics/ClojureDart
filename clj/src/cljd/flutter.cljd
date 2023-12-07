@@ -438,8 +438,8 @@
      cljd.flutter/StateLifecycle
      (~'-init-state [_# ^KeepAliveState state#])
      (~'-dispose-state [_# ^KeepAliveState state#]
-      (when-some [handle (.-handle state#)]
-        (.dispose handle)
+      (when-some [handle# (.-handle state#)]
+        (.dispose handle#)
         (.-handle! state# nil)))
      (~'-build [_# ^KeepAliveState state# ^widgets/BuildContext ctx#]
       (if ~expr
@@ -447,8 +447,8 @@
           (-> (.-handle! state# (foundation/ChangeNotifier))
             widgets/KeepAliveNotification
             (.dispatch ctx#)))
-        (when-some [handle (.-handle state#)]
-          (doto handle .notifyListeners .dispose)
+        (when-some [handle# (.-handle state#)]
+          (doto handle# .notifyListeners .dispose)
           (.-handle! state# nil)))
       (let [~closest-context ctx#]
         (-widget-cont ~(assoc env :key nil :closest-ctx true)
