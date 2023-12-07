@@ -574,7 +574,7 @@
 (defn ^:macro-support expand-visible [env visible forms]
   `(widgets/Visibility
      .key ~(:env key)
-     .visible ~visible
+     .visible (boolean ~visible)
      .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms)))
 
 (defn ^:macro-support expand-height-width [env forms]
@@ -699,7 +699,7 @@
    :color c -- specify the background color; shorthand for (ColoredBox .color c ...)
    :width w
    :height h -- specify width and and height shorthands for SizedBox
-   :visible v -- when v is false the subsequent widget is replace by an empty widget (m/SizedBox.shrink)"
+   :when test -- when test is falsy the subsequent widget is replaced by an empty widget (m/SizedBox.shrink)"
   [& body]
   `(-widget-cont {} ~@body))
 
@@ -749,7 +749,7 @@
       :padding (expand-padding env v forms)
       :color (expand-color env v forms)
       (:height :width) (expand-height-width env (list* k v forms))
-      :visible (expand-visible env v forms))))
+      :when (expand-visible env v forms))))
 
 (defmacro -widget-cont
   "PRIVATE DONT USE"
