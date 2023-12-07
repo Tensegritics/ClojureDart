@@ -385,7 +385,8 @@
 (defn ^:macro-support expand-resource
   [&env env binding expr opts forms]
   (let [dispose (:dispose opts '.dispose)
-        refresh-on (refresh-on-expr opts &env expr)]
+        refresh-on (refresh-on-expr opts &env expr)
+        expr (list 'dart/async-barrier expr)]
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
        (~'createState [_#] (ResourceState nil nil))
