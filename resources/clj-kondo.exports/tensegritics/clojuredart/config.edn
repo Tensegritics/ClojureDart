@@ -16,7 +16,8 @@
              StackOverflowError StackTrace StateError Stopwatch Stream String
              StringBuffer StringSink super Symbol Type TypeError
              UnimplementedError UnsupportedError Uri UriData]}}
- :hooks {:analyze-call {cljd.flutter.alpha/widget hooks.flutter/widget
+ :hooks {:analyze-call {clojure.core/try hooks.cljd-core/stacktrace-catch
+                        cljd.flutter.alpha/widget hooks.flutter/widget
                         cljd.flutter/build hooks.flutter2/analyze-build
                         cljd.flutter/run hooks.flutter2/widget
                         cljd.flutter/widget hooks.flutter2/widget}}}
