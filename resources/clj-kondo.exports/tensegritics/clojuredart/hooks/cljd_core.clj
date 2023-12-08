@@ -7,6 +7,7 @@
      (catch Exception _ex (let [st (StackTrace.)] (println st)))"
   [[head type ex-sym st-sym? & body]]
   (if (and (api/token-node? st-sym?)
+           (not= ex-sym st-sym?)
            (simple-symbol? (api/sexpr st-sym?)))
     (list
      head type ex-sym
