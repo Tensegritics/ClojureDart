@@ -532,7 +532,7 @@
        (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))
 
 (defn ^:macro-support expand-vsync [env name forms]
-  `(reify :extends (widgets/StatefulWidget .key ~(:env key))
+  `(reify :extends (widgets/StatefulWidget .key ~(:key env))
      :no-meta true
      (~'createState [_#]
        (reify :extends widgets/State
@@ -563,28 +563,27 @@
 
 (defn ^:macro-support expand-padding [env padding forms]
   `(widgets/Padding
-     .key ~(:env key)
+     .key ~(:key env)
      .padding (edge-insets-geometry ~padding)
      .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms)))
 
 (defn ^:macro-support expand-color [env color forms]
   `(widgets/ColoredBox
-     .key ~(:env key)
+     .key ~(:key env)
      .color ~color
      .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms)))
 
 (defn ^:macro-support expand-visible [env visible forms]
-  `(widgets/Visibility
-     .key ~(:env key)
-     .visible (boolean ~visible)
-     .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms)))
+  `(if ~visible
+     (-widget-cont ~env ~@forms)
+     (widgets/SizedBox.shrink .key ~(:key env))))
 
 (defn ^:macro-support expand-height-width [env forms]
   (let [dims (take-while (fn [[k]] (case k (:height :width) true false)) (partition 2 forms))
         forms (drop (* 2 (count dims)) forms)
         {:keys [height width]} (reduce (fn [m [k v]] (assoc m k v)) {} dims)]
     `(widgets/SizedBox
-       .key ~(:env key)
+       .key ~(:key env)
        .width ~width
        .height ~height
        .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))
