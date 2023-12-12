@@ -928,3 +928,9 @@
                             :ret-type bool}} Function? f ^Iterable l]
             (.any l f))]
     (is (thrown? Error (f nil [1])))))
+
+(deftest print-level-print-length
+  (is (= "[[[# 7] 8] 9]" (binding [*print-level* 3] (pr-str (reduce vector (range 10))))))
+  (is (= "{{{# 7} 8} 9}" (binding [*print-level* 3] (pr-str (reduce hash-map (range 10))))))
+  (is (= "(0 1 2 ...)" (binding [*print-length* 3] (pr-str (range 10)))))
+  (is (= "{0 1, 4 5, 6 7, ...}" (binding [*print-length* 3] (pr-str (apply hash-map (range 10)))))))

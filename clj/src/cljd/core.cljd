@@ -800,6 +800,25 @@
 (def ^:dynamic *print-readably* true)
 (def ^:dynamic *print-dup* false)
 (def ^:dynamic *print-meta* false)
+(def ^:dynamic *print-level*
+  "*print-level* controls how many levels deep the printer will
+  print nested objects. If it is bound to logical false, there is no
+  limit. Otherwise, it must be bound to an integer indicating the maximum
+  level to print. Each argument to print is at level 0; if an argument is a
+  collection, its items are at level 1; and so on. If an object is a
+  collection and is at a level greater than or equal to the value bound to
+  *print-level*, the printer prints '#' to represent it. The root binding
+  is nil indicating no limit."
+  nil)
+(def ^:dynamic *print-length*
+  "*print-length* controls how many items of each collection the
+  printer will print. If it is bound to logical false, there is no
+  limit. Otherwise, it must be bound to an integer indicating the maximum
+  number of items of each collection to print. If a collection contains
+  more items, the printer will print items up to the limit followed by
+  '...' to represent the remaining items. The root binding is nil
+  indicating no limit."
+  nil)
 
 (defprotocol IPrint
   (-print [o string-sink]))
@@ -3121,40 +3140,32 @@
   (dart:core/identical x false))
 
 ;; TODO : manage all bindings for printing
-(defn- print-sequential [^String begin ^String end sequence ^StringSink sink]
-  #_(binding [*print-level* (and (not *print-dup*) *print-level* (dec *print-level*))]
-      (if (and *print-level* (neg? *print-level*))
-        (.write w "#")
-        (do
-          (.write w begin)
-          (when-let [xs (seq sequence)]
-            (if (and (not *print-dup*) *print-length*)
-              (loop [[x & xs] xs
-                     print-length *print-length*]
-                (if (zero? print-length)
-                  (.write w "...")
-                  (do
-                    (print-one x w)
-                    (when xs
-                      (.write w sep)
-                      (recur xs (dec print-length))))))
-              (loop [[x & xs] xs]
-                (print-one x w)
-                (when xs
-                  (.write w sep)
-                  (recur xs)))))
-          (.write w end))))
+(defn- -print-sequential [^String begin ^String end sequence ^StringSink sink]
   (when-let [m (and *print-meta* (meta sequence))]
     (.write sink "^")
     (.write sink m)
     (.write sink " "))
   (.write sink begin)
-  (reduce (fn [need-sep x]
-            (when need-sep
-              (.write sink " "))
-            (-print x sink)
-            true) false sequence)
+  (let [len (and (not *print-dup*) *print-length*)]
+    (reduce (fn [i x]
+              (when (pos? i)
+                (.write sink " "))
+              (if (and len (<= len i ))
+                (do
+                  (.write sink "...")
+                  (reduced nil))
+                (do
+                  (-print x sink)
+                  (inc i)))) 0 sequence))
   (.write sink end))
+
+(defn- print-sequential [begin end sequence ^StringSink sink]
+  (if-let [level-1 (and (not *print-dup*) *print-level* (dec *print-level*))]
+    (if (neg? level-1)
+      (.write sink "#")
+      (binding [*print-level* level-1]
+        (-print-sequential begin end sequence sink)))
+    (-print-sequential begin end sequence sink)))
 
 (deftype ^:mixin #/(SeqListMixin E)
   []
@@ -4918,52 +4929,49 @@
       2 (-lookup coll (first more) (second more)))))
 
 ;; TODO *configs*
-(defn- print-map [m ^StringSink sink]
-  #_(binding [*print-level* (and (not *print-dup*) *print-level* (dec *print-level*))]
-      (if (and *print-level* (neg? *print-level*))
-        (.write w "#")
-        (do
-          (.write w begin)
-          (when-let [xs (seq sequence)]
-            (if (and (not *print-dup*) *print-length*)
-              (loop [[x & xs] xs
-                     print-length *print-length*]
-                (if (zero? print-length)
-                  (.write w "...")
-                  (do
-                    (print-one x w)
-                    (when xs
-                      (.write w sep)
-                      (recur xs (dec print-length))))))
-              (loop [[x & xs] xs]
-                (print-one x w)
-                (when xs
-                  (.write w sep)
-                  (recur xs)))))
-          (.write w end))))
+(defn- -print-map [m ^StringSink sink]
   (when-let [m (and *print-meta* (meta m))]
     (.write sink "^")
     (.write sink m)
     (.write sink " "))
   (.write sink "{")
-  (if (satisfies? IKVReduce m)
-    (reduce-kv (fn [need-sep k v]
-                 (when need-sep
-                   (.write sink ", "))
-                 (-print k sink)
-                 (.write sink " ")
-                 (-print v sink)
-                 true)
-      false m)
-    (reduce (fn [need-sep [k v]]
-              (when need-sep
-                (.write sink ", "))
-              (-print k sink)
-              (.write sink " ")
-              (-print v sink)
-              true)
-      false m))
+  (let [len (and (not *print-dup*) *print-length*)]
+    (if (satisfies? IKVReduce m)
+      (reduce-kv (fn [i k v]
+                   (when (pos? i)
+                     (.write sink ", "))
+                   (if (and len (<= len i))
+                     (do
+                       (.write sink "...")
+                       (reduced nil))
+                     (do
+                       (-print k sink)
+                       (.write sink " ")
+                       (-print v sink)
+                       (inc i))))
+        0 m)
+      (reduce (fn [i [k v]]
+                (when (pos? i)
+                  (.write sink ", "))
+                (if (and len (<= len i))
+                  (do
+                    (.write sink "...")
+                    (reduced nil))
+                  (do
+                    (-print k sink)
+                    (.write sink " ")
+                    (-print v sink)
+                    (inc i))))
+        0 m)))
   (.write sink "}"))
+
+(defn- print-map [m ^StringSink sink]
+  (if-let [level-1 (and (not *print-dup*) *print-level* (dec *print-level*))]
+    (if (neg? level-1)
+      (.write sink "#")
+      (binding [*print-level* level-1]
+        (-print-map m sink)))
+    (-print-map m sink)))
 
 (extend-type Map
   ISeqable
