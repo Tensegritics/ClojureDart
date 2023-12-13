@@ -3333,10 +3333,6 @@
           (cond
             (symbol? x) (emit-symbol x env)
             #?@(:clj [(char? x) (str x)])
-            ;; (and (number? x) (= x java.lang.Double/POSITIVE_INFINITY))
-            ;; (emit 'double/infinity env)
-            ;; (and (number? x) (= x java.lang.Double/NEGATIVE_INFINITY))
-            ;; (emit 'double/negativeInfinity env)
             (or (number? x) (boolean? x) (string? x)) x
             (instance? java.util.Date x)
             (let [[_ s] (re-matches #"#inst *\"(.*)\"" (pr-str x))]
