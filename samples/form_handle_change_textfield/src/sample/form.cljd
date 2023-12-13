@@ -1,46 +1,21 @@
 (ns sample.form
+  "Faithful port of https://docs.flutter.dev/cookbook/forms/text-field-changes"
   (:require ["package:flutter/material.dart" :as m]
             [cljd.flutter :as f]))
 
-(defn new-page [idx]
-  (f/widget
-    m/Center
-    :padding {:horizontal 32}
-    (m/Row
-      .children
-      [(f/widget
-         m/Expanded
-         (m/Text (str "Page #: " idx) .style (m/TextStyle .fontSize 32 .fontWeight m/FontWeight.w700)))
-       (f/widget
-         :get [:routes]
-         (m/IconButton
-           .iconSize 44
-           .icon (m/Icon m/Icons.navigate_next)
-           .color m/Colors.black
-           .onPressed
-           (fn []
-             (swap! routes
-               (fn [s]
-                 (conj s (new-page (inc (count s)))))))))])))
-
-(defn material-page [child]
-  (m/MaterialPage .child (m/Container .color m/Colors.white .child child)))
-
-(defonce routes (atom [(new-page 1)]))
-
 (defn main []
-  (f/run
-    :bind {:routes routes}
-    (m/MaterialApp .title "Cljd Navigator")
-    .home
-    (m/Scaffold
-      .appBar (m/AppBar
-                .backgroundColor m/Colors.blue
-                .title (m/Text "Cljd Navigator")))
-    .body
-    :watch [pages routes]
-    (m/Navigator
-      .pages (map material-page pages)
-      .onPopPage (fn [route result]
-                   (swap! routes pop)
-                   (.didPop ^m/Route route result)))))
+  (let [title "Retrieve text input"]
+    (m/runApp
+      (f/widget
+        (m/MaterialApp .title title)
+        .home
+        (m/Scaffold .appBar (m/AppBar .title (m/Text title)))
+        .body
+        (m/Padding .padding (m/EdgeInsets.all 16.0))
+        :managed [text-controller (m/TextEditingController)]
+        :bg-watcher ([^m/TextEditingValue {second-input-text .-text} text-controller ]
+                     (dart:core/print (str "Second text field: " second-input-text)))
+        m/Column
+        .children
+        [(m/TextField .onChanged (fn [text] (dart:core/print (str "First text field: " text))))
+         (m/TextField .controller text-controller)]))))

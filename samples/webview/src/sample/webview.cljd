@@ -8,15 +8,13 @@
 
 (defn web-view [current-url]
   (f/widget
-    :let [ios (dart/is? webview/WebViewPlatform.instance webview-ios/WebKitWebViewPlatform)]
-    :managed [;; you can customize parameters passed to the underlying platform ios/android/web...
+    :let [ios (dart/is? webview/WebViewPlatform.instance webview-ios/WebKitWebViewPlatform)
+          ;; you can customize parameters passed to the underlying platform ios/android/web...
           ;; @see here: https://pub.dev/documentation/webview_flutter_wkwebview/latest/webview_flutter_wkwebview/WebKitWebViewControllerCreationParams-class.html
-              params (if ios
-                       (webview-ios/WebKitWebViewControllerCreationParams)
-                       (webview/PlatformWebViewControllerCreationParams)) :dispose nil
-              loading (m/ValueNotifier true)
-              ;;page-start (fn [_] (.-value! loading false) nil) :dispose nil
-              ;;page-finished (fn [_] (.-value! loading false) nil) :dispose nil
+          params (if ios
+                   (webview-ios/WebKitWebViewControllerCreationParams)
+                   (webview/PlatformWebViewControllerCreationParams))]
+    :managed [loading (m/ValueNotifier true)
               controller
               (doto (webview/WebViewController.fromPlatformCreationParams params)
                 ;; depending on your needs
@@ -26,8 +24,8 @@
                 (.setUserAgent "ClojureDart")
                 (.setNavigationDelegate
                   (webview/NavigationDelegate
-                    .onPageStarted #_page-start (fn [_] (.-value! loading true) nil)
-                    .onPageFinished #_page-finished (fn [_] (.-value! loading false) nil)
+                    .onPageStarted (fn [_] (.-value! loading true) nil)
+                    .onPageFinished (fn [_] (.-value! loading false) nil)
                     .onNavigationRequest
                     (fn [{for-main-frame .-isMainFrame
                           url .-url :as ^webview/NavigationRequest nav}]
@@ -42,19 +40,13 @@
                   (-> ^webview-ios/WebKitWebViewController (.-platform)
                     ;; if you want the user to be able to go back, ios only
                     (.setAllowsBackForwardNavigationGestures true)))
-                ;;(.loadRequest (Uri/parse current-url))
-                (.loadHtmlString
-                  "<iframe id=\"ytplayer\" type=\"text/html\" width=\"640\" height=\"360\"
-  src=\"https://www.youtube.com/embed/M7lc1UVf-VE?autoplay=0&origin=https://roamresearch.com/
-  frameborder=\"0\"></iframe>")
-                )
+                (.loadRequest (Uri/parse current-url)))
               ;; WebViewController does not have a .dispose method so we must set the option to false
               :dispose false]
-    :let [_ (dart:core/print (hash controller))]
-    ;;:context ctx
-    ;;:let [_ (dart:core/print (str "ismounted " (.-mounted ctx)))]
-    ;;:watch [ld loading]
-    (webview/WebViewWidget .controller controller)))
+    :watch [ld loading]
+    (if ld
+      (m/CircularProgressIndicator)
+      (webview/WebViewWidget .controller controller))))
 
 (defn main []
   (f/run
@@ -63,14 +55,4 @@
     (m/Scaffold .appBar (m/AppBar .title (m/Text "Embed a webview")))
     .body
     m/Center
-    (f/widget
-      m/ListView
-      .children
-      (take 1000 (cycle [(m/Container .height 200 .color m/Colors.red)
-                         (m/ConstrainedBox
-                           .constraints (m/BoxConstraints.tightFor .height 200)
-                           .child (web-view ""))
-                         (m/Container .height 200 .color m/Colors.green)
-                         (m/ConstrainedBox
-                           .constraints (m/BoxConstraints.tightFor .height 200)
-                           .child (web-view ""))])))))
+    (web-view "https://clojuredart.org")))

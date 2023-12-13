@@ -5,17 +5,25 @@
 
 (def ^m/TextStyle text-style (m/TextStyle .fontWeight m/FontWeight.w700 .fontSize 32))
 
-(def fa (fn [a b] (m/Text "ya ")))
-
-(defn caca []
-  (m/ListView.builder .itemBuilder (identity fa)))
-
 (defn main []
   (f/run
     (m/MaterialApp .title "Fizz buzz Demo")
     .home
     (m/Scaffold .appBar (m/AppBar .title (m/Text "Fizz buzz Demo")))
     .body
-    m/Center
-    #_(m/Text "Heyllo")
-    (caca)))
+    :let [s1 (-> (Stream/periodic (Duration .seconds 1) identity) .asBroadcastStream)
+          s3 (Stream/periodic (Duration .seconds 3) #(* 3 (inc %)))
+          s5 (Stream/periodic (Duration .seconds 5) #(* 5 (inc %)))]
+    (m/Column .mainAxisAlignment m/MainAxisAlignment.center .crossAxisAlignment m/CrossAxisAlignment.stretch)
+    .children
+    [(f/widget
+       :watch [n s1]
+       (m/Text (str n) .textAlign m/TextAlign.center .style text-style))
+     (f/widget
+       :watch [n (f/sub [s1 s3] (fn [[n n3]] (if (= n n3) "Fizz" "")))
+               ; default opts to f
+               :sub/opts [{:default 777} {:default 888}]]
+       (m/Text n .textAlign m/TextAlign.center .style (.apply text-style .color m/Colors.red.shade200)))
+     (f/widget
+       :watch [n (f/sub [s1 s5] (fn [[n n5]] (if (= n n5) "Buzz" "")))]
+       (m/Text n .textAlign m/TextAlign.center .style (.apply text-style .color m/Colors.green.shade200)))]))
