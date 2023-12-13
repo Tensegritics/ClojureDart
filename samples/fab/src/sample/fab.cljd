@@ -1,112 +1,138 @@
 (ns sample.fab
   "Faithful port of https://docs.flutter.dev/cookbook/effects/expandable-fab#interactive-example"
   (:require
-   ["dart:io" :as dart:io]
-   ["dart:typed_data" :as dart:typed_data]
-   ["dart:ffi" :as dart:ffi]
    ["package:flutter/material.dart" :as m]
-   ["package:flutter/foundation.dart" :as foundation]
-   ["package:flutter/cupertino.dart" :as cupertino]
-   ["clipboard_manager.dart" :as clipboard]
-   ["vision_bindings.dart" :as vision]
-   ["package:ffi/ffi.dart" :as package:ffi]
-   ["package:flutter/painting.dart" :as painting]
    ["dart:math" :as math]
-   ["package:jni/jni.dart" :as jni]
    [cljd.flutter :as f]))
 
+;; https://docs.flutter.dev/cookbook/effects/expandable-fab#interactive-example
 
-;; Android helpers
-(defmacro with-release
-  [bindings & body]
-  (cond
-    (= (count bindings) 0) `(do ~@body)
-    (symbol? (bindings 0)) `(let ~(subvec bindings 0 2)
-                              (try
-                                (with-release ~(subvec bindings 2) ~@body)
-                                (finally
-                                  (.release ~(bindings 0)))))
-    :else (throw (Exception. "with-release only allows Symbols in bindings"))))
+(defn fake-item [is-big]
+  (m/Container
+    .margin (m/EdgeInsets.symmetric .vertical 8.0 .horizontal 24.0)
+    .height (if is-big 128.0 36.0)
+    .decoration
+    (m/BoxDecoration
+      .borderRadius (-> 8.0 m/Radius.circular m/BorderRadius.all)
+      .color m/Colors.grey.shade300)))
 
-(defn ^jni/JString java-string
-  {:inline (fn [x] `(jni/JString.fromString ~x))
-   :inline-arities #{1}}
-  [dart-string]
-  (jni/JString.fromString dart-string))
+(def action-titles ["Create Post" "Upload Photo" "Upload Video"])
 
-(defn ^#/(jni/JArray jni/JString) java-string-array
-  [strings]
-  (let [n (count strings)]
-    (doto (#/(jni/JArray jni/JString) (jni/JStringType) n)
-      (-> #/(jni/ObjectArray jni/JString) (.setRange 0 n (map java-string strings))))))
+(defn show-action [ctx i]
+  (m/showDialog
+   .context ctx
+   .builder (f/build
+              :get [m/Navigator]
+              (m/AlertDialog
+               .content (m/Text (action-titles i))
+               .actions [(m/TextButton
+                          .onPressed #(.pop navigator)
+                          .child (m/Text "CLOSE"))]))))
 
-(defn ^#/(jni/JArray jni/jbyte) java-byte-array
-  [^dart:typed_data/Uint8List bytes]
-  (let [n (.-length bytes)]
-    (doto (#/(jni/JArray jni/jbyte) (jni/jbyteType) n)
-      (-> jni/ByteArray (.setRange 0 n bytes)))))
+(defn action-button [& {:keys [on-pressed icon]}]
+  (f/widget
+    :get {{{:flds [secondary onSecondary]} .-colorScheme} m/Theme}
+    (m/Material
+      .shape (m/CircleBorder)
+      .clipBehavior m/Clip.antiAlias
+      .color secondary
+      .elevation 4.0)
+    (m/IconButton
+      .onPressed on-pressed
+      .icon icon
+      .color onSecondary)))
 
-(defn ^clipboard/ClipboardManager cb-manager []
-  (with-release [activity (clipboard/Activity.fromRef (jni/Jni.getCurrentActivity))]
-    (-> activity
-      (.getSystemService (java-string clipboard/Context.CLIPBOARD_SERVICE))
-      (. #/(castTo clipboard/ClipboardManager)
-        clipboard/ClipboardManager.type
-        .releaseOriginal true))))
+(defn expanding-action-button
+  [& {:keys [direction-degrees max-distance ^#/(m/Animation double) progress child]}]
+  (f/widget
+    :watch [v progress]
+    :let [{:flds [dx dy]} (m/Offset.fromDirection
+                            (* direction-degrees (/ math/pi 180.0))
+                            (* v max-distance))]
+    (m/Positioned .right (+ 4.0 dx) .bottom (+ 4.0 dy))
+    (m/Transform.rotate .angle (* (- 1.0 v) math/pi 0.5))
+    (m/Opacity .opacity v)
+    child))
 
-(defn ^Future load-image [^dart:io/HttpClient client ^Uri uri]
-  (let [request (await (.getUrl client uri))
-        response (await (.close request))]
-    (if-not (= (.-statusCode response) dart:io/HttpStatus.ok)
-      (do (. response #/(drain (List int)) #dart ^int [])
-          (throw (painting/NetworkImageLoadException
-                   .statusCode (.-statusCode response)
-                   .uri uri)))
-      (let [bytes (await (foundation/consolidateHttpClientResponseBytes response))]
-        (when (zero? (.-lengthInBytes bytes))
-          (throw (Exception (str "NetworkImage is an empty file: " uri))))
-        bytes))))
+(defn expandable-fab [& {:keys [distance children]}]
+  (f/widget
+   :let [open-state (atom false)]
+   :vsync vsync
+   :managed [controller (m/AnimationController
+                          .value 0.0
+                          .duration (dart:core/Duration .milliseconds 250)
+                          .vsync vsync)
+             expand-animation (m/CurvedAnimation
+                                .curve m/Curves.fastOutSlowIn
+                                .reverseCurve m/Curves.easeOutQuad
+                                .parent controller)]
+   :let [toggle #(if (swap! open-state not)
+                   (.forward controller)
+                   (.reverse controller))
+         tap-to-close-fab
+         (f/widget
+           (m/SizedBox
+             .width 56.0
+             .height 56.0)
+           m/Center
+           (m/Material
+             .shape (m/CircleBorder)
+             .clipBehavior m/Clip.antiAlias
+             .elevation 4.0)
+           (m/InkWell .onTap toggle)
+           (m/Padding .padding (m/EdgeInsets.all 8.0))
+           :get {{:flds [primaryColor]} m/Theme}
+           (m/Icon m/Icons.close .color primaryColor))
+         tap-to-open-fab
+         (f/widget
+           :watch [is-open open-state]
+           (m/IgnorePointer .ignoring is-open)
+           :let [scaling (if is-open 0.7 1.0)]
+           (m/AnimatedContainer
+             .transformAlignment m/Alignment.center
+             .transform (m.Matrix4/diagonal3Values scaling scaling 1.0)
+             .duration (dart:core/Duration .milliseconds 250)
+           .curve (m/Interval 0.0 0.5 .curve m/Curves.easeOut))
+           (m/AnimatedOpacity
+             .opacity (if is-open 0.0 1.0)
+             .curve (m/Interval 0.25 1.0 .curve m/Curves.easeInOut)
+             .duration (dart:core/Duration .milliseconds 250))
+           (m/FloatingActionButton .onPressed toggle)
+           (m/Icon m/Icons.create))
+         step (/ 90.0 (dec (count children)))]
+   m/SizedBox.expand
+   (m/Stack
+    .alignment m/Alignment.bottomRight
+    .clipBehavior m/Clip.none
+    .children (concat [tap-to-close-fab]
+                (map-indexed
+                  (fn [i child]
+                    (expanding-action-button
+                      :direction-degrees (* i step)
+                      :max-distance distance
+                      :progress expand-animation
+                      :child child))
+                  children)
+                [tap-to-open-fab]))))
+
+(def example-expandable-fab
+  (f/widget
+   :context ctx
+   (m/Scaffold
+    .appBar (m/AppBar .title (m/Text "Expandable Fab"))
+    .body (m/ListView.builder
+           .padding (m/EdgeInsets.symmetric .vertical 8.0)
+           .itemCount 25
+           .itemBuilder (f/build [i] (fake-item (odd? i))))
+    .floatingActionButton
+    (expandable-fab
+     :distance 112.0
+     :children [(action-button :on-pressed #(show-action ctx 0)
+                               :icon (m/Icon m/Icons.format_size))
+                (action-button :on-pressed #(show-action ctx 1)
+                               :icon (m/Icon m/Icons.insert_photo))
+                (action-button :on-pressed #(show-action ctx 2)
+                               :icon (m/Icon m/Icons.videocam))]))))
 
 (defn main []
-  (jni/Jni.initDLApi)
-  (f/run
-    m/MaterialApp
-    .home
-    m/Scaffold
-    .body
-    m/Center
-    (m/Column)
-    .children
-    [(f/widget
-       (m/TextButton .onPressed (fn []))
-       (m/Text "heyyy"))
-     (f/widget
-       :let [src "https://www.newsdle.com/img/blog/2022/10/qKhvhTV41EUgoYZPp6dQ34rBfLuy1b.jpg"]
-       :managed [client (dart:io/HttpClient) :dispose .close]
-       :watch [bytes (load-image client (Uri.parse src))]
-       (if bytes
-         (f/widget
-           (cupertino/CupertinoContextMenu
-             .actions [(f/widget
-                         :context ctx
-                         (cupertino/CupertinoContextMenuAction
-                           .onPressed
-                           (fn []
-                             (m/Navigator.pop ctx)
-                             (let [recognizer
-                                   (vision/TextRecognition.getClient vision/TextRecognizerOptions.DEFAULT_OPTIONS)
-                                   bitmap (vision/BitmapFactory.decodeByteArray1
-                                            (java-byte-array bytes)
-                                            0
-                                            (.-length ^dart:typed_data/Uint8List bytes))
-                                   input-image (vision/InputImage.fromBitmap bitmap 0)
-                                   task (.process recognizer input-image)]
-                               (dart:core/print "AFTER PROCESSSSS")
-                               ;;(dart:core/print task)
-                               (.close recognizer)))
-                           .isDefaultAction true,
-                           .trailingIcon cupertino/CupertinoIcons.doc_on_clipboard_fill,
-                           .child (m/Text "Copy image")))]
-             .enableHapticFeedback true)
-           (m/Image.memory bytes .semanticLabel "heyllo world"))
-         (m/SizedBox.shrink)))]))
+  (f/run (m/MaterialApp .home example-expandable-fab)))
