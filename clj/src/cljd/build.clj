@@ -225,7 +225,7 @@
                         (print-exception e)
                         false)))))
               compilation-success (compile-nses namespaces)]
-          (when (or watch flutter)
+          (if (or watch flutter)
             (let [compile-files
                   (fn [^java.io.Writer flutter-stdin]
                     (fn [_ files]
@@ -306,7 +306,15 @@
                     (when p
                       (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
                   (finally
-                    (some-> p .destroy)))))))))))
+                    (some-> p .destroy)))))
+            compilation-success))))))
+
+(defn test-cli [& {:keys [namespaces]}]
+  (when (compile-cli :namespaces namespaces)
+    (newline)
+    (println (title "Running tests..."))
+    (let [bin (some-> *deps* :cljd/opts :kind name)]
+      (System/exit (exec {:in nil #_#_:out nil} bin "test")))))
 
 (defn gen-entry-point []
   (let [deps-cljd-opts (:cljd/opts *deps*)
@@ -480,6 +488,7 @@
    "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart."}
    "clean" {:doc "When there's something wrong with compilation, erase all ClojureDart build artifacts.\nConsider running flutter clean too."}
    "help" {:doc (:doc help-spec)}
+   "test" {:doc "Run specified test namespaces (or all by default)."}
    "upgrade" {:doc "Upgrade cljd to latest version."}
    "watch" {:doc "Like compile but keep recompiling in response to file updates."}
    "flutter" {:options false
@@ -540,6 +549,11 @@
       (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--directory=."
         coords))))
 
+(defn ensure-test-dev-dep! []
+  (let [parser (org.yaml.snakeyaml.Yaml.)]
+    (when-not (get-in (.load parser (slurp "pubspec.yaml")) ["dev_dependencies" "test"])
+      (exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--dev" "test"))))
+
 (defn -main [& args]
   (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
             compiler/*lib-path*
@@ -547,7 +561,7 @@
     (binding [*deps* (deps/create-basis nil)]
       (let [[options cmd cmd-opts & args] (parse-args commands args)]
         (case cmd
-          ("compile" "watch" "flutter") (sync-pubspec!)
+          ("compile" "watch" "flutter" "test") (sync-pubspec!)
           nil)
         (case cmd
           :help (print-help commands)
@@ -558,6 +572,18 @@
            :namespaces (or (seq (map symbol args))
                            (some-> *deps* :cljd/opts :main list))
            :watch (= cmd "watch"))
+          "test"
+          (do
+            (ensure-test-dev-dep!)
+            (test-cli
+              :namespaces
+              (or (seq (map symbol args))
+                (for [path (:paths *deps*)
+                      ^java.io.File file (tree-seq
+                                           some? #(.listFiles ^java.io.File %)
+                                           (java.io.File. path))
+                      :when (re-matches #".*\.clj[cd]" (.getName file))]
+                  (compiler/peek-ns file)))))
           "upgrade"
           (upgrade-cljd)
           "flutter"
