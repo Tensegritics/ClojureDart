@@ -957,3 +957,8 @@
         m {1 explode}]
     (is (= v v))
     (is (= m m))))
+
+(deftest casting-to-void-function
+  (let [n (volatile! 0)]
+    (.forEach #dart ["hello" "world"] (fn [x] (vswap! n inc) :not-void-nor-dynamic))
+    (is (= 2 @n))))
