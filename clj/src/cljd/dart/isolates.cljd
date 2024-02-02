@@ -1,0 +1,53 @@
+(ns cljd.dart.isolates
+  (:require ["dart:isolate" :as dart:isolate]))
+
+(defn- named-recvs [names]
+  (into {} (map (fn [k] [k (dart:isolate/ReceivePort)])) names))
+
+(defn- sends-from-recvs [recvs-map]
+  (into recvs-map (map (fn [[k ^dart:isolate/ReceivePort recv]] [k (.-sendPort recv)])) recvs-map))
+
+(defn- boot-isolate [[f handshake outs ins]]
+  (let [ins (named-recvs ins)]
+    (.send ^dart:isolate/SendPort handshake (sends-from-recvs ins))
+    (f (into outs ins))))
+
+(defn spawn!
+  "Spawn a function f of one argument (a map whose values are ReceivePorts or SendPorts).
+   Returns a map with keys :isolate (a reference to the spawned Isolate), and :ports a map
+   (a map whose values are ReceivePorts or SendPorts).
+   Supported options are :ports, :paused, :debug-name, :errors-are-fatal, :on-exit and :on-error.
+
+   :ports is a map of identifiers to :recv or :send. :recv and :send are expressed from the point
+   of view of the caller: if you specify :send (resp. :recv) you get a SendPort (resp. ReceivePort)
+   under :ports in the return value and the new isolate gets the matching ReceivePort (resp. SendPort).
+   Thus these 3 maps (:ports as option, :ports in return value and the map passed to f) share the
+   same keyset.
+
+   If :ports is omitted, {:in :send :out :recv} is assumed to start an isolate with one input and one output.
+
+   See https://api.dart.dev/stable/dart-isolate/Isolate/spawn.html for the role of
+   :paused, :debug-name, :errors-are-fatal, :on-exit and :on-error.
+
+   The value under :in is a SendPort connected to the ReceivePort passed as in to f.
+   The value under :out is a ReceivePort connected to the SendPort passed as out to f."
+  ([f] (spawn! f {}))
+  ([f {:keys [ports paused debug-name errors-are-fatal on-exit on-error]
+       :or {ports {:in :send :out :recv}
+            errors-are-fatal true
+            paused false}}]
+   (let [handshake (dart:isolate/ReceivePort)
+         outs (named-recvs (keep (fn [[k v]] (case v :recv k :send nil)) ports))
+         isolate
+         (await
+           (dart:isolate/Isolate.spawn
+             boot-isolate
+             [f (.-sendPort handshake) (sends-from-recvs outs) (keep (fn [[k v]] (case v :recv nil :send k)) ports)]
+             .errorsAreFatal errors-are-fatal
+             .paused paused
+             .debugName debug-name
+             .onExit on-exit
+             .onError on-error))
+         ins (await (.-first handshake))]
+     {:isolate isolate
+      :ports (into ins outs)})))

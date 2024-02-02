@@ -1,0 +1,37 @@
+(ns sample.keep-alive
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
+
+(defn main []
+  (f/run
+    m/MaterialApp
+    .home
+    m/Scaffold
+    .body
+    (m/ListView.builder
+      .itemCount 100
+      .itemBuilder
+      (f/build [idx]
+        :key idx
+        :height 80
+        :let [kept-alive (odd? idx)]
+        :color (cond
+                 (zero? idx) m/Colors.white
+                 kept-alive m/Colors.red.shade200
+                 :else m/Colors.blue.shade200)
+        :keep-alive kept-alive
+        :let [now (DateTime.now)]
+        m/Center
+        (m/Text
+          (if (zero? idx)
+            "Scroll back and forth and you should see ephemeral items being rebuilt while kept-alive items are reused."
+            (print-str idx
+              (if kept-alive
+                "KEPT ALIVE"
+                "EPHEMERAL")
+              " rebuilt at: "
+              (.-hour now) "h"
+              (.-minute now) "m"
+              (.-second now) "s"))
+          .style (m/TextStyle .fontSize 18 .fontWeight m/FontWeight.w700)
+          .textAlign m/TextAlign.center)))))

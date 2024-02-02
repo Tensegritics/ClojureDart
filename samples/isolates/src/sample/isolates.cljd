@@ -1,0 +1,52 @@
+(ns sample.isolates
+  "Isolate example, original code by Ian Fernandez (https://github.com/ianffcs)"
+  (:require ["package:flutter/material.dart" :as m]
+            ["dart:isolate" :as dart:isolate]
+            [cljd.flutter :as f]
+            [cljd.dart.isolates :as di]))
+
+(def isolate-ui
+  (f/widget
+    m/Center
+    (m/Column
+      .mainAxisAlignment m/MainAxisAlignment.center
+      .children
+      [(f/widget
+         (m/FilledButton .onPressed (fn [] (dotimes [_ (* 1000 1000 1000 10)])))
+         (m/Text "Busy loop on default isolate (will block ui)"))
+
+       (f/widget
+         :padding {:top 8 :bottom 32}
+         :watch [isolate-out (atom nil) :as running
+                 ; here we can cascade `:watch` because `reset!` value is a `ReceivePort` which implements `Stream`
+                 status isolate-out :default (when isolate-out :running)]
+         (m/FilledButton
+           .onPressed (case status
+                        (nil :done)
+                        (fn []
+                          (let [{{:keys [out]} :ports}
+                                (await
+                                  (di/spawn! (fn [{:keys [in out]}]
+                                               (dotimes [_ (* 1000 1000 1000 10)])
+                                               (.send ^dart:isolate/SendPort out :done)
+                                               (dart:core/print "done"))))]
+                            (reset! running out)
+                            nil))
+                        ; nil disables the button
+                        :running nil))
+         (m/Text "Busy loop on new isolate (won't block ui)"))
+
+       (m/Text "If the spinner stops, the UI is frozen")
+
+       (f/widget
+         :padding {:top 8}
+         (m/CircularProgressIndicator))])))
+
+(defn main []
+  (f/run
+    (m/MaterialApp
+      .title "Isolates 101"
+      .theme (m/ThemeData .useMaterial3 true))
+    .home
+    (m/Scaffold .appBar (m/AppBar .title (m/Text "Isolates 101")))
+    .body isolate-ui))

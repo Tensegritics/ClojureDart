@@ -385,7 +385,7 @@
   [clj-alias]
   (when clj-alias
     (let [{:keys [libs dart-aliases] :as all-nses} @nses
-          {:keys [clj-aliases imports]} (all-nses *current-ns*)]
+          {:keys [clj-aliases]} (all-nses *current-ns*)]
       (or (get clj-aliases clj-alias)
         (some-> (re-matches #"\$lib:(.*)" clj-alias) second dart-aliases)))))
 
@@ -933,7 +933,7 @@
       (update analyzer-type :type-parameters (fn [ps] (map #(actual-type % type-env) ps))))))
 
 (defn actual-parameters [parameters type-env]
-  (map #(update % :type actual-type type-env) parameters))
+  (some->> parameters (map #(update % :type actual-type type-env))))
 
 (defn actual-member [[type-env member-info]]
   (case (:kind member-info)
@@ -1395,6 +1395,7 @@
           named-args (cond-> named-args (= '.& (first named-args)) next)]
       (-> [] (into (map #(vector nil (emit % env) dc-dynamic) positional-args))
         (into (comp (partition-all 2) (map (fn [[name x]] [(ensure-kw name) (emit x env) dc-dynamic]))) named-args)))
+    ; named parameters
     (map? opts-types)
     (let [args (remove '#{.&} args) ; temporary as .& in args is redundant with args starting by a dot and the fact that we know the expected params. It's just some cpmpatibility feature with some very early cljd code
           positional-args (mapv #(vector nil (emit %1 env) (or %2 dc-dynamic)) args fixed-types)
@@ -1411,9 +1412,12 @@
       (when-not (= (count positional-args) (count fixed-types))
         (throw (Exception. (str "Not enough positional arguments: expected " (count fixed-types) " got " (count positional-args)))))
       (when-not (even? (count rem-args))
-        (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))
+        (case (count rem-args)
+          1 (throw (Exception. (str "Positional argument encountered: " (pr-str (last rem-args)) ", while expecting a parameter name amongst " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))
+          (when-not (even? (count rem-args))
+            (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))))
       all-args)
-    :else
+    :else ; positional parameters
     (let [all-args (mapv #(vector nil (emit %1 env) (or %2 dc-dynamic)) args (concat fixed-types opts-types))]
       (when-not (<= 0 (- (count args) (count fixed-types)) (count opts-types))
         (throw (Exception. (str "Wrong argument count: expecting between " (count fixed-types) " and " (+ (count fixed-types) (count opts-types)) " but got " (count args)))))
@@ -1529,8 +1533,8 @@
   ([dart-expr expected-type actual-type env]
    (cond
      (= 'dc.dynamic (:canon-qname expected-type)) dart-expr ; TODO: should be covered by is-assignable?
-     (is-assignable? expected-type actual-type) dart-expr ; <1>
-     (and (nullable-type? expected-type) (nullable-type? actual-type))
+     (is-assignable? expected-type actual-type) dart-expr   ; <1>
+     (and (nullable-type? expected-type) (nullable-type? actual-type)) ; <2>
      (if-some [expected-type+ (positive-type expected-type)]
        (with-once [dart-expr dart-expr] env
          `(dart/if (dart/. nil "!=" ~dart-expr)
@@ -1539,6 +1543,13 @@
             ~(magicast dart-expr expected-type+ actual-type env)
             nil))
        (list 'dart/let [[nil dart-expr]] nil))
+     (and
+       (not= 'dc.dynamic (:canon-qname actual-type))
+       (nullable-type? actual-type))
+     ; expected-type is not nullable because of the previous check <2>
+     (if-some [actual-type+ (positive-type actual-type)]
+       (recur (list 'dart/as dart-expr actual-type+) expected-type actual-type+ env)
+       (throw (Exception. "Can't cast a null expression to something non-nullable.")))
      ;; When inlined #dart[], we keep it inlines
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
      (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
@@ -1559,7 +1570,10 @@
                 (list 'dart/as dart-expr expected-type)
                 (list 'dart/. (list 'dart/as dart-expr (dissoc expected-type :type-parameters :nullable)) (into ["cast"] (:type-parameters expected-type)))))])
          casted))
-     (= (:canon-qname expected-type) 'dc.Function) ; TODO : generics
+     (and
+       (= (:canon-qname expected-type) 'dc.Function)
+       (:return-type expected-type))
+     ; TODO : generics
      (let [{:keys [return-type parameters]} expected-type
            [fixed-types optionals] (dart-method-sig expected-type)
            fixed-params (into [] (map (fn [_] (dart-local env))) fixed-types)
@@ -1758,6 +1772,9 @@
           static (:dart/class (meta dart-obj))
           type (or static (:dart/type (infer-type dart-obj)))
           type! (dissoc type :nullable)
+          member-name (cond-> member-name
+                        (and prop (not (re-matches #"[a-zA-Z_$0-9]+" member-name)))
+                        munge-str)
           num-only-member-name (when (.startsWith member-name "num:") (subs member-name 4))
           type! (cond-> type! num-only-member-name num-type)
           member-name (or num-only-member-name member-name)
@@ -1772,6 +1789,13 @@
                           (if static (dart-member-lookup type! (str (:element-name static) "." member-name) env))
                           (dart-member-lookup dc-Object member-name+ env))
                         actual-member)
+          ; trying to munge name, just in case (and for records etc.)
+          member-name' (when-not member-info (munge member-name {}))
+          member-info (or member-info
+                        (some-> (dart-member-lookup type! member-name' (meta member) env) actual-member))
+          member-name (if (and member-name' member-info) member-name' member-name)
+          ; end of trying to munge name
+          member-name (:member-name member-info member-name)
           dart-obj (cond
                      (= "==" member-name+) dart-obj
                      (:type-params (meta obj)) ; static only
@@ -2012,16 +2036,17 @@
     (empty? clauses) (emit default env)
     (or (every? #(or (char? % ) (string? %)) (mapcat first clauses))
       (every? int? (mapcat first clauses)))
-    (list 'dart/case (emit expr env)
+    (list 'dart/case (emit expr env) nil
       (for [[vs e] clauses]
         [(map #(emit % {}) vs) (emit e env)])
       (emit default env))
     :else
     (let [dart-local (env expr)
           by-hashes (group-by (fn [[v e]] (cljd-hash v)) (for [[vs e] clauses, v vs] [v e]))
-          [tmp :as binding] (dart-binding 'hash (emit (list 'cljd.core/hash expr) env) env)]
+          [tmp :as binding] (dart-binding 'hash (emit (list 'cljd.core/hash expr) env) env)
+          default-label (gensym "_default")]
       (list 'dart/let [binding]
-        (list 'dart/case tmp
+        (list 'dart/case tmp default-label
           (for [[h groups] by-hashes]
             (list
               [h]
@@ -2030,7 +2055,7 @@
                         (list 'dart/if (emit (list 'cljd.core/= (list 'quote v) expr) env)
                           (emit e env)
                           else))
-                '(dart/continue _default) (rseq groups))))
+                (list 'dart/continue default-label) (rseq groups))))
           (emit default env))))))
 
 (defn- variadic? [[params]] (some #{'&} params))
@@ -2235,6 +2260,7 @@
                 (and (seq? dart-expr) (= 'dart/as (first dart-expr)))
                 (recur [k (second dart-expr)])
                 (:dart/const (infer-type dart-expr)) nil
+                (and (seq? dart-expr) (= 'dart/fn (first dart-expr))) nil
                 :else (throw (ex-info (str "Unexpected dart value in environment for key " k ": " (pr-str dart-expr)) {:dart-expr dart-expr})))))
           env)]
     (into #{} (comp (filter symbol?) (keep dart-locals))
@@ -2530,84 +2556,97 @@
 (defn alter-def [nses sym f & args]
   (apply update-in nses [*current-ns* sym] f args))
 
+(defn- resolve-method-spec [owner-spec type spec type-env]
+  (let [[mname arglist & body] spec
+        mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
+        [mname' arglist']
+        (case (:type type)
+          :self [mname arglist]
+          :protocol (resolve-protocol-method type mname arglist type-env)
+          :class
+          (let [dart-type (:dart/type type)]
+            (or
+              (resolve-dart-method dart-type mname arglist type-env)
+              (throw (Exception. (str "In class " owner-spec ", can't resolve method " mname (vec arglist) " on class " (:element-name dart-type) " from lib " (:lib dart-type) (source-info)))))))
+        mname (vary-meta mname' merge (meta mname))
+        parsed-arglist' (parse-dart-params arglist')
+        parsed-arglist (parse-dart-params arglist)
+        #_{:fixed-params fixed-params
+           :opt-kind (case delim .& :named :positional)
+           :opt-params
+           (for [[p d] (partition-all 2 1 opt-params)
+                 :when (symbol? p)]
+             [p (when-not (symbol? d) d)])}]
+    (list* mname parsed-arglist'
+      (when (seq body) ; don't emit a body if no explicit body
+        [`(let [; a bunch of rebinding to take into account disagreeing type hints
+                ; and/or destructuring
+                ; first, fixed args, they may be destrctured
+                ~@(mapcat (fn [a a']
+                            (if (symbol? a)
+                              (when-some [t (:tag (meta a))]
+                                (when-not (= t (:tag (meta a')))
+                                  [a a']))
+                              ; destructuring case
+                              [a a']))
+                    (:fixed-params parsed-arglist)
+                    (:fixed-params parsed-arglist'))
+                ; second, optionals which can't be destructured because it would be syntactically
+                ; ambiguous, so only checking for types disagreement
+                ~@(case (:opt-kind parsed-arglist')
+                    :named
+                    ; named may appear out of order
+                    (let [names' (into #{} (map first) (:opt-params parsed-arglist'))]
+                      (mapcat (fn [[a]]
+                                (when-some [t (:tag (meta a))]
+                                  (let [a' (names' a)]
+                                    (when-not (= t (:tag (meta a')))
+                                      [a a']))))
+                        (:opt-params parsed-arglist)))
+                    :positional
+                    (mapcat (fn [[a] [a']]
+                              (when-some [t (:tag (meta a))]
+                                (when-not (= t (:tag (meta a')))
+                                  [a a'])))
+                      (:opt-params parsed-arglist)
+                      (:opt-params parsed-arglist')))]
+            ~@body)]))))
+
+(defn resolve-conflicting-meths [[ma :as a] [mb :as b]]
+  (let [oa (-> ma meta :override boolean)
+        ob (-> mb meta :override boolean)]
+    (cond
+      (= oa ob) (throw (Exception. (str "Conflicting method implementations for " ma ".")))
+      oa a
+      :else b)))
+
 (defn- resolve-methods-specs [class-name specs type-env]
-  (let [last-seen-type (atom nil)]
-    (map
-      (fn [spec]
-        (cond
-          (= class-name spec) (do (reset! last-seen-type {:type :self}) spec)
-          (seq? spec)
-          (let [[mname arglist & body] spec
-                mname (cond-> mname (string? mname) symbol) ; this will make unreadable symbols for some operators thus beware of weird printouts.
-                [mname' arglist']
-                (let [t @last-seen-type]
-                  (case (:type t)
-                    nil (throw (Exception. (str "Encountered method " mname  " in type " class-name " without having encountered a class or protocol name before" (source-info))))
-                    :self [mname arglist]
-                    :protocol (resolve-protocol-method t mname arglist type-env)
-                    :class
-                    (or
-                      (resolve-dart-method (:dart/type t) mname arglist type-env)
-                      (throw (Exception. (str "In class " class-name ", can't resolve method " mname (vec arglist) " on class " (:element-name (:dart/type t)) " from lib " (:lib (:dart/type t)) (source-info)))))))
-                mname (vary-meta mname' merge (meta mname))
-                parsed-arglist' (parse-dart-params arglist')
-                parsed-arglist (parse-dart-params arglist)]
-            #_{:fixed-params fixed-params
-               :opt-kind (case delim .& :named :positional)
-               :opt-params
-               (for [[p d] (partition-all 2 1 opt-params)
-                     :when (symbol? p)]
-                 [p (when-not (symbol? d) d)])}
-            (list* mname parsed-arglist'
-              (when (seq body) ; don't emit a body if no explicit body
-                [`(let [; a bunch of rebinding to take into account disagreeing type hints
-                        ; and/or destructuring
-                        ; first, fixed args, they may be destrctured
-                        ~@(mapcat (fn [a a']
-                                    (if (symbol? a)
-                                      (when-some [t (:tag (meta a))]
-                                        (when-not (= t (:tag (meta a')))
-                                          [a a']))
-                                      ; destructuring case
-                                      [a a']))
-                            (:fixed-params parsed-arglist)
-                            (:fixed-params parsed-arglist'))
-                        ; second, optionals which can't be destructured because it would be syntactically
-                        ; ambiguous, so only checking for types disagreement
-                        ~@(case (:opt-kind parsed-arglist')
-                            :named
-                            ; named may appear out of order
-                            (let [names' (into #{} (map first) (:opt-params parsed-arglist'))]
-                              (mapcat (fn [[a]]
-                                        (when-some [t (:tag (meta a))]
-                                          (let [a' (names' a)]
-                                            (when-not (= t (:tag (meta a')))
-                                              [a a']))))
-                                (:opt-params parsed-arglist)))
-                            :positional
-                            (mapcat (fn [[a] [a']]
-                                      (when-some [t (:tag (meta a))]
-                                        (when-not (= t (:tag (meta a')))
-                                          [a a'])))
-                              (:opt-params parsed-arglist)
-                              (:opt-params parsed-arglist')))]
-                    ~@body)])))
-          (:mixin (meta spec)) (do (reset! last-seen-type
-                                     {:type :class
-                                      :dart/type (resolve-type spec type-env)}) spec)
-          :else
-          (let [[tag x] (resolve-non-local-symbol spec type-env)]
-            (case tag
-              :def (do
-                     (reset! last-seen-type x)
-                     (case (:type x)
-                       :class spec
-                       :protocol (symbol (name (:ns x)) (name (:iface x)))))
-              :dart (do
-                      (reset! last-seen-type {:type :class :dart/type x})
-                      spec)
-              (throw (Exception. (str "Can't resolve " spec (source-info))))))))
-      specs)))
+  (loop [specs-order [] resolved-specs {} specs specs]
+    (if-some [[spec & more-specs :as specs] (seq specs)]
+      (if (nil? spec) ; cgrand: I don't know why we have a leading nil
+        (recur specs-order resolved-specs more-specs)
+        (let [_ (when-not (symbol? spec)
+                  (throw (Exception. (str "Encountered " (pr-str spec) " while expecting a symbol denoting a type or a protocol. " (source-info)))))
+              [type spec] (cond
+                            (= class-name spec) [{:type :self} spec]
+                            (:mixin (meta spec)) [{:type :class
+                                                   :dart/type (resolve-type spec type-env)}
+                                                  spec]
+                            :else
+                            (let [[tag x] (resolve-non-local-symbol spec type-env)]
+                              (case tag
+                                :def [x (case (:type x)
+                                          :class spec
+                                          :protocol (symbol (name (:ns x)) (name (:iface x))))]
+                                :dart [{:type :class :dart/type x} spec]
+                                (throw (Exception. (str "Can't resolve " spec (source-info)))))))
+              [meths more-specs] (split-with seq? more-specs)
+              meths (into {} (comp (map #(resolve-method-spec spec type % type-env)) (map (fn [[mname :as meth]] [mname meth])))meths)]
+          (recur
+            (cond-> specs-order (not (resolved-specs spec)) (conj spec))
+            (update resolved-specs spec #(merge-with resolve-conflicting-meths % meths))
+            more-specs)))
+      (mapcat (fn [spec] (cons spec (vals (resolved-specs spec)))) specs-order))))
 
 (defn- parse-class-specs [class-name opts specs env]
   (let [{:keys [extends]} opts
@@ -2622,7 +2661,7 @@
                 (:type-vars env #{}))
         ctor-meth (when (= '. ctor-op) (first ctor-args))
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
-        methods (into [] (filter seq?) specs)  ; crude
+        methods (into [] (filter seq?) specs) ; crude
         base-type (emit-type base env)
         classes (sequence
                   (comp (filter symbol?) (remove #{class-name})
@@ -2735,6 +2774,7 @@
                           fingerprint)))
         mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
         dart-type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env)
+
         ;; it's ok to predecl the class without fields because in a closure you don't have direct access to them nor to the constructor.
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})
         class (emit-class-specs mclass-name parsed-class-specs env)
@@ -2783,12 +2823,14 @@
                                      (~'-with-meta [_# m#] (new ~mclass-name m# ~@closed-overs)))
                                    env-for-ctor-call)]
             [parsed-class-meta-specs (emit-class-specs 'dart:core/Object parsed-class-meta-specs env-for-ctor-call)]))
-        all-fields
-        (cond->> closed-overs meta-field (cons meta-field))
-        dart-type (let [const-meta-dart-type (new-dart-type mclass-name (:type-vars env) all-fields (when meta-field parsed-class-meta-specs) env)]
-                    (-> dart-type
-                      (update :interfaces (fnil conj []) (:interfaces const-meta-dart-type))
-                      (update :members merge (:members const-meta-dart-type))))
+        all-fields (cond->> closed-overs meta-field (cons meta-field))
+        dart-type (if meta-field
+                    (let [meta-members (:members (new-dart-type mclass-name (:type-vars env) all-fields parsed-class-meta-specs env))]
+                      (-> dart-type
+                        ; no mixins, no super, only interfaces
+                        (update-in [:members :interfaces] (fnil into []) (:interfaces meta-members))
+                        (update :members into (filter (fn [[k]] (string? k))) meta-members)))
+                    dart-type)
         _ (swap! nses alter-def class-name assoc :dart/type dart-type)
         class (-> class
                   (assoc
@@ -2842,7 +2884,7 @@
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
   (assert (and (re-matches #"[_$a-zA-Z][_$a-zA-Z0-9]*" (name class-name))
             (not (reserved-words (name class-name))))
-    "class-names must be valid dart ids")
+    (str "class-names must be valid dart ids; infringing class name: " (name class-name)))
   (let [abstract (:abstract (meta class-name))
         mixin (:mixin (meta class-name))
         [class-name & type-params] (cons class-name (:type-params (meta class-name)))
@@ -3134,15 +3176,17 @@
           (->>
            (concat
             (map refer-clojure-to-require refer-clojures)
-            (for [[directive & specs]
-                  ns-clauses
+            (for [[directive & specs :as clause] ns-clauses
+                  :when clause ; allow nils produced by conditionals
                   :let [f (case directive
                             :require #(if (sequential? %) % [%])
                             :import import-to-require
                             :use use-to-require
                             (:refer-clojure :host-ns) nil)]
                   :when f
-                  spec specs]
+                  spec specs
+                  ; allow nils produced by conditionals
+                  :when spec]
               (f spec)))
            (map (fn [[lib & more :as spec]]
                   (or (some-> (cljdize lib) (cons more))
@@ -3156,6 +3200,8 @@
                   (for [[lib & {:keys [as refer rename]}] require-specs
                         :let [_ (when (and (string? lib) (nil? (analyzer-info lib)))
                                   (throw (Exception. (str "Can't find Dart lib: " lib))))
+                              _ (when-not (or (nil? refer) (and (coll? refer) (every? symbol? refer)))
+                                  (throw (ex-info ":refer expects a collection of symbols; :refer :all is not supported." {:refer refer})))
                               clj-ns (when-not (string? lib) lib)
                               dartlib (else->>
                                        (if (string? lib) lib)
@@ -3209,17 +3255,20 @@
     dart-expr))
 
 (defn emit-try [[_ & body] env]
-  (let [{body nil catches 'catch [[_ & finally-body]] 'finally}
-        (group-by #(when (seq? %) (#{'finally 'catch} (first %))) body)]
-    (list 'dart/try
-           (emit-no-recur (cons 'do body) env)
-           (for [[_ classname e & [maybe-st & exprs :as body]] catches
-                 :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
-                       exprs (if st exprs body)
-                       env (cond-> (assoc env e (dart-local e env))
-                             st (assoc st (dart-local st env)))]]
-             [(emit-type classname env) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
-           (some-> finally-body (conj 'do) (emit-no-recur env)))))
+  (let [{body nil catches 'catch [[_ & finally-body] :as finallies] 'finally}
+        (group-by #(when (seq? %) (#{'finally 'catch} (first %))) body)
+        dart-expr (emit-no-recur (cons 'do body) env)]
+    (if (or (seq catches) (seq finallies))
+      (list 'dart/try
+        dart-expr
+        (for [[_ classname e & [maybe-st & exprs :as body]] catches
+              :let [st (when (and exprs (symbol? maybe-st)) maybe-st)
+                    exprs (if st exprs body)
+                    env (cond-> (assoc env e (dart-local e env))
+                          st (assoc st (dart-local st env)))]]
+          [(emit-type classname env) (env e) (some-> st env) (emit-no-recur (cons 'do exprs) env)])
+        (some-> finally-body (conj 'do) (emit-no-recur env)))
+      dart-expr)))
 
 (defn emit-throw [[_ expr] env]
   ;; always emit throw as a statement (in case it gets promoted to rethrow)
@@ -3250,6 +3299,28 @@
         {:dart/type (no-future ret-type)
          :dart/inferred true}))))
 
+(defn emit-dart-async-barrier [form env]
+  (let [dart-expr (emit-do form env)]
+    (if (has-await? dart-expr)
+      (list (list 'dart/fn () :positional () true dart-expr))
+      dart-expr)))
+
+(defn emit-dart-run-zoned [[_ & opts+body] env]
+  (let [opts (take-while (fn [[k v]] (keyword? k)) (partition 2 (butlast opts+body)))
+        body (drop (* 2 (count opts)) opts+body)
+        {:keys [values spec]} (into {} (map vec) opts)
+        dart-expr (emit-no-recur (cons 'do body) env)
+        async (has-await? dart-expr)
+        thunk (list 'dart/fn () :positional () async dart-expr)
+        thunksym (gensym "dart-run-zoned-thunk")]
+    (emit
+      (cond->>
+          (list '$lib:da/runZoned
+            thunksym '.zoneValues values '.zoneSpecification spec)
+        async
+        (list 'await))
+      (assoc env thunksym thunk))))
+
 (defn emit-dart-type-like [[_ x like] env]
   (simple-cast (emit x env) (:dart/type (infer-type (emit like env)))))
 
@@ -3274,6 +3345,8 @@
             (keyword? x)
             (emit (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) env)
             (nil? x) nil
+            (uuid? x)
+            (emit (list 'cljd.core/UUID. (str x) (cljd-hash (str x))) env)
             (and (seq? x) (seq x)) ; non-empty seqs only
             (let [f (first x)
                   emit (if (symbol? f)
@@ -3282,6 +3355,8 @@
                            set! emit-set!
                            dart/is? emit-dart-is ;; local inference done
                            dart/await emit-dart-await
+                           dart/async-barrier emit-dart-async-barrier
+                           dart/run-zoned emit-dart-run-zoned
                            dart/assert emit-dart-assert
                            dart/type-like emit-dart-type-like
                            throw emit-throw
@@ -3606,6 +3681,13 @@
                       (when-not (-> *current-ns* all-nses :imports (get lib))
                         (swap! nses assoc-in [*current-ns* :imports lib] {}))))
                   (dart-print x))
+    (double? x)
+    (cond
+      (Double/isNaN x) (dart-print "dc.double.nan")
+      (Double/isInfinite x) (dart-print (if (pos? x)
+                                          "dc.double.infinity"
+                                          "dc.double.negativeInfinity"))
+      :else (dart-print (str x)))
     :else (dart-print (str x))))
 
 (defn write-params [fixed-params opt-kind opt-params]
@@ -3974,7 +4056,7 @@
         (write condition expr-locus)
         (dart-print ", ")
         (write msg-expr expr-locus)
-        (dart-print ");\n"))
+        (dart-print "); // assert\n\n"))
       dart/await
       (let [[_ expr] x]
         (print-pre locus)
@@ -3989,7 +4071,7 @@
           (write expr throw-locus))
         true)
       dart/case
-      (let [[_ expr clauses default-expr] x
+      (let [[_ expr default-label clauses default-expr] x
             decl (declaration locus)
             locus (declared locus)
             _ (some-> decl dart-print)
@@ -4004,7 +4086,10 @@
                       (dart-print "break;\n")))
                   true
                   clauses)
-            _ (dart-print "_default: default:\n")
+            _ (when default-label
+                (dart-print default-label)
+                (dart-print ": "))
+            _ (dart-print "default:\n")
             exit (and (write default-expr locus) exit)]
         (dart-print "}\n")
         exit)
@@ -4226,6 +4311,8 @@
 
 ;; Compile clj -> dart file
 (defn dump-ns [ns-name {ns-lib :lib :as ns-map}]
+  ;; used to silence the analyzer when people are using VS Code or other tools
+  (dart-print "// ignore_for_file: type=lint, unnecessary_cast, unnecessary_type_check, unused_import, unused_local_variable, unused_label, unnecessary_question_mark, unused_catch_clause, type_check_with_null, dead_code\n")
   (doseq [lib (keys (:imports ns-map))
           :let [dart-alias (-> @nses :libs (get lib) :dart-alias)]]
     (dart-print "import ")
@@ -4507,11 +4594,16 @@
     #_(write
         (emit-test `~(tagged-literal 'dart '[1 2]) {})
         return-locus)
-    (write (emit-test `(fn [~(with-meta 'ss
+    #_(write (emit-test `(fn [~(with-meta 'ss
                                {:tag (dart-type-params-reader '(dart:core/Set dart:core/List))})]
                          (let [v (.lookup ss "key")]
                            (.-first! "val"))) {})
-      return-locus))
+      return-locus)
+
+    (get (analyzer-info "dart:core" "Function") "apply")
+
+    #_(write (emit '(Future.delayed (Duration .seconds 1) (constantly "h")) {})
+        return-locus))
 
   (binding [analyzer-info li
             *dart-out* *out*

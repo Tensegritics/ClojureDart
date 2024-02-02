@@ -1,0 +1,14 @@
+{
+    "name": "CoolGuy",
+    "age": 21,
+    "nicknames": [
+        {
+            "name": "Mr. Cool",
+            "length": 8
+        },
+        {
+            "name": "Ice Cold",
+            "length": 8
+        }
+    ]
+}

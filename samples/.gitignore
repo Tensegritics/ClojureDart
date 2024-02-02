@@ -9,9 +9,16 @@
 /*/pubspec.yaml
 /*/README.md
 !/webview/README.md
+!/syncfusion_flutter_charts/README.md
 /*/test/*
 /*/web/*
 /*/windows/*
+/*/bin/*
+/*/CHANGELOG.md
 !/ffi/hello_library/
 !/ffi/README.md
 !/ffi/pubspec.yaml
+!/fficjson/third_party/
+!/fficjson/README.md
+!/fficjson/config.yaml
+!/fficjson/example.json

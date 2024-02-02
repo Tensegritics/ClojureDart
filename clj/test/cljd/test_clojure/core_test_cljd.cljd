@@ -10,7 +10,8 @@
 ;;
 
 (ns cljd.test-clojure.core-test-cljd
-  (:require ["dart:developer" :as dev]
+  (:require ["dart:async" :as dart:async]
+            ["dart:developer" :as dev]
             ["dart:io" :as io]
             ["dart:typed_data" :as typed-data]
             [cljd.string :as str])
@@ -861,3 +862,75 @@
     (is (true? (case f
                  true false
                  false true)))))
+
+(deftest test-dissoc!-on-datascript-record-extension-failure
+  (let [m {:as :aka, :default nil, :name :aka, :pattern nil, :recursion-limit nil, :recursive? nil, :reverse? nil,
+           :xform nil, :multival? true, :ref? nil, :component? nil, :limit 1000}]
+    (is (= {:as :aka, :default nil, :name :aka, :pattern nil, :recursion-limit nil, :recursive? nil, :reverse? nil,
+            :xform nil, :multival? true, :ref? nil, :component? nil}
+          (-> m transient (dissoc! :limit) persistent!)))))
+
+(deftest magicasting-to-function-types-with-parameters
+  (is (= "y" (.replaceAllMapped "x" "x" (constantly "y")))))
+
+(deftest dont-magicast-to-function-types-with-empty-parameters-list
+  (is (= "Hello"
+        (await (Future.delayed (Duration .microseconds 1) (constantly "Hello"))))))
+
+(deftest dont-magicast-to-function-types-without-parameters
+  (is (try
+        (Function.apply (identity str) ["abc" "def"])
+        false
+        (catch TypeError e
+          (or (.contains (str e) #" is not a subtype of type 'Function' in type cast")
+            (throw e))))))
+
+(deftest test-reify-type-properly-inferred
+  ;; check that this form compiles correctly
+  ;; the inference of the type of this if used to create a compilation error
+  (is (do (.write (if (identity true)
+                    (reify :no-meta true StringSink (write [_ _]))
+                    (StringBuffer "i")) "tactac")
+          true))
+  (is (do (.write (if (identity true)
+                    (reify StringSink (write [_ _]))
+                    (StringBuffer "i")) "tactac")
+          true)))
+
+(deftest test-async-error-handler
+  (let [completer (dart:async/Completer)
+        fut (binding [*async-error-handler*
+                      (fn [e st]
+                        (.complete completer e))]
+              (Future/microtask #(throw :from-async)))]
+    (is (not (.-isCompleted completer)))
+    (is (= :from-async (await (.-future completer))))))
+
+(deftest nil-is-not-a-set-but-disj-must-work
+  (is (not (set? nil)))
+  (is (nil? (disj nil :a))))
+
+(deftest dart-lists-obey-print-readably
+  (is (= "[\"hello\"]" (pr-str #dart ["hello"]))))
+
+(deftest nested-case-dart-closure-case-dont-throw-becasue-of-over-captured-default-label
+  (is (case (rand)
+        :a false
+        :b (fn []
+             (case (rand) :c false false))
+        true)))
+
+(deftest nil-as-test-expression-in-when-some
+  (is (nil? (when-some [x nil] 42))))
+
+(deftest throw-when-passing-a-nullable-fn-instead-of-a-non-nullable-fn
+  (let [f (fn [^^{:fn-type {:fixed-params-types [dynamic]
+                            :ret-type bool}} Function? f ^Iterable l]
+            (.any l f))]
+    (is (thrown? Error (f nil [1])))))
+
+(deftest print-level-print-length
+  (is (= "[[[# 7] 8] 9]" (binding [*print-level* 3] (pr-str (reduce vector (range 10))))))
+  (is (= "{{{# 7} 8} 9}" (binding [*print-level* 3] (pr-str (reduce hash-map (range 10))))))
+  (is (= "(0 1 2 ...)" (binding [*print-length* 3] (pr-str (range 10)))))
+  (is (= "{0 1, 4 5, 6 7, ...}" (binding [*print-length* 3] (pr-str (apply hash-map (range 10)))))))

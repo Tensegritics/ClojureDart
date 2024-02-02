@@ -9,7 +9,7 @@
 (ns cljd.build
   (:require [cljd.compiler :as compiler]
             [clojure.edn :as edn]
-            [clojure.tools.cli.api :as deps]
+            [clojure.tools.deps.alpha :as deps]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
             [clojure.java.io :as io]))
@@ -131,7 +131,7 @@
         (or
           (first
             (for [bin bins
-                  dir (.split path java.io.File/pathSeparator)
+                  dir (cons ".fvm/flutter_sdk/bin" (.split path java.io.File/pathSeparator))
                   :let [file (java.io.File. dir bin)]
                   :when (and (.isFile file) (.canExecute file))]
               (.getAbsolutePath file)))
@@ -226,7 +226,7 @@
                         (print-exception e)
                         false)))))
               compilation-success (compile-nses namespaces)]
-          (when (or watch flutter)
+          (if (or watch flutter)
             (let [compile-files
                   (fn [^java.io.Writer flutter-stdin]
                     (fn [_ files]
@@ -307,7 +307,15 @@
                     (when p
                       (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
                   (finally
-                    (some-> p .destroy)))))))))))
+                    (some-> p .destroy)))))
+            compilation-success))))))
+
+(defn test-cli [& {:keys [namespaces]}]
+  (when (compile-cli :namespaces namespaces)
+    (newline)
+    (println (title "Running tests..."))
+    (let [bin (some-> *deps* :cljd/opts :kind name)]
+      (System/exit (exec {:in nil #_#_:out nil} bin "test")))))
 
 (defn gen-entry-point []
   (let [deps-cljd-opts (:cljd/opts *deps*)
@@ -480,25 +488,103 @@
            :defaults {:target "flutter"}}
    "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart."}
    "clean" {:doc "When there's something wrong with compilation, erase all ClojureDart build artifacts.\nConsider running flutter clean too."}
+   "help" {:doc (:doc help-spec)}
+   "test" {:doc "Run specified test namespaces (or all by default)."}
    "upgrade" {:doc "Upgrade cljd to latest version."}
    "watch" {:doc "Like compile but keep recompiling in response to file updates."}
    "flutter" {:options false
               :doc "Like watch but hot reload the application in the simulator or device. All options are passed to flutter run."}})
 
+(defn sha256 [string]
+  (let [digest (.digest (java.security.MessageDigest/getInstance "SHA-256") (.getBytes string "UTF-8"))]
+    (apply str (map (partial format "%02x") digest))))
+
+(defn find-pubspec [{:keys [:deps/root paths]}]
+  (if root
+    (let [f (java.io.File. root "pubspec.yaml")]
+      (when (.exists f)
+        (slurp f)))
+    (some
+      (fn [path]
+        (let [f (java.io.File. path)]
+          (if (.isDirectory f)
+            (let [f (java.io.File. f "pubspec.yaml")]
+              (when (.exists f)
+                (slurp f)))
+            (with-open [in (-> f io/input-stream java.util.jar.JarInputStream.)]
+              (loop []
+                (when-some [e (.getNextJarEntry in)]
+                  (if (= "pubspec.yaml" (.getName e))
+                    (slurp in) ; slurp closes `in` but it's ok it's the last action
+                    (recur))))))))
+      paths)))
+
+(defn sync-pubspec! []
+  (let [parser (org.yaml.snakeyaml.Yaml.)
+        existing-deps (into {}
+                        (for [[name {:strs [path]}] (get (.load parser (slurp "pubspec.yaml")) "dependencies")
+                              :let [[_ sha] (some->> path (re-matches #"^\.clojuredart/deps/(.+)"))]
+                              :when sha]
+                          [[name sha] (-> path java.io.File. .exists)]))
+        declared-deps (into {}
+                        (for [pubspec (keep find-pubspec (vals (deps/resolve-deps *deps* {})))
+                              :let [{:strs [name]} (.load parser pubspec)
+                                    sha (sha256 pubspec)]]
+                          [[name sha] pubspec]))
+        ; the (filter existing-deps) is to remove "bridge" deps which don't exist on disk
+        ; typically when getting an updated pubspec.yaml from scm (git)
+        deps-to-remove (keys (transduce (filter existing-deps) dissoc existing-deps (keys declared-deps)))
+        deps-to-add (transduce (filter existing-deps) dissoc declared-deps existing-deps)]
+
+    (when-some [names (seq (map first deps-to-remove))]
+      (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "remove"
+        names)
+      (run! #(del-tree (java.io.File. ".clojuredart/deps" (second %))) deps-to-remove))
+
+    (when-some [coords (seq (for [[name sha] (keys deps-to-add)]
+                              (str name ":{\"path\":\".clojuredart/deps/" sha "\"}")))]
+      (doseq [[[name sha] pubspec] deps-to-add
+              :let [f (java.io.File. ".clojuredart/deps" sha)]]
+        (.mkdirs f)
+        (spit (java.io.File. f "pubspec.yaml") pubspec))
+      (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--directory=."
+        coords))))
+
+(defn ensure-test-dev-dep! []
+  (let [parser (org.yaml.snakeyaml.Yaml.)]
+    (when-not (get-in (.load parser (slurp "pubspec.yaml")) ["dev_dependencies" "test"])
+      (exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--dev" "test"))))
+
 (defn -main [& args]
   (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
             compiler/*lib-path*
             (str (.getPath (java.io.File. "lib")) "/")]
-    (binding [*deps* (:basis (deps/basis nil))]
+    (binding [*deps* (deps/create-basis nil)]
       (let [[options cmd cmd-opts & args] (parse-args commands args)]
         (case cmd
+          ("compile" "watch" "flutter" "test") (sync-pubspec!)
+          nil)
+        (case cmd
           :help (print-help commands)
+          "help" (print-help commands)
           "init" (init-project args)
           ("compile" "watch")
           (compile-cli
            :namespaces (or (seq (map symbol args))
                            (some-> *deps* :cljd/opts :main list))
            :watch (= cmd "watch"))
+          "test"
+          (do
+            (ensure-test-dev-dep!)
+            (test-cli
+              :namespaces
+              (or (seq (map symbol args))
+                (for [path (:paths *deps*)
+                      ^java.io.File file (tree-seq
+                                           some? #(.listFiles ^java.io.File %)
+                                           (java.io.File. path))
+                      :when (re-matches #".*\.clj[cd]" (.getName file))]
+                  (compiler/peek-ns file)))))
           "upgrade"
           (upgrade-cljd)
           "flutter"
@@ -515,6 +601,7 @@
             (del-tree (java.io.File. "lib/cljd-out"))
             (del-tree (java.io.File. "test/cljd-out"))
             (del-tree (java.io.File. ".clojuredart"))
+            (sync-pubspec!)
             (println "ClojureDart build state succesfully cleaned!")
             (case (some-> *deps* :cljd/opts :kind)
               :flutter (println "If problems persist, try" (bright "flutter clean"))

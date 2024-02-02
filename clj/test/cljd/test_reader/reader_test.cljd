@@ -123,10 +123,12 @@
   (is (= 'abc:def/ghi:jkl.mno (r/read-string "abc:def/ghi:jkl.mno")))
   (is (dart/is?  (r/read-string "alphabet") cljd.core/Symbol))
   (is (= "foo//" (str (r/read-string "foo//"))))
-  ;; TODO : think about it
-  #_(is (await (js/isNaN (r/read-string "##NaN"))))
-  #_(is (= js/Number.POSITIVE_INFINITY (r/read-string "##Inf")))
-  #_(is (= js/Number.NEGATIVE_INFINITY (r/read-string "##-Inf"))))
+  (is (true? (-> (r/read-string "##NaN") .-isNaN)))
+  (is (= double/infinity (r/read-string "##Inf")))
+  (is (= double/negativeInfinity (r/read-string "##-Inf")))
+  (is (dart/is? (r/read-string "#inst \"2023-01-01T00:00:00.000-00:00\"") DateTime)))
+
+
 
 (deftest read-specials
   (is (= 'nil (read-string "nil")))
