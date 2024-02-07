@@ -934,3 +934,13 @@
   (is (= "{{{# 7} 8} 9}" (binding [*print-level* 3] (pr-str (reduce hash-map (range 10))))))
   (is (= "(0 1 2 ...)" (binding [*print-length* 3] (pr-str (range 10)))))
   (is (= "{0 1, 4 5, 6 7, ...}" (binding [*print-length* 3] (pr-str (apply hash-map (range 10)))))))
+
+(deftest iterator-on-pv-returns-pviterator
+  (is (dart/is? (iterator [1 2]) cljd.core/PVIterator)))
+
+(deftest doseq-handles-await-like-a-charm
+  (let [out (atom [])]
+    (doseq [d (range 3)]
+      (await (future nil))
+      (swap! out conj d))
+    (is (= [0 1 2] @out))))

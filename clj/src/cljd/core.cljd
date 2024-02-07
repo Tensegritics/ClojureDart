@@ -3167,6 +3167,30 @@
         (-print-sequential begin end sequence sink)))
     (-print-sequential begin end sequence sink)))
 
+(deftype #/(SeqIterator E)
+  [^:mutable curr ^:mutable more]
+  :type-only true
+  #/(Iterator E)
+  (current [iter] curr)
+  (moveNext [iter]
+    ;; state machine:
+    ;;  more | curr | state
+    ;; ------+------+----------------------------------------
+    ;;  nil  | some | init, curr contains the sequence
+    ;;  nil  | nil  | the end
+    ;;  some | ?    | in progress, curr is the current value
+    (when (nil? more)
+      (set! more curr))
+    (if-some [s (seq more)]
+      (do
+        (set! curr (first s))
+        (set! more (rest s))
+        true)
+      (do
+        (set! curr nil)
+        (set! more nil)
+        false))))
+
 (deftype ^:mixin #/(SeqListMixin E)
   []
   Object
@@ -3185,6 +3209,7 @@
    (throw (UnsupportedError. "[]= not supported on Cons")))
   ("[]" [coll idx] (-nth coll idx))
   (length [coll] (-count coll))
+  (iterator [o] (#/(SeqIterator E) nil o))
   IIndexed
   (-nth [coll n]
     (when (neg? n) (throw (ArgumentError. "Index out of bounds")))
@@ -6693,22 +6718,27 @@
                       (let [body (wrap more-mods body)]
                         (case mod
                           :let `(let ~expr ~body)
-                          :while  `(if ~expr ~body (reduced ~acc))
-                          :when `(when ~expr ~body)))
+                          :while  `(when ~expr ~body)
+                          :when `(if ~expr ~body (recur))))
                       body))
                   nmods (* 2 (count (take-while keyword? (take-nth 2 seq-exprs))))
                   mods (take nmods seq-exprs)
                   seq-exprs (seq (drop nmods seq-exprs))
                   body
-                  `(reduce (fn [~acc ~binding]
-                             ~(wrap mods
-                                (if seq-exprs
-                                  (emit seq-exprs)
-                                  `(do ~@body-expr nil))))
-                     nil
-                     ~expr)]
+                  `(let [it# (iterator ~expr)]
+                     (loop []
+                       (when (.moveNext it#)
+                         (let [~binding (.-current it#)]
+                           ~(wrap mods
+                              `(do
+                                 ~(if seq-exprs
+                                    (emit seq-exprs)
+                                    `(do ~@body-expr))
+                                 (recur)))))))]
               body))]
-    (some-> seq-exprs seq emit)))
+    `(do
+       ~(some-> seq-exprs seq emit)
+       nil)))
 
 (defn ^PersistentVector vec [coll]
   (into [] coll))
