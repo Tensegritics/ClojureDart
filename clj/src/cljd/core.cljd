@@ -1735,38 +1735,40 @@
 (defn ^bool -equiv-sequential
   "Assumes x is sequential."
   [x y]
-  (and
-    (or (sequential? y) (dart/is? y List))
-    (or (not (counted? x)) (not (counted? y))
-      (== (count x) (count y)))
-    (or (not (-hash-realized? x)) (not (-hash-realized? y))
-      (== (-hash x) (-hash y)))
-    (loop [xs (seq x) ys (seq y)]
-      (cond
-        (nil? xs) (nil? ys)
-        (nil? ys) false
-        (= (first xs) (first ys)) (recur (next xs) (next ys))
-        :else false))))
+  (or (identical? x y)
+    (and
+      (or (sequential? y) (dart/is? y List))
+      (or (not (counted? x)) (not (counted? y))
+        (== (count x) (count y)))
+      (or (not (-hash-realized? x)) (not (-hash-realized? y))
+        (== (-hash x) (-hash y)))
+      (loop [xs (seq x) ys (seq y)]
+        (cond
+          (nil? xs) (nil? ys)
+          (nil? ys) false
+          (= (first xs) (first ys)) (recur (next xs) (next ys))
+          :else false)))))
 
 (defn ^bool -equiv-map
   "Test map equivalence. Returns true if x equals y, otherwise returns false."
   [x y]
-  (boolean
-    (when (and (map? y) (not (record? y)))
-      ; assume all maps are counted
-      (when (== (count x) (count y))
-        (let [never-equiv ^:unique (Object.)]
-          (if (satisfies? IKVReduce x)
-            (reduce-kv
-              (fn [_ k v]
-                (if (= (get y k never-equiv) v)
-                  true
-                  (reduced false)))
-              true x)
-            (every?
-              (fn [xkv]
-                (= (get y (first xkv) never-equiv) (second xkv)))
-              x)))))))
+  (or (identical? x y)
+    (boolean
+      (when (and (map? y) (not (record? y)))
+        ; assume all maps are counted
+        (when (== (count x) (count y))
+          (let [never-equiv ^:unique (Object.)]
+            (if (satisfies? IKVReduce x)
+              (reduce-kv
+                (fn [_ k v]
+                  (if (= (get y k never-equiv) v)
+                    true
+                    (reduced false)))
+                true x)
+              (every?
+                (fn [xkv]
+                  (= (get y (first xkv) never-equiv) (second xkv)))
+                x))))))))
 
 (deftype ^:mixin EqualsEquivMixin []
   Object

@@ -944,3 +944,16 @@
       (await (future nil))
       (swap! out conj d))
     (is (= [0 1 2] @out))))
+
+(deftype ThrowOnEqual []
+  cljd.core/IEquiv
+  (-equiv [_ _] (throw (Exception. "exception")))
+  cljd.core/IHash
+  (-hash [_] 666))
+
+(deftest check-identity-before-deep-equiv
+  (let [explode (ThrowOnEqual.)
+        v [explode]
+        m {1 explode}]
+    (is (= v v))
+    (is (= m m))))
