@@ -107,7 +107,16 @@
 (defn timestamp []
   (.format (java.text.SimpleDateFormat. "@HH:mm:ss" (java.util.Locale/getDefault)) (java.util.Date.)))
 
-(defn exec [& args]
+(defn exec
+  "If first arg is a map, it's an option map.
+   Supported options:
+   :in, :out and :err are either nil, a File or a ProcessBuilder$Redirect -- default to ProcessBuilder$Redirect/INHERIT
+   :env a map of extra environment variables (strings to strings)
+   :dir the current directory
+   :async a boolean (defaults to false), when true exec returns immediatly.
+   When async, exec returns a Process.
+   When not async exec returns nil (for exit code 0) or non-zero exit code"
+  [& args]
   (let [{:keys [async in err out env dir] :as opts
          :or {env {}
               in java.lang.ProcessBuilder$Redirect/INHERIT
@@ -314,7 +323,7 @@
     (newline)
     (println (title "Running tests..."))
     (let [bin (some-> *deps* :cljd/opts :kind name)]
-      (System/exit (exec {:in nil #_#_:out nil} bin "test")))))
+      (System/exit (or (exec {:in nil #_#_:out nil} bin "test") 0)))))
 
 (defn gen-entry-point []
   (let [deps-cljd-opts (:cljd/opts *deps*)
