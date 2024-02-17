@@ -1991,8 +1991,8 @@
               [bindings dart-test] (lift-arg (nil? truth) dart-test "test" env)
               dart-test (case truth
                           (:boolean :falsy :truthy) dart-test
-                          :some (list 'dart/. dart-test "!=" nil)
-                          (list 'dart/. (list 'dart/. dart-test "!=" false) "&&" (list 'dart/. dart-test "!=" nil)))]
+                          :some (list 'dart/. nil "!=" dart-test)
+                          (list 'dart/. (list  'dart/. false "!=" dart-test) "&&" (list 'dart/. nil "!=" dart-test)))]
           (case truth
             :falsy (list 'dart/let (conj (vec bindings) [nil dart-test]) (emit else env))
             :truthy (list 'dart/let (conj (vec bindings) [nil dart-test]) (emit then env))
