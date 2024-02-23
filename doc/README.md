@@ -362,6 +362,14 @@ Automatic lifecycle management for `*Controllers` and the like.
 
 `:managed` takes a bindings vector like `:let` but expressions must produce objects in need of being disposed (using the `.dispose` method by default).
 
+#### `:managed` + `:dispose` option
+
+See [`:watch` + `:dispose`](#watch--dispose-option).
+
+#### `:managed` + `:refresh-on` option
+
+See [`:watch` + `:refresh-on`](#watch--refresh-on).
+
 ### `:bind` directive
 Dynamic binding but along the widgets tree, not the call tree. Inherited bindings in Flutter speak.
 
