@@ -224,8 +224,106 @@ It will wrap its value inside a ValueKey so that you don’t have to.
 
 When `an-atom` changes, everything after `:watch` will update with `v` bound to the current value of `an-atom`.
 
+`:watch` bindings can take options:
+
+#### `:watch` + `:default` option
+Some watchables can't provide a current value (like `Future`s, `Stream`s, `Listenable`s...).
+
+In the following example the future will only yield a value 3 seconds after the widget is built for the first time. In the meantime, `v` is bound to `nil`.
+
+```clj
+(f/widget
+  :watch [v (Future/delayed (Duration .seconds 3) (fn [] "Surprise! 🎉"))]
+  (m/Text (or v "Nothing yet...")))
+```
+
+The `nil` interim value can be overrided using the `:default` option:
+
+```clj
+(f/widget
+  :watch [v (Future/delayed (Duration .seconds 3) (fn [] "Surprise! 🎉"))
+          :default "Nothing yet..."]
+  (m/Text v))
+```
+
 #### Watchables
 `nil`, atoms, cells, `Stream`s, `Future`s, `Listenable`s and `ValueListenable`s and any extension of the `Subscribable` protocol.
+
+#### `:watch` + `:as` option
+`:as local-name` gives a local name to the watchable.
+
+This is especially useful for local state where the watchable is an expression:
+
+```clj
+(f/widget
+  :watch [n (atom 0) :as counter]
+  (m/TextButton .onPressed (fn [] (swap! counter inc) nil))
+  (m/Text (str "Clicked " n "time(s)")))
+```
+
+This is functionally equivalent to:
+
+```clj
+(f/widget
+  :managed [counter (atom 0)
+            :dispose nil]
+  :watch [n counter]
+  (m/TextButton .onPressed (fn [] (swap! counter inc) nil))
+  (m/Text (str "Clicked " n "time(s)")))
+```
+
+#### `:watch` + `:dispose` option
+`:dispose disposing-expr` (defaults to `nil`) allows to specify how to dispose of the watched resource (see `:managed`).
+It's generally used in conjuction with `:as`.
+
+The resource will be threaded through `disposing-expr` as per `->`: `(-> resource disposing-expr)`.
+
+Beware: `:watch`'s `:dispose` defaults to `nil` but `:managed`'s `:dispose` defaults to `.dispose`.
+
+#### `:watch` + `:refresh-on`
+
+The watchable will be recomputed every time a local involved in its expression is modified.
+
+The following example illustrates the default (and sensible behavior): each time you click the top button, the bottom button is reset to the current value of the top one.
+
+```clj
+(f/widget
+  :watch [ntop (atom 0) :as top-counter
+          nbottom (atom ntop) :as bottom-counter]
+  m/Column
+  .children
+  [(f/widget
+     (m/TextButton .onPressed (fn [] (swap! top-counter + 10) nil))
+     (m/Text (str "Clicked " (quot ntop 10) "time(s)")))
+   (f/widget
+     (m/TextButton .onPressed (fn [] (swap! bottom-counter inc) nil))
+     (m/Text (str "Clicked " nbottom "time(s)")))]
+```
+
+By specifying `:refresh-on refresh-expr` the watchable will be recomputed only when `refresh-expr` changes. Usually `refresh-expr` will be `nil`, a local or a vector of locals.
+
+
+```clj
+(f/widget
+  :watch [ntop (atom 0) :as top-counter
+          nbottom (atom ntop) :as bottom-counter :refresh-on nil]
+  m/Column
+  .children
+  [(f/widget
+     (m/TextButton .onPressed (fn [] (swap! top-counter + 10) nil))
+     (m/Text (str "Clicked " (quot ntop 10) "time(s)")))
+   (f/widget
+     (m/TextButton .onPressed (fn [] (swap! bottom-counter inc) nil))
+     (m/Text (str "Clicked " nbottom "time(s)")))]
+```
+
+In the above example clicking on the top button doesn't cause the bottom counter to be reset.
+
+To test your understanding, replace `:refresh nil` by `:refresh-on (quot ntop 20)`. This will cause the bottom counter to be restet every two click on the top button.
+
+#### `:watch` + `:>` option
+
+TODO
 
 #### Cells
 Great for maintaining and reusing derived state; tip: try to share them via inherited bindings (see `:bind`) rather than function arguments.
