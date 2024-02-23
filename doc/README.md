@@ -246,9 +246,6 @@ The `nil` interim value can be overrided using the `:default` option:
   (m/Text v))
 ```
 
-#### Watchables
-`nil`, atoms, cells, `Stream`s, `Future`s, `Listenable`s and `ValueListenable`s and any extension of the `Subscribable` protocol.
-
 #### `:watch` + `:as` option
 `:as local-name` gives a local name to the watchable.
 
@@ -284,7 +281,7 @@ Beware: `:watch`'s `:dispose` defaults to `nil` but `:managed`'s `:dispose` defa
 
 The watchable will be recomputed every time a local involved in its expression is modified.
 
-The following example illustrates the default (and sensible behavior): each time you click the top button, the bottom button is reset to the current value of the top one.
+The following example illustrates the default (and sensible) behavior: each time you click the top button, the bottom button is reset to the current value of the top one.
 
 ```clj
 (f/widget
@@ -319,11 +316,38 @@ By specifying `:refresh-on refresh-expr` the watchable will be recomputed only w
 
 In the above example clicking on the top button doesn't cause the bottom counter to be reset.
 
-To test your understanding, replace `:refresh nil` by `:refresh-on (quot ntop 20)`. This will cause the bottom counter to be restet every two click on the top button.
+To test your understanding, replace `:refresh nil` by `:refresh-on (quot ntop 20)`. This will cause the bottom counter to be reset every two clicks on the top button.
 
 #### `:watch` + `:>` option
 
-TODO
+Some watchables (like `Listenable`s) don't provide a value, they just notify they have changed with no standard way of getting the value. (By default the values successively bound by `:watch` would be successive integers, which isn't very useful.)
+
+This leads to code like:
+```clj
+(f/widget
+  :watch [_ some-notifier]
+  :let [v (.-adHocProperty some-notifier)]
+  ...)
+```
+
+This is better written as:
+```clj
+(f/widget
+  :watch [v some-notifier :> .-adHocProperty]
+  ...)
+```
+
+This change is more than cosmetic: values will be automatically deduplicated, while you would get extraneous rebuild by using the `:let`.
+
+#### Deduplication
+`:watch` triggers a rebuild only when its bound values change (according to `=`).
+
+It means that if you have `:watch [x big-atom]` it will trigger every time the atom change. But if you have `:watch [{:keys [some-prop]} big-atom]` it will trigger only when `some-prop` changes!
+
+So if you see spurious rebuilds maybe you have a unused bindings like in `:watch [{:keys [some-prop] :as unused-big-value} big-atom]`.
+
+#### Watchables
+`nil`, atoms, cells, `Stream`s, `Future`s, `Listenable`s and `ValueListenable`s and any extension of the `Subscribable` protocol.
 
 #### Cells
 Great for maintaining and reusing derived state; tip: try to share them via inherited bindings (see `:bind`) rather than function arguments.
