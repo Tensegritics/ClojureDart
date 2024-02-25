@@ -378,7 +378,7 @@ Dynamic binding but along the widgets tree, not the call tree. Inherited binding
 ### `:get` directive
 `:get [:k1 :k2]` retrieves values bound to `:k1` and `:k2` via `:bind` and binds these values to `k1` and `k2` in the lexical scope (the following forms).
 
-`:get [m/Navigator]` retrieves instance returned by `(m/Navigator.of context)` and lexically binds it to `navigator` -- implicit kebab-casing of teh Dart name.
+    `:get [m/Navigator]` retrieves instance returned by `(m/Navigator.of context)` and lexically binds it to `navigator` -- implicit kebab-casing of teh Dart name.
 
 ### `:context` directive — when Flutter lacks context
 `:context ctx` binds ctx to a `BuildContext` instance.
@@ -388,3 +388,24 @@ This comes handy when you have to pass a `BuildContext` to a Flutter call. Howev
 ### `:vsync` directive — chasing the electron beam across a phosphor screen
 
 `:vsync clock` binds `clock` to a `TickerProvider`, generally required by animations.
+
+### `:height`, `:width` and `:color`
+
+Utilities directives to cut on SizedBox, ColoredBox or Container usage.
+
+`:height` and `:width` expect a numeric value.
+
+`:color` expects an instance of `Color` as value.
+
+### `:padding`
+
+Utility directive to simplify setting padding.
+
+`:padding padding-expr` where `padding-expr` may evaluate to:
+* an `EdgeInsetsGeometry` instance
+* a number -- in which case it's passed to `EdgeInsets.all` to specify that it's the padding in all directions
+* a map with keys amongst `:top` `:bottom` `:left` `:right` `:start` `:end` `:horizontal` `:vertical` (and numeric values)
+
+### `:when`
+
+`:when test` will show the rest of the widget only when test is truthy (not `nil` or `false`).

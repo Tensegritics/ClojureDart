@@ -666,7 +666,13 @@
      Out of the box it means: atoms, Streams, Futures, Listenables,
      ValueListenable and... nil.
      These bindings can take options (in the same way as :managed bindings do).
-     Supported options are  :refresh-on, :dispose, :dedup and :>
+     Supported options are :as, :default, :refresh-on, :dispose, :dedup and :>
+     - :as -- gives a name to the watched resource (e.g. to be able to swap! on
+       it if it's an atom)
+     - :default -- provides an interim value to use while the first actual value
+       is available (e.g. while waiting for a Future to complete or a Stream to
+       produce a value). Useless when the watched resource can provide a current
+       value (atoms for example).
      - :refresh-on expr -- see :managed
      - :dispose form -- if the object under watch also needs to be managed use
        this option. Works like :dispose for :managed except for \":dispose true\"
