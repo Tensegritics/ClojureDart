@@ -1,14 +1,62 @@
 # ClojureDart
 
+- [The language](#the-language)
+  - [Word of warning](#word-of-warning)
+  - [CLI](#cli)
+  - [Using Dart packages](#using-dart-packages)
+  - [Types and aliases](#types-and-aliases)
+  - [Types and nullability](#types-and-nullability)
+  - [Parametrized types](#parametrized-types)
+  - [Property access](#property-access)
+  - [`:flds`, Object destructuring](#flds-object-destructuring)
+  - [Constructors](#constructors)
+  - [Understanding Dart signatures](#understanding-dart-signatures)
+  - [Named arguments](#named-arguments)
+  - [Optional params (named or not)](#optional-params-named-or-not)
+  - [Enums](#enums)
+  - [Consts and const opt-out](#consts-and-const-opt-out)
+  - [Creating classes](#creating-classes)
+     - [`:extends`](#extends)
+     - [mixins](#mixins)
+     - [operators](#operators)
+  - [Getters/Setters](#getterssetters)
+- [`cljd.flutter`: more Flutter,  less clutter!](#cljdflutter-more-flutter-less-clutter)
+  - [Require this! It’s dangerous to go alone...](#require-this-its-dangerous-to-go-alone)
+  - [`f/run [& widget-body]`](#frun--widget-body)
+  - [`f/widget [& widget-body]`](#fwidget--widget-body)
+  - [`.child-threading`](#child-threading)
+  - [`:let` directive](#let-directive)
+  - [`:key` directive](#key-directive)
+  - [`:watch` directive — or how to react to IO and state](#watch-directive--or-how-to-react-to-io-and-state)
+    - [`:watch` + `:default` option](#watch--default-option)
+    - [`:watch` + `:as` option](#watch--as-option)
+    - [`:watch` + `:dispose` option](#watch--dispose-option)
+    - [`:watch` + `:refresh-on`](#watch--refresh-on)
+    - [`:watch` + `:>` option](#watch---option)
+    - [Deduplication](#deduplication)
+    - [Watchables](#watchables)
+    - [Cells](#cells)
+  - [`:managed` directive](#managed-directive)
+    - [`:managed` + `:dispose` option](#managed--dispose-option)
+    - [`:managed` + `:refresh-on` option](#managed--refresh-on-option)
+  - [`:bind` directive](#bind-directive)
+  - [`:get` directive](#get-directive)
+  - [`:context` directive — when Flutter lacks context](#context-directive--when-flutter-lacks-context)
+  - [`:vsync` directive — chasing the electron beam across a phosphor screen](#vsync-directive--chasing-the-electron-beam-across-a-phosphor-screen)
+  - [`:height`, `:width` and `:color`](#height-width-and-color)
+  - [`:padding`](#padding)
+  - [`:when`](#when)
+
 ## The language
 
-This assumes basic knowledge of another Clojure dialect.
+This documentation assumes basic knowledge of [another Clojure dialect](https://clojure.org/guides/getting_started).
 
 ### Word of warning
-Interop is core to Clojure, and it differs from host to host. Dart is both more strongly typed and less dynamic than Java.
-This lack of dynamism is the price for excellent tree-shaking and fast startup.
+Interop is a core part of Clojure and differs from host to host. Dart is both more strongly typed and less dynamic than Java.
+This lack of dynamism is the price for excellent tree-shaking and fast startups.
 
 ### CLI
+
 ```sh
 clj -M:cljd init
 clj -M:cljd flutter # automatically compile and hot reload; press RETURN to force restart
@@ -19,13 +67,13 @@ clj -M:cljd test
 ```
 
 ### Using Dart packages
-In the ns form, `:require` as usual but with a string instead of a symbol:
+In the ns form use `:require` as usual but with a string instead of a symbol when importing Dart packages:
 ```clj
 (ns my.project  (:require   ["package:flutter/material.dart" :as m]))
 ```
 
 ### Types and aliases
-Unlike Clojure/JVM, types can be prefixed by an alias. `m/ElevatedButton` refers to `ElevatedButton` in the package aliased by `m`.
+Unlike JVM-Clojure, types can be prefixed by an alias. `m/ElevatedButton` refers to `ElevatedButton` in the package aliased by `m`.
 
 ### Types and nullability
 In ClojureDart, `^String x` implies `x` can’t be `nil`.
@@ -142,7 +190,7 @@ Getters and setters are defined as regular methods in the body of a `reify`/`def
 
 If the property is defined in a parent class or interface, you don’t need anything more. If the property is newly introduced by the type you need to tag the method name with `^:getter` or `^:setter`.
 
-## `cljd.flutter`: more Flutter, less clutter!
+## `cljd.flutter`: more Flutter,  less clutter!
 `cljd.flutter` does not aspire to be a framework. It’s an utility lib to cut down on the boilerplate and thus to make Flutter more pleasing to Clojurists palates. Bon Appétit!
 
 ### Require this! It’s dangerous to go alone...
