@@ -12,6 +12,9 @@
             [clojure.java.io :as io]
             [clojure.edn :as edn]))
 
+(defn read [opts in]
+  (cljd.lang.LispReader/read in opts))
+
 (def dc-void {:kind :class
               :element-name        "void"
               :canon-qname 'void
@@ -4376,7 +4379,7 @@
    '/ dart-type-params-reader})
 
 (def cljd-resolver
-  (reify #?(:clj clojure.lang.LispReader$Resolver
+  (reify #?(:clj cljd.lang.LispReader$Resolver
             :cljd cljd.reader/IResolver)
     (currentNS [_] *current-ns*)
     (resolveClass [_ sym]
@@ -4415,7 +4418,7 @@
        (let [in (clojure.lang.LineNumberingPushbackReader. in)]
          (loop []
            (let [form (read {:eof in :read-cond :allow
-                             :features #{:cljd :cljd/clj-host}} in)]
+                             :features #{:cljd :cljd/clj-host :clj}} in)]
              (when-not (identical? form in)
                (binding [*locals-gen* {}] (host-eval form))
                (recur))))))))
@@ -4512,7 +4515,7 @@
     (with-cljd-reader
       (let [in (clojure.lang.LineNumberingPushbackReader. in)]
         (loop []
-          (let [form (read {:eof in :read-cond :allow} in)]
+          (let [form (read {:eof in :read-cond :preserve} in)]
             (cond
               (identical? form in) nil
               (and (seq? form) (= 'ns (first form))) (second form)
