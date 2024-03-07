@@ -4859,9 +4859,9 @@
               (when-not (== i n-2)
                 (doto arr
                   (aset i (aget arr n-2))
-                  (aset i+1 (aget arr n-1)))
+                  (aset i+1 (aget arr n-1))))
               (doto arr (aset n-2 nil) (aset n-1 nil))
-              (set! cnt (dec cnt))))
+              (set! cnt (dec cnt)))
             :else (recur (+ 2 i))))
         node))))
 
