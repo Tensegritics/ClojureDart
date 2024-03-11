@@ -482,7 +482,8 @@
                                    [(symbol
                                      (if (keyword? hint)
                                        (name hint)
-                                       (camel-kebab (re-find #"[^.]+$" (name hint)))))
+                                       (camel-kebab
+                                         (second (re-find #"([^.]+?)(?:Of|\.of)?$" (name hint))))))
                                     type-or-kw])))
                           shortcuts)
                     inherit)
@@ -494,12 +495,13 @@
            inherited-bindings true}
           (group-by (fn [[sym [type-or-kw]]] (keyword? type-or-kw)) inherit)]
       `(let [~@(mapcat (fn [[sym [type-or-kw & args]]]
-                         [sym
-                          (list*
-                            (symbol
-                              (namespace type-or-kw)
-                              (str (name type-or-kw) ".of"))
-                            closest-context args)])
+                         (let [name (name type-or-kw)
+                               has-of (re-find #"(?:\..+Of|\.of)$" name)
+                               name (cond-> name (not has-of) (str ".of"))]
+                           [sym
+                            (list*
+                              (symbol (namespace type-or-kw) name)
+                              closest-context args)]))
                  inherited-widgets)]
          (->> (-widget-cont ~env ~@forms)
            ~@(when (seq inherited-bindings)
@@ -623,10 +625,9 @@
      siblings count is not set.
    :let [bindings] -- just a regular let, all bindings are visible to the next
      forms.
-   :get [SomeClass1 ... SomeClass2]
-     -- shortcut for :get {:value-of [SomeClass1 ... SomeClass2]}
-   :get {a AClass b :some/name :value-of [AnotherClass]} -- introduces a, b and
-     another-class (kebab-cased version of AnotherClass) in the local scope for
+   :get [SomeClass1 ... SomeClassN]
+     -- shortcut for :get {:value-of [SomeClass1 ... SomeClassN]}
+   :get {a AClass b :some/name :value-of [AnotherClass SomeClass.somePropOf]} -- introduces a, b, another-class (kebab-cased version of AnotherClass) and some-prop (kebab-cased version of somePropOf) in the local scope for
      next forms. a and b may be destructuring forms.
      They are bound to:
      - for classes (eg AClass and AnotherClass) to the value returned by
@@ -634,7 +635,7 @@
        For example :get [m/Theme] binds theme to (m/Theme.of ctx).
      - for keywords to the value set by the closest matching :bind directive in
        the widget's ancestors.
-     Last, when .of expects more arguments (eg Localizations) then you can pass
+     Last, when .of (or the explicit method) expects more arguments (eg Localizations) then you can pass
      these argument by by using (ClassName a b c) instead of just ClassName.
    :bind {:some/name value} -- makes value available to :get {x :some/name} on
      all descendants.
