@@ -1,0 +1,8 @@
+{:paths ["src" "target/classes"] ;; project paths
+ :deps {org.clojure/clojure {:mvn/version "1.11.1"}} 
+
+ :aliases
+ {;; Run with clj -T:build function-in-build
+  :build {:deps {io.github.clojure/tools.build {:git/tag "v0.9.6" :git/sha "8e78bcc"}
+                 slipset/deps-deploy {:mvn/version "0.2.2"}}
+          :ns-default build}}}

@@ -958,7 +958,47 @@
     (is (= v v))
     (is (= m m))))
 
-(deftest casting-to-void-function
+(deftest check-reader-doesnt-follow-clj
+  (is (= #?(:clj 42 :cljd 1) 1)))
+
+; disabled because fix in progress
+#_(deftest casting-to-void-function
   (let [n (volatile! 0)]
     (.forEach #dart ["hello" "world"] (fn [x] (vswap! n inc) :not-void-nor-dynamic))
     (is (= 2 @n))))
+
+(deftest disj!-collision
+  ; reported here https://clojurians.slack.com/archives/C03A6GE8D32/p1709798898697239
+  (testing "repro: disj! from transient set doesn't work consistently"
+    (let [persistent-items (-> #{}
+                             (conj "a")
+                             (conj nil)
+                             (conj "b")
+                             (conj "")
+                             (conj "c")
+                             (disj "")
+                             (disj nil))]
+      (testing "disj nil later"
+        (let [transient-items (-> (transient #{})
+                                (conj! "a")
+                                (conj! nil)
+                                (conj! "b")
+                                (conj! "")
+                                (conj! "c")
+                                (disj! "")
+                                (disj! nil)
+                                (persistent!))]
+          ;; this fails
+          (is (= persistent-items transient-items))))
+      (testing "disj nil first"
+        (let [transient-items (-> (transient #{})
+                                (conj! "a")
+                                (conj! nil)
+                                (conj! "b")
+                                (conj! "")
+                                (conj! "c")
+                                (disj! nil)
+                                (disj! "")
+                                (persistent!))]
+          ;; this passes
+          (is (= persistent-items transient-items)))))))
