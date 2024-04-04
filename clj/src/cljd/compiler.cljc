@@ -2232,7 +2232,7 @@
 (defn- no-future [type]
   (case (:canon-qname type)
     (da.FutureOr da.Future)
-    (cond-> (-> type :type-parameters first) (nullable-type? type) (assoc :nullable true))
+    (cond-> (or (-> type :type-parameters first) dc-dynamic) (nullable-type? type) (assoc :nullable true))
     nil dc-dynamic
     type))
 
@@ -4597,11 +4597,30 @@
     #_(write
         (emit-test `~(tagged-literal 'dart '[1 2]) {})
         return-locus)
-    #_(write (emit-test `(fn [~(with-meta 'ss
-                               {:tag (dart-type-params-reader '(dart:core/Set dart:core/List))})]
-                         (let [v (.lookup ss "key")]
-                           (.-first! "val"))) {})
+    (write (emit-test `(fn ~(with-meta 'sss {:tag (dart-type-params-reader
+                                                             'dart:core/String)})
+                         []
+                         (await 1)
+                         "aa") {})
       return-locus)
+
+    ;(get (analyzer-info "dart:core" "Function") "apply")
+
+    #_(write (emit '(Future.delayed (Duration .seconds 1) (constantly "h")) {})
+        return-locus))
+
+  (binding [analyzer-info li
+            *dart-out* *out*
+            *locals-gen* {}
+            *current-ns* 'cljd.core]
+    #_(write
+        (emit-test `~(tagged-literal 'dart '[1 2]) {})
+        return-locus)
+    #_(write (emit-test `(fn [~(with-meta 'ss
+                                 {:tag (dart-type-params-reader '(dart:core/Set dart:core/List))})]
+                           (let [v (.lookup ss "key")]
+                             (.-first! "val"))) {})
+        return-locus)
 
     (get (analyzer-info "dart:core" "Function") "apply")
 
