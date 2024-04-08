@@ -1002,3 +1002,6 @@
                                 (persistent!))]
           ;; this passes
           (is (= persistent-items transient-items)))))))
+
+(deftest await-properly-infers
+  (is (= 42 (await ^Future (identity (Future.value 42))))))
