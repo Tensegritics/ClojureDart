@@ -293,7 +293,7 @@
               ~(if destructured-locals (vec destructured-locals) binding) (.-latest ~state)
               ~closest-context ctx#
               ~@(when subscribable-binding
-                  [subscribable-binding `(.-subscribable ~state)])]
+                  [subscribable-binding `(dart/type-like (.-subscribable ~state) ~expr)])]
           (-widget-cont ~(assoc env :key nil :closest-ctx true)
             ~@forms)))
        (~'-update-state [_# state#]
