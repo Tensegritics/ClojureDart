@@ -1,0 +1,179 @@
+(ns sample.audio-service
+  "Sample definided inside audio_service package on:
+   https://github.com/ryanheise/audio_service/blob/minor/audio_service/example/lib/example_android13.dart"
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:flutter/widgets.dart" :as w]
+            ["package:audio_service/audio_service.dart" :as as]
+            ["package:just_audio/just_audio.dart" :as ja]
+            ["package:rxdart/rxdart.dart" :as rx]
+            ["common.dart" :as c]
+            ["dart:async" :as da]
+            [cljd.flutter :as f]))
+
+(def ^as/MediaItem media-item
+  (as/MediaItem
+    .id "https://s3.amazonaws.com/scifri-episodes/scifri20181123-episode.mp3"
+    .album "Science Friday",
+    .title "A Salute To Head-Scratching Science"
+    .artist "Science Friday and WNYC Studios"
+    .duration (Duration .milliseconds 5739820)
+    .artUri (Uri/parse "https://media.wnyc.org/i/1400/1400/l/80/1/ScienceFriday_WNYCStudios_1400.jpg")))
+
+(deftype MyAudioHandler [^ja/AudioPlayer audio-player]
+         :extends (as/BaseAudioHandler)
+         (play [_]
+                      (.play audio-player))
+         (pause [_]
+                       (.pause audio-player))
+         (stop [_]
+                      (.stop audio-player))
+         ^:mixin as/SeekHandler
+         (seek [_ ^Duration duration]
+                      (.seek audio-player duration)))
+
+(defn ^:async main []
+      (do (.ensureInitialized w/WidgetsFlutterBinding)
+          (f/run
+            (m/MaterialApp
+              .title "Welcome to Flutter"
+              .theme (m/ThemeData .primarySwatch m.Colors/pink))
+            .home
+            (m/Scaffold
+              .appBar (m/AppBar
+                        .title (m/Text "Welcome to ClojureDart")))
+            .body
+            m/Center
+            (f/widget
+              :managed [audio-player (ja/AudioPlayer)]
+              :let [transform-event (fn [^ja/PlaybackEvent event]
+                                            (as/PlaybackState)
+                                              .controls [as/MediaControl.rewind]
+                                                         (if (some-> audio-player
+                                                                           .-playing))
+                                                           as/MediaControl.pause
+                                                           as/MediaControl.play
+                                                         as/MediaControl.stop
+                                                         as/MediaControl.fastForward
+                                              .systemActions #{as/MediaAction.seek}
+                                                               as/MediaAction.seekForward
+                                                               as/MediaAction.seekBackward
+                                              .androidCompactActionIndices [0]
+                                                                            1
+                                                                            3
+                                              .processingState (get {ja/ProcessingState.idle      as/AudioProcessingState.idle}
+                                                                           ja/ProcessingState.loading   as/AudioProcessingState.loading
+                                                                           ja/ProcessingState.buffering as/AudioProcessingState.buffering
+                                                                           ja/ProcessingState.ready     as/AudioProcessingState.ready
+                                                                           ja/ProcessingState.completed as/AudioProcessingState.completed
+                                                                          (some-> audio-player)
+                                                                                  .-processingState)
+                                              .playing (-> audio-player)
+                                                           .-playing
+                                              .updatePosition (-> audio-player)
+                                                                  .-position
+                                              .bufferedPosition (-> audio-player)
+                                                                    .-bufferedPosition
+                                              .speed (-> audio-player)
+                                                         .-speed
+                                              .queueIndex (-> event)
+                                                              .-currentIndex)]
+              :watch [^MyAudioHandler as-handler  (as/AudioService.init
+                                                    .builder (fn []  ^as/AudioHandler (->MyAudioHandler ^ja/AudioPlayer audio-player))
+                                                    .config (as/AudioServiceConfig
+                                                              .androidNotificationChannelId "sample.main"
+                                                              .androidNotificationChannelName "Sample Main"
+                                                              .androidNotificationOngoing true
+                                                              .androidShowNotificationBadge true)) :dispose nil]
+              :when as-handler
+              :let [pipe-state (some-> audio-player
+                                       .-playbackEventStream
+                                       ^#/(da/Stream as/PlaybackState) (.map transform-event)
+                                       (.pipe (.-playbackState as-handler)))
+                    _add-item-to-audio-handler (.add (.-mediaItem as-handler) media-item)
+                    _set-audio-source-to-media-id (.setAudioSource audio-player (-> media-item
+                                                                                    .-id
+                                                                                    Uri/parse
+                                                                                    ja/AudioSource.uri))
+                    media-stream (rx/Rx.combineLatest2 (.-mediaItem as-handler)
+                                                       (as/AudioService.position)
+                                                       (fn [^as/MediaItem media-item
+                                                            ^Duration position]
+                                                               {:media-item media-item}
+                                                                :position position))]
+              :when audio-player
+              (m/Column .mainAxisAlignment m/MainAxisAlignment.center)
+              .children [(m/StreamBuilder
+                           .stream (.-mediaItem as-handler)
+                           .builder (fn [_ctx
+                                         ^w/AsyncSnapshot snapshot]
+                                            (if-let [mi (.-data snapshot)]
+                                                          (m/Text (.-title ^as/MediaItem mi))
+                                                          (m/Container))))
+                         (m/StreamBuilder
+                           .stream (some-> as-handler
+                                           .-playbackState
+                                           (.map (fn [st]
+                                                         (.-playing ^as/PlaybackState st)))
+                                           (.distinct))
+                           .builder (fn [_ctx
+                                         ^w/AsyncSnapshot snapshot]
+                                            (let [playing (or (.-data snapshot))
+                                                                    false]
+                                                       (m/Row)
+                                                         .mainAxisAlignment m/MainAxisAlignment.center
+                                                         .children [(m/IconButton)]
+                                                                      .icon (m/Icon m/Icons.fast_rewind)
+                                                                      .iconSize 64
+                                                                      .onPressed (fn [] (.rewind ^MyAudioHandler as-handler) nil)
+                                                                    (if playing)
+                                                                      (m/IconButton)
+                                                                        .icon (m/Icon m/Icons.pause)
+                                                                        .iconSize 64
+                                                                        .onPressed (fn [])
+                                                                                       (.pause ^MyAudioHandler as-handler)
+                                                                                       nil
+                                                                      (m/IconButton)
+                                                                        .icon (m/Icon (m/Icons.play_arrow))
+                                                                        .iconSize 64
+                                                                        .onPressed (fn [])
+                                                                                       (.play ^MyAudioHandler as-handler)
+                                                                                       nil
+                                                                    (m/IconButton)
+                                                                      .icon (m/Icon m/Icons.stop)
+                                                                      .iconSize 64
+                                                                      .onPressed (fn [])
+                                                                                     (.stop ^MyAudioHandler as-handler)
+                                                                                     nil
+                                                                    (m/IconButton)
+                                                                      .icon (m/Icon m/Icons.fast_forward)
+                                                                      .iconSize 64
+                                                                      .onPressed (fn [])
+                                                                                     (.fastForward ^MyAudioHandler as-handler)
+                                                                                     nil)))
+                         (m/StreamBuilder
+                           .stream  (some-> media-stream)
+                           .builder (fn [_ctx
+                                         ^w/AsyncSnapshot snapshot]
+                                            (if-let [ms (.-data snapshot)]
+                                                          (c/SeekBar)
+                                                            .duration ^Duration (or (some-> ^as/MediaItem (get ms :media-item))
+                                                                                                        .-duration)
+                                                                                    (Duration.zero)
+                                                            .position (or (some-> ms)
+                                                                                              :position)
+                                                                          (Duration.zero)
+                                                            .onChangeEnd (fn [new-pos])
+                                                                             (.seek ^as/SeekHandler as-handler new-pos)
+                                                                             nil
+                                                          (m/Container))))
+                         (m/StreamBuilder
+                           .stream (some-> ^as/AudioHandler as-handler
+                                           .-playbackState
+                                           (.map (fn [st]
+                                                         (.-playing ^as/PlaybackState st)))
+                                           (.distinct))
+                           .builder (fn [_ctx
+                                         ^w/AsyncSnapshot snapshot]
+                                            (m/Text (str "Processing state: " (if-let [ps (.-data snapshot)]
+                                                                                            ps
+                                                                                            as/AudioProcessingState.idle)))))]))))
