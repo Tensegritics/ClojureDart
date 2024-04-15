@@ -140,8 +140,9 @@
   (updateShouldNotifyDependent [this prev-this aspects]
     (let [prev-bindings (.-bindings ^InheritedBindings prev-this)]
       (boolean
-        (some (fn [k] (not= (prev-bindings k) (bindings k)))
-          (first aspects))))))
+        (some (fn [ks]
+                (some (fn [k] (not= (prev-bindings k) (bindings k))) ks))
+          aspects)))))
 
 (defn- ^:macro-support collect-options
   "Returns [options-map & more]."
