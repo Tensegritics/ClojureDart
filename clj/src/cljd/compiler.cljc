@@ -7,7 +7,7 @@
 ;   You must not remove this notice, or any other, from this software.
 
 (ns cljd.compiler
-  (:refer-clojure :exclude [macroexpand macroexpand-1 munge compile])
+  (:refer-clojure :exclude [macroexpand macroexpand-1 munge compile read])
   (:require [clojure.string :as str]
             [clojure.java.io :as io]
             [clojure.edn :as edn]))
