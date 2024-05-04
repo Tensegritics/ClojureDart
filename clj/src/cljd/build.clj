@@ -317,7 +317,7 @@
                       (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
                   (finally
                     (some-> p .destroy)))))
-            compilation-success))))))
+            (or compilation-success (System/exit 1))))))))
 
 (defn test-cli [& {:keys [namespaces]}]
   (when (compile-cli :namespaces namespaces)
