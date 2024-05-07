@@ -1,0 +1,49 @@
+(ns sample.gorouter
+  ;; how to use https://pub.dev/packages/webview_flutter
+  (:require
+   ["package:flutter/material.dart" :as m]
+   ["package:go_router/go_router.dart" :as go_router]
+   [cljd.flutter :as f]))
+
+
+(def theme
+  (m/ThemeData
+    .colorSchemeSeed m/Colors.yellow
+    .useMaterial3 true
+    .textTheme (m/TextTheme
+                 .displayLarge (m/TextStyle
+                                 .fontWeight m/FontWeight.w700
+                                 .fontSize 24
+                                 .color m/Colors.black))))
+
+(def ^m/Widget home-screen
+  (f/build [^go_router/GoRouterState router-state]
+    (m/Scaffold .appBar (m/AppBar .title (m/Text "Home screen")))
+    .body
+    m/Center
+    :context ctx
+    (m/ElevatedButton .onPressed #(-> ctx go_router/GoRouterHelper (.go "/details")))
+    (m/Text "Go to the details screen")))
+
+(def ^m/Widget details-screen
+  (f/build [^go_router/GoRouterState router-state]
+    (m/Scaffold .appBar (m/AppBar .title (m/Text "Details screen")))
+    .body
+    m/Center
+    :context ctx
+    (m/ElevatedButton .onPressed #(-> ctx go_router/GoRouterHelper (.go "/")))
+    (m/Text "Go to the home screen")))
+
+(def router
+  (go_router/GoRouter
+    .initialLocation "/"
+    .routes [(go_router/GoRoute
+               .path "/"
+               .builder home-screen)
+             (go_router/GoRoute
+               .path "/details"
+               .builder details-screen)]))
+
+(defn main []
+  (f/run
+    (m/MaterialApp.router .routerConfig router)))
