@@ -2,6 +2,7 @@
 /*/android/*
 /*/cljd.edn
 /*/ios/*
+/*/build/*
 /*/lib/*
 /*/lib/*
 /*/linux/*
@@ -23,3 +24,4 @@
 !/fficjson/README.md
 !/fficjson/config.yaml
 !/fficjson/example.json
+!/platform_view/ios/

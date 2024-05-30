@@ -12,3 +12,6 @@ test/cljd-out/*
 .*
 !.github
 tmp/
+
+# FVM Version Cache
+.fvm/
