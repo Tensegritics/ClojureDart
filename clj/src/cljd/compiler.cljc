@@ -1051,6 +1051,8 @@
   ;; TODO do something with docstrings
   (let [proto (vary-meta proto assoc :tag 'cljd.core/IProtocol)
         [doc-string & methods] (if (string? (first methods)) methods (list* nil methods))
+        [opts methods] (split-with #(not (list? %)) methods)
+        opts (zipmap (take-nth 2 opts) (take-nth 2 (rest opts)))
         method-mapping
         (into {} (map (fn [[m & arglists]]
                         (let [dart-m (munge m {})
