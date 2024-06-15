@@ -17,13 +17,14 @@
     (m/Column .mainAxisAlignment m/MainAxisAlignment.center .crossAxisAlignment m/CrossAxisAlignment.stretch)
     .children
     [(f/widget
-       :watch [n s1]
+       :watch [n s1
+               :default 0]
        (m/Text (str n) .textAlign m/TextAlign.center .style text-style))
      (f/widget
-       :watch [n (f/sub [s1 s3] (fn [[n n3]] (if (= n n3) "Fizz" "")))
-               ; default opts to f
-               :sub/opts [{:default 777} {:default 888}]]
+       :watch [n (f/sub [s1 s3] (fn [[n n3]] (if (= n n3) "Fizz" " ")))
+               :default " "]
        (m/Text n .textAlign m/TextAlign.center .style (.apply text-style .color m/Colors.red.shade200)))
      (f/widget
-       :watch [n (f/sub [s1 s5] (fn [[n n5]] (if (= n n5) "Buzz" "")))]
+       :watch [n (f/sub [s1 s5] (fn [[n n5]] (if (= n n5) "Buzz" " ")))
+               :default " "]
        (m/Text n .textAlign m/TextAlign.center .style (.apply text-style .color m/Colors.green.shade200)))]))
