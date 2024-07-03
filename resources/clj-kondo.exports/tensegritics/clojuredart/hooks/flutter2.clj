@@ -327,7 +327,7 @@
          (list
           (api/token-node 'fn)
           (if (api/vector-node? argsvec?)
-            argsvec?
-            (api/vector-node []))
+            (api/vector-node (concat [(api/token-node '_ctx)] (:children argsvec?)))
+            (api/vector-node [(api/token-node '_ctx)]))
           widget-node))]
     {:node result}))
