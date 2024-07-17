@@ -1500,6 +1500,8 @@
 
 (defn get
   "Returns the value mapped to key, not-found or nil if key not present."
+  {:inline (call-to `-lookup)
+   :inline-arities #{2 3}}
   ([map key]
    (-lookup map key))
   ([map key not-found]
@@ -1637,9 +1639,9 @@
 (defn rseq
   "Returns, in constant time, a seq of the items in rev (which
   can be a vector or sorted-map), in reverse order. If rev is empty returns nil"
-  [rev]
   {:inline (call-to `-rseq)
    :inline-arities #{1}}
+  [rev]
   (-rseq rev))
 
 (defprotocol ISorted

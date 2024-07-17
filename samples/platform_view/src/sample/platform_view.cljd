@@ -1,0 +1,26 @@
+(ns sample.platform-view
+  (:require
+   ["package:flutter/foundation.dart" :as foundation]
+   ["package:flutter/rendering.dart" :as rendering]
+   ["package:flutter/services.dart" :as services]
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter :as f]))
+
+
+(defn main
+  []
+  (f/run
+    (m/MaterialApp
+      .debugShowCheckedModeBanner false
+      .theme (m/ThemeData .useMaterial3 true))
+    .home
+    m/Scaffold
+    .body
+    m/Center
+    :height 200
+    (m/UiKitView
+      .viewType "clojuredart_component"
+      .layoutDirection m/TextDirection.ltr,
+      .creationParams {}
+      .creationParamsCodec (services/StandardMessageCodec),
+      .hitTestBehavior rendering/PlatformViewHitTestBehavior.translucent)))

@@ -2,6 +2,7 @@
 /*/android/*
 /*/cljd.edn
 /*/ios/*
+/*/build/*
 /*/lib/*
 /*/lib/*
 /*/linux/*
@@ -9,6 +10,7 @@
 /*/pubspec.yaml
 /*/README.md
 !/webview/README.md
+!/go_router/README.md
 !/syncfusion_flutter_charts/README.md
 /*/test/*
 /*/web/*
@@ -22,3 +24,4 @@
 !/fficjson/README.md
 !/fficjson/config.yaml
 !/fficjson/example.json
+!/platform_view/ios/
