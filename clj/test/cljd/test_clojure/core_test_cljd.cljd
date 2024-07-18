@@ -1005,3 +1005,14 @@
 
 (deftest await-properly-infers
   (is (= 42 (await ^Future (identity (Future.value 42))))))
+
+(deftest assoc!-on-vectors-larger-than-32*33
+  (let [vrange (fn [n]
+                 (let [v (vec (repeat n nil))
+                       tv (reduce (fn [tv i] (assoc! tv i i)) (transient v) (range n))]
+                   (persistent! tv)))]
+    (is (= (range 100) (vrange 100)))
+    ; this one used to throw a NPE
+   (is (= (range (inc (* 32 33))) (vrange (inc (* 32 33)))))
+    ; this one wasn't throwing but returning garbage
+    (is (= (range (inc (* 32 34))) (vrange (inc (* 32 34)))))))

@@ -4341,7 +4341,7 @@
       :else
       (loop [^List arr (.-arr (set! root (tv-ensure-editable edit root)))
              ^int level shift]
-        (let [subidx (bit-and (u32-bit-shift-right n shift) 31)]
+        (let [subidx (bit-and (u32-bit-shift-right n level) 31)]
           (if (pos? level)
             (let [child (tv-ensure-editable edit (aget arr subidx))]
               (recur (.-arr (aset arr subidx child)) (- level 5)))
