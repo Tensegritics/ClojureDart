@@ -4551,6 +4551,21 @@
         false))))
 
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
+  ; each node has a max fan-out of 32 children (except for collision nodes which are unbounded)
+  ; singleton children (nodes which only contain 1 key-value pair) can be inlined
+  ; thus the interanl array arr can contains up to 64 items (32 pairs)
+  ; we use two 32-bit bitmaps (because a single 64-bit bitmap wouldn't work with web target)
+  ; thus each child gets two bits (one from hi, one from lo)
+  ;
+  ; hi | lo | semantics
+  ; 0  | 0  | no child
+  ; 0  | 1  | shared node child reference
+  ; 1  | 0  | owned node child reference
+  ; 1  | 1  | inline kv pair
+  ;
+  ; The ownership "spin" allows to track when a node is mutable in a transient:
+  ; a node is mutable in a transient iff the whole path to this node from the root
+  ; is made only from owned references.
   :type-only true
   BitmapNode
   (inode_lookup [node k not-found]
@@ -4570,7 +4585,7 @@
             (cond
               (zero? (bit-or hi lo)) ; nothing
               not-found
-              (zero? (bit-and hi lo))
+              (zero? (bit-and hi lo)) ; node
               (recur (aget (.-arr node) idx) (+ 5 shift))
               :else ; kv
               (let [arr (.-arr node)
@@ -4660,18 +4675,14 @@
               (when (< i size)
                 (aset new-arr i (aget arr j))
                 (recur (inc i) (inc j))))
-            #_(BitmapNode. (inc cnt) (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit) new-arr)
-            (BitmapNode. (inc cnt) (bit-xor bitmap-hi bit) (bit-xor bitmap-lo bit) new-arr))
+            (BitmapNode. (inc cnt) (bit-or bitmap-hi bit) (bit-or bitmap-lo bit) new-arr))
           (zero? (bit-and hi lo)) ; node
           (let [^BitmapNode child (aget arr idx)
                 ^BitmapNode new-child (.inode_assoc child (+ shift 5) h k v)]
             (if (identical? child new-child)
               node
               (BitmapNode. (+ cnt (- (.-cnt new-child) (.-cnt child)))
-                (bit-xor bitmap-hi bit) (bit-xor bitmap-lo bit)
-                (doto (aclone (.-arr node)) (aset idx new-child)))
-              #_(BitmapNode. (+ cnt (- (.-cnt new-child) (.-cnt child)))
-                (bit-xor (bit-and bitmap-hi bitmap-lo) bit) (bit-xor (bit-or bitmap-hi bitmap-lo) bitmap-lo bit)
+                bitmap-hi bitmap-lo
                 (doto (aclone (.-arr node)) (aset idx new-child)))))
           :else ; kv
           (let [k' (aget arr idx)
@@ -4683,6 +4694,8 @@
                     shift' (+ 5 ^int shift)
                     n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
                     bit' (u32-bit-shift-left 1 n')
+                    ; create a new child node with extra padding for the new kv pair and then
+                    ; mute is (it's safe it hasn't been shared yet) to assoc the new kv pair
                     new-node (-> (BitmapNode. 1 bit' bit' #dart ^:fixed [k' v' nil nil]) (.inode_assoc_transient shift' h k v))
                     new-arr (.filled #/(List dynamic) size new-node)]
                 (dotimes [i idx] (aset new-arr i (aget arr i)))
@@ -4690,11 +4703,10 @@
                   (when (< i size)
                     (aset new-arr i (aget arr j))
                     (recur (inc i) (inc j))))
-                (BitmapNode. (inc cnt) bitmap-hi (bit-xor bitmap-lo bit) new-arr))
+                (BitmapNode. (inc cnt) (bit-xor bitmap-hi bit) bitmap-lo new-arr))
               (identical? v v') node
               :else
-              (BitmapNode. cnt (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo)
-                (doto (aclone arr) (aset (inc idx) v)))))))
+              (BitmapNode. cnt bitmap-hi bitmap-lo (doto (aclone arr) (aset (inc idx) v)))))))
       ; collisions node
       (let [n (* 2 cnt)]
         (loop [^int i 0]
@@ -4734,19 +4746,23 @@
             (set! bitmap-hi (bit-or bitmap-hi bit))
             (set! bitmap-lo (bit-or bitmap-lo bit)))
           (zero? (bit-and hi lo)) ; node
-          (let [^BitmapNode child (aget arr idx)]
-            (if (zero? hi)
-              ; if node is not owned
-              (let [^BitmapNode child' (.inode_assoc child (+ shift 5) h k v)]
-                (when-not (identical? child child')
-                  (set! bitmap-hi (bit-xor hi bitmap-hi))
-                  (set! bitmap-lo (bit-xor hi bitmap-lo))
-                  (aset arr idx child')
-                  (set! cnt (+ cnt (- (.-cnt child') (.-cnt child))))))
-              ; if node is owned
-              (let [old-cnt-child (.-cnt child)]
-                (.inode_assoc_transient child (+ shift 5) h k v)
-                (set! cnt (+ cnt (- (.-cnt child) old-cnt-child))))))
+          (let [^BitmapNode child (aget arr idx)
+                child
+                (if (zero? hi)
+                  ; if child node is not owned
+                  (let [cbitmap-hi (.-bitmap_hi child)
+                        cbitmap-lo (.-bitmap_lo child)
+                        owned-child (BitmapNode. (.-cnt child) (bit-and cbitmap-hi cbitmap-lo) (bit-or cbitmap-hi cbitmap-lo) (aclone (.-arr child)))]
+                    (aset arr idx owned-child)
+                    ; mark as owned
+                    (set! bitmap-hi (bit-xor hi bitmap-hi))
+                    (set! bitmap-lo (bit-xor hi bitmap-lo))
+                    owned-child)
+                  ; if child node is owned
+                  child)
+                old-cnt-child (.-cnt child)]
+            (.inode_assoc_transient child (+ shift 5) h k v)
+            (set! cnt (+ cnt (- (.-cnt child) old-cnt-child))))
           :else ; kv
           (let [k' (aget arr idx)
                 v' (aget arr (inc idx))]
@@ -4824,11 +4840,11 @@
                     (when (< idx i-1)
                       (aset arr i (aget from-arr i-1))
                       (recur i-1 (dec i-1))))
-                (aset arr idx k)
-                (aset arr (inc idx) v)
-                (set! cnt (dec cnt))
-                (set! bitmap-hi (bit-or bitmap-hi bit))
-                (set! bitmap-lo (bit-or bitmap-lo bit)))
+                  (aset arr idx k)
+                  (aset arr (inc idx) v)
+                  (set! cnt (dec cnt))
+                  (set! bitmap-hi (bit-or bitmap-hi bit))
+                  (set! bitmap-lo (bit-or bitmap-lo bit)))
                 ; just update in place
                 (aset arr idx child'))))
           ; the right kv pair
@@ -5140,6 +5156,13 @@
           bitmap-lo (.-bitmap_lo root)
           net-size (u32x2-bit-count bitmap-hi bitmap-lo)
           gross-size (bit-and -8 (+ 7 net-size))]
+      ; these two expressions (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) reset
+      ; the owned spin of node references to shared so that initially no node is mutable for the transient
+      ; lo | hi | lo and hi | lo or hi
+      ;  0 |  0 |     0     |     0
+      ;  0 |  1 |     0     |     1
+      ;  1 |  1 |     1     |     1
+      ;  1 |  0 |     0     |     1
       (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil))))))
 
 (def ^PersistentHashMap -EMPTY-MAP
@@ -7712,11 +7735,11 @@ specified.
   [m f]
   (with-meta
     (persistent!
-     (reduce-kv (fn [acc k v] (assoc! acc k (f v)))
-                (if (satisfies? IEditableCollection m)
-                  (transient m)
-                  (transient {}))
-                m))
+      (reduce-kv (fn [acc k v] (assoc! acc k (f v)))
+        (if (satisfies? IEditableCollection m)
+          (transient m)
+          (transient {}))
+        m))
     (meta m)))
 
 (defn update-keys
