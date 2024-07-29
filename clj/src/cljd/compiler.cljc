@@ -1536,7 +1536,9 @@
   ([dart-expr expected-type actual-type env]
    (cond
      (= 'dc.dynamic (:canon-qname expected-type)) dart-expr ; TODO: should be covered by is-assignable?
+
      (is-assignable? expected-type actual-type) dart-expr   ; <1>
+
      (and (nullable-type? expected-type) (nullable-type? actual-type)) ; <2>
      (if-some [expected-type+ (positive-type expected-type)]
        (with-once [dart-expr dart-expr] env
@@ -1546,20 +1548,47 @@
             ~(magicast dart-expr expected-type+ actual-type env)
             nil))
        (list 'dart/let [[nil dart-expr]] nil))
+
+     ; expected type is guaranteed to be non nullable because of <2> above
+     (case (:canon-qname expected-type)
+       (dc.List dc.Iterable) (= 'dc.Null (:canon-qname actual-type))
+       false)
+     (list 'dart/. expected-type "empty")
+
      (and
        (not= 'dc.dynamic (:canon-qname actual-type))
        (nullable-type? actual-type))
      ; expected-type is not nullable because of the previous check <2>
      (if-some [actual-type+ (positive-type actual-type)]
        (recur (list 'dart/as dart-expr actual-type+) expected-type actual-type+ env)
-       (throw (Exception. "Can't cast a null expression to something non-nullable.")))
+       (throw (Exception. (str "Can't cast a null expression to something non-nullable." (:canon-qname actual-type) (:canon-qname expected-type)))))
+
      ;; When inlined #dart[], we keep it inlines
      ;; TODO: don't like the (vector? dart-expr) check, it smells bad
      (and (= 'dc.List (:canon-qname expected-type) (:canon-qname actual-type))
-       (vector? dart-expr)) dart-expr
+       (vector? dart-expr))
+     dart-expr
+
+     ; coerce dynamic nil (as returned by sequence processing) to empty lists/iterables
+     (when-not (:nullable expected-type)
+       (case (:canon-qname expected-type)
+         (dc.List dc.Iterable) (= 'dc.dynamic (:canon-qname actual-type))
+         false))
+     (let [[bindings dart-expr] (lift-arg true dart-expr "castable" env)
+           casted (vary-meta (dart-local 'casted {} ) assoc :dart/type expected-type)]
+       (list 'dart/let
+         (conj (vec bindings)
+           [casted
+            (list 'dart/if (list 'dart/. nil "==" dart-expr)
+              (list 'dart/. expected-type "empty")
+              (list 'dart/if (list 'dart/is dart-expr expected-type) ; or expected-type?
+                (list 'dart/as dart-expr expected-type)
+                (list 'dart/. (list 'dart/as dart-expr (dissoc expected-type :type-parameters :nullable)) (into ["cast"] (:type-parameters expected-type)))))])
+         casted))
+
+     ;; any target with a cast method and where source is of the same type
      (and
        (has-cast-method? expected-type)
-       #_(#{'dc.List 'dc.Map 'dc.Set} (:canon-qname expected-type))
        (when-some [tps (seq (:type-parameters expected-type))]
          (not-every? #(= (:canon-qname %) 'dc.dynamic) tps)))
      (let [[bindings dart-expr] (lift-arg true dart-expr "castable" env)
@@ -1573,6 +1602,7 @@
                 (list 'dart/as dart-expr expected-type)
                 (list 'dart/. (list 'dart/as dart-expr (dissoc expected-type :type-parameters :nullable)) (into ["cast"] (:type-parameters expected-type)))))])
          casted))
+
      (and
        (= (:canon-qname expected-type) 'dc.Function)
        (:return-type expected-type))
@@ -1592,6 +1622,7 @@
              (list 'dart/fn fixed-params :positional () nil ; TODO opts
                (emit (cons (vary-meta cljf assoc :clj true :dart nil) fixed-params) wrapper-env)))]]
          wrapper))
+
      :else (simple-cast dart-expr expected-type actual-type))))
 
 (defn lift-args

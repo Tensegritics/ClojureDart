@@ -1016,3 +1016,14 @@
    (is (= (range (inc (* 32 33))) (vrange (inc (* 32 33)))))
     ; this one wasn't throwing but returning garbage
     (is (= (range (inc (* 32 34))) (vrange (inc (* 32 34)))))))
+
+(deftest nil-should-be-magicasted-to-list-or-iterable
+  ; static nil
+  (let [growable-list (List.from nil)] ; coerce nil to iterable
+    (List/copyRange growable-list 0 nil)  ; coerce nil to List
+    (is (= (sequence growable-list) [])))
+  ; dynamic nil
+  (let [x (seq [])
+        growable-list (List.from x)]
+    (List/copyRange growable-list 0 x)
+    (is (= (sequence growable-list) []))))
