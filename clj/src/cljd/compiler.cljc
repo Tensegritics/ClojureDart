@@ -3406,7 +3406,7 @@
       (throw
        (if-some [stack (::emit-stack (ex-data e))]
          (ex-info (ex-message e) (assoc (ex-data e) ::emit-stack (conj stack x)) (ex-cause e))
-         (ex-info (str "Error while compiling " (pr-str x)) {::emit-stack [x]} e))))))
+         (ex-info (str "Error while compiling " *file* " " (pr-str x)) {::emit-stack [x]} e))))))
 
 (defn host-eval
   [x]
@@ -3456,7 +3456,7 @@
         (throw
           (if-some [stack (::emit-stack (ex-data e))]
             (ex-info (ex-message e) (assoc (ex-data e) ::emit-stack (conj stack x)) (ex-cause e))
-            (ex-info (str "Error while host-compiling " (pr-str x)) {::emit-stack [x]} e)))))))
+            (ex-info (str "Error while host-compiling " *file* " " (pr-str x)) {::emit-stack [x]} e)))))))
 
 (defn emit-test [expr env]
   (binding [*locals-gen* {}
