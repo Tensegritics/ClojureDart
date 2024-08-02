@@ -3172,7 +3172,7 @@
 
 (defn- import-to-require [spec]
   (cond
-    (symbol? spec) (let [[_ ns id] (re-matches (name spec) #"(.+)\.(.+)")]
+    (symbol? spec) (let [[_ ns id] (re-matches #"(.+)\.(.+)" (name spec))]
                      [(symbol ns) :refer [(symbol id)]])
     (sequential? spec) [(first spec) :refer (rest spec)]
     :else (throw (ex-info (str "Unsupported import spec: "
