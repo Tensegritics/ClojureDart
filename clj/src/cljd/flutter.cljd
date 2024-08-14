@@ -402,8 +402,6 @@
        :no-meta true
        :name-hint "managed"
        (~'createState [_#] (ResourceState nil nil))
-       ^:mixin foundation/DiagnosticableTreeMixin
-       (~'toString [_# ~'.minLevel (do foundation/DiagnosticLevel.info)] "BOOOYA")
        cljd.flutter/StateLifecycle
        (~'-init-state [_# state#]
          (doto ^ResourceState state#
