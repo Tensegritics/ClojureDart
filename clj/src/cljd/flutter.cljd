@@ -181,7 +181,12 @@
   (-invoke [state x]
     (set! latest x)
     (when (.-mounted state)
-      (.setState state (fn [])))))
+      (.setState state (fn []))))
+  ^:mixin foundation/Diagnosticable
+  (debugFillProperties [this props]
+    (.debugFillProperties ^super this props)
+    (.add props (foundation/DiagnosticsProperty "subscribable" subscribable))
+    (.add props (foundation/DiagnosticsProperty "current value" latest))))
 
 (defn ^:macro-support refresh-on-expr [opts &env expr]
   (if (contains? opts :refresh-on)
@@ -269,6 +274,7 @@
            sub#)]
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
+       :name-hint "watch"
        (~'createState [_#] (WatchState nil nil nil nil))
        cljd.flutter/StateLifecycle
        (~'-init-state [_# state#]
@@ -381,7 +387,11 @@
     (-dispose-state (.-widget state) state)
     (.dispose ^super state))
   (build [state ctx]
-    (-build (.-widget state) state ctx)))
+    (-build (.-widget state) state ctx))
+  ^:mixin foundation/Diagnosticable
+  (debugFillProperties [this props]
+    (.debugFillProperties ^super this props)
+    (.add props (foundation/DiagnosticsProperty "resource" resource))))
 
 (defn ^:macro-support expand-resource
   [&env env binding expr opts forms]
@@ -390,7 +400,10 @@
         expr (list 'dart/async-barrier expr)]
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
+       :name-hint "managed"
        (~'createState [_#] (ResourceState nil nil))
+       ^:mixin foundation/DiagnosticableTreeMixin
+       (~'toString [_# ~'.minLevel (do foundation/DiagnosticLevel.info)] "BOOOYA")
        cljd.flutter/StateLifecycle
        (~'-init-state [_# state#]
          (doto ^ResourceState state#
@@ -431,12 +444,17 @@
     (-dispose-state (.-widget state) state)
     (.dispose ^super state))
   (build [state ctx]
-    (-build (.-widget state) state ctx)))
+    (-build (.-widget state) state ctx))
+  ^:mixin foundation/Diagnosticable
+  (debugFillProperties [this props]
+    (.debugFillProperties ^super this props)
+    (.add props (foundation/DiagnosticsProperty "keep-alive" (some? handle)))))
 
 (defn ^:macro-support expand-keep-alive
   [&env env expr forms]
   `(reify :extends (widgets/StatefulWidget .key ~(:key env))
      :no-meta true
+     :name-hint "keep-alive"
      (~'createState [_#] (KeepAliveState nil))
      cljd.flutter/StateLifecycle
      (~'-init-state [_# ^KeepAliveState state#])
@@ -537,12 +555,13 @@
 (defn ^:macro-support expand-vsync [env name forms]
   `(reify :extends (widgets/StatefulWidget .key ~(:key env))
      :no-meta true
+     :name-hint "vsync"
      (~'createState [_#]
-       (reify :extends widgets/State
-         :no-meta true
-         (~'build [state# ctx#]
-          (-build (.-widget state#) state# ctx#))
-         ^:mixin widgets/TickerProviderStateMixin))
+      (reify :extends widgets/State
+        :no-meta true
+        (~'build [state# ctx#]
+         (-build (.-widget state#) state# ctx#))
+        ^:mixin widgets/TickerProviderStateMixin))
      StateLifecycle
      (~'-build [_# state# ~closest-context]
        (let [~(vary-meta name assoc :tag `widgets/TickerProvider) state#]
@@ -714,6 +733,7 @@
 
 (defn- ^:macro-support stateless-flush [env forms]
   `(reify :extends (widgets/StatelessWidget .key ~(:key env))
+     :name-hint "widget"
      :no-meta true
      (~'build [_# ~closest-context]
       (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))

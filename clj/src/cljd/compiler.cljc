@@ -783,8 +783,10 @@
      (with-meta (symbol (str dart-hint "$" n)) dart-meta))))
 
 (defn anonymous-global
-  [suffix]
-  (let [basis (str *class-prefix* suffix)
+  [prefix suffix]
+  (let [basis (if (= "" *class-prefix*)
+                (str prefix "_" suffix)
+                (str prefix "_" *class-prefix* "_" suffix))
         {n basis} (set! *locals-gen* (assoc *locals-gen* basis (inc (*locals-gen* basis 0))))]
     (symbol (str basis "$" n))))
 
@@ -2803,9 +2805,9 @@
                             (into #{} (map :canon-qname) (:implements parsed-class-specs))
                             (into #{} (map :canon-qname) (:mixins parsed-class-specs))]) 36)
         class-name (anonymous-global
-                    (munge-str
-                     (str (if-some [var-name (:var-name opts)] "ifn" (or (:name-hint opts) "Reify"))
-                          fingerprint)))
+                     (munge-str
+                       (str (if-some [var-name (:var-name opts)] "ifn" (or (:name-hint opts) "reify"))))
+                     fingerprint)
         mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
         dart-type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env)
 
@@ -3088,7 +3090,7 @@
                       :field (tack-version dartqname) ; only fields need to be versioned
                       dartqname))
         dart-fn
-        (binding [*class-prefix* (str *class-prefix* dartname)]
+        (binding [*class-prefix* (cond-> dartname (not= "" *class-prefix*) (str "_M_" *class-prefix*))]
           ; predecl so that the def is visible in recursive defs
           (swap! nses do-def sym {:dart/qname dartqname
                                   :dart/name dartname
