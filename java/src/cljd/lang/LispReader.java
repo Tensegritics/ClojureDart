@@ -49,6 +49,8 @@ static final Symbol FN = Symbol.intern("fn*");
 final static Keyword TAG_KEY = Keyword.intern(null, "tag");
 static Keyword LINE_KEY = Keyword.intern(null, "line");
 static Keyword COLUMN_KEY = Keyword.intern(null, "column");
+static Keyword END_LINE_KEY = Keyword.intern(null, "end-line");
+static Keyword END_COLUMN_KEY = Keyword.intern(null, "end-column");
 
 static Namespace currentNS(){
 	return (Namespace) RT.CURRENT_NS.deref();
@@ -1024,6 +1026,8 @@ public static class MetaReader extends AFn{
 				{
 				meta = RT.assoc(meta, LINE_KEY, RT.get(meta, LINE_KEY, line));
 				meta = RT.assoc(meta, COLUMN_KEY, RT.get(meta,COLUMN_KEY, column));
+				meta = RT.assoc(meta, END_LINE_KEY, RT.get(meta, END_LINE_KEY, ((LineNumberingPushbackReader) r).getLineNumber()));
+				meta = RT.assoc(meta, END_COLUMN_KEY, RT.get(meta,END_COLUMN_KEY, ((LineNumberingPushbackReader) r).getColumnNumber()-1));
 				}
 			if(o instanceof IReference)
 				{
@@ -1180,7 +1184,7 @@ public static class SyntaxQuoteReader extends AFn{
 		if(form instanceof IObj && RT.meta(form) != null)
 			{
 			//filter line and column numbers
-			IPersistentMap newMeta = ((IObj) form).meta().without(LINE_KEY).without(COLUMN_KEY);
+      IPersistentMap newMeta = ((IObj) form).meta().without(LINE_KEY).without(COLUMN_KEY).without(END_LINE_KEY).without(END_COLUMN_KEY);
 			if(newMeta.count() > 0)
 				return RT.list(WITH_META, ret, syntaxQuote(((IObj) form).meta()));
 			}
@@ -1308,6 +1312,8 @@ public static class ListReader extends AFn{
 			Object meta = RT.meta(s);
 			meta = RT.assoc(meta, LINE_KEY, RT.get(meta, LINE_KEY, line));
 			meta = RT.assoc(meta, COLUMN_KEY, RT.get(meta,COLUMN_KEY, column));
+			meta = RT.assoc(meta, END_LINE_KEY, RT.get(meta, END_LINE_KEY, ((LineNumberingPushbackReader) r).getLineNumber()));
+			meta = RT.assoc(meta, END_COLUMN_KEY, RT.get(meta,END_COLUMN_KEY, ((LineNumberingPushbackReader) r).getColumnNumber()-1));
 			return s.withMeta((IPersistentMap)meta);
 			}
 		else

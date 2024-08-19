@@ -120,6 +120,12 @@
                    :canon-qname pseudo.not-bool
                    :nullable true})
 
+(def pseudo-not-nil '{:kind :class
+                      :qname       dc.dynamic
+                      :lib "dart:core"
+                      :canon-qname pseudo.not-nil
+                      :nullable false})
+
 (def pseudo-super '{:kind :class
                     :qname       dc.dynamic
                     :lib "dart:core"
@@ -631,6 +637,7 @@
   [tag {:keys [type-vars] :as env}]
   (cond
     (= 'some tag) pseudo-some
+    (= 'not-nil tag) pseudo-not-nil
     (= 'super tag) pseudo-super
     ('#{void dart:core/void} tag) dc-void
     :else
@@ -1016,7 +1023,9 @@
             _ (case opt-kind
                 :named
                 (do
-                  (when-not (<= (count opt-params) (count opts))
+                  (when-some [extras (seq (keep (fn [[p d]] (when-not (opts p) p)) opt-params))]
+                    (throw (Exception. (str "Unexpected optional named arguments " extras  " for method " mname " for " (:element-name type) " of library " (:lib type)))))
+                  #_(when-not (<= (count opt-params) (count opts))
                     (throw (Exception. (str "Too many optional named arguments (" (- (count opt-params) (count opts))  " extra(s)) for method " mname " for " (:element-name type) " of library " (:lib type)))))
                   (when-some [missed (seq (reduce disj opts (into #{} (map first) opt-params)))]
                     (throw (Exception. (str "Missing optional named arguments " missed  " for method " mname " for " (:element-name type) " of library " (:lib type))))))
@@ -1536,10 +1545,13 @@
   ([dart-expr expected-type env]
    (magicast dart-expr expected-type (:dart/type (infer-type dart-expr)) env))
   ([dart-expr expected-type actual-type env]
+   (when (= 'dc.Function (:canon-qname expected-type) (:canon-qname actual-type))
+     (prn 'RETX (is-assignable? expected-type actual-type) (:canon-qname (:return-type expected-type))
+       (:canon-qname (:return-type actual-type))))
    (cond
      (= 'dc.dynamic (:canon-qname expected-type)) dart-expr ; TODO: should be covered by is-assignable?
 
-     (is-assignable? expected-type actual-type) dart-expr   ; <1>
+     (is-assignable? expected-type actual-type) dart-expr ; <1>
 
      (and (nullable-type? expected-type) (nullable-type? actual-type)) ; <2>
      (if-some [expected-type+ (positive-type expected-type)]
@@ -3363,6 +3375,7 @@
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
+  (when (-> x meta :line) (-> x meta prn))
   (try
     (let [x (macroexpand-and-inline env x) ;; meta dc-nim
           dart-x
@@ -3375,9 +3388,9 @@
               (emit (list 'dart:core/DateTime.parse s) env))
             (instance? java.util.regex.Pattern x)
             (emit (list 'new 'dart:core/RegExp
-                        #_(list '. 'dart:core/RegExp 'escape (.pattern ^java.util.regex.Pattern x))
-                        (.pattern ^java.util.regex.Pattern x)
-                        #_#_#_'.& :unicode true) env)
+                    #_(list '. 'dart:core/RegExp 'escape (.pattern ^java.util.regex.Pattern x))
+                    (.pattern ^java.util.regex.Pattern x)
+                    #_#_#_'.& :unicode true) env)
             (keyword? x)
             (emit (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) env)
             (nil? x) nil
@@ -3416,9 +3429,10 @@
                            extend-type-protocol* emit-extend-type-protocol*
                            emit-fn-call)
                          emit-fn-call)]
-              (binding [*source-info* (let [{:keys [line column]} (meta x)]
+              (binding [*source-info* (let [{:keys [line column end-line end-column]} (meta x)]
                                         (if line
-                                          {:line line :column column}
+                                          {:line line :column column
+                                           :end-line end-line :end-column end-column}
                                           *source-info*))]
                 (emit x env)))
             (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
@@ -3437,9 +3451,9 @@
         type (simple-cast type)))
     (catch Exception e
       (throw
-       (if-some [stack (::emit-stack (ex-data e))]
-         (ex-info (ex-message e) (assoc (ex-data e) ::emit-stack (conj stack x)) (ex-cause e))
-         (ex-info (str "Error while compiling " *file* " " (pr-str x)) {::emit-stack [x]} e))))))
+        (if-some [stack (::emit-stack (ex-data e))]
+          (ex-info (ex-message e) (assoc (ex-data e) ::emit-stack (conj stack x)) (ex-cause e))
+          (ex-info (str "Error while compiling " *file* " " (pr-str x)) {::emit-stack [x]} e))))))
 
 (defn host-eval
   [x]
