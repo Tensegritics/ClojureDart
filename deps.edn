@@ -5,4 +5,4 @@
         org.clojure/tools.deps.alpha {:mvn/version "0.12.1162"}
         org.slf4j/slf4j-simple {:mvn/version "1.7.36"}
         org.yaml/snakeyaml {:mvn/version "2.2"}
-        org.clojuredart/java-host-lisp-reader {:mvn/version "1.11.1633"}}}
+        org.clojuredart/java-host-lisp-reader {:mvn/version "1.11.1602"}}}
