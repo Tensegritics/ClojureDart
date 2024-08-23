@@ -3968,7 +3968,13 @@
                 (let [[_ _ dart-then dart-else] x]
                   {:dart/type (merge-types (:dart/type (infer-type dart-then)) (:dart/type (infer-type dart-else)))
                    :dart/const false})
-                dart/let (infer-type (last x))
+                dart/let (let [[_ bindings expr] x
+                               inferred-type (infer-type expr)]
+                           (if-not (:dart/const inferred-type)
+                             inferred-type
+                             (assoc inferred-type
+                               :dart/const
+                               (every? (fn [[v e]] (:dart/const (infer-type e))) bindings))))
                 dart/.
                 (let [[_ a meth & bs :as all] x ; TODO use type-params
                       {:dart/keys [fn-type ret-type]} (infer-type a)
