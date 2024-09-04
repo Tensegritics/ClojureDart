@@ -1,5 +1,6 @@
 (ns cljd.flutter
   (:require ["package:flutter/widgets.dart" :as widgets]
+            ["package:flutter/material.dart" :as material]
             ["package:flutter/foundation.dart" :as foundation]
             ["dart:async" :as dart:async]
             [cljd.string :as str])
@@ -609,13 +610,111 @@
        .height ~height
        .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))
 
+(defprotocol ITweenable
+  (-tween [end]))
+
+(extend-protocol ITweenable
+  fallback
+  (-tween [end] (widgets/Tween .end end))
+
+  widgets/AlignmentGeometry
+  (-tween [end] (widgets/AlignmentGeometryTween .end end))
+
+  widgets/Alignment
+  (-tween [end] (widgets/AlignmentTween .end end))
+
+  widgets/BorderRadius
+  (-tween [end] (widgets/BorderRadiusTween .end end))
+
+  widgets/Border
+  (-tween [end] (widgets/BorderTween .end end))
+
+  widgets/BoxConstraints
+  (-tween [end] (widgets/BoxConstraintsTween .end end))
+
+  widgets/Color
+  (-tween [end] (widgets/ColorTween .end end))
+
+  widgets/Decoration
+  (-tween [end] (widgets/DecorationTween .end end))
+
+  widgets/EdgeInsetsGeometry
+  (-tween [end] (widgets/EdgeInsetsGeometryTween .end end))
+
+  widgets/EdgeInsets
+  (-tween [end] (widgets/EdgeInsetsTween .end end))
+
+  widgets/FractionalOffset
+  (-tween [end] (widgets/FractionalOffsetTween .end end))
+
+  int
+  (-tween [end] (widgets/IntTween .end end))
+
+  widgets/Matrix4
+  (-tween [end] (widgets/Matrix4Tween .end end))
+
+  widgets/Rect
+  (-tween [end] (widgets/RectTween .end end))
+
+  widgets/RelativeRect
+  (-tween [end] (widgets/RelativeRectTween .end end))
+
+  material/ShapeBorder
+  (-tween [end] (material/ShapeBorderTween .end end))
+
+  widgets/Size
+  (-tween [end] (widgets/SizeTween .end end))
+
+  widgets/TextStyle
+  (-tween [end] (widgets/TextStyleTween .end end))
+
+  material/ThemeData
+  (-tween [end] (material/ThemeDataTween .end end)))
+
+(deftype CustomTween [f ^:mutable lerpf]
+  :extends widgets/Tween
+  (begin [this v] (set! lerpf nil) (.-begin! ^super this v))
+  (end [this v] (set! lerpf nil) (.-end! ^super this v))
+  (lerp [this t]
+    (let [lerpf (or lerpf (set! lerpf (f (.-begin this) (.-end this))))]
+      (lerpf t))))
+
+(defn ^widgets/Tween tween-with
+  "Create a tween ending at the provided value. Or return the value if it's already a tween.
+   When f is not provided, a tween is created using the ITweenable protocol.
+   When f is provided it must be a function of two args (begin and end values),
+   returning an interpolation function from t (between 0.0 and 1.0) to
+   interpolated value."
+  [f end]
+  (cond
+    f
+    (doto (CustomTween f nil)
+      (.-end! end))
+    (instance? widgets/Tween end) end
+    :else
+    (-tween end)))
+
+(defn ^:macro-support expand-animate
+  [&env env binding expr {:keys [lerp on-end duration curve] :as opts
+                          :or {duration `(Duration .milliseconds 500)
+                               curve `widgets/Curves.linear}} forms]
+ `(widgets/TweenAnimationBuilder
+    .key ~(:key env)
+    .tween (tween-with ~lerp ~expr)
+    .duration ~duration
+    .curve ~curve
+    .onEnd ~(when on-end `(fn [] ~on-end nil))
+    .builder
+    (fn [~closest-context ~binding _#]
+      (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
+
 (deftype SpyWidget [k child f]
   :extends (widgets/StatelessWidget .key k)
   (build [_ _] child)
   (debugFillProperties [this props-builder]
-   (.debugFillProperties ^super this props-builder)
-   (f props-builder)
-   nil))
+    (.debugFillProperties ^super this props-builder)
+    (f props-builder)
+    nil))
 
 (defn ^:macro-support expand-spy [env expr forms]
   `(SpyWidget ~(:key env) (-widget-cont ~(assoc env :key nil) ~@forms)
@@ -777,7 +876,12 @@
       :padding (expand-padding env v forms)
       :color (expand-color env v forms)
       (:height :width) (expand-height-width env (list* k v forms))
-      :when (expand-visible env v forms))))
+      :when (expand-visible env v forms)
+      :animate
+      (if-some [[binding expr & more] (seq v)]
+        (let [[opts & more] (collect-options more #{:duration :curve :on-end :lerp})]
+          (expand-animate &env env binding expr opts (list* :animate more forms)))
+        `(-widget-cont ~env ~@forms)))))
 
 (defmacro -widget-cont
   "PRIVATE DONT USE"

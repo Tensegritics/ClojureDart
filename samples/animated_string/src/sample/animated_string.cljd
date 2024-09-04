@@ -1,0 +1,41 @@
+(ns sample.animated-string
+  (:require
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter :as f]))
+
+(def animated-text
+  (f/widget
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text ":animate demo")))
+    .body
+    :watch [text (atom "") :as *text]
+    m/Column
+    .children
+    [(m/Text "Enter text below and press enter:")
+     (m/TextField
+       .onSubmitted (fn [x] (reset! *text x) nil))
+     (m/Text "See text being slowly animated (interpolated) between actual value.")
+     (m/Text "(Try changing text again while the animation is running.)")
+     (f/widget
+       :animate [s text
+                 :duration (Duration .seconds 3)
+                 :lerp (fn [from to]
+                         (if (= from to)
+                           (constantly to)
+                           (let [common (count (take-while true? (map = from to)))
+                                 nfrom (- (count from) common)
+                                 nto (- (count to) common)
+                                 n (+ nfrom nto)
+                                 threshold (/ nfrom (double n))]
+                             (fn [t]
+                               (if (< t threshold)
+                                 (subs from 0 (+ common (int (* n (- threshold t)))))
+                                 (subs to 0 (+ common (int (* n (- t threshold))))))))))]
+       (m/Text (str s "◼️")
+         .style (m/TextStyle .fontSize 36 .fontFamily "courier")))
+     (m/Text "Animated length but with a shorter duration")
+     (f/widget
+       :animate [n (count text)]
+       (m/Text (str "n=" n)))]))
+
+(defn main [] (f/run m/MaterialApp .home animated-text))
