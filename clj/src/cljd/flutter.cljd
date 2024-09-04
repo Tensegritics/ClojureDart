@@ -614,7 +614,7 @@
   (-tween [end]))
 
 (extend-protocol ITweenable
-  fallback
+  fallback ; supports types like double, offsets which defines + and uses * as a scaling operator
   (-tween [end] (widgets/Tween .end end))
 
   widgets/AlignmentGeometry
@@ -831,7 +831,18 @@
    :color c -- specify the background color; shorthand for (ColoredBox .color c ...)
    :width w
    :height h -- specify width and and height shorthands for SizedBox
-   :when test -- when test is falsy the subsequent widget is replaced by an empty widget (m/SizedBox.shrink)"
+   :when test -- when test is falsy the subsequent widget is replaced by an empty widget (m/SizedBox.shrink)
+   :animate [binding expr & options] -- animate changes to `expr` value; during
+     animation, at each frame an interpolated value between the previous value
+     :of `expr` and the new one is bound to `binding`. Supported options are:
+     - :duration d -- the animation length as a Duration instance (500ms by default),
+     - :curve c -- the Curve instance used to interpolate between values (Curves.linear by default).
+     - :on-end expr -- expr is evaluated when the animation reaches its end.
+     - :lerp f -- to provide custom interpolation, f must be a function of two args (from and to)
+       returning a function of t (a double usually between 0.0 and 1.0 but some Curve instances can
+       generate values out of this range, see Curves.easeInOutBack for example).
+     Default interpolation is provided by cljd.flutter/lerp for many types:
+     int, double, Offset, Size, TextStyle, Color... and can be extebded via the ITweenable protocol."
   [& body]
   `(-widget-cont {} ~@body))
 
