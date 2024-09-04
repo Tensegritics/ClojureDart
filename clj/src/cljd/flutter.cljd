@@ -671,6 +671,12 @@
   material/ThemeData
   (-tween [end] (material/ThemeDataTween .end end)))
 
+(defn lerp
+  "Returns the default interpolation function (taking one argument t from 0.0 to 1.0)
+   for provided values."
+  [from to]
+  (.-lerp (doto (-tween to) (.-begin! from))))
+
 (deftype CustomTween [f ^:mutable lerpf]
   :extends widgets/Tween
   (begin [this v] (set! lerpf nil) (.-begin! ^super this v))
