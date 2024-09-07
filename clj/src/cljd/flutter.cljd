@@ -1,5 +1,6 @@
 (ns cljd.flutter
   (:require ["package:flutter/widgets.dart" :as widgets]
+            ["package:flutter/material.dart" :as material]
             ["package:flutter/foundation.dart" :as foundation]
             ["dart:async" :as dart:async]
             [cljd.string :as str])
@@ -609,13 +610,117 @@
        .height ~height
        .child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))
 
+(defprotocol ITweenable
+  (-tween [end]))
+
+(extend-protocol ITweenable
+  fallback ; supports types like double, offsets which defines + and uses * as a scaling operator
+  (-tween [end] (widgets/Tween .end end))
+
+  widgets/AlignmentGeometry
+  (-tween [end] (widgets/AlignmentGeometryTween .end end))
+
+  widgets/Alignment
+  (-tween [end] (widgets/AlignmentTween .end end))
+
+  widgets/BorderRadius
+  (-tween [end] (widgets/BorderRadiusTween .end end))
+
+  widgets/Border
+  (-tween [end] (widgets/BorderTween .end end))
+
+  widgets/BoxConstraints
+  (-tween [end] (widgets/BoxConstraintsTween .end end))
+
+  widgets/Color
+  (-tween [end] (widgets/ColorTween .end end))
+
+  widgets/Decoration
+  (-tween [end] (widgets/DecorationTween .end end))
+
+  widgets/EdgeInsetsGeometry
+  (-tween [end] (widgets/EdgeInsetsGeometryTween .end end))
+
+  widgets/EdgeInsets
+  (-tween [end] (widgets/EdgeInsetsTween .end end))
+
+  widgets/FractionalOffset
+  (-tween [end] (widgets/FractionalOffsetTween .end end))
+
+  int
+  (-tween [end] (widgets/IntTween .end end))
+
+  widgets/Matrix4
+  (-tween [end] (widgets/Matrix4Tween .end end))
+
+  widgets/Rect
+  (-tween [end] (widgets/RectTween .end end))
+
+  widgets/RelativeRect
+  (-tween [end] (widgets/RelativeRectTween .end end))
+
+  material/ShapeBorder
+  (-tween [end] (material/ShapeBorderTween .end end))
+
+  widgets/Size
+  (-tween [end] (widgets/SizeTween .end end))
+
+  widgets/TextStyle
+  (-tween [end] (widgets/TextStyleTween .end end))
+
+  material/ThemeData
+  (-tween [end] (material/ThemeDataTween .end end)))
+
+(defn lerp
+  "Returns the default interpolation function (taking one argument t from 0.0 to 1.0)
+   for provided values."
+  [from to]
+  (.-lerp (doto ^widgets/Tween (-tween to) (.-begin! from))))
+
+(deftype CustomTween [f ^:mutable lerpf]
+  :extends widgets/Tween
+  (begin [this v] (set! lerpf nil) (.-begin! ^super this v))
+  (end [this v] (set! lerpf nil) (.-end! ^super this v))
+  (lerp [this t]
+    (let [lerpf (or lerpf (set! lerpf (f (.-begin this) (.-end this))))]
+      (lerpf t))))
+
+(defn ^widgets/Tween tween-with
+  "Create a tween ending at the provided value. Or return the value if it's already a tween.
+   When f is not provided, a tween is created using the ITweenable protocol.
+   When f is provided it must be a function of two args (begin and end values),
+   returning an interpolation function from t (between 0.0 and 1.0) to
+   interpolated value."
+  [f end]
+  (cond
+    f
+    (doto (CustomTween f nil)
+      (.-end! end))
+    (instance? widgets/Tween end) end
+    :else
+    (-tween end)))
+
+(defn ^:macro-support expand-animate
+  [&env env binding expr {:keys [lerp on-end duration curve] :as opts
+                          :or {duration `(Duration .milliseconds 500)
+                               curve `widgets/Curves.linear}} forms]
+ `(widgets/TweenAnimationBuilder
+    .key ~(:key env)
+    .tween (tween-with ~lerp ~expr)
+    .duration ~duration
+    .curve ~curve
+    .onEnd ~(when on-end `(fn [] ~on-end nil))
+    .builder
+    (fn [~closest-context ~binding _#]
+      (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
+
 (deftype SpyWidget [k child f]
   :extends (widgets/StatelessWidget .key k)
   (build [_ _] child)
   (debugFillProperties [this props-builder]
-   (.debugFillProperties ^super this props-builder)
-   (f props-builder)
-   nil))
+    (.debugFillProperties ^super this props-builder)
+    (f props-builder)
+    nil))
 
 (defn ^:macro-support expand-spy [env expr forms]
   `(SpyWidget ~(:key env) (-widget-cont ~(assoc env :key nil) ~@forms)
@@ -726,7 +831,18 @@
    :color c -- specify the background color; shorthand for (ColoredBox .color c ...)
    :width w
    :height h -- specify width and and height shorthands for SizedBox
-   :when test -- when test is falsy the subsequent widget is replaced by an empty widget (m/SizedBox.shrink)"
+   :when test -- when test is falsy the subsequent widget is replaced by an empty widget (m/SizedBox.shrink)
+   :animate [binding expr & options] -- animate changes to `expr` value; during
+     animation, at each frame an interpolated value between the previous value
+     :of `expr` and the new one is bound to `binding`. Supported options are:
+     - :duration d -- the animation length as a Duration instance (500ms by default),
+     - :curve c -- the Curve instance used to interpolate between values (Curves.linear by default).
+     - :on-end expr -- expr is evaluated when the animation reaches its end.
+     - :lerp f -- to provide custom interpolation, f must be a function of two args (from and to)
+       returning a function of t (a double usually between 0.0 and 1.0 but some Curve instances can
+       generate values out of this range, see Curves.easeInOutBack for example).
+     Default interpolation is provided by cljd.flutter/lerp for many types:
+     int, double, Offset, Size, TextStyle, Color... and can be extebded via the ITweenable protocol."
   [& body]
   `(-widget-cont {} ~@body))
 
@@ -777,7 +893,12 @@
       :padding (expand-padding env v forms)
       :color (expand-color env v forms)
       (:height :width) (expand-height-width env (list* k v forms))
-      :when (expand-visible env v forms))))
+      :when (expand-visible env v forms)
+      :animate
+      (if-some [[binding expr & more] (seq v)]
+        (let [[opts & more] (collect-options more #{:duration :curve :on-end :lerp})]
+          (expand-animate &env env binding expr opts (list* :animate more forms)))
+        `(-widget-cont ~env ~@forms)))))
 
 (defmacro -widget-cont
   "PRIVATE DONT USE"
@@ -787,18 +908,22 @@
     (:key env)
     (stateless-flush env (cons form more-forms))
     (nil? more-forms) form
+    (= '.child form) ; for nested f/widgets ending by a directive
+    `(-widget-cont ~env ~@more-forms)
     (symbol? form)
     `(-widget-cont ~env ~(with-meta (list form) (meta form)) ~@more-forms)
     (seq? form)
-    (let [[maybe-prop & more-forms] more-forms
-          prop (when (and more-forms (simple-symbol? maybe-prop)
+    (let [[maybe-prop] more-forms
+          prop (when (and (simple-symbol? maybe-prop)
                        (.startsWith (name maybe-prop) "."))
                  maybe-prop)
-          env (dissoc env :closest-ctx)]
-      (-> (if prop
-            `(~@form ~prop (-widget-cont ~env ~@more-forms))
-            `(~@form .child (-widget-cont ~env ~maybe-prop ~@more-forms)))
-          (with-meta (meta form))))
+          env (dissoc env :closest-ctx)
+          more-forms (cond-> more-forms prop next)
+          prop (or prop '.child)
+          widget-name (-> prop name gensym)]
+      (-> `(let [~widget-name (f/-widget-cont ~env ~@more-forms)]
+             (~@form ~prop ~widget-name))
+        (with-meta (meta form))))
     :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms}))))
 
 (defmacro build

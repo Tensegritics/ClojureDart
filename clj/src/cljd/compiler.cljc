@@ -146,6 +146,14 @@
        ~@body)
      (.toString w#)))
 
+(defmacro with-dart-code [& body]
+  `(let [sw# (java.io.StringWriter.)
+         lnw# (cljd.lang.LineNumberingWriter. sw#)]
+     (binding [*dart-out* lnw#
+               #_*line-mappings*]
+       ~@body)
+     {:str (.toString sw#)}))
+
 ;; analyzer-info is a fn to query info about types and libs
 ;;
 ;; [lib element] returns a full map
@@ -2881,7 +2889,7 @@
                     (map second super-ctor-split-params)))
                   (assoc-in [:super-ctor :args]
                             (into [] (comp cat (remove nil?)) super-ctor-split-params)))]
-    (swap! nses alter-def class-name assoc :dart/code (with-dart-str (write-class class)))
+    (swap! nses alter-def class-name assoc :dart/code (with-dart-code (write-class class)))
     (let [ctor-split-args (map #(assoc % 0 nil) super-ctor-split-args+types)
           [bindings dart-args] (lift-args ctor-split-args env)
           bindings (concat super-fn-bindings bindings)]
@@ -2914,7 +2922,7 @@
            (assoc spec
                   :dart/name dartname
                   :dart/qname (dart-qualify dartname)
-                  :dart/code (with-dart-str (write-top-field dartname (emit (list 'new (:impl spec)) {})))
+                  :dart/code (with-dart-code (write-top-field dartname (emit (list 'new (:impl spec)) {})))
                   :type :protocol))))
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
@@ -2974,7 +2982,7 @@
                                        (-> arg (ensure-dart-expr env) list)
                                        [name (-> arg (ensure-dart-expr env))])))
                                   super-ctor-split-args+types)))]
-    (swap! nses alter-def class-name assoc :dart/code (with-dart-str (write-class class)) :dart/type dart-type)
+    (swap! nses alter-def class-name assoc :dart/code (with-dart-code (write-class class)) :dart/type dart-type)
     (emit class-name env)))))
 
 (defn relocatable-class-name
@@ -3101,7 +3109,7 @@
         (when-not *host-eval* (into [] (map #(emit % env)) (-> form meta :annotations)))
         dart-code
         (when-not *host-eval*
-          (with-dart-str
+          (with-dart-code
             (write-annotations dart-annotations)
             (cond
               (:dynamic (meta sym))
@@ -3416,9 +3424,10 @@
                            extend-type-protocol* emit-extend-type-protocol*
                            emit-fn-call)
                          emit-fn-call)]
-              (binding [*source-info* (let [{:keys [line column]} (meta x)]
+              (binding [*source-info* (let [{:keys [line column end-line end-column]} (meta x)]
                                         (if line
-                                          {:line line :column column}
+                                          {:line line :column column
+                                           :end-line end-line :end-column end-column}
                                           *source-info*))]
                 (emit x env)))
             (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
@@ -3959,7 +3968,13 @@
                 (let [[_ _ dart-then dart-else] x]
                   {:dart/type (merge-types (:dart/type (infer-type dart-then)) (:dart/type (infer-type dart-else)))
                    :dart/const false})
-                dart/let (infer-type (last x))
+                dart/let (let [[_ bindings expr] x
+                               inferred-type (infer-type expr)]
+                           (if-not (:dart/const inferred-type)
+                             inferred-type
+                             (assoc inferred-type
+                               :dart/const
+                               (every? (fn [[v e]] (:dart/const (infer-type e))) bindings))))
                 dart/.
                 (let [[_ a meth & bs :as all] x ; TODO use type-params
                       {:dart/keys [fn-type ret-type]} (infer-type a)
@@ -4361,7 +4376,7 @@
           :let [{:keys [dart/code]} v]
           :when code]
     (dart-println "\n// BEGIN" sym)
-    (dart-println code)
+    (dart-println (:str code))
     (dart-println "// END" sym)))
 
 ;; #/[bool bool .foo String]

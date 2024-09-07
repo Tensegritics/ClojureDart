@@ -1,0 +1,39 @@
+(ns sample.scoped-watch
+  "Scoped watch demo"
+  (:require
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter :as f]))
+
+(defn main []
+  (let [flip (atom false)]
+    (f/run
+      (m/MaterialApp
+        .title "Cljd Demo"
+        .theme (m/ThemeData .primarySwatch m/Colors.blue))
+      .home
+      (m/Scaffold
+        .appBar (m/AppBar .title (m/Text "ClojureDart Home Page"))
+        .floatingActionButton
+        (f/widget
+          (m/FloatingActionButton
+            .onPressed #(swap! flip not)
+            .tooltip "Flip color")
+          (m/Icon m/Icons.add)))
+      .body
+      m/Row
+      .children
+      [(f/widget
+         m/Expanded
+         :watch [is-flipped flip]
+         :color (if is-flipped m/Colors.blue m/Colors.green)
+         m/Center
+         :let [_ (prn 'flat)]
+         (m/Text "I shouldn't rebuild when flip changes"))
+       (f/widget
+         m/Expanded
+         (f/widget
+           :watch [is-flipped flip]
+           :color (if is-flipped m/Colors.blue m/Colors.green))
+         m/Center
+         :let [_ (prn 'scoped)]
+         (m/Text "I shouldn't rebuild when flip changes"))])))
