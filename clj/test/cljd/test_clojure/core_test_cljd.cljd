@@ -209,7 +209,11 @@
   (is (= true (apply distinct? (range 20)))))
 
 (deftest testing-every-pred
-  (is (= true ((every-pred #(< % 10) number?) 1 2 3 4))))
+  (is (= true ((every-pred #(< % 10) number?) 1 2 3 4)))
+  (is (= false ((every-pred some? #(throw (ex-info (str %) {})) some?) 1 nil)))
+  (is (= false ((every-pred some? some? #(throw (ex-info (str %) {}))) 1 nil)))
+  (is (= false ((every-pred some? #(throw (ex-info (str %) {})) some?) 1 1 nil)))
+  (is (= false ((every-pred some? some? #(throw (ex-info (str %) {}))) 1 1 nil))))
 
 (deftest testing-filterv
   (is (= [1 3 5 7 9] (filterv odd? (range 10)))))
@@ -229,6 +233,10 @@
 
 (deftest testing-select-keys
   (is (= {1 1 5 5} (select-keys (into {} (map #(vector % %)) (range 10)) [1 5]))))
+
+(deftest testing-some-fn
+  (is (= true ((some-fn number? odd? #(> % 0)) :a 1)))
+  (is (= true ((some-fn number? odd? #(> % 0)) :a 1 3))))
 
 (deftype Base [x]
   Object
