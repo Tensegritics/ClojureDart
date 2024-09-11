@@ -3548,7 +3548,7 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (LazySeq. new-meta #(.sval ^LazySeq coll) nil __hash)))
+      (LazySeq. new-meta #(.sval coll) nil __hash)))
   IMeta
   (-meta [coll] meta)
   ISeqable
