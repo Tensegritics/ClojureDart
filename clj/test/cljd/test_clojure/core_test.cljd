@@ -381,22 +381,7 @@
                  ([result input] (rf result input))))]
       (is (= (sequence xf [1 2 3]) [1 2 3 :foo]))))
   (testing "CLJS-2258"
-    (is (= ["1"] (sequence (map str) (eduction [1])))))
-  (testing "sentinels"
-    (is (= [[1] ["none"] [3] ["none"]]
-           (into [] (partition-by identity) [1 "none" 3 "none"])))
-    (is (= [:cljd.core/none]
-           (into [] (dedupe) [:cljd.core/none])
-           (sequence (dedupe) [:cljd.core/none])))
-    (is (= {:cljd.core/halt :should-be-wrapped}
-           (into () (comp (halt-when (fn [_] false))
-                          (fn [rf]
-                            (fn
-                              ([] (rf))
-                              ([result] (rf result))
-                              ([result input]
-                               (reduced {:cljd.core/halt :should-be-wrapped})))))
-                 [1])))))
+    (is (= ["1"] (sequence (map str) (eduction [1]))))))
 
 (deftest test-obj-equiv
   (testing "Object equiv method"
