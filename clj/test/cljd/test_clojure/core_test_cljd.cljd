@@ -1027,3 +1027,10 @@
         growable-list (List.from x)]
     (List/copyRange growable-list 0 x)
     (is (= (sequence growable-list) []))))
+
+(deftest lazy-seq-should-realize-seq-once
+  (let [a (atom 0)
+        x (eduction (map (fn [_] (swap! a inc))) [nil])
+        l (lazy-seq x)]
+    (dotimes [_ 10]
+      (is (= [1] l)))))

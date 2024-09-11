@@ -3535,7 +3535,10 @@
     (if (nil? fn)
       s
       (do
-        (set! s (fn))
+        (loop [ls (fn)]
+          (if (dart/is? ls LazySeq)
+            (recur (.sval ^LazySeq ls))
+            (set! s (seq ls))))
         (set! fn nil)
         s)))
   IPending
@@ -3545,32 +3548,27 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (LazySeq. new-meta #(-seq coll) nil __hash)))
+      (LazySeq. new-meta #(.sval ^LazySeq coll) nil __hash)))
   IMeta
   (-meta [coll] meta)
   ISeqable
   (-seq [coll]
     (.sval coll)
-    (when-not (nil? s)
-      (loop [ls s]
-        (if (dart/is? ls LazySeq)
-          (recur (.sval ^LazySeq ls))
-          (do (set! s ls)
-              (seq s))))))
+    s)
   ISeq
   (-first [coll]
-    (-seq coll)
+    (.sval coll)
     (when-not (nil? s)
-      (first s)))
+      (-first s)))
   (-rest [coll]
-    (-seq coll)
+    (.sval coll)
     (if-not (nil? s)
-      (rest s)
+      (-rest s)
       ()))
   (-next [coll]
-    (-seq coll)
+    (.sval coll)
     (when-not (nil? s)
-      (next s)))
+      (-next s)))
   ICollection
   (-conj [coll o] (cons o coll))
   IEmptyableCollection
