@@ -3552,9 +3552,7 @@
   IMeta
   (-meta [coll] meta)
   ISeqable
-  (-seq [coll]
-    (.sval coll)
-    s)
+  (-seq [coll] (.sval coll))
   ISeq
   (-first [coll]
     (.sval coll)
