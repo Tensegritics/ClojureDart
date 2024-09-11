@@ -1034,3 +1034,20 @@
         l (lazy-seq x)]
     (dotimes [_ 10]
       (is (= [1] l)))))
+
+(deftest transducer-sentinels-test
+  (testing "sentinels"
+    (is (= [[1] ["none"] [3] ["none"]]
+           (into [] (partition-by identity) [1 "none" 3 "none"])))
+    (is (= [:cljd.core/none]
+           (into [] (dedupe) [:cljd.core/none])
+           (sequence (dedupe) [:cljd.core/none])))
+    (is (= {:cljd.core/halt :should-be-wrapped}
+           (into () (comp (halt-when (fn [_] false))
+                          (fn [rf]
+                            (fn
+                              ([] (rf))
+                              ([result] (rf result))
+                              ([result input]
+                               (reduced {:cljd.core/halt :should-be-wrapped})))))
+                 [1])))))

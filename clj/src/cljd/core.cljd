@@ -6445,8 +6445,7 @@
   ([f]
    (fn [rf]
      (let [a #dart []
-           ;; TODO replace "none" by ::none
-           pv (volatile! "none")]
+           pv (volatile! sentinel)]
        (fn
          ([] (rf))
          ([result]
@@ -6461,7 +6460,8 @@
           (let [pval @pv
                 val (f input)]
             (vreset! pv val)
-            (if (or (identical? pval "none") (= val pval))
+            (if (or (identical? pval sentinel)
+                    (= val pval))
               (do
                 (.add a input)
                 result)
@@ -6500,7 +6500,7 @@
   Returns a transducer when no collection is provided."
   ([]
    (fn [rf]
-     (let [pv (volatile! ::none)]
+     (let [pv (volatile! sentinel)]
        (fn
          ([] (rf))
          ([result] (rf result))
@@ -6566,12 +6566,12 @@
      (fn
        ([] (rf))
        ([result]
-        (if (and (map? result) (contains? result ::halt))
-          (::halt result)
+        (if (and (map? result) (contains? result sentinel))
+          (get result sentinel)
           (rf result)))
        ([result input]
         (if (pred input)
-          (reduced {::halt (if retf (retf (rf result) input) input)})
+          (reduced {sentinel (if retf (retf (rf result) input) input)})
           (rf result input)))))))
 
 (defn remove
