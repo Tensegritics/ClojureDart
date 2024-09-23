@@ -5112,8 +5112,10 @@
     (not (identical? (-lookup coll k coll) coll)))
   IFind
   (-find [coll k]
-    (when-some [v (-lookup coll k nil)]
-      (new #/(MapEntry K V) k v)))
+    ;; NOTE: `coll` is used as a local sentinel here
+    (let [v (-lookup coll k coll)]
+      (when-not (identical? coll v)
+        (new #/(MapEntry K V) k v))))
   IMap
   (-dissoc [coll k]
     (let [new-root (.inode_without root 0 (hash k) k)]

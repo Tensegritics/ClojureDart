@@ -1059,3 +1059,6 @@
                               ([result input]
                                (reduced {:cljd.core/halt :should-be-wrapped})))))
                  [1])))))
+
+(deftest find-returns-nil-value
+  (is (= (find {1 nil, 2 "b"} 1) [1 nil])))
