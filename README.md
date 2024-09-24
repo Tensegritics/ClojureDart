@@ -51,7 +51,7 @@ cat << EOF > deps.edn
 {:paths ["src"] ; where your cljd files are
  :deps {tensegritics/clojuredart
         {:git/url "https://github.com/tensegritics/ClojureDart.git"
-         :sha "4871523ecf30364faec4a54a7543f5299ad08534"}}
+         :sha "e203b0fc7767e94a42270fe2d4a3b6b6c6f10cdf"}}
  :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
  :cljd/opts {:kind :flutter
              :main acme.main}}
