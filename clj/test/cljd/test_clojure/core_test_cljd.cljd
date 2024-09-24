@@ -1062,3 +1062,14 @@
 
 (deftest find-returns-nil-value
   (is (= (find {1 nil, 2 "b"} 1) [1 nil])))
+
+(deftype SuperMagicast [^#/(List? String) strings])
+
+(deftype SuperMagicastHello [^:mutable x] ; :mutable to prevent making the class const
+  :extends (SuperMagicast ["hello" (str x)])
+  (toString [this]
+                 (apply str (.-strings this))))
+
+(deftest magicast-in-super-ctor
+  (is (= "helloWorld"
+        (str (SuperMagicastHello "World")))))

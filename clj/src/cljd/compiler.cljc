@@ -2703,7 +2703,7 @@
             :else (throw (Exception. (str "Unexpected super constructor")))))
         specs (resolve-methods-specs class-name (cons (if extends base class-name) specs)
                 (:type-vars env #{}))
-        ctor-meth (when (= '. ctor-op) (first ctor-args))
+        ctor-meth (when (= '. ctor-op) (first ctor-args)) ; named constructor
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
         methods (into [] (filter seq?) specs) ; crude
         base-type (emit-type base env)
@@ -2965,24 +2965,27 @@
             super-ctor-split-args+types
             (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))
 
-        const (and (:const super-ctor-info) (not-any? #(:dart/mutable (meta %)) dart-fields)) ; TODO it's weak we should test super args for const while assuming params to be const
-        dart-type (cond-> dart-type const (assoc-in [:members (name mclass-name) :const] true))
-        class (-> class
-                  (assoc :name dart-type
-                         :ctor mclass-name
-                         :abstract abstract
-                         :mixin mixin
-                         :fields dart-fields
-                         :ctor-params (map #(list '. %) dart-fields))
-                  (assoc-in [:super-ctor :args]
-                            (into []
-                                  (mapcat
-                                   (fn [[name arg]]
-                                     (if (nil? name)
-                                       (-> arg (ensure-dart-expr env) list)
-                                       [name (-> arg (ensure-dart-expr env))])))
-                                  super-ctor-split-args+types)))]
-    (swap! nses alter-def class-name assoc :dart/code (with-dart-code (write-class class)) :dart/type dart-type)
+            const (and (:const super-ctor-info) (not-any? #(:dart/mutable (meta %)) dart-fields)) ; TODO it's weak we should test super args for const while assuming params to be const
+            dart-type (cond-> dart-type const (assoc-in [:members (name mclass-name) :const] true))
+            arg-caster (if const simple-cast #(magicast %1 %2 env))
+            class (-> class
+                    (assoc :name dart-type
+                      :ctor mclass-name
+                      :abstract abstract
+                      :mixin mixin
+                      :fields dart-fields
+                      :ctor-params (map #(list '. %) dart-fields))
+                    (assoc-in [:super-ctor :args]
+                      (into []
+                        (mapcat
+                          (fn [[name arg t]]
+                            (let [dart-expr
+                                  (-> arg (arg-caster t) (ensure-dart-expr env))]
+                              (if (nil? name)
+                                (list dart-expr)
+                                [name dart-expr]))))
+                        super-ctor-split-args+types)))]
+        (swap! nses alter-def class-name assoc :dart/code (with-dart-code (write-class class)) :dart/type dart-type)
     (emit class-name env)))))
 
 (defn relocatable-class-name
