@@ -884,20 +884,33 @@
                  (into [] (map :type) opts))]
       [(into [] (map :type) fixed) opts (:type-parameters member-info)])))
 
+(defn super-dart-type
+  "Accorting to 10.9 Superclasses, superclasses are extends + with, not extends alone.
+   Thus when there are mixins, the super class is synthetic."
+  [{:keys [super mixin] :as dart-type}]
+  (if-some [mixins (seq (:mixins dart-type))]
+    {:synthetic :super-type
+     :super-of dart-type
+     :mixins mixins
+     :super super}
+    super))
+
 (defn full-class-info
   "Takes a partial dart type (as map or discrete lib + element-name as strings).
    Returns a fully populated type map."
   ([dart-type]
-   (let [fci (full-class-info (:lib dart-type) (:element-name dart-type))]
-     (case (:canon-qname dart-type)
-       dc.Record
-       (let [{:keys [positional-fields named-fields]} dart-type]
-         (into (assoc fci :positional-fields positional-fields :named-fields named-fields)
-           (map (fn [x] [(name (:name x)) (-> x (assoc :kind :field :getter true) (dissoc :name))]))
-           (concat
-             (map-indexed #(assoc %2 :name (str "$" (inc %1))) positional-fields)
-             named-fields)))
-       fci)))
+   (if (:synthetic dart-type)
+     dart-type
+     (let [fci (full-class-info (:lib dart-type) (:element-name dart-type))]
+       (case (:canon-qname dart-type)
+         dc.Record
+         (let [{:keys [positional-fields named-fields]} dart-type]
+           (into (assoc fci :positional-fields positional-fields :named-fields named-fields)
+             (map (fn [x] [(name (:name x)) (-> x (assoc :kind :field :getter true) (dissoc :name))]))
+             (concat
+               (map-indexed #(assoc %2 :name (str "$" (inc %1))) positional-fields)
+               named-fields)))
+         fci))))
   ([lib element-name]
    (let [{:keys [libs] :as all-nses} @nses]
      (when-some [ci (or
@@ -1473,8 +1486,15 @@
   "Returns true when a value of type value-type can be used as a value of type slot-type."
   [slot-type value-type]
   (letfn [(is-assignable? [slot-type value-type]
-            (every? (apply some-fn (map (fn [s] (fn [v] (simply-assignable? s v))) (simple-types slot-type)))
-              (simple-types value-type)))
+            (case (:synthetic slot-type)
+              :super-type
+              (is-assignable? (:super-of slot-type)
+                (case (:synthetic value-type)
+                  :super-type (:super-of value-type)
+                  nil value-type))
+              nil
+              (every? (apply some-fn (map (fn [s] (fn [v] (simply-assignable? s v))) (simple-types slot-type)))
+                (simple-types value-type))))
           (simply-assignable?
             [{slot-canon-qname :canon-qname :as slot-type} value-type]
             ; simple because types are not nullable and not unions
@@ -1513,7 +1533,7 @@
   ([dart-expr expected-type actual-type]
    (cond
      (= (:canon-qname expected-type) 'pseudo.super)
-     (let [super-type (:super (full-class-info actual-type) 'dc.Object)
+     (let [super-type (super-dart-type (full-class-info actual-type))
            super (if (= 'this dart-expr) 'super (:that-super (meta dart-expr)))]
        (when-not super
          (throw (Exception. "Can't tag with pseudo-type super a local which isn't a this.")))
