@@ -2000,7 +2000,7 @@
       (let [[_ obj member] target
             [bindings dart-obj member dart-type] (resolve-field-for-set! obj member env)]
         (cond->> (list 'dart/set! (list 'dart/.- dart-obj member)
-                   (dart-binding 'setval (emit expr env) env))
+                   (dart-binding 'setval (-> expr (emit env) (magicast dart-type env)) env))
           bindings (list 'dart/let bindings)))
       :else
       (throw (ex-info (str "Unsupported target for assignment: " target) {:target target})))))
