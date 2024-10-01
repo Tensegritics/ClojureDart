@@ -969,7 +969,9 @@
       (update :parameters actual-parameters type-env)
       (update :type-parameters (fn [ps] (map #(actual-type % type-env) ps))))
     :field
-    (update member-info :type actual-type type-env)
+    (-> member-info
+      (update :type actual-type type-env)
+      (update :setter-type actual-type type-env))
     :constructor
     ;; TODO: what about type-parameters
     (-> member-info
@@ -1978,7 +1980,7 @@
         (println "DYNAMIC WARNING: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info)))
       (not= (:kind member-info) :field)
       (throw (Exception. (str member-name " is not a field of " (:element-name type!) " " (source-info)))))
-    [dart-obj-bindings dart-obj member-name (or (:type member-info) dc-dynamic)]))
+    [dart-obj-bindings dart-obj member-name (or (:setter-type member-info) dc-dynamic)]))
 
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
