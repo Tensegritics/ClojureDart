@@ -3535,7 +3535,10 @@
     (if (nil? fn)
       s
       (do
-        (set! s (fn))
+        (loop [ls (fn)]
+          (if (dart/is? ls LazySeq)
+            (recur (.sval ^LazySeq ls))
+            (set! s (seq ls))))
         (set! fn nil)
         s)))
   IPending
@@ -3545,32 +3548,25 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (LazySeq. new-meta #(-seq coll) nil __hash)))
+      (LazySeq. new-meta #(.sval coll) nil __hash)))
   IMeta
   (-meta [coll] meta)
   ISeqable
-  (-seq [coll]
-    (.sval coll)
-    (when-not (nil? s)
-      (loop [ls s]
-        (if (dart/is? ls LazySeq)
-          (recur (.sval ^LazySeq ls))
-          (do (set! s ls)
-              (seq s))))))
+  (-seq [coll] (.sval coll))
   ISeq
   (-first [coll]
-    (-seq coll)
+    (.sval coll)
     (when-not (nil? s)
-      (first s)))
+      (-first s)))
   (-rest [coll]
-    (-seq coll)
+    (.sval coll)
     (if-not (nil? s)
-      (rest s)
+      (-rest s)
       ()))
   (-next [coll]
-    (-seq coll)
+    (.sval coll)
     (when-not (nil? s)
-      (next s)))
+      (-next s)))
   ICollection
   (-conj [coll o] (cons o coll))
   IEmptyableCollection
@@ -5116,8 +5112,10 @@
     (not (identical? (-lookup coll k coll) coll)))
   IFind
   (-find [coll k]
-    (when-some [v (-lookup coll k nil)]
-      (new #/(MapEntry K V) k v)))
+    ;; NOTE: `coll` is used as a local sentinel here
+    (let [v (-lookup coll k coll)]
+      (when-not (identical? coll v)
+        (new #/(MapEntry K V) k v))))
   IMap
   (-dissoc [coll k]
     (let [new-root (.inode_without root 0 (hash k) k)]
@@ -5513,8 +5511,8 @@
     (fn ep3
       ([] true)
       ([x] (boolean (and (p1 x) (p2 x) (p3 x))))
-      ([x y] (boolean (and (p1 x) (p2 x) (p3 x) (p1 y) (p2 y) (p3 y))))
-      ([x y z] (boolean (and (p1 x) (p2 x) (p3 x) (p1 y) (p2 y) (p3 y) (p1 z) (p2 z) (p3 z))))
+      ([x y] (boolean (and (p1 x) (p1 y) (p2 x) (p2 y) (p3 x) (p3 y))))
+      ([x y z] (boolean (and (p1 x) (p1 y) (p1 z) (p2 x) (p2 y) (p2 z) (p3 x) (p3 y) (p3 z))))
       ([x y z & args] (boolean (and (ep3 x y z)
                                  (every? #(and (p1 %) (p2 %) (p3 %)) args))))))
    ([p1 p2 p3 & ps]
@@ -5612,8 +5610,8 @@
    (fn sp3
      ([] nil)
      ([x] (or (p1 x) (p2 x) (p3 x)))
-     ([x y] (or (p1 x) (p2 x) (p3 x) (p1 y) (p2 y) (p3 y)))
-     ([x y z] (or (p1 x) (p2 x) (p3 x) (p1 y) (p2 y) (p3 y) (p1 z) (p2 z) (p3 z)))
+     ([x y] (or (p1 x) (p1 y) (p2 x) (p2 y) (p3 x) (p3 y)))
+     ([x y z] (or (p1 x) (p1 y) (p1 z) (p2 x) (p2 y) (p2 z) (p3 x) (p3 y) (p3 z)))
      ([x y z & args] (or (sp3 x y z)
                        (some #(or (p1 %) (p2 %) (p3 %)) args)))))
   ([p1 p2 p3 & ps]
@@ -6449,8 +6447,7 @@
   ([f]
    (fn [rf]
      (let [a #dart []
-           ;; TODO replace "none" by ::none
-           pv (volatile! "none")]
+           pv (volatile! sentinel)]
        (fn
          ([] (rf))
          ([result]
@@ -6465,7 +6462,8 @@
           (let [pval @pv
                 val (f input)]
             (vreset! pv val)
-            (if (or (identical? pval "none") (= val pval))
+            (if (or (identical? pval sentinel)
+                    (= val pval))
               (do
                 (.add a input)
                 result)
@@ -6504,7 +6502,7 @@
   Returns a transducer when no collection is provided."
   ([]
    (fn [rf]
-     (let [pv (volatile! ::none)]
+     (let [pv (volatile! sentinel)]
        (fn
          ([] (rf))
          ([result] (rf result))
@@ -6570,12 +6568,12 @@
      (fn
        ([] (rf))
        ([result]
-        (if (and (map? result) (contains? result ::halt))
-          (::halt result)
+        (if (and (map? result) (contains? result sentinel))
+          (get result sentinel)
           (rf result)))
        ([result input]
         (if (pred input)
-          (reduced {::halt (if retf (retf (rf result) input) input)})
+          (reduced {sentinel (if retf (retf (rf result) input) input)})
           (rf result input)))))))
 
 (defn remove

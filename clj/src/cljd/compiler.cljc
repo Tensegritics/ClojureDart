@@ -884,20 +884,33 @@
                  (into [] (map :type) opts))]
       [(into [] (map :type) fixed) opts (:type-parameters member-info)])))
 
+(defn super-dart-type
+  "Accorting to 10.9 Superclasses, superclasses are extends + with, not extends alone.
+   Thus when there are mixins, the super class is synthetic."
+  [{:keys [super mixin] :as dart-type}]
+  (if-some [mixins (seq (:mixins dart-type))]
+    {:synthetic :super-type
+     :super-of dart-type
+     :mixins mixins
+     :super super}
+    super))
+
 (defn full-class-info
   "Takes a partial dart type (as map or discrete lib + element-name as strings).
    Returns a fully populated type map."
   ([dart-type]
-   (let [fci (full-class-info (:lib dart-type) (:element-name dart-type))]
-     (case (:canon-qname dart-type)
-       dc.Record
-       (let [{:keys [positional-fields named-fields]} dart-type]
-         (into (assoc fci :positional-fields positional-fields :named-fields named-fields)
-           (map (fn [x] [(name (:name x)) (-> x (assoc :kind :field :getter true) (dissoc :name))]))
-           (concat
-             (map-indexed #(assoc %2 :name (str "$" (inc %1))) positional-fields)
-             named-fields)))
-       fci)))
+   (if (:synthetic dart-type)
+     dart-type
+     (let [fci (full-class-info (:lib dart-type) (:element-name dart-type))]
+       (case (:canon-qname dart-type)
+         dc.Record
+         (let [{:keys [positional-fields named-fields]} dart-type]
+           (into (assoc fci :positional-fields positional-fields :named-fields named-fields)
+             (map (fn [x] [(name (:name x)) (-> x (assoc :kind :field :getter true) (dissoc :name))]))
+             (concat
+               (map-indexed #(assoc %2 :name (str "$" (inc %1))) positional-fields)
+               named-fields)))
+         fci))))
   ([lib element-name]
    (let [{:keys [libs] :as all-nses} @nses]
      (when-some [ci (or
@@ -956,7 +969,9 @@
       (update :parameters actual-parameters type-env)
       (update :type-parameters (fn [ps] (map #(actual-type % type-env) ps))))
     :field
-    (update member-info :type actual-type type-env)
+    (-> member-info
+      (update :type actual-type type-env)
+      (update :setter-type actual-type type-env))
     :constructor
     ;; TODO: what about type-parameters
     (-> member-info
@@ -1473,8 +1488,15 @@
   "Returns true when a value of type value-type can be used as a value of type slot-type."
   [slot-type value-type]
   (letfn [(is-assignable? [slot-type value-type]
-            (every? (apply some-fn (map (fn [s] (fn [v] (simply-assignable? s v))) (simple-types slot-type)))
-              (simple-types value-type)))
+            (case (:synthetic slot-type)
+              :super-type
+              (is-assignable? (:super-of slot-type)
+                (case (:synthetic value-type)
+                  :super-type (:super-of value-type)
+                  nil value-type))
+              nil
+              (every? (apply some-fn (map (fn [s] (fn [v] (simply-assignable? s v))) (simple-types slot-type)))
+                (simple-types value-type))))
           (simply-assignable?
             [{slot-canon-qname :canon-qname :as slot-type} value-type]
             ; simple because types are not nullable and not unions
@@ -1513,7 +1535,7 @@
   ([dart-expr expected-type actual-type]
    (cond
      (= (:canon-qname expected-type) 'pseudo.super)
-     (let [super-type (:super (full-class-info actual-type) 'dc.Object)
+     (let [super-type (super-dart-type (full-class-info actual-type))
            super (if (= 'this dart-expr) 'super (:that-super (meta dart-expr)))]
        (when-not super
          (throw (Exception. "Can't tag with pseudo-type super a local which isn't a this.")))
@@ -1958,7 +1980,7 @@
         (println "DYNAMIC WARNING: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info)))
       (not= (:kind member-info) :field)
       (throw (Exception. (str member-name " is not a field of " (:element-name type!) " " (source-info)))))
-    [dart-obj-bindings dart-obj member-name (or (:type member-info) dc-dynamic)]))
+    [dart-obj-bindings dart-obj member-name (or (:setter-type member-info) dc-dynamic)]))
 
 (defn emit-set! [[_ target expr] env]
   (let [target (macroexpand env target)]
@@ -1980,7 +2002,7 @@
       (let [[_ obj member] target
             [bindings dart-obj member dart-type] (resolve-field-for-set! obj member env)]
         (cond->> (list 'dart/set! (list 'dart/.- dart-obj member)
-                   (dart-binding 'setval (emit expr env) env))
+                   (dart-binding 'setval (-> expr (emit env) (magicast dart-type env)) env))
           bindings (list 'dart/let bindings)))
       :else
       (throw (ex-info (str "Unsupported target for assignment: " target) {:target target})))))
@@ -2703,7 +2725,7 @@
             :else (throw (Exception. (str "Unexpected super constructor")))))
         specs (resolve-methods-specs class-name (cons (if extends base class-name) specs)
                 (:type-vars env #{}))
-        ctor-meth (when (= '. ctor-op) (first ctor-args))
+        ctor-meth (when (= '. ctor-op) (first ctor-args)) ; named constructor
         ctor-args (cond-> ctor-args (= '. ctor-op) next)
         methods (into [] (filter seq?) specs) ; crude
         base-type (emit-type base env)
@@ -2965,24 +2987,27 @@
             super-ctor-split-args+types
             (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))
 
-        const (and (:const super-ctor-info) (not-any? #(:dart/mutable (meta %)) dart-fields)) ; TODO it's weak we should test super args for const while assuming params to be const
-        dart-type (cond-> dart-type const (assoc-in [:members (name mclass-name) :const] true))
-        class (-> class
-                  (assoc :name dart-type
-                         :ctor mclass-name
-                         :abstract abstract
-                         :mixin mixin
-                         :fields dart-fields
-                         :ctor-params (map #(list '. %) dart-fields))
-                  (assoc-in [:super-ctor :args]
-                            (into []
-                                  (mapcat
-                                   (fn [[name arg]]
-                                     (if (nil? name)
-                                       (-> arg (ensure-dart-expr env) list)
-                                       [name (-> arg (ensure-dart-expr env))])))
-                                  super-ctor-split-args+types)))]
-    (swap! nses alter-def class-name assoc :dart/code (with-dart-code (write-class class)) :dart/type dart-type)
+            const (and (:const super-ctor-info) (not-any? #(:dart/mutable (meta %)) dart-fields)) ; TODO it's weak we should test super args for const while assuming params to be const
+            dart-type (cond-> dart-type const (assoc-in [:members (name mclass-name) :const] true))
+            arg-caster (if const simple-cast #(magicast %1 %2 env))
+            class (-> class
+                    (assoc :name dart-type
+                      :ctor mclass-name
+                      :abstract abstract
+                      :mixin mixin
+                      :fields dart-fields
+                      :ctor-params (map #(list '. %) dart-fields))
+                    (assoc-in [:super-ctor :args]
+                      (into []
+                        (mapcat
+                          (fn [[name arg t]]
+                            (let [dart-expr
+                                  (-> arg (arg-caster t) (ensure-dart-expr env))]
+                              (if (nil? name)
+                                (list dart-expr)
+                                [name dart-expr]))))
+                        super-ctor-split-args+types)))]
+        (swap! nses alter-def class-name assoc :dart/code (with-dart-code (write-class class)) :dart/type dart-type)
     (emit class-name env)))))
 
 (defn relocatable-class-name

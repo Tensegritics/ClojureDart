@@ -209,7 +209,11 @@
   (is (= true (apply distinct? (range 20)))))
 
 (deftest testing-every-pred
-  (is (= true ((every-pred #(< % 10) number?) 1 2 3 4))))
+  (is (= true ((every-pred #(< % 10) number?) 1 2 3 4)))
+  (is (= false ((every-pred some? #(throw (ex-info (str %) {})) some?) 1 nil)))
+  (is (= false ((every-pred some? some? #(throw (ex-info (str %) {}))) 1 nil)))
+  (is (= false ((every-pred some? #(throw (ex-info (str %) {})) some?) 1 1 nil)))
+  (is (= false ((every-pred some? some? #(throw (ex-info (str %) {}))) 1 1 nil))))
 
 (deftest testing-filterv
   (is (= [1 3 5 7 9] (filterv odd? (range 10)))))
@@ -229,6 +233,10 @@
 
 (deftest testing-select-keys
   (is (= {1 1 5 5} (select-keys (into {} (map #(vector % %)) (range 10)) [1 5]))))
+
+(deftest testing-some-fn
+  (is (= true ((some-fn number? odd? #(> % 0)) :a 1)))
+  (is (= true ((some-fn number? odd? #(> % 0)) :a 1 3))))
 
 (deftype Base [x]
   Object
@@ -1027,3 +1035,41 @@
         growable-list (List.from x)]
     (List/copyRange growable-list 0 x)
     (is (= (sequence growable-list) []))))
+
+(deftest lazy-seq-should-realize-seq-once
+  (let [a (atom 0)
+        x (eduction (map (fn [_] (swap! a inc))) [nil])
+        l (lazy-seq x)]
+    (dotimes [_ 10]
+      (is (= [1] l)))))
+
+(deftest transducer-sentinels-test
+  (testing "sentinels"
+    (is (= [[1] ["none"] [3] ["none"]]
+           (into [] (partition-by identity) [1 "none" 3 "none"])))
+    (is (= [:cljd.core/none]
+           (into [] (dedupe) [:cljd.core/none])
+           (sequence (dedupe) [:cljd.core/none])))
+    (is (= {:cljd.core/halt :should-be-wrapped}
+           (into () (comp (halt-when (fn [_] false))
+                          (fn [rf]
+                            (fn
+                              ([] (rf))
+                              ([result] (rf result))
+                              ([result input]
+                               (reduced {:cljd.core/halt :should-be-wrapped})))))
+                 [1])))))
+
+(deftest find-returns-nil-value
+  (is (= (find {1 nil, 2 "b"} 1) [1 nil])))
+
+(deftype SuperMagicast [^#/(List? String) strings])
+
+(deftype SuperMagicastHello [^:mutable x] ; :mutable to prevent making the class const
+  :extends (SuperMagicast ["hello" (str x)])
+  (toString [this]
+                 (apply str (.-strings this))))
+
+(deftest magicast-in-super-ctor
+  (is (= "helloWorld"
+        (str (SuperMagicastHello "World")))))

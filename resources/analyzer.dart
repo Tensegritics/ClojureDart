@@ -229,7 +229,8 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
         ':const': f.isConst,
         ':getter': f.getter != null,
         ':setter': f.setter != null,
-        ':type': emitType(rootLib, f.type)
+        ':type': emitType(rootLib, f.type),
+        ':setter-type': f.setter != null ? emitType(rootLib, f.setter!.parameters.first.type) : null
       };
     }
     return classData;
