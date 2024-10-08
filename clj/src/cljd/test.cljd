@@ -332,7 +332,7 @@
 ;; You use these in your tests.
 
 (def ^:dynamic *groups* ())
-(def ^:dynamic *in-test* false)
+(def ^:dynamic *in-test* nil)
 
 (defmacro is
   "Generic assertion macro.  'form' is any predicate test.
@@ -441,16 +441,26 @@
 
   When *load-tests* is false, deftest is ignored."
   [name & body]
-  (let [{:keys [current-ns] :as nses} (:nses &env)
+  (let [opts (take-while (fn [[k]] (keyword? k)) (partition 2 body))
+        body (drop (* 2 (count opts)) body)
+        opts (into {} (map vec) opts)
+        [runner runner-args] (:runner opts [`dt/test []])
+        {:keys [current-ns] :as nses} (:nses &env)
         the-ns (nses current-ns)]
     `(do
        (defn ~(vary-meta name assoc ::test true) []
          (let [name# ~(str (:current-ns (:nses &env)) "/" name)
-               thunk# (fn [] (testing name# ~@body))]
+               test-called (volatile! false)
+               thunk#
+               (fn []
+                 (let [~runner-args *in-test*]
+                   (testing name# ~@body)))]
            (if *in-test*
              (thunk#)
-             (binding [*in-test* true]
-               (dt/test name# thunk#)))))
+             (~runner name#
+              (fn ~runner-args
+                (binding [*in-test* ~runner-args]
+                  (thunk#)))))))
        (defrunner-main))))
 
 (defmacro deftest-

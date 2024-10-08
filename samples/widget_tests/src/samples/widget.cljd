@@ -1,0 +1,13 @@
+(ns samples.widget
+  (:require [cljd.flutter :as f]
+            ["package:flutter/material.dart" :as m]))
+
+(defn my-widget [title message]
+  (f/widget
+    (m/MaterialApp .title "Flutter Demo")
+    .home
+    (m/Scaffold
+      .appBar (m/AppBar .title (m/Text title)))
+    .body
+    m/Center
+    (m/Text message)))
