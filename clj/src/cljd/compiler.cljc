@@ -4519,7 +4519,7 @@
     (load-input in)
     (let [the-ns (@nses *current-ns*)
           libname (:lib the-ns)
-          is-test-ns (-> 'main the-ns :meta :dart/test)
+          is-test-ns (->> the-ns vals (some #(-> % :meta :dart/test)))
           libname' (if is-test-ns
                      (str *test-path* (str/replace (subs libname (count *lib-path*)) #"\.dart$" "_test.dart"))
                      libname)]

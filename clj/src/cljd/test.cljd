@@ -422,7 +422,7 @@
   (let [{:keys [current-ns] :as nses} (:nses &env)
         the-ns (nses current-ns)
         tests (keep (fn [[k v]] (when (and (symbol? k) (::test (:meta v))) (list k))) the-ns)]
-    `(defn ~'^:dart/test main []
+    `(defn ~'^{:dart/test true :dart/name main} -cljd-test-runner-entry-point []
        ~(when (the-ns 'cljd-test-once-fixtures)
           `(register-once-fixtures ~'cljd-test-once-fixtures))
        ~(when (the-ns 'cljd-test-each-fixtures)
@@ -441,9 +441,8 @@
 
   When *load-tests* is false, deftest is ignored."
   [name & body]
-  (assert (not= 'main name)
-    "Can't use `main` as a test name.")
-  (let [opts (take-while (fn [[k]] (keyword? k)) (partition 2 body))
+  (let [name (cond-> name (= 'main name) (vary-meta assoc :dart/name 'main$reserved))
+        opts (take-while (fn [[k]] (keyword? k)) (partition 2 body))
         body (drop (* 2 (count opts)) body)
         opts (into {} (map vec) opts)
         [runner runner-args] (:runner opts [`dt/test []])
