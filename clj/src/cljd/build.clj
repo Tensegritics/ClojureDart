@@ -591,7 +591,7 @@
                       ^java.io.File file (tree-seq
                                            some? #(.listFiles ^java.io.File %)
                                            (java.io.File. path))
-                      :when (re-matches #".*\.clj[cd]" (.getName file))]
+                      :when (re-matches #"[^.].*\.clj[cd]" (.getName file))]
                   (compiler/peek-ns file)))))
           "upgrade"
           (upgrade-cljd)
