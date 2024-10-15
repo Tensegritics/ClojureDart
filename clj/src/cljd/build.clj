@@ -318,12 +318,12 @@
                     (some-> p .destroy)))))
             (or compilation-success (System/exit 1))))))))
 
-(defn test-cli [& {:keys [namespaces]}]
+(defn test-cli [& {:keys [namespaces dart-test-args]}]
   (when (compile-cli :namespaces namespaces)
     (newline)
     (println (title "Running tests..."))
     (let [bin (some-> *deps* :cljd/opts :kind name)]
-      (System/exit (or (exec {:in nil #_#_:out nil} bin "test") 0)))))
+      (System/exit (or (apply exec {:in nil #_#_:out nil} bin "test" dart-test-args) 0)))))
 
 (defn gen-entry-point []
   (let [deps-cljd-opts (:cljd/opts *deps*)
@@ -386,7 +386,7 @@
           (loop [args (seq args) options defaults]
             (if-some [[arg & more-args] args]
               (cond
-                (= "--" arg) (cons options more-args)
+                (= "--" arg) (cons options args)
                 (.startsWith ^String arg "--")
                 (if-some [{:keys [long id parser rf init] :as opt-spec}
                           (some (fn [{:keys [long] :as spec}] (when (= long arg) spec)) opt-specs)]
@@ -591,11 +591,13 @@
                           (some-> *deps* :cljd/opts :main list))
             :watch (= cmd "watch"))
           "test"
-          (do
+          (let [[nses [_ & dart-test-args]] (split-with #(not= % "--") args)
+                nses (map symbol nses)]
             (ensure-test-dev-dep!)
             (test-cli
+              :dart-test-args dart-test-args
               :namespaces
-              (or (seq (map symbol args))
+              (or (seq nses)
                 (for [path (:paths *deps*)
                       ^java.io.File file (tree-seq
                                            some? #(.listFiles ^java.io.File %)
