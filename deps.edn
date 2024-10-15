@@ -2,7 +2,7 @@
  :deps {org.clojure/clojure {:mvn/version "1.11.1"}
         org.clojure/java.classpath {:mvn/version "1.0.0"}
         org.clojure/tools.cli {:mvn/version "1.0.206"}
-        org.clojure/tools.deps.alpha {:mvn/version "0.12.1162"}
+        org.clojure/tools.deps {:mvn/version "0.21.1449"}
         org.slf4j/slf4j-simple {:mvn/version "1.7.36"}
         org.yaml/snakeyaml {:mvn/version "2.2"}
         org.clojuredart/java-host-lisp-reader {:mvn/version "1.11.1637"}}}

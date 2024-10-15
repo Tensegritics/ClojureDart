@@ -9,7 +9,7 @@
 (ns cljd.build
   (:require [cljd.compiler :as compiler]
             [clojure.edn :as edn]
-            [clojure.tools.deps.alpha :as deps]
+            [clojure.tools.deps :as deps]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
             [clojure.java.io :as io]))
@@ -563,11 +563,20 @@
     (when-not (get-in (.load parser (slurp "pubspec.yaml")) ["dev_dependencies" "test"])
       (exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--dev" "test"))))
 
+(defn runtime-basis
+ "Load the runtime execution basis context and return it."
+ []
+ (when-let [f (java.io.File. (System/getProperty "clojure.basis"))]
+   (if (and f (.exists f))
+     (deps/slurp-deps f)
+     (throw (IllegalArgumentException. "No basis declared in clojure.basis system property")))))
+
+
 (defn -main [& args]
   (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
             compiler/*lib-path*
             (str (.getPath (java.io.File. "lib")) "/")]
-    (binding [*deps* (deps/create-basis nil)]
+    (binding [*deps* (runtime-basis)]
       (let [[options cmd cmd-opts & args] (parse-args commands args)]
         (case cmd
           ("compile" "watch" "flutter" "test") (sync-pubspec!)
@@ -578,9 +587,9 @@
           "init" (init-project args)
           ("compile" "watch")
           (compile-cli
-           :namespaces (or (seq (map symbol args))
-                           (some-> *deps* :cljd/opts :main list))
-           :watch (= cmd "watch"))
+            :namespaces (or (seq (map symbol args))
+                          (some-> *deps* :cljd/opts :main list))
+            :watch (= cmd "watch"))
           "test"
           (do
             (ensure-test-dev-dep!)
@@ -600,10 +609,10 @@
                 flutter-args (if dash flutter-args args)
                 args (if dash args nil)]
             (compile-cli
-             :namespaces
-             (or (seq (map symbol args))
-                 (some-> *deps* :cljd/opts :main list))
-             :flutter (vec flutter-args)))
+              :namespaces
+              (or (seq (map symbol args))
+                (some-> *deps* :cljd/opts :main list))
+              :flutter (vec flutter-args)))
           "clean"
           (do
             (del-tree (java.io.File. "lib/cljd-out"))
