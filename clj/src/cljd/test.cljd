@@ -431,36 +431,40 @@
 
 (defmacro deftest
   "Defines a test function with no arguments.  Test functions may call
-  other tests, so tests may be composed.  If you compose tests, you
-  should also define a function named test-ns-hook; run-tests will
-  call test-ns-hook instead of testing all vars.
+  other tests, so tests may be composed.
 
-  Note: Actually, the test body goes in the :test metadata on the var,
-  and the real function (the value of the var) calls test-var on
-  itself.
+  The body may start by inline options: opt1 val1 ... :optN valN body-expr1 ... body-exprM.
 
-  When *load-tests* is false, deftest is ignored."
-  [name & body]
-  (let [name (cond-> name (= 'main name) (vary-meta assoc :dart/name 'main$reserved))
-        opts (take-while (fn [[k]] (keyword? k)) (partition 2 body))
-        body (drop (* 2 (count opts)) body)
-        opts (into {} (map vec) opts)
+  Supported options are:
+  - :runner (runner-symbol argsvec)
+  - :tags [tag1 ... tagN] where tags can be keywords, symbols or strings -- used to filter test using
+    dart test -x and -t options. See also :dart-test-args in :cljd-opts in deps.edn."
+  [test-name & opts+body]
+  (let [test-name (cond-> test-name (= 'main test-name) (vary-meta assoc :dart/name 'main$reserved))
+        opts (take-while (fn [[k]] (keyword? k)) (partition 2 opts+body))
+        body (drop (* 2 (count opts)) opts+body)
+        {:keys [tags] :as opts} (into {} (map vec) opts)
+        dart-tags (tagged-literal 'dart (with-meta (into [] (map name) tags) {:tag 'dart:core/String}))
         [runner runner-args] (:runner opts [`dt/test []])
         {:keys [current-ns] :as nses} (:nses &env)
         the-ns (nses current-ns)]
     `(do
-       (defn ~(vary-meta name assoc ::test true) []
-         (let [name# ~(str (:current-ns (:nses &env)) "/" name)
+       (defn ~(vary-meta test-name assoc ::test true)
+         []
+         (let [name# ~(str (:current-ns (:nses &env)) "/" test-name)
                thunk#
                (fn []
                  (let [~runner-args *in-test*]
                    (testing name# ~@body)))]
            (if *in-test*
              (thunk#)
-             (~runner name#
-              (fn ~runner-args
-                (binding [*in-test* ~runner-args]
-                  (thunk#)))))))
+             (dt/group nil
+               (fn []
+                 (~runner name#
+                  (fn ~runner-args
+                    (binding [*in-test* ~runner-args]
+                      (thunk#)))))
+               .tags ~dart-tags))))
        (defrunner-main))))
 
 (defmacro deftest-

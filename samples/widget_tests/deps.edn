@@ -1,6 +1,9 @@
-{:paths ["src" "test"] ; where your cljd files are
+{:paths ["src"] ; where your cljd files are
  :deps {org.clojure/clojure {:mvn/version "1.10.1"}
         tensegritics/clojuredart {:local/root "../../"}}
- :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}
+           :test-widgets
+           {:extra-paths ["test"]
+            :cljd/opts {:dart-test-args ["-t" "widget"]}}}
  :cljd/opts {:main sample.widget_tests
              :kind :flutter}}
