@@ -3864,12 +3864,21 @@
         (transient inferred) explicit))
     explicit))
 
+(defn- inheritance-info [t]
+  (let [t' (full-class-info t)
+        type-env (type-env-for (:element-name t) (:type-parameters t) (:type-parameters t'))
+        actual-types (fn [types] (map #(actual-type % type-env) types))]
+    (-> t'
+      (update :super actual-type type-env)
+      (update :mixins actual-types)
+      (update :interfaces actual-types))))
+
 (defn- inheritance-graph [dart-type]
   (loop [g {} todos [dart-type]]
     (if-some [{cqnt :canon-qname :as t} (peek todos)]
       (if (g cqnt)
         (recur g (pop todos))
-        (let [{:keys [super mixins interfaces]} (full-class-info t)
+        (let [{:keys [super mixins interfaces]} (inheritance-info t)
               ts (cond->> (concat mixins interfaces) super (cons super))]
           (recur (assoc g cqnt {:type t :supers (into #{} (map :canon-qname) ts)})
             (-> todos pop (into ts)))))
@@ -3889,14 +3898,14 @@
                 (or (@cache k)
                   (do
                     (vswap! cache assoc k dc-Object)
-                    (let [ga (inheritance-graph (full-class-info a))
-                          gb (inheritance-graph (full-class-info b))
+                    (let [ga (inheritance-graph a)
+                          gb (inheritance-graph b)
                           [cqn & too-many] (common-roots ga gb)
-                          a (:type (ga cqn))
-                          b (:type (gb cqn))
+                          ca (:type (ga cqn))
+                          cb (:type (gb cqn))
                           c (if too-many
-                              dc-Object
-                              (merge-type-params a b))]
+                              dc-Object ; TODO union type
+                              (merge-type-params ca cb))]
                       (vswap! cache assoc k c)
                       c)))))
             (merge-type-params [a b]
