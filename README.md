@@ -6,7 +6,7 @@ ClojureDart is a recent Clojure dialect to make native mobile and desktop apps u
 It's production-ready: applications are being built with it.
 
 # Funding and Support
-Clojuredart is developed by [Baptiste Dupuch](https://github.com/dupuchba)[🐦](https://twitter.com/BaptisteDupuch) and [Christophe Grand](https://github.com/cgrand)[🐦](https://twitter.com/cgrand) by taking time off of their consultancy -- it's grueling at times.
+ClojureDart is developed by [Baptiste Dupuch](https://github.com/dupuchba)[🐦](https://twitter.com/BaptisteDupuch) and [Christophe Grand](https://github.com/cgrand)[🐦](https://twitter.com/cgrand) by taking time off of their consultancy -- it's grueling at times.
 
 How can you help?
 
@@ -19,9 +19,9 @@ We have a [cheatsheet](doc/ClojureDart%20Cheatsheet.pdf) covering ClojureDart sp
 
 # Conj 2023 talk and demo
 
-Want to see what's the workflow like? Our talk at Clojure/Conj 2023 is mostly a live-coding session, starting from scratch and assuming no prior knowledge of Dart or Flutter! [Click here or on the image 👇](https://www.youtube.com/watch?v=dqBeGpuedf0)
+Want to see what's the workflow like? Our talk at Clojure/Conj 2023 is mostly a live-coding session, starting from scratch and assuming no prior knowledge of Dart or Flutter! [Click here or on the image 👇](https://www.youtube.com/watch?v=wbUBb09bUnk)
 
-[<img src="https://i.ytimg.com/vi/dqBeGpuedf0/maxresdefault.jpg" width="80%">](https://www.youtube.com/watch?v=dqBeGpuedf0 "ClojureDart demo at Conj 2023")
+[<img src="https://i.ytimg.com/vi/wbUBb09bUnk/maxresdefault.jpg" width="80%">](https://www.youtube.com/watch?v=wbUBb09bUnk "ClojureDart demo at Conj 2023")
 
 # Where to find help?
 Stop by the [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart) or open an issue.
@@ -34,7 +34,7 @@ The two missing big features are:
 # Links dump
 
 [Slack](https://clojurians.slack.com/app_redirect?channel=clojuredart)
-[Youtube](https://www.youtube.com/channel/UCCkvOkh6pXzYqkFKDgoyWRg)
+[YouTube](https://www.youtube.com/channel/UCCkvOkh6pXzYqkFKDgoyWRg)
 [Twitter](https://twitter.com/clojuredart)
 
 Don't forget to subscribe to [Curiosities -- our newsletter on ClojureDart and more](https://buttondown.email/tensegritics-curiosities)!
@@ -110,7 +110,7 @@ More details [there](doc/flutter-quick-start.md)
 
 # Examples
 
-In the [samples directory](samples/) directory, you'll find original sample code and ports of [Flutter recipes](https://docs.flutter.dev/cookbook).
+In the [samples directory](samples/), you'll find original sample code and ports of [Flutter recipes](https://docs.flutter.dev/cookbook).
 
 ## How to run a sample project
 
