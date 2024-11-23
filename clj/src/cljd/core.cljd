@@ -2521,7 +2521,7 @@
 (defn ^num abs
   {:doc "Returns the absolute value of a."
    :inline-arities #{1}
-   :inline (fn [a] `(.abs ~a))}
+   :inline (fn [a] `(.num:abs ~a))}
   [^num a]
   (.abs a))
 
