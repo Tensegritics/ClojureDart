@@ -8766,9 +8766,9 @@ specified.
   {:added "1.0"}
   [expr]
   `(let [stopwatch# (dart:core/Stopwatch)
-         _ (.start stopwatch#)
-         ret# ~expr
-         _ (.stop stopwatch#)]
+         _# (.start stopwatch#)
+         ret# ~expr]
+     (.stop stopwatch#)
      (prn (str "Elapsed time: " (/ (.-elapsedMicroseconds stopwatch#) 1000) " msecs"))
      ret#))
 
