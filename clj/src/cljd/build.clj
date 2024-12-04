@@ -135,7 +135,7 @@
         PATH (if os-is-windows "Path" "PATH")
         ^String path (or
                        (-> pb .environment (get PATH))
-                       (throw (Exception. (str "No " PATH " variable found in the environment. Known variables: " (str/join ", " (keys (-> pb .environment))) ". Meanwhile System/getenv returns: " (System/getenv PATH) ))))
+                       (throw (Exception. (str "No " PATH " variable found in the environment. But PATH is: " (-> pb .environment (get "PATH")) ". Meanwhile System/getenv returns: " (System/getenv PATH) ))))
         bins (if os-is-windows [(str bin ".exe") (str bin ".bat")] [bin])
         full-bin
         (or
