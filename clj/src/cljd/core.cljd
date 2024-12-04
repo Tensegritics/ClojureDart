@@ -8066,7 +8066,7 @@ specified.
 ;; It draws inspiration from Zip Trees and B+Trees.
 ;; From Zip Trees it borrows the idea of a max-treap with hash-based geometrically distributed
 ;; rank function.
-;; From B+Trees  it borrows wider fan-out and the idea of storing values only in teh leaves for
+;; From B+Trees  it borrows wider fan-out and the idea of storing values only in the leaves for
 ;; faster iteration.
 ;; Where Zip Trees use a binary tree and have a geometric rank distribution with a 2 ratio,
 ;; HashRankedWideTreapMap use trees of variable fan out (16 on average) and thus the rank
