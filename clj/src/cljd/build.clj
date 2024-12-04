@@ -133,7 +133,9 @@
                  dir (.directory (io/file dir))))
         os-is-windows (.startsWith (System/getProperty "os.name") "Windows")
         PATH (if os-is-windows "Path" "PATH")
-        path (-> pb .environment (get PATH))
+        ^String path (or
+                       (-> pb .environment (get PATH))
+                       (throw (Exception. (str "No " PATH " variable found in the environment."))))
         bins (if os-is-windows [(str bin ".exe") (str bin ".bat")] [bin])
         full-bin
         (or
