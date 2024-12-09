@@ -1,0 +1,105 @@
+(ns cljd.test-clojure.parse
+  (:require
+   [clojure.test :refer [deftest is are]]))
+
+(def max-int-32 0x7fffffff) ;; 2147483647
+(def max-int-64 0x7fffffffffffffff) ;; 9223372036854775807
+
+(defn int-32->int64 [n]
+  (+ n (- max-int-64 max-int-32)))
+
+(deftest test-parse-long
+  (are [s expected]
+       (= expected (parse-long s))
+    "100" 100
+    "+100" 100
+    "0" 0
+    "+0" 0
+    "-0" 0
+    "-42" -42
+    "9223372036854775807" 9223372036854775807
+    "+9223372036854775807" +9223372036854775807
+    "-9223372036854775808" -9223372036854775808
+    "0xA0" 160 ;; hex (clj(s) do not support hex)
+    "077" 77)
+
+  (are [s] ;; do not parse
+       (nil? (parse-long s))
+    "0.3" ;; no float
+    "9223372036854775808" ;; past max
+    "-9223372036854775809" ;; past min
+    "2r010");; no radix support
+
+  (are [s] ;; do not parse
+       (nil? (parse-long s))
+    "9223372036854775808" ;; past max
+    "-9223372036854775809" ;; past min
+    ))
+
+;; generative test - gen long -> str -> parse, compare
+(deftest test-gen-parse-long
+  (let [res (reduce (fn [_ _]
+                      (let [f (comp (rand-nth [identity int-32->int64]) (rand-nth [identity -]))
+                            n (-> max-int-32 rand-int f)
+                            r (= n (-> n str parse-long))]
+                        (if r
+                          r
+                          (reduced n))))
+                    false
+                    (range 100000))]
+
+    (is (= max-int-64 (int-32->int64 max-int-32)))
+    (is true res)))
+
+(deftest test-parse-double
+  (are [s expected]
+       (= expected (parse-double s))
+    "1.234" 1.234
+    "+1.234" 1.234
+    "-1.234" -1.234
+    "+0" +0.0
+    "-0.0" -0.0
+    "0.0" 0.0
+    "5" 5.0
+    "Infinity" dart:core/double.infinity
+    "-Infinity" dart:core/double.negativeInfinity
+    "1.7976931348623157E308" dart:core/double.maxFinite
+    "4.9E-324" dart:core/double.minPositive
+    "1.7976931348623157E309" dart:core/double.infinity ;; past max double
+    "2.5e-324" dart:core/double.minPositive ;; past min double, above half minimum
+    "2.4e-324" 0.0) ;; below minimum double
+  (is (dart:core/double.nan (parse-double "NaN")))
+  (are [s] ;; nil on invalid string
+       (nil? (parse-double s))
+    "double" ;; invalid string
+    "1.7976931348623157G309")) ;; invalid, but similar to valid
+
+;; generative test - gen double -> str -> parse, compare
+(deftest test-gen-parse-double
+  (let [res (reduce (fn [_ _]
+                      (let [f (rand-nth [identity -])
+                            n (-> 1.7976931348623157E308 rand f)
+                            r (= n (-> n str parse-double))]
+                        (if r
+                          r
+                          (reduced n))))
+                    false
+                    (range 100000))]
+
+    (is true res)))
+
+(deftest test-parse-boolean
+  (is (identical? true (parse-boolean "true")))
+  (is (identical? false (parse-boolean "false")))
+
+  (are [s] ;; nil on invalid string
+       (nil? (parse-boolean s))
+    "abc"
+    "TRUE"
+    "FALSE"
+    " true ")
+
+  (is (thrown? ArgumentError (parse-boolean nil)))
+  (is (thrown? ArgumentError (parse-boolean false)))
+  (is (thrown? ArgumentError (parse-boolean true)))
+  (is (thrown? ArgumentError (parse-boolean 100))))

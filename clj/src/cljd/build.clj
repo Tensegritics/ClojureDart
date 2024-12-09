@@ -9,7 +9,7 @@
 (ns cljd.build
   (:require [cljd.compiler :as compiler]
             [clojure.edn :as edn]
-            [clojure.tools.deps.alpha :as deps]
+            [clojure.tools.deps :as deps]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
             [clojure.java.io :as io]))
@@ -319,12 +319,12 @@
                     (some-> p .destroy)))))
             (or compilation-success (System/exit 1))))))))
 
-(defn test-cli [& {:keys [namespaces]}]
+(defn test-cli [& {:keys [namespaces dart-test-args]}]
   (when (compile-cli :namespaces namespaces)
     (newline)
     (println (title "Running tests..."))
     (let [bin (some-> *deps* :cljd/opts :kind name)]
-      (System/exit (or (exec {:in nil #_#_:out nil} bin "test") 0)))))
+      (System/exit (or (apply exec {:in nil #_#_:out nil} bin "test" dart-test-args) 0)))))
 
 (defn gen-entry-point []
   (let [deps-cljd-opts (:cljd/opts *deps*)
@@ -387,7 +387,7 @@
           (loop [args (seq args) options defaults]
             (if-some [[arg & more-args] args]
               (cond
-                (= "--" arg) (cons options more-args)
+                (#{"--" "++"} arg) (cons options args)
                 (.startsWith ^String arg "--")
                 (if-some [{:keys [long id parser rf init] :as opt-spec}
                           (some (fn [{:keys [long] :as spec}] (when (= long arg) spec)) opt-specs)]
@@ -564,11 +564,38 @@
     (when-not (get-in (.load parser (slurp "pubspec.yaml")) ["dev_dependencies" "test"])
       (exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--dev" "test"))))
 
+(defn merge-cljd-opts [cljd-opts alias-cljd-opts]
+  (reduce-kv
+    (fn [cljd-opts k v]
+      (if-some [[_ prefix base] (re-matches #"(replace|extra)-(.+)" (name k))]
+        (let [k (keyword base)]
+          (case prefix
+            "replace" (assoc cljd-opts k v)
+            "extra" (merge-with into cljd-opts {k v})))
+        (let [v' (cljd-opts k v)]
+          (when-not (= v' v)
+            (throw (Exception. (str "Two different values provided in :cljd/opts for " k ": " (pr-str v) " and " (pr-str v')))))
+          (assoc cljd-opts k v))))
+    cljd-opts
+    alias-cljd-opts))
+
+(defn runtime-basis
+  "Load the runtime execution basis context and return it."
+  []
+  (when-let [f (java.io.File. (System/getProperty "clojure.basis"))]
+    (if (and f (.exists f))
+      (let [{:keys [aliases basis-config] :as basis} (deps/slurp-deps f)]
+        (assoc basis
+          :cljd/opts
+          (reduce merge-cljd-opts (:cljd/opts basis) (keep (comp :cljd/opts aliases) (:aliases basis-config)))))
+      (throw (IllegalArgumentException. "No basis declared in clojure.basis system property")))))
+
+
 (defn -main [& args]
   (binding [*ansi* (and (System/console) (get (System/getenv) "TERM"))
             compiler/*lib-path*
             (str (.getPath (java.io.File. "lib")) "/")]
-    (binding [*deps* (deps/create-basis nil)]
+    (binding [*deps* (runtime-basis)]
       (let [[options cmd cmd-opts & args] (parse-args commands args)]
         (case cmd
           ("compile" "watch" "flutter" "test") (sync-pubspec!)
@@ -579,32 +606,42 @@
           "init" (init-project args)
           ("compile" "watch")
           (compile-cli
-           :namespaces (or (seq (map symbol args))
-                           (some-> *deps* :cljd/opts :main list))
-           :watch (= cmd "watch"))
+            :namespaces (or (seq (map symbol args))
+                          (some-> *deps* :cljd/opts :main list))
+            :watch (= cmd "watch"))
           "test"
-          (do
+          (let [[nses [delim & dart-test-args]] (split-with (complement #{"--" "++"}) args)
+                nses (map symbol nses)
+                opts-dart-test-args (-> *deps* :cljd/opts :dart-test-args)]
             (ensure-test-dev-dep!)
             (test-cli
+              :dart-test-args (case delim
+                                "++" (concat opts-dart-test-args dart-test-args)
+                                (or dart-test-args opts-dart-test-args))
               :namespaces
-              (or (seq (map symbol args))
-                (for [path (:paths *deps*)
-                      ^java.io.File file (tree-seq
-                                           some? #(.listFiles ^java.io.File %)
-                                           (java.io.File. path))
-                      :when (re-matches #".*\.clj[cd]" (.getName file))]
-                  (compiler/peek-ns file)))))
+              (or (seq nses)
+                (let [wd (-> (java.io.File. ".") .getCanonicalFile .toPath)]
+                  (for [root (:classpath-roots *deps*)
+                        :when (-> root java.io.File. .getCanonicalFile .toPath (.startsWith wd))
+                        ^java.io.File file (tree-seq
+                                             some? #(.listFiles ^java.io.File %)
+                                             (java.io.File. root))
+                        :when (re-matches #"[^.].*\.clj[cd]" (.getName file))]
+                    (compiler/peek-ns file))))))
           "upgrade"
           (upgrade-cljd)
           "flutter"
-          (let [[args [dash & flutter-args]] (split-with #(not= "--" %) args)
-                flutter-args (if dash flutter-args args)
-                args (if dash args nil)]
+          (let [[args [delim & flutter-args]] (split-with (complement #{"--" "++"}) args)
+                flutter-args (if delim flutter-args args)
+                args (if delim args nil)
+                opts-flutter-run-args (-> *deps* :cljd/opts :flutter-run-args)]
             (compile-cli
-             :namespaces
-             (or (seq (map symbol args))
-                 (some-> *deps* :cljd/opts :main list))
-             :flutter (vec flutter-args)))
+              :namespaces
+              (or (seq (map symbol args))
+                (some-> *deps* :cljd/opts :main list))
+              :flutter (vec (case delim
+                              "++" (concat opts-flutter-run-args flutter-args)
+                              flutter-args))))
           "clean"
           (do
             (del-tree (java.io.File. "lib/cljd-out"))

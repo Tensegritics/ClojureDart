@@ -1,0 +1,18 @@
+(ns samples.widgets-test
+  #_{:dart.test/dir "wttests"}
+  (:require [cljd.test :as t :refer [deftest is]]
+            [samples.widget :as sw]
+            ["package:flutter_test/flutter_test.dart" :as ft]))
+
+(deftest whatever
+  :tags [:widget]
+  :runner (ft/testWidgets [tester])
+  (let [^ft/WidgetTester {:flds [pumpWidget]} tester
+        _ (await (pumpWidget (sw/my-widget "T" "M")))
+        title-finder (ft/find.text "T")
+        message-finder (ft/find.text "M")]
+    (ft/expect title-finder ft/findsOneWidget)
+    (ft/expect message-finder ft/findsOneWidget)))
+
+(deftest main
+  (is (= 0 1)))

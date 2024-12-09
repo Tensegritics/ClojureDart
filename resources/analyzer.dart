@@ -443,6 +443,10 @@ Future<Map<String, dynamic>?> retrieveElement(
     var e = rootLib.exportNamespace.get(element);
     // not found? Try again in case it's a private class (from which a public may inherit members)
     if (e == null) e = rootLib.getClass(element);
+    // not found? Try again in case it's a private Mixin/Enum and so on (from which a public may inherit members, yes it's legit)
+    if (e == null && rootLib.topLevelElements.any((e) => e.displayName == element)) {
+      e = rootLib.topLevelElements.firstWhere((e) => e.displayName == element);
+    }
     if (e != null) {
       var res = e.accept(TopLevelVisitor(rootLib));
       if (res != null) {

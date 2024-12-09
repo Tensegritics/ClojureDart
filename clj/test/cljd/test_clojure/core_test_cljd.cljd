@@ -1073,3 +1073,12 @@
 (deftest magicast-in-super-ctor
   (is (= "helloWorld"
         (str (SuperMagicastHello "World")))))
+
+(deftest merging-types-preserve-type-parameters
+  (is (= :bar (let [{:strs [foo]} (Map.of {"foo" :bar})]
+                foo)))
+  (is (= :bar
+        (let [m (Map.of {"foo" :bar})
+              m (if (identity false) ^cljd.core/PersistentHashMap m m)
+              foo (-lookup m "foo")]
+          foo))))

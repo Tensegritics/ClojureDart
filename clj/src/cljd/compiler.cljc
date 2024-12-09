@@ -256,7 +256,6 @@
 (def ^:dynamic *host-eval* false)
 
 (def ^:dynamic ^String *lib-path* "lib/")
-(def ^:dynamic ^String *test-path* "test/")
 
 (def ^:dynamic *target-subdir*
   "Relative path to the lib directory (*lib-dir*) where compiled dart file will be put.
@@ -3236,7 +3235,8 @@
 
 (defn emit-ns [[_ ns-sym & ns-clauses :as ns-form] _]
   (when (or (not *hosted*) *host-eval*)
-    (let [ns-clauses (drop-while #(or (string? %) (map? %)) ns-clauses) ; drop doc and meta for now
+    (let [[ns-meta ns-clauses] (split-with #(or (string? %) (map? %)) ns-clauses)
+          ns-meta (into {} (map #(if (string? %) [:doc %] % )) ns-meta)
           refer-clojures (if (= 'cljd.core ns-sym)
                            [[:refer-clojure :only []]]
                            (or (seq (filter #(= :refer-clojure (first %)) ns-clauses)) [[:refer-clojure]]))
@@ -3262,8 +3262,9 @@
                       spec))))
           ns-lib (ns-to-lib ns-sym)
           ns-map (-> ns-prototype
-                     (assoc :lib ns-lib)
-                     (assoc-in [:imports ns-lib] {:clj-alias (name ns-sym)}))
+                   (assoc :meta ns-meta)
+                   (assoc :lib ns-lib)
+                   (assoc-in [:imports ns-lib] {:clj-alias (name ns-sym)}))
           ns-map
           (reduce #(%2 %1) ns-map
                   (for [[lib & {:keys [as refer rename]}] require-specs
@@ -3863,12 +3864,21 @@
         (transient inferred) explicit))
     explicit))
 
+(defn- inheritance-info [t]
+  (let [t' (full-class-info t)
+        type-env (type-env-for (:element-name t) (:type-parameters t) (:type-parameters t'))
+        actual-types (fn [types] (map #(actual-type % type-env) types))]
+    (-> t'
+      (update :super actual-type type-env)
+      (update :mixins actual-types)
+      (update :interfaces actual-types))))
+
 (defn- inheritance-graph [dart-type]
   (loop [g {} todos [dart-type]]
     (if-some [{cqnt :canon-qname :as t} (peek todos)]
       (if (g cqnt)
         (recur g (pop todos))
-        (let [{:keys [super mixins interfaces]} (full-class-info t)
+        (let [{:keys [super mixins interfaces]} (inheritance-info t)
               ts (cond->> (concat mixins interfaces) super (cons super))]
           (recur (assoc g cqnt {:type t :supers (into #{} (map :canon-qname) ts)})
             (-> todos pop (into ts)))))
@@ -3888,14 +3898,14 @@
                 (or (@cache k)
                   (do
                     (vswap! cache assoc k dc-Object)
-                    (let [ga (inheritance-graph (full-class-info a))
-                          gb (inheritance-graph (full-class-info b))
+                    (let [ga (inheritance-graph a)
+                          gb (inheritance-graph b)
                           [cqn & too-many] (common-roots ga gb)
-                          a (:type (ga cqn))
-                          b (:type (gb cqn))
+                          ca (:type (ga cqn))
+                          cb (:type (gb cqn))
                           c (if too-many
-                              dc-Object
-                              (merge-type-params a b))]
+                              dc-Object ; TODO union type
+                              (merge-type-params ca cb))]
                       (vswap! cache assoc k c)
                       c)))))
             (merge-type-params [a b]
@@ -4519,9 +4529,10 @@
     (load-input in)
     (let [the-ns (@nses *current-ns*)
           libname (:lib the-ns)
-          is-test-ns (-> 'main the-ns :meta :dart/test)
+          test-dir (some->> the-ns :meta :dart.test/dir (re-matches #"(.*?)/*") second)
+          is-test-ns (or (some? test-dir) (->> the-ns vals (some #(-> % :meta :dart/test))))
           libname' (if is-test-ns
-                     (str *test-path* (str/replace (subs libname (count *lib-path*)) #"\.dart$" "_test.dart"))
+                     (str (or test-dir "test") "/" (str/replace (subs libname (count *lib-path*)) #"\.dart$" "_test.dart"))
                      libname)]
       (when is-test-ns
         (swap! nses rename-lib libname libname'))
