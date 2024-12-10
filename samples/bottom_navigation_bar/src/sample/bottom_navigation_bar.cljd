@@ -36,4 +36,4 @@
                  (m/BottomNavigationBarItem .icon (m/Icon. m/Icons.directions_transit) .label "directions_transit")
                  (m/BottomNavigationBarItem .icon (m/Icon. m/Icons.directions_bike) .label "directions_bike")]
          .currentIndex current-index
-         .onTap (fn [index] (dart:core/print index) (dart:core/print current-index) (reset! selected-index index))))))))
+         .onTap (fn [index] (reset! selected-index index))))))))
