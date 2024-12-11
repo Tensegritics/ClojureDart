@@ -142,6 +142,7 @@
     (let [prev-bindings (.-bindings ^InheritedBindings prev-this)]
       (boolean
         (some (fn [ks]
+                ; should we rather use identity?
                 (some (fn [k] (not= (prev-bindings k) (bindings k))) ks))
           aspects)))))
 
@@ -513,31 +514,36 @@
           {inherited-widgets false
            inherited-bindings true}
           (group-by (fn [[sym [type-or-kw]]] (keyword? type-or-kw)) inherit)]
-      `(let [~@(mapcat (fn [[sym [type-or-kw & args]]]
-                         (let [name (name type-or-kw)
-                               has-of (re-find #"(?:\..+Of|\.of)$" name)
-                               name (cond-> name (not has-of) (str ".of"))]
-                           [sym
-                            (list*
-                              (symbol (namespace type-or-kw) name)
-                              closest-context args)]))
-                 inherited-widgets)]
-         (->> (-widget-cont ~env ~@forms)
-           ~@(when (seq inherited-bindings)
-               [`(let [inherited-elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ~closest-context)
-                       ~bindings-sym (some-> inherited-elt#
-                                       ^InheritedBindings (.-widget)
-                                       .-bindings)
-                       ~@(mapcat
-                           (fn [[sym [type-or-kw & args]]]
-                             [sym
-                              `(->
-                                 (get ~bindings-sym ~type-or-kw)
-                                 ~(or (seq args) `do))])
-                           inherited-bindings)]
-                   (.dependOnInheritedElement ~closest-context
-                     inherited-elt#
-                     .aspect ~(into [] (map (fn [[sym [type-or-kw]]] type-or-kw)) inherited-bindings)))]))))))
+      `(reify :extends (widgets/StatelessWidget .key ~(:key env))
+        :name-hint "get"
+        :no-meta true
+         (~'build [_# ~closest-context]
+          (let [~@(mapcat (fn [[sym [type-or-kw & args]]]
+                            (let [name (name type-or-kw)
+                                  has-of (re-find #"(?:\..+Of|\.of)$" name)
+                                  name (cond-> name (not has-of) (str ".of"))]
+                              [sym
+                               (list*
+                                 (symbol (namespace type-or-kw) name)
+                                 closest-context args)]))
+                    inherited-widgets)]
+            (->>
+              (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)
+              ~@(when (seq inherited-bindings)
+                  [`(let [inherited-elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ~closest-context)
+                          ~bindings-sym (some-> inherited-elt#
+                                          ^InheritedBindings (.-widget)
+                                          .-bindings)
+                          ~@(mapcat
+                              (fn [[sym [type-or-kw & args]]]
+                                [sym
+                                 `(->
+                                    (get ~bindings-sym ~type-or-kw)
+                                    ~(or (seq args) `do))])
+                              inherited-bindings)]
+                      (.dependOnInheritedElement ~closest-context
+                        inherited-elt#
+                        .aspect ~(into [] (map (fn [[sym [type-or-kw]]] type-or-kw)) inherited-bindings)))]))))))))
 
 (defn ^:macro-support expand-bind [env bindings-map forms]
   `(-widget-cont ~env
@@ -564,7 +570,7 @@
         ^:mixin widgets/TickerProviderStateMixin))
      StateLifecycle
      (~'-build [_# state# ~closest-context]
-       (let [~(vary-meta name assoc :tag `widgets/TickerProvider) state#]
+      (let [~(vary-meta name assoc :tag `widgets/TickerProvider) state#]
          (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))))
 
 
