@@ -693,8 +693,8 @@
   expression is true. Note that, unlike cond branching, cond-> threading does
   not short circuit after the first true test expression."
   [expr & clauses]
-  #_(assert (even? (count clauses)))
-  (let [g (gensym)
+  (assert (even? (count clauses)))
+  (let [g `cond->#
         steps (map (fn [[test step]] `(if ~test (-> ~g ~step) ~g))
                 (partition 2 clauses))]
     `(let [~g ~expr
@@ -709,8 +709,8 @@
   is true.  Note that, unlike cond branching, cond->> threading does not short circuit
   after the first true test expression."
   [expr & clauses]
-  #_(assert (even? (count clauses)))
-  (let [g (gensym)
+  (assert (even? (count clauses)))
+  (let [g `cond->>#
         steps (map (fn [[test step]] `(if ~test (->> ~g ~step) ~g))
                 (partition 2 clauses))]
     `(let [~g ~expr
@@ -6043,7 +6043,7 @@
   value of x supplied at the front of the given arguments.  The forms
   are evaluated in order.  Returns x."
   [x & forms]
-  (let [gx (gensym)]
+  (let [gx `doto#]
     `(let [~gx ~x]
        ~@(map (fn [f]
                 (with-meta
@@ -6099,7 +6099,7 @@
   "When expr is not nil, threads it into the first form (via ->),
   and when that result is not nil, through the next etc"
   [expr & forms]
-  (let [g (gensym)
+  (let [g `some->#
         steps (map (fn [step] `(if (nil? ~g) nil (-> ~g ~step)))
                 forms)]
     `(let [~g ~expr
@@ -6112,7 +6112,7 @@
   "When expr is not nil, threads it into the first form (via ->>),
   and when that result is not nil, through the next etc"
   [expr & forms]
-  (let [g (gensym)
+  (let [g `some->>#
         steps (map (fn [step] `(if (nil? ~g) nil (->> ~g ~step)))
                 forms)]
     `(let [~g ~expr
