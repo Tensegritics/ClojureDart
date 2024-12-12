@@ -543,20 +543,18 @@
                       inherited-elt#
                       .aspect ~(into [] (map (fn [[sym [type-or-kw]]] type-or-kw)) inherited-bindings)))])))))))
 
+(deftype Bind [k bindings child]
+  :extends (widgets/StatelessWidget .key k)
+  (build [_ ctx]
+   (let [elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)
+         prev-bindings (some-> elt ^InheritedBindings (.-widget) .-bindings)
+         non-shadowed-keys (remove #(contains? bindings %) (keys prev-bindings))]
+     (when (seq non-shadowed-keys)
+       (.dependOnInheritedElement ctx elt .aspect non-shadowed-keys))
+     (cljd.flutter/InheritedBindings. (merge prev-bindings bindings) child))))
+
 (defn ^:macro-support expand-bind [env bindings-map forms]
-  `(let  [child# (f/widget ~@forms)]
-     (reify :extends (widgets/StatelessWidget .key ~(:key env))
-       :name-hint "bind"
-       :no-meta true
-       (~'build [_# ctx#]
-        (let [bindings# ~bindings-map
-              elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx#)
-              prev-bindings# (some-> elt# ^InheritedBindings (.-widget) .-bindings)
-              non-shadowed-keys#
-              (remove (fn [k#] (contains? bindings# k#)) (keys prev-bindings#))]
-          (when (seq non-shadowed-keys#)
-            (.dependOnInheritedElement ctx# elt# .aspect non-shadowed-keys#))
-          (cljd.flutter/InheritedBindings. (merge prev-bindings# bindings#) child#))))))
+  `(Bind ~(:key env) ~bindings-map (f/widget ~@forms)))
 
 (defn ^:macro-support expand-vsync [env name forms]
   `(reify :extends (widgets/StatefulWidget .key ~(:key env))
