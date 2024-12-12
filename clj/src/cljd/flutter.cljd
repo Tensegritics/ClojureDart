@@ -923,10 +923,9 @@
                  maybe-prop)
           env (dissoc env :closest-ctx)
           more-forms (cond-> more-forms prop next)
-          prop (or prop '.child)
-          widget-name (-> prop name gensym)]
-      (-> `(let [~widget-name (f/-widget-cont ~env ~@more-forms)]
-             (~@form ~prop ~widget-name))
+          prop (or prop '.child)]
+      (-> `(let [threaded-prop# (f/-widget-cont ~env ~@more-forms)]
+             (~@form ~prop threaded-prop#))
         (with-meta (meta form))))
     :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms}))))
 
