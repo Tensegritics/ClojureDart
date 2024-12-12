@@ -142,6 +142,7 @@
     (let [prev-bindings (.-bindings ^InheritedBindings prev-this)]
       (boolean
         (some (fn [ks]
+                ; should we rather use identity?
                 (some (fn [k] (not= (prev-bindings k) (bindings k))) ks))
           aspects)))))
 
@@ -491,66 +492,69 @@
      not-found)))
 
 (defn ^:macro-support expand-get-inherited [env v forms]
-  (if-not (:closest-ctx env)
-    `(-widget-cont ~env :context ~closest-context :get ~v ~@forms)
-    (let [inherit (if (vector? v) {:value-of v} v)
-          inherit (if-some [shortcuts (:value-of inherit)]
-                    (into (dissoc inherit :value-of)
-                          (map (fn [type-or-kw]
-                                 (let [hint (cond-> type-or-kw (seq? type-or-kw) first)]
-                                   [(symbol
-                                     (if (keyword? hint)
-                                       (name hint)
-                                       (camel-kebab
-                                         (second (re-find #"([^.]+?)(?:Of|\.of)?$" (name hint))))))
-                                    type-or-kw])))
-                          shortcuts)
-                    inherit)
-          inherit (into inherit
-                        (keep (fn [[k v]] (when-not (seq? v) [k (list v)])))
-                        inherit)
-          bindings-sym `bindings#
-          {inherited-widgets false
-           inherited-bindings true}
-          (group-by (fn [[sym [type-or-kw]]] (keyword? type-or-kw)) inherit)]
-      `(let [~@(mapcat (fn [[sym [type-or-kw & args]]]
-                         (let [name (name type-or-kw)
-                               has-of (re-find #"(?:\..+Of|\.of)$" name)
-                               name (cond-> name (not has-of) (str ".of"))]
-                           [sym
-                            (list*
-                              (symbol (namespace type-or-kw) name)
-                              closest-context args)]))
-                 inherited-widgets)]
-         (->> (-widget-cont ~env ~@forms)
-           ~@(when (seq inherited-bindings)
-               [`(let [inherited-elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ~closest-context)
-                       ~bindings-sym (some-> inherited-elt#
-                                       ^InheritedBindings (.-widget)
-                                       .-bindings)
-                       ~@(mapcat
-                           (fn [[sym [type-or-kw & args]]]
-                             [sym
-                              `(->
-                                 (get ~bindings-sym ~type-or-kw)
-                                 ~(or (seq args) `do))])
-                           inherited-bindings)]
-                   (.dependOnInheritedElement ~closest-context
-                     inherited-elt#
-                     .aspect ~(into [] (map (fn [[sym [type-or-kw]]] type-or-kw)) inherited-bindings)))]))))))
+  (let [inherit (if (vector? v) {:value-of v} v)
+        inherit (if-some [shortcuts (:value-of inherit)]
+                  (into (dissoc inherit :value-of)
+                    (map (fn [type-or-kw]
+                           (let [hint (cond-> type-or-kw (seq? type-or-kw) first)]
+                             [(symbol
+                                (if (keyword? hint)
+                                  (name hint)
+                                  (camel-kebab
+                                    (second (re-find #"([^.]+?)(?:Of|\.of)?$" (name hint))))))
+                              type-or-kw])))
+                    shortcuts)
+                  inherit)
+        inherit (into inherit
+                  (keep (fn [[k v]] (when-not (seq? v) [k (list v)])))
+                  inherit)
+        bindings-sym `bindings#
+        {inherited-widgets false
+         inherited-bindings true}
+        (group-by (fn [[sym [type-or-kw]]] (keyword? type-or-kw)) inherit)]
+    `(reify :extends (widgets/StatelessWidget .key ~(:key env))
+       :name-hint "get"
+       :no-meta true
+       (~'build [_# ~closest-context]
+        (let [~@(mapcat (fn [[sym [type-or-kw & args]]]
+                          (let [name (name type-or-kw)
+                                has-of (re-find #"(?:\..+Of|\.of)$" name)
+                                name (cond-> name (not has-of) (str ".of"))]
+                            [sym
+                             (list*
+                               (symbol (namespace type-or-kw) name)
+                               closest-context args)]))
+                  inherited-widgets)]
+          (->>
+            (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)
+            ~@(when (seq inherited-bindings)
+                [`(let [inherited-elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ~closest-context)
+                        ~bindings-sym (some-> inherited-elt#
+                                        ^InheritedBindings (.-widget)
+                                        .-bindings)
+                        ~@(mapcat
+                            (fn [[sym [type-or-kw & args]]]
+                              [sym
+                               `(->
+                                  (get ~bindings-sym ~type-or-kw)
+                                  ~(or (seq args) `do))])
+                            inherited-bindings)]
+                    (.dependOnInheritedElement ~closest-context
+                      inherited-elt#
+                      .aspect ~(into [] (map (fn [[sym [type-or-kw]]] type-or-kw)) inherited-bindings)))])))))))
+
+(deftype Bind [k bindings child]
+  :extends (widgets/StatelessWidget .key k)
+  (build [_ ctx]
+   (let [elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)
+         prev-bindings (some-> elt ^InheritedBindings (.-widget) .-bindings)
+         non-shadowed-keys (remove #(contains? bindings %) (keys prev-bindings))]
+     (when (seq non-shadowed-keys)
+       (.dependOnInheritedElement ctx elt .aspect non-shadowed-keys))
+     (cljd.flutter/InheritedBindings. (merge prev-bindings bindings) child))))
 
 (defn ^:macro-support expand-bind [env bindings-map forms]
-  `(-widget-cont ~env
-     :context ctx#
-     :let [bindings# ~bindings-map
-           elt# (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx#)
-           prev-bindings# (some-> elt# ^InheritedBindings (.-widget) .-bindings)
-           non-shadowed-keys#
-           (remove (fn [k#] (contains? bindings# k#)) (keys prev-bindings#))
-           _ (when (seq non-shadowed-keys#)
-               (.dependOnInheritedElement ctx# elt# .aspect non-shadowed-keys#))]
-     (cljd.flutter/InheritedBindings. (merge prev-bindings# bindings#)
-       (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))
+  `(Bind ~(:key env) ~bindings-map (f/widget ~@forms)))
 
 (defn ^:macro-support expand-vsync [env name forms]
   `(reify :extends (widgets/StatefulWidget .key ~(:key env))
@@ -564,7 +568,7 @@
         ^:mixin widgets/TickerProviderStateMixin))
      StateLifecycle
      (~'-build [_# state# ~closest-context]
-       (let [~(vary-meta name assoc :tag `widgets/TickerProvider) state#]
+      (let [~(vary-meta name assoc :tag `widgets/TickerProvider) state#]
          (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)))))
 
 
@@ -919,10 +923,9 @@
                  maybe-prop)
           env (dissoc env :closest-ctx)
           more-forms (cond-> more-forms prop next)
-          prop (or prop '.child)
-          widget-name (-> prop name gensym)]
-      (-> `(let [~widget-name (f/-widget-cont ~env ~@more-forms)]
-             (~@form ~prop ~widget-name))
+          prop (or prop '.child)]
+      (-> `(let [threaded-prop# (f/-widget-cont ~env ~@more-forms)]
+             (~@form ~prop threaded-prop#))
         (with-meta (meta form))))
     :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms}))))
 
