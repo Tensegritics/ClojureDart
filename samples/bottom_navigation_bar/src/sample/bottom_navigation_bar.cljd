@@ -1,0 +1,39 @@
+(ns sample.bottom-navigation-bar
+  "Faithful port of https://docs.flutter.dev/cookbook/design/tabs"
+  (:require
+   ["package:flutter/material.dart" :as m]
+   [cljd.flutter :as f]))
+
+(defn main
+  []
+  (let
+      [title "Bottom Navigation Bar Demo"
+       pages [(m/Icon. m/Icons.directions_car)
+              (m/Icon. m/Icons.directions_transit)
+              (m/Icon. m/Icons.directions_bike)]
+       selected-index (atom 0)]
+    (f/run
+      (m/MaterialApp .title title)
+
+      .home
+      (m/Scaffold
+
+       .appBar
+       (m/AppBar
+        .title
+        (m/Text "BottomNavigationBar"))
+       
+       .body
+       (m/Center
+        .child
+        (f/widget :watch [current-index selected-index] (get pages current-index)))
+       
+       .bottomNavigationBar
+       (f/widget
+        :watch [current-index selected-index]
+        (m/BottomNavigationBar
+         .items [(m/BottomNavigationBarItem .icon (m/Icon. m/Icons.directions_car) .label "directions_car")
+                 (m/BottomNavigationBarItem .icon (m/Icon. m/Icons.directions_transit) .label "directions_transit")
+                 (m/BottomNavigationBarItem .icon (m/Icon. m/Icons.directions_bike) .label "directions_bike")]
+         .currentIndex current-index
+         .onTap (fn [index] (reset! selected-index index))))))))
