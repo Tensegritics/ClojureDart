@@ -1082,3 +1082,6 @@
               m (if (identity false) ^cljd.core/PersistentHashMap m m)
               foo (-lookup m "foo")]
           foo))))
+
+(deftest non-strict-subseq
+  (is (empty? (subseq (conj (sorted-map) [0 :zero])  <= -1))))

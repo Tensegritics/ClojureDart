@@ -1665,7 +1665,7 @@
      > (-sorted-seq sc key nil 8)
      >= (-sorted-seq sc key nil 12)
      < (-sorted-seq sc nil key 2)
-     <= (-sorted-seq sc nil key 1)))
+     <= (-sorted-seq sc nil key 3)))
   ([sc start-test start-key end-test end-key]
    (-sorted-seq sc start-key end-key
      (cond-> 10
@@ -1681,7 +1681,7 @@
      > (-sorted-rseq sc key nil 8)
      >= (-sorted-rseq sc key nil 12)
      < (-sorted-rseq sc nil key 2)
-     <= (-sorted-rseq sc nil key 1)))
+     <= (-sorted-rseq sc nil key 3)))
   ([sc start-test start-key end-test end-key]
    (-sorted-rseq sc start-key end-key
      (cond-> 10
