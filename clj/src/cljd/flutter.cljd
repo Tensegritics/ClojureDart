@@ -907,27 +907,33 @@
 (defmacro -widget-cont
   "PRIVATE DONT USE"
   [env form & more-forms]
-  (cond
-    (keyword? form) (apply expand-directive &env env form more-forms)
-    (:key env)
-    (stateless-flush env (cons form more-forms))
-    (nil? more-forms) form
-    (= '.child form) ; for nested f/widgets ending by a directive
-    `(-widget-cont ~env ~@more-forms)
-    (symbol? form)
-    `(-widget-cont ~env ~(with-meta (list form) (meta form)) ~@more-forms)
-    (seq? form)
-    (let [[maybe-prop] more-forms
-          prop (when (and (simple-symbol? maybe-prop)
-                       (.startsWith (name maybe-prop) "."))
-                 maybe-prop)
-          env (dissoc env :closest-ctx)
-          more-forms (cond-> more-forms prop next)
-          prop (or prop '.child)]
-      (-> `(let [threaded-prop# (f/-widget-cont ~env ~@more-forms)]
-             (~@form ~prop threaded-prop#))
-        (with-meta (meta form))))
-    :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms}))))
+  (let [[last-maybe-prop last-expr] (take-last 2 more-forms)]
+    (cond
+      (-> last-maybe-prop meta ::threaded-in)
+      `(let [threaded-in-form# ~last-expr]
+         (-widget-cont ~env ~form ~@(drop-last 2 more-forms)
+           ~(vary-meta last-maybe-prop dissoc  ::threaded-in)
+           threaded-in-form#))
+      (keyword? form) (apply expand-directive &env env form more-forms)
+      (:key env)
+      (stateless-flush env (cons form more-forms))
+      (nil? more-forms) form
+      (= '.child form) ; for nested f/widgets ending by a directive
+      `(-widget-cont ~env ~@more-forms)
+      (symbol? form)
+      `(-widget-cont ~env ~(with-meta (list form) (meta form)) ~@more-forms)
+      (seq? form)
+      (let [[maybe-prop] more-forms
+            [prop & more-forms]
+            (if (and more-forms (simple-symbol? maybe-prop)
+                  (.startsWith (name maybe-prop) "."))
+              more-forms
+              (cons '.child more-forms))
+            env (dissoc env :closest-ctx)]
+        (-> `(~@form ~(vary-meta prop assoc ::threaded-in true)
+              (-widget-cont ~env ~@more-forms))
+          (with-meta (meta form))))
+      :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms})))))
 
 (defmacro build
   "Generates a so-called \"builder\" function, that is a widget-returning function which expects 1+ arguments, where the first argument is a BuildContext. (Such fns are expected for example as the .itemBuilder param to ListView/builder)
