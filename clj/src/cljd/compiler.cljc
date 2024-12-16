@@ -486,7 +486,7 @@
 
 (defn- resolve-non-local-symbol [sym type-vars]
   (let [{:keys [libs dart-aliases] :as nses} @nses
-        {:keys [mappings clj-aliases] :as current-ns} (nses *current-ns*)
+        {:keys [mappings clj-aliases typedefs] :as current-ns} (nses *current-ns*)
         ensure-class (fn [v] (when (= :class (:type v)) v))
         resolve (fn [sym ensure-right-type]
                   (else->>
@@ -2618,6 +2618,15 @@
       :else
       (assoc-in nses [the-ns sym] (assoc m :meta (merge msym (:meta m)))))))
 
+(defn do-typedef [nses old-sym sym]
+  (let [the-ns *current-ns*]
+    (update nses the-ns
+      (fn [ns]
+        (-> ns
+          (dissoc old-sym)
+          (assoc-in [:mappings old-sym] sym)
+          (assoc-in [:typedefs old-sym] sym))))))
+
 (defn alter-def [nses sym f & args]
   (apply update-in nses [*current-ns* sym] f args))
 
@@ -2889,6 +2898,20 @@
                                    env-for-ctor-call)]
             [parsed-class-meta-specs (emit-class-specs 'dart:core/Object parsed-class-meta-specs env-for-ctor-call)]))
         all-fields (cond->> closed-overs meta-field (cons meta-field))
+        ; change the classname to vary on meta+closed-overs to avoid
+        ; reloading errors on fieldset changes.
+        ; introduce a typedef to fix code emitted above
+        old-class-name class-name
+        fingerprint (str fingerprint "_"
+                      (Integer/toUnsignedString
+                        (hash all-fields) 36))
+        class-name (anonymous-global
+                     (munge-str
+                       (str (if-some [var-name (:var-name opts)] "ifn" (or (:name-hint opts) "reify"))))
+                     fingerprint)
+        mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
+        dart-type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env)
+
         dart-type (if meta-field
                     (let [meta-members (:members (new-dart-type mclass-name (:type-vars env) all-fields parsed-class-meta-specs env))]
                       (-> dart-type
@@ -2896,8 +2919,8 @@
                         (update-in [:members :interfaces] (fnil into []) (:interfaces meta-members))
                         (update :members into (filter (fn [[k]] (string? k))) meta-members)))
                     dart-type)
-        _ (swap! nses alter-def class-name assoc :dart/type dart-type)
-        class (-> class
+        _ (swap! nses do-typedef old-class-name class-name)
+        _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})class (-> class
                   (assoc
                    :name (emit-type mclass-name env)
                    :ctor class-name
@@ -4405,6 +4428,12 @@
     (write-string-literal (relativize-lib ns-lib lib)) ;; TODO: relativize local libs (nses)
     (dart-print " as ")
     (dart-print dart-alias)
+    (dart-print ";\n"))
+  (doseq [[alias type] (:typedefs ns-map)]
+    (dart-print "typedef ")
+    (dart-print alias)
+    (dart-print " = ")
+    (dart-print type)
     (dart-print ";\n"))
   (doseq [[sym v] (->> ns-map (filter (comp symbol? key)) (sort-by key))
           :when (symbol? sym)
