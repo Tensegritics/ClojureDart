@@ -2900,16 +2900,16 @@
         ; change the classname to vary on meta+closed-overs to avoid
         ; reloading errors on fieldset changes.
         ; introduce a typedef to fix code emitted above
-        old-class-name class-name
-        fingerprint (str fingerprint "_"
+        #_#_old-class-name class-name
+        #_#_fingerprint (str fingerprint "_"
                       (Integer/toUnsignedString
                         (hash all-fields) 36))
-        class-name (anonymous-global
+        #_#_class-name (anonymous-global
                      (munge-str
                        (str (if-some [var-name (:var-name opts)] "ifn" (or (:name-hint opts) "reify"))))
                      fingerprint)
-        mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
-        dart-type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env)
+        #_#_mclass-name (vary-meta class-name assoc :type-params (:type-vars env))
+        #_#_dart-type (new-dart-type mclass-name (:type-vars env) [] parsed-class-specs env)
 
         dart-type (if meta-field
                     (let [meta-members (:members (new-dart-type mclass-name (:type-vars env) all-fields parsed-class-meta-specs env))]
@@ -2918,7 +2918,7 @@
                         (update-in [:members :interfaces] (fnil into []) (:interfaces meta-members))
                         (update :members into (filter (fn [[k]] (string? k))) meta-members)))
                     dart-type)
-        _ (swap! nses do-typedef old-class-name class-name)
+        #_#__ (swap! nses do-typedef old-class-name class-name)
         _ (swap! nses do-def class-name {:dart/name mclass-name :dart/type dart-type :type :class})class (-> class
                   (assoc
                    :name (emit-type mclass-name env)
