@@ -776,7 +776,7 @@
   ([prefix] (munge prefix (swap! gens inc) {})))
 
 (def ^:dynamic *locals-gen*)
-(def ^:dynamic *class-prefix* "")
+(def ^:dynamic *class-prefix* nil)
 
 (defn dart-local
   "Generates a unique (relative to the top-level being compiled) dart symbol.
@@ -791,9 +791,8 @@
 
 (defn anonymous-global
   [prefix suffix]
-  (let [basis (if (= "" *class-prefix*)
-                (str prefix "_" suffix)
-                (str prefix "_" *class-prefix* "_" suffix))
+  (assert (some? *class-prefix*))
+  (let [basis (str prefix "_" *class-prefix* "_" suffix)
         {n basis} (set! *locals-gen* (assoc *locals-gen* basis (inc (*locals-gen* basis 0))))]
     (symbol (str basis "$" n))))
 
@@ -1730,13 +1729,13 @@
       (if-some [[item & more-items] (seq x)]
         (let [lsym (dart-local (with-meta 'fl {:tag list-tag}) env)]
           (list 'dart/let
-            (cons
-              [lsym (with-lifted [item (maybe-quoted-emit item env)] env
-                      (list 'dart/. (emit-type list-tag env) "filled" (count x) item))]
+            (into
+              [[lsym (with-lifted [item (maybe-quoted-emit item env)] env
+                       (list 'dart/. (emit-type list-tag env) "filled" (count x) item))]]
               (map-indexed (fn [i item]
                              [nil (with-lifted [item (maybe-quoted-emit item env)] env
-                                    (list 'dart/. lsym "[]=" (inc i) item))])
-                more-items))
+                                    (list 'dart/. lsym "[]=" (inc i) item))]))
+              more-items)
             lsym))
         (emit (list '. list-tag 'empty) env)))
     (let [item-type (or (resolve-type item-tag (:type-vars env)) dc-dynamic)
