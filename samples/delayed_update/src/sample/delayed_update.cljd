@@ -29,7 +29,7 @@
                 .child (m/Text "Using reset!")
                 .onPressed (fn [] (reset! my-result (await (my-delayed-fn "reset!"))) nil))
                ;; using swap!
-               ;; this is a bit contrieved because there's no reason to not use reset! here
+               ;; this is a bit contrived because there's no reason to not use reset! here
                (m/ElevatedButton
                 .child (m/Text "swap")
                 .onPressed (fn [] (let [v (await (my-delayed-fn "swap!"))] (swap! my-result (fn [_] v))) nil))
