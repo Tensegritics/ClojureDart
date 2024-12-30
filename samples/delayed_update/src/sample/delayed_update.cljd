@@ -1,0 +1,35 @@
+(ns sample.delayed-update
+  "Different versions of updating from futures"
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
+
+(defonce my-result (atom []))
+
+(defn my-delayed-fn [x] (Future/delayed (Duration .seconds 3) (fn [] (str " is working!"))))
+
+;(defonce my-other-list data/my-delayed-list)
+
+(defn wait-for-result! [] (reset! my-list (await (data/my-delayed-fn "wait-for-result!"))))
+
+(defn main []
+  (f/run
+   (m/MaterialApp
+    .title "Delayed Update Demo")
+   .home
+   (m/Scaffold
+    .appBar (m/AppBar .title (m/Text "Delayed Update")))
+   .body
+   m/Center
+   (f/widget
+    :watch [listdata my-list]
+    (m/Column .children
+              [(m/ElevatedButton
+                .child (m/Text "Using reset!")
+                .onPressed (fn [] (reset! my-list (await (data/my-delayed-fn "reset!"))) nil))
+               (m/ElevatedButton
+                .child (m/Text "swap")
+                .onPressed (fn [] (let [v (await (data/my-delayed-fn "swap"))] (swap! my-list (fn [_] v))) nil))
+               (m/ElevatedButton
+                .child (m/Text "delayed fn")
+                .onPressed (fn [] (wait-for-result!) nil))
+               (m/Text my-result)]))))
