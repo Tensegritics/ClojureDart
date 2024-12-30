@@ -3,13 +3,13 @@
   (:require ["package:flutter/material.dart" :as m]
             [cljd.flutter :as f]))
 
-(defonce my-result (atom []))
+(defonce my-result (atom ""))
 
-(defn my-delayed-fn [x] (Future/delayed (Duration .seconds 3) (fn [] (str " is working!"))))
+(defn my-delayed-fn
+  "a sample function that returns a dart future"
+  [x] (Future/delayed (Duration .seconds 1) (fn [] (str x " is working!"))))
 
-;(defonce my-other-list data/my-delayed-list)
-
-(defn wait-for-result! [] (reset! my-list (await (data/my-delayed-fn "wait-for-result!"))))
+(defn wait-for-result! [] (reset! my-result (await (my-delayed-fn "wait-for-result!"))))
 
 (defn main []
   (f/run
@@ -21,15 +21,20 @@
    .body
    m/Center
    (f/widget
-    :watch [listdata my-list]
+    :watch [r my-result]
     (m/Column .children
-              [(m/ElevatedButton
+              [
+               ;; using reset!
+               (m/ElevatedButton
                 .child (m/Text "Using reset!")
-                .onPressed (fn [] (reset! my-list (await (data/my-delayed-fn "reset!"))) nil))
+                .onPressed (fn [] (reset! my-result (await (my-delayed-fn "reset!"))) nil))
+               ;; using swap!
+               ;; this is a bit contrieved because there's no reason to not use reset! here
                (m/ElevatedButton
                 .child (m/Text "swap")
-                .onPressed (fn [] (let [v (await (data/my-delayed-fn "swap"))] (swap! my-list (fn [_] v))) nil))
+                .onPressed (fn [] (let [v (await (my-delayed-fn "swap!"))] (swap! my-result (fn [_] v))) nil))
+               ;; using a function that swaps out the atom elsewhere
                (m/ElevatedButton
                 .child (m/Text "delayed fn")
                 .onPressed (fn [] (wait-for-result!) nil))
-               (m/Text my-result)]))))
+               (m/Text r)]))))
