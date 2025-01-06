@@ -4352,7 +4352,7 @@
               (dart-print meth)
               (dart-print " ")
               (write arg expr-locus)))
-          ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" #_">>>")
+          ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" ">>>")
           (do
             (assert (= (count args) 1))
             (write obj expr-locus)
