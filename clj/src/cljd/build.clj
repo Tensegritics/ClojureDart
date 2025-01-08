@@ -158,7 +158,7 @@
       (.listFiles f)))
   (.delete f))
 
-(defn ensure-cljd-analyzer! []
+(defn try-ensure-cljd-analyzer! [{:keys [pubspec analyzer-dep resource-name]}]
   (let [cljd-sha (get-in *deps* [:libs 'tensegritics/clojuredart :git/sha])
         parent-dir (-> (System/getProperty "user.dir") (java.io.File. ".clojuredart") (java.io.File. "cache")
                      (java.io.File. (or cljd-sha "dev")))
@@ -168,15 +168,32 @@
         pubspec-yaml (-> analyzer-dir (java.io.File. "pubspec.yaml"))]
     (when-not (.exists pubspec-yaml)
       (with-open [out (java.io.FileOutputStream. pubspec-yaml)]
-        (-> "name: cljd_helper\n\nenvironment:\n  sdk: '>=2.17.0 <4.0.0'\n"
+        (-> ^String pubspec
           (.getBytes java.nio.charset.StandardCharsets/UTF_8)
           java.io.ByteArrayInputStream.
           (.transferTo out))))
     (when-not (.exists analyzer-dart)
-      (exec {:dir analyzer-dir} (some-> *deps* :cljd/opts :kind name) "pub" "add" "analyzer:5.13.0")
-      (with-open [out (java.io.FileOutputStream. analyzer-dart)]
-        (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream "analyzer.dart") (.transferTo out))))
-    (.getPath analyzer-dir)))
+      ; to move beyond analyzer 7.0.0 we need to move the min version to at least 6.5.2
+      ; (changes to our analyzer.dart are required and they would break compat with 6.2.0)
+      ; we are willing to support 6.2 for now as it means supporting dartlang < 3.3 (3.3 mandatory starting 6.3.0)
+      ; maybe we should consider having multiple copies of our own analyzer.dart
+      (if (exec {:dir analyzer-dir} (some-> *deps* :cljd/opts :kind name) "pub" "add" analyzer-dep)
+        ; `pub add` failure
+        (del-tree analyzer-dir)
+        ; `pub add` worked
+        (with-open [out (java.io.FileOutputStream. analyzer-dart)]
+          (-> (Thread/currentThread) .getContextClassLoader (.getResourceAsStream ^String resource-name) (.transferTo out)))))
+    (when (.exists analyzer-dir)
+      (.getPath analyzer-dir))))
+
+(defn ensure-cljd-analyzer! []
+  (some try-ensure-cljd-analyzer!
+    [{:pubspec "name: cljd_helper\n\nenvironment:\n  sdk: '>=3.0.0 <4.0.0'\n"
+      :analyzer-dep "analyzer:'>=6.2.0 <7.0.0'"
+      :resource-name "analyzer.dart"}
+     {:pubspec "name: cljd_helper\n\nenvironment:\n  sdk: '>=2.17.0 <4.0.0'\n"
+      :analyzer-dep "analyzer:5.13.0"
+      :resource-name "analyzer_legacy_dart2.dart"}]))
 
 (defmacro with-taps [fns & body]
   `(let [fns# [~@fns]]

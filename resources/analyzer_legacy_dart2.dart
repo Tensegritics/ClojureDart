@@ -46,7 +46,7 @@ String M(Map<String, dynamic> m) {
 }
 
 Map<String, dynamic> emitType(LibraryElement rootLib, DartType t) {
-  final lib = t.element?.library?.identifier;
+  final lib = t.element2?.library?.identifier;
 
   if (t is RecordType) {
     return {
@@ -109,7 +109,7 @@ Map<String, dynamic> emitType(LibraryElement rootLib, DartType t) {
     };
   }
   if (t is TypeParameterType) {
-    var res = emitTypeParameter(rootLib, t.element);
+    var res = emitTypeParameter(rootLib, t.element2);
     res[":nullable"] =
         t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question;
     return res;
@@ -120,11 +120,11 @@ Map<String, dynamic> emitType(LibraryElement rootLib, DartType t) {
   //if (!isParam || lib != null) addLibIdentifierIfNotContains(libsToDo, lib as String);
   var canonLib = lib == null ? null : "\"${lib}\"";
   var exportingLib = null;
-  if (canonLib != null && t.element != null) {
-    var telementExported = rootLib.exportNamespace.get(t.element!.displayName);
+  if (canonLib != null && t.element2 != null) {
+    var telementExported = rootLib.exportNamespace.get(t.element2!.displayName);
     // NOTE: we are not 100% sure that you can't get 2 elements instances for the same type
     // but with different `id`s
-    if (telementExported != null && telementExported.id == t.element!.id) {
+    if (telementExported != null && telementExported.id == t.element2!.id) {
       exportingLib = "\"${rootLib.identifier}\"";
     } else {
       exportingLib = canonLib;
@@ -236,10 +236,6 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
     return classData;
   }
 
-  Map<String, dynamic> visitExtensionTypeElement(ExtensionTypeElement e) {
-    return this._visitInterfaceElement(e);
-  }
-
   Map<String, dynamic> visitClassElement(ClassElement e) {
     return this._visitInterfaceElement(e);
   }
@@ -301,10 +297,10 @@ class TopLevelVisitor extends ThrowingElementVisitor<Map<String, dynamic>> {
       ':canon-qname-placeholder': true,
       ':canon-lib': '"${e.library.identifier}"',
       ':lib': '"${rootLib.identifier}"',
-      ':const': e.variable?.isConst,
-      ':getter': e.variable?.getter != null,
-      ':setter': e.variable?.setter != null,
-      ':type': emitType(rootLib, e.variable!.type)
+      ':const': e.variable.isConst,
+      ':getter': e.variable.getter != null,
+      ':setter': e.variable.setter != null,
+      ':type': emitType(rootLib, e.variable.type)
     };
   }
 
