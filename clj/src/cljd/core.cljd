@@ -7872,7 +7872,7 @@ specified.
     (assert (= (zero? rank) (even? (alength arr))))
     (assert (pos? (alength arr)))
     ; fully rezipping for dissoc
-    (TreapNode (dec cnt)
+    (TreapNode (-> cnt dec (+ (.-cnt lnode)))
       (if (zero? rank)
         (new-array [:copy (.-arr lnode) 0]  [:copy arr 2]) ; ok: even + (even-2) =even
         (let [larr (.-arr lnode)
