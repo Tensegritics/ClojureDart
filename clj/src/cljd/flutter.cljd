@@ -914,9 +914,12 @@
          (-widget-cont ~env ~form ~@(drop-last 2 more-forms)
            ~(vary-meta last-maybe-prop dissoc  ::threaded-in)
            threaded-in-form#))
-      (keyword? form) (apply expand-directive &env env form more-forms)
+      (simple-keyword? form) (apply expand-directive &env env form more-forms)
       (:key env)
       (stateless-flush env (cons form more-forms))
+      (qualified-keyword? form)
+      (let [[options & more-forms] more-forms]
+        `(-widget-cont ~env (~(symbol form) ~options) ~@more-forms))
       (nil? more-forms) form
       (= '.child form) ; for nested f/widgets ending by a directive
       `(-widget-cont ~env ~@more-forms)
