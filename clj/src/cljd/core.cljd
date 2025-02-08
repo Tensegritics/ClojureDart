@@ -7800,22 +7800,34 @@ specified.
               specs)]
        ~dest)))
 
+(defmacro ^:private => [a b] `(if ~a ~b true))
+
 (deftype TreapNode [^int cnt ^List arr]
+  ; preconditions disable the const -- TODO explore if there's a way out
+  #_#_:pre {(=> (odd? (count arr))
+              (= cnt (transduce
+                       (map-indexed (fn [i x]
+                                      (if (even? i) (.-cnt x) 0)))
+                       + arr)))
+            (pr-str 'odd cnt (vec (map (fn [x] (.-cnt x)) (take-nth 2 arr))))
+            (=> (even? (count arr))
+              (= cnt (quot (count arr) 2)))
+            (pr-str 'even cnt (vec arr))}
   :type-only true
   TreapNode
   (^int tnode_leaf_search [node k ^#/(dynamic dynamic -> int) cmp]
    (assert (even? (alength arr)))
    ; leaf, arr is kvkv...
    ; even on success, odd on failure
-    (loop [^int i -1 ^int j (dec (alength arr))]
-      (if (< i j)
-        (let [m (bit-and (quot (+ i j) 2) 0xFFFFFFFE)
-              z (cmp k (aget arr m))]
-          (cond
-            (neg? z) (recur i (dec m))
-            (zero? z) m
-            :pos (recur (inc m) j)))
-        i)))
+   (loop [^int i -1 ^int j (dec (alength arr))]
+     (if (< i j)
+       (let [m (bit-and (quot (+ i j) 2) 0xFFFFFFFE)
+             z (cmp k (aget arr m))]
+         (cond
+           (neg? z) (recur i (dec m))
+           (zero? z) m
+           :pos (recur (inc m) j)))
+       i)))
   (^int tnode_branch_search [node k ^#/(dynamic dynamic -> int) cmp]
    (assert (odd? (alength arr)))
    ; inner node, arr is rkrkr...r
@@ -7846,85 +7858,85 @@ specified.
    (assert (= (zero? rank) (even? (alength arr))))
    (TreapNode cnt
      (if (zero? rank)
-       (new-array [:insert k v] [:copy arr 2]); ok: 2+(even-2)=even
+       (new-array [:insert k v] [:copy arr 2]) ; ok: 2+(even-2)=even
        (new-array [:insert (.tnode_set_leftmost ^TreapNode (aget arr 0) (dec rank) k v)] [:copy arr 1])))) ; ok: 1 + (odd-1)=odd
   (^TreapNode tnode_partial_zip [rnode ^TreapNode lnode ^int rank ^int krank k v]
-    (assert (= (zero? rank) (even? (alength arr))))
-    ; partially rezipping a higher split since the new equal k is of lesser rank
-    (assert (<= krank rank))
-    (TreapNode cnt
-      (cond
-        (zero? rank)
-        (new-array [:copy (.-arr lnode) 0] [:insert k v] [:copy arr 2]) ; ok: even + 2 + (even-2) =even
-        (> rank krank)
-        (let [larr (.-arr lnode)
-              ln-1 (dec (alength larr))]
-          (new-array
-            [:copy larr 0 ln-1]
-            [:insert (.tnode_partial_zip ^TreapNode (aget arr 0) (aget larr ln-1) (dec rank) krank k v)]
-            [:copy arr 1])) ; ok: (odd-1) + 1 + (odd-1) = odd
-        :else
-        (new-array
-          [:copy (.-arr lnode) 0]
-          [:insert k (.tnode_set_leftmost ^TreapNode (aget arr 0) (dec rank) k v)]
-          [:copy arr 1])))) ; ok: odd + 2 + (odd-1) = odd
+   (assert (= (zero? rank) (even? (alength arr))))
+   ; partially rezipping a higher split since the new equal k is of lesser rank
+   (assert (<= krank rank))
+   (TreapNode (+ cnt (.-cnt lnode))
+     (cond
+       (zero? rank)
+       (new-array [:copy (.-arr lnode) 0] [:insert k v] [:copy arr 2]) ; ok: even + 2 + (even-2) =even
+       (> rank krank)
+       (let [larr (.-arr lnode)
+             ln-1 (dec (alength larr))]
+         (new-array
+           [:copy larr 0 ln-1]
+           [:insert (.tnode_partial_zip ^TreapNode (aget arr 0) (aget larr ln-1) (dec rank) krank k v)]
+           [:copy arr 1])) ; ok: (odd-1) + 1 + (odd-1) = odd
+       :else
+       (new-array
+         [:copy (.-arr lnode) 0]
+         [:insert k (.tnode_set_leftmost ^TreapNode (aget arr 0) (dec rank) k v)]
+         [:copy arr 1])))) ; ok: odd + 2 + (odd-1) = odd
   (^TreapNode tnode_zip [rnode ^TreapNode lnode ^int rank]
-    (assert (= (zero? rank) (even? (alength arr))))
-    (assert (pos? (alength arr)))
-    ; fully rezipping for dissoc
-    (TreapNode (-> cnt dec (+ (.-cnt lnode)))
-      (if (zero? rank)
-        (new-array [:copy (.-arr lnode) 0]  [:copy arr 2]) ; ok: even + (even-2) =even
-        (let [larr (.-arr lnode)
-              ln-1 (dec (alength larr))]
-          (new-array
-            [:copy larr 0 ln-1]
-            [:insert (.tnode_zip ^TreapNode (aget arr 0) (aget larr ln-1) (dec rank))]
-            [:copy arr 1])))))  ; ok: (odd-1) + 1 + (odd-1) = odd
+   (assert (= (zero? rank) (even? (alength arr))))
+   (assert (pos? (alength arr)))
+   ; fully rezipping for dissoc
+   (TreapNode (-> cnt dec (+ (.-cnt lnode)))
+     (if (zero? rank)
+       (new-array [:copy (.-arr lnode) 0]  [:copy arr 2]) ; ok: even + (even-2) =even
+       (let [larr (.-arr lnode)
+             ln-1 (dec (alength larr))]
+         (new-array
+           [:copy larr 0 ln-1]
+           [:insert (.tnode_zip ^TreapNode (aget arr 0) (aget larr ln-1) (dec rank))]
+           [:copy arr 1]))))) ; ok: (odd-1) + 1 + (odd-1) = odd
   (^int tnode_split [node ^int rank k v ^List lparr ^int li ^List rparr ^int ri ^#/(dynamic dynamic -> int) cmp]
-    (assert (= (zero? rank) (even? (alength arr))))
-    ; returns 0 on update, 1 on insert
-    (if (zero? rank)
-      (let [i (.tnode_leaf_search node k cmp)]
-        (if (even? i)
-          (let [lcnt (quot i 2)
-                rcnt (- cnt lcnt)]
-            (aset lparr li (TreapNode lcnt (new-array [:copy arr 0 i]))) ; ok: even
-            (aset rparr ri (TreapNode rcnt (new-array [:insert k v] [:copy arr (+ i 2)]))) ; ok 2 + (even-(2+even)) = even
-            0)
-          (let [i (inc i)
-                lcnt (quot i 2)
-                rcnt (inc (- cnt lcnt))]
-            (aset lparr li (TreapNode lcnt (new-array [:copy arr 0 i]))) ; ok: even
-            (aset rparr ri (TreapNode rcnt (new-array [:insert k v] [:copy arr i]))) ; ok: 2 + (even - even) = even
-            1)))
-      (let [i (.tnode_branch_search node k cmp)]
-        (if (odd? i)
-          ; found an equal key of lesser rank: remove it and reuse its split
-          (let [lcnt (loop [j 0 n 0]
-                       (if (< j i)
-                         (recur (+ j 2) (+ n (.-cnt ^TreapNode (aget arr j))))
-                         n))
-                rcnt (- cnt lcnt)
-                ^TreapNode knode (aget arr (inc i))]
-            (aset lparr li (TreapNode lcnt (new-array [:copy arr 0 i]))) ; ok: odd
-            (aset rparr ri (TreapNode rcnt
-                             (new-array
-                               [:insert (.tnode_set_leftmost knode (dec rank) k v)]
-                               [:copy arr (+ 2 i)]))) ; ok: 1 + (odd - (2+odd)) = odd
-            0)
-          (let [larr (new-array [:copy arr 0 (inc i)]) ; ok: 1 + even = odd
-                rarr (new-array [:copy arr i]) ; ok: odd-even = odd
-                cnt-inc (.tnode_split ^TreapNode (aget arr i) (dec rank) k v larr i rarr 0 cmp)
-                lcnt
-                (loop [j 0 n 0]
-                  (if (< j i)
-                    (recur (+ j 2) (+ n (.-cnt ^TreapNode (aget larr j))))
-                    n))
-                rcnt (- cnt lcnt)]
-            (aset lparr li (TreapNode lcnt larr))
-            (aset rparr ri (TreapNode rcnt rarr))
-            cnt-inc)))))
+   (assert (= (zero? rank) (even? (alength arr))))
+   ; returns 0 on update, 1 on insert
+   (if (zero? rank)
+     (let [i (.tnode_leaf_search node k cmp)]
+       (if (even? i)
+         (let [lcnt (quot i 2)
+               rcnt (- cnt lcnt)]
+           (aset lparr li (TreapNode lcnt (new-array [:copy arr 0 i]))) ; ok: even
+           (aset rparr ri (TreapNode rcnt (new-array [:insert k v] [:copy arr (+ i 2)]))) ; ok 2 + (even-(2+even)) = even
+           0)
+         (let [i (inc i)
+               lcnt (quot i 2)
+               rcnt (inc (- cnt lcnt))]
+           (aset lparr li (TreapNode lcnt (new-array [:copy arr 0 i]))) ; ok: even
+           (aset rparr ri (TreapNode rcnt (new-array [:insert k v] [:copy arr i]))) ; ok: 2 + (even - even) = even
+           1)))
+     (let [i (.tnode_branch_search node k cmp)]
+       (if (odd? i)
+         ; found an equal key of lesser rank: remove it and reuse its split
+         (let [lcnt (loop [j 0 n 0]
+                      (if (< j i)
+                        (recur (+ j 2) (+ n (.-cnt ^TreapNode (aget arr j))))
+                        n))
+               rcnt (- cnt lcnt)
+               ^TreapNode knode (aget arr (inc i))]
+           (aset lparr li (TreapNode lcnt (new-array [:copy arr 0 i]))) ; ok: odd
+           (aset rparr ri (TreapNode rcnt
+                            (new-array
+                              [:insert (.tnode_set_leftmost knode (dec rank) k v)]
+                              [:copy arr (+ 2 i)]))) ; ok: 1 + (odd - (2+odd)) = odd
+           0)
+         (let [larr (new-array [:copy arr 0 (inc i)]) ; ok: 1 + even = odd
+               rarr (new-array [:copy arr i]) ; ok: odd-even = odd
+               cnt-inc (.tnode_split ^TreapNode (aget larr i) (dec rank) k v larr i rarr 0 cmp)
+               lcnt
+               (loop [j 0 n 0]
+                 (if (<= j i)
+                   (recur (+ j 2) (+ n (.-cnt ^TreapNode (aget larr j))))
+                   n))
+               rcnt (+ (- cnt lcnt) cnt-inc)]
+           (aset lparr li (TreapNode lcnt larr))
+           (aset rparr ri (TreapNode rcnt rarr))
+           cnt-inc)))))
   (^TreapNode tnode_without [node ^int rank ^int krank k ^#/(dynamic dynamic -> int) cmp]
    (assert (= (zero? rank) (even? (alength arr))))
    (assert (<= krank rank))
@@ -7946,40 +7958,41 @@ specified.
              node
              (TreapNode (dec cnt) (new-array [:copy arr 0 i] [:insert child'] [:copy arr (inc i)])))))))) ; ok: even + 1 + odd - (1+even)=1
   (^TreapNode tnode_assoc [node ^int rank ^int krank k v ^#/(dynamic dynamic -> int) cmp]
-    (assert (= (zero? rank) (even? (alength arr))))
-    (assert (<= krank rank))
-    (cond
-      (zero? rank)
-      (let [i (.tnode_leaf_search node k cmp)]
-        (if (even? i)
-          (TreapNode cnt (new-array [:copy arr 0 i] [:insert k v] [:copy arr (+ i 2)])) ; even + 2 + (even - (even + 2)) = even
-          (TreapNode (inc cnt) (new-array [:copy arr 0 (inc i)] [:insert k v] [:copy arr (inc i)])))) ; ok (1 + odd) + 2 + (even - (1 + odd)) = even
-      (= rank krank)
-      (let [i (.tnode_branch_search node k cmp)]
-        (if (odd? i)
-          ; there's an equal key at the same rank: the split is ok
-          (TreapNode cnt (new-array [:copy arr 0 i]
-                           [:insert k (.tnode_set_leftmost ^TreapNode (aget arr (inc i)) (dec rank) k v)]
-                           [:copy arr (+ 2 i)])) ; ok: odd + 2 + (odd - (2 + odd)) = odd
-          ; no equal key, split the incumbent node!
-          (let [arr' (new-array [:copy arr 0 i] [:insert nil k nil] [:copy arr (inc i)]) ; ok: even + 3 + (odd - (even + 1)) = odd
-                inc-cnt (.tnode_split ^TreapNode (aget arr i) (dec rank) k v arr' i arr' (+ 2 i) cmp)]
-            (TreapNode (+ inc-cnt cnt) arr'))))
-      :else ; krank < rank
-      (let [i (.tnode_branch_search node k cmp)]
-        (if (odd? i)
-          ; there's an equal key of higher rank: the split has to be changed to
-          ; achieve history-independence
-          (let [^TreapNode lnode (aget arr (dec i))
-                ^TreapNode rnode (aget arr (inc i))]
-            (TreapNode cnt
-              (new-array
-                [:copy arr 0 (dec i)]
-                [:insert (.tnode_partial_zip rnode lnode (dec rank) krank k v)]
-                [:copy arr (+ 2 i)]))) ; ok: (odd - 1) + 1 + (odd - (odd +2)) = odd
-          (let [^TreapNode child (aget arr i)
-                child' (.tnode_assoc child (dec rank) krank k v cmp)]
-            (TreapNode (+ (- cnt (.-cnt child)) (.-cnt child')) (new-array [:copy arr 0 i] [:insert child'] [:copy arr (inc i)])))))))) ; ok: even + 1 + (odd - (1 + even)) = odd
+   (assert (= (zero? rank) (even? (alength arr))))
+   (assert (<= krank rank))
+   (cond
+     (zero? rank)
+     (let [i (.tnode_leaf_search node k cmp)]
+       (if (even? i)
+         (TreapNode cnt (new-array [:copy arr 0 i] [:insert k v] [:copy arr (+ i 2)])) ; even + 2 + (even - (even + 2)) = even
+         (TreapNode (inc cnt) (new-array [:copy arr 0 (inc i)] [:insert k v] [:copy arr (inc i)])))) ; ok (1 + odd) + 2 + (even - (1 + odd)) = even
+     (= rank krank)
+     (let [i (.tnode_branch_search node k cmp)]
+       (if (odd? i)
+         ; there's an equal key at the same rank: the split is ok
+         (TreapNode cnt (new-array [:copy arr 0 i]
+                          [:insert k (.tnode_set_leftmost ^TreapNode (aget arr (inc i)) (dec rank) k v)]
+                          [:copy arr (+ 2 i)])) ; ok: odd + 2 + (odd - (2 + odd)) = odd
+         ; no equal key, split the incumbent node!
+         (let [arr' (new-array [:copy arr 0 i] [:insert nil k nil] [:copy arr (inc i)]) ; ok: even + 3 + (odd - (even + 1)) = odd
+               inc-cnt (.tnode_split ^TreapNode (aget arr i) (dec rank) k v arr' i arr' (+ 2 i) cmp)]
+           (TreapNode (+ inc-cnt cnt) arr'))))
+     :else ; krank < rank
+     (let [i (.tnode_branch_search node k cmp)]
+       (if (odd? i)
+         ; there's an equal key of higher rank: the split has to be changed to
+         ; achieve history-independence
+         (let [^TreapNode lnode (aget arr (dec i))
+               ^TreapNode rnode (aget arr (inc i))]
+           (TreapNode cnt
+             (new-array
+               [:copy arr 0 (dec i)]
+               [:insert (.tnode_partial_zip rnode lnode (dec rank) krank k v)]
+               [:copy arr (+ 2 i)]))) ; ok: (odd - 1) + 1 + (odd - (odd +2)) = odd
+         (let [^TreapNode child (aget arr i)
+               child' (.tnode_assoc child (dec rank) krank k v cmp)]
+           (TreapNode (+ (- cnt (.-cnt child)) (.-cnt child'))
+             (new-array [:copy arr 0 i] [:insert child'] [:copy arr (inc i)])))))))) ; ok: even + 1 + (odd - (1 + even)) = odd
 
 (deftype #/(TreapIterator E)
   [^:mutable ^TreapNode node ; current node
