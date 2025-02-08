@@ -3008,11 +3008,18 @@
             super-ctor-split-args+types
             (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))
 
-            const (and (:const super-ctor-info) (not-any? #(:dart/mutable (meta %)) dart-fields)) ; TODO it's weak we should test super args for const while assuming params to be const
+            asserts (into []
+                      (map (fn [[condition msg]]
+                             [(-> condition (emit env) (ensure-dart-expr env))
+                              (-> msg (emit env) (ensure-dart-expr env))]))
+                      (:pre opts))
+            const (and (:const super-ctor-info) (not-any? #(:dart/mutable (meta %)) dart-fields)
+                    (empty? asserts)) ; TODO it's weak we should test super args for const while assuming params to be const
             dart-type (cond-> dart-type const (assoc-in [:members (name mclass-name) :const] true))
             arg-caster (if const simple-cast #(magicast %1 %2 env))
             class (-> class
                     (assoc :name dart-type
+                      :asserts asserts
                       :ctor mclass-name
                       :abstract abstract
                       :mixin mixin
@@ -3809,7 +3816,7 @@
     (dart-print (case opt-kind :positional "]" "}")))
   (dart-print ")"))
 
-(defn write-class [{class-name :name :keys [mixin abstract extends implements with fields ctor ctor-params super-ctor methods nsm]}]
+(defn write-class [{class-name :name :keys [mixin abstract extends implements with fields ctor ctor-params super-ctor methods nsm asserts]}]
   (when abstract (dart-print "abstract "))
   (let [[_ dart-alias local-class-name] (re-matches #"(?:([a-zA-Z0-9_$]+)\.)?(.+)" (type-str class-name))]
     ; TODO assert dart-alias is current alias
@@ -3833,7 +3840,14 @@
     (doseq [p ctor-params]
       (dart-print (if (seq? p) (str "this." (second p)) p))
       (dart-print ", "))
-    (dart-print "):super")
+    (dart-print "):")
+    (doseq [[condition msg-expr] asserts]
+      (dart-print "assert(")
+        (write condition expr-locus)
+        (dart-print ", ")
+        (write msg-expr expr-locus)
+        (dart-print "), // assert\n\n"))
+    (dart-print "super")
     (some->> super-ctor :method (str ".") dart-print)
     (write-args (:args super-ctor))
     (dart-print ";\n"))
