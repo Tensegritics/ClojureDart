@@ -207,8 +207,10 @@
     :managed (managed-vector-node->let-binding-nodes node-val)
     :watch (watch-vector-node->let-binding-nodes node-val)
     :bg-watcher [[(token-node '_) (vector-node->bg-watcher-node node-val)]]
-    ;; unsupported keys ignored
-    []))
+    (if (qualified-keyword? (sexpr node-key))
+      [[(token-node '_) (token-node (symbol (sexpr node-key)))]
+       [(token-node '_) node-val]]
+      [])))
 
 (defn nest-body
   [[head & tail]]
