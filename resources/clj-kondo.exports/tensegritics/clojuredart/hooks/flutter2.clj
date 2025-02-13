@@ -207,7 +207,7 @@
     :managed (managed-vector-node->let-binding-nodes node-val)
     :watch (watch-vector-node->let-binding-nodes node-val)
     :bg-watcher [[(token-node '_) (vector-node->bg-watcher-node node-val)]]
-    (if (qualified-keyword? (sexpr node-key))
+    (if (qualified-keyword? (sexpr node-key)) ; not the right place, TODO: reorg the widget function below to be recursive and hopefully both simpler and closer to the actual behavior
       [[(token-node '_) (token-node (symbol (sexpr node-key)))]
        [(token-node '_) node-val]]
       [])))
