@@ -3,7 +3,8 @@
             ["package:flutter/material.dart" :as material]
             ["package:flutter/foundation.dart" :as foundation]
             ["dart:async" :as dart:async]
-            [cljd.string :as str])
+            [cljd.string :as str]
+            [cljd.flutter.repl :as repl])
   (:host-ns
    (:require [clojure.string :as str])))
 
@@ -948,6 +949,24 @@
     `(fn [~closest-context] (-widget-cont {:closest-ctx true} ~argsvec? ~@body))))
 
 (defmacro run
+  "Starts an application, takes a widget body and uses it as the application root widget.
+  Hot-reload friendly."
+  [& widget-body]
+  `(widgets/runApp
+     #_~(stateless-flush {} widget-body)
+     (reify :extends (widgets/StatefulWidget)
+       :no-meta true
+       (~'createState [_#]
+         (reify :extends (widgets/State)
+           :no-meta true
+           (~'reassemble [this#]
+            (.reassemble ^{:tag ~'super} this#)
+            (repl/-form-exec (Object)))
+           (~'build [_# ~closest-context]
+            (-widget-cont {:closest-ctx true} ~@widget-body)))))))
+
+
+#_(defmacro run
   "Starts an application, takes a widget body and uses it as the application root widget.
   Hot-reload friendly."
   [& widget-body]

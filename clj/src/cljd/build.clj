@@ -12,7 +12,8 @@
             [clojure.tools.deps :as deps]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.core.server :as server]))
 
 (def ^:dynamic *ansi* false)
 (def ^:dynamic *deps*)
@@ -203,6 +204,25 @@
        (finally
          (run! remove-tap fns#)))))
 
+(defn repl [{:keys [dart-version analyzer-info recompile-count trigger-reload]}]
+  (binding [compiler/*dart-version* dart-version
+            compiler/analyzer-info analyzer-info]
+    (try
+      (println "ClojureDart")
+      (binding [compiler/*current-ns* 'sample.counter]
+        (compiler/recompile-form '(ns cljd.user) (swap! recompile-count inc))
+        (loop []
+          (print (str compiler/*current-ns* "=> "))
+          (flush)
+          (let [expr (read)]
+            ; how to evaluate in one ns?
+            (compiler/recompile-form expr (swap! recompile-count inc))
+            (trigger-reload)
+            (recur))))
+      (catch Exception e
+        (println "REPL session terminated." (.getMessage e))
+        (st/print-stack-trace e)))))
+
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
   (let [user-dir (System/getProperty "user.dir")
@@ -234,7 +254,7 @@
                                  (when root paths))
                          (vals (:libs *deps*)))))
               dirty-nses (volatile! #{})
-              recompile-count (volatile! 0)
+              recompile-count (atom 0)
               compile-nses
               (fn [nses]
                 (let [nses (into @dirty-nses nses)]
@@ -244,7 +264,7 @@
                     (println (title "Compiling to Dart...") (timestamp))
                     (run! #(println " " %) (sort nses))
                     (try
-                      (compiler/recompile nses (vswap! recompile-count inc))
+                      (compiler/recompile nses (swap! recompile-count inc))
                       (println (success) (timestamp))
                       true
                       (catch Exception e
@@ -329,6 +349,17 @@
                                            (recur state))))))))
                         (.setDaemon true)
                         .start))
+                    (let [^java.net.ServerSocket socket
+                          (server/start-server {:port 0 :name "CLJD repl" :accept 'cljd.build/repl
+                                                :args [{:dart-version compiler/*dart-version*
+                                                        :analyzer-info compiler/analyzer-info
+                                                        :recompile-count recompile-count
+                                                        :trigger-reload
+                                                        #(doto flutter-stdin
+                                                           (.write "r")
+                                                           .flush)}]})]
+                      (println (title "ClojureDart REPL (experimental 💥)") "listening on port" (title (.getLocalPort socket)))
+                      (newline))
                     (watch-dirs-until (fn [_] (some-> p .isAlive not)) nil dirs (compile-files flutter-stdin))
                     (when p
                       (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))

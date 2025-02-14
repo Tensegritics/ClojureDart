@@ -4670,9 +4670,10 @@
       (try
 
         (let [contributions
-              (for [ns nses-to-recompile
-                    path (keys (:contributions-paths (nses-before ns)))]
-                path)]
+              (set
+                (for [ns nses-to-recompile
+                      path (keys (:contributions-paths (nses-before ns)))]
+                  path))]
           ; undo contributions
           (run! (fn [path]
                   (assert (vector? path))
@@ -4694,6 +4695,67 @@
                 ; the ns may already have been transitively reloaded
                   :when (nil? (@nses ns))]
           ; recompiling via ns and not via url because cljd/cljc shadowing
+            (compile-namespace ns)))
+        (catch Exception e
+          (reset! nses nses-before) ; avoid messy states
+          (throw e))))))
+
+(defn recompile-form
+  [form recompile-count]
+  (with-dump-modified-files
+    (let [current-ns *current-ns*
+          nses-before @nses
+          dependants (fn [ns]
+                       (let [lib (some-> nses-before ns :lib)]
+                         (for [[ns {:keys [imports contribs]}] nses-before
+                               :when (and (get imports lib) (not (get contribs lib)))]
+                           ns)))
+          nses-to-recompile
+          (disj (transitive-closure [current-ns] dependants) current-ns)]
+      ; COMPILE EXPR
+      (try
+        (binding [*recompile-count* recompile-count]
+          (binding [*locals-gen* {}
+                    *dart-out* *out*]
+            (try
+              (case (when (seq? form) (first form))
+                ns (do
+                     (emit form {})
+                     (emit `(cljd.core/extend-protocol cljd.flutter.repl/ReplHack
+                              dart:core/Object
+                              (~'-form-exec [_#]
+                               (dart:core/print (cljd.core/pr-str nil)))) {}))
+                (emit `(cljd.core/extend-protocol cljd.flutter.repl/ReplHack
+                         dart:core/Object
+                         (~'-form-exec [_#]
+                          (dart:core/print (cljd.core/pr-str ~form)))) {}))
+              (catch Exception e
+                (prn e)
+                (throw e))))
+          (let [contributions
+                (set (for [ns nses-to-recompile
+                           path (keys (:contributions-paths (nses-before ns)))]
+                       path))]
+            ; undo contributions
+            (run! (fn [path]
+                    (assert (vector? path))
+                    (swap! nses update-in (pop path) dissoc (peek path)))
+              contributions)
+
+            ; remove nses to be recompiled -- but not their libs to keep aliases stable
+            (apply swap! nses dissoc nses-to-recompile)
+
+            (doseq [[protocol-ns protocol-name tag] contributions]
+              (case tag
+                :extensions
+                (when-some [proto-map (get-in @nses [protocol-ns protocol-name])]
+                  (binding [*current-ns* protocol-ns
+                            *locals-gen* {}]
+                    (emit (expand-protocol-impl proto-map) {}))))))
+          (doseq [ns nses-to-recompile
+                  ; the ns may already have been transitively reloaded
+                  :when (nil? (@nses ns))]
+            ; recompiling via ns and not via url because cljd/cljc shadowing
             (compile-namespace ns)))
         (catch Exception e
           (reset! nses nses-before) ; avoid messy states
