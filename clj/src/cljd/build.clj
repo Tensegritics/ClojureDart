@@ -322,7 +322,7 @@
                                    (when-some [line (.readLine flutter-stdout)]
                                      (when-not (= :reload-failed state)
                                        (if-some [[_ out] (re-matches #"flutter: REPL:(.*)" line)]
-                                         (prn 'repl> out)
+                                         (println 'repl> out)
                                          (println line)))
                                      (let [line (.trim line)]
                                        (case state
