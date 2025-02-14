@@ -4724,11 +4724,11 @@
                      (emit `(cljd.core/extend-protocol cljd.flutter.repl/ReplHack
                               dart:core/Object
                               (~'-form-exec [_#]
-                               (dart:core/print (cljd.core/pr-str nil)))) {}))
+                               nil)) {}))
                 (emit `(cljd.core/extend-protocol cljd.flutter.repl/ReplHack
                          dart:core/Object
                          (~'-form-exec [_#]
-                          (dart:core/print (cljd.core/pr-str ~form)))) {}))
+                          ~form)) {}))
               (catch Exception e
                 (prn e)
                 (throw e))))

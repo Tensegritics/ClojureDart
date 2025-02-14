@@ -210,7 +210,8 @@
     (try
       (println "ClojureDart")
       (binding [compiler/*current-ns* 'sample.counter]
-        (compiler/recompile-form '(ns cljd.user) (swap! recompile-count inc))
+        (compiler/recompile-form '(ns cljd.user
+                                    (:require [cljd.flutter.repl])) (swap! recompile-count inc))
         (loop []
           (print (str compiler/*current-ns* "=> "))
           (flush)
@@ -320,7 +321,9 @@
                                  (loop [state :idle]
                                    (when-some [line (.readLine flutter-stdout)]
                                      (when-not (= :reload-failed state)
-                                       (println line))
+                                       (if-some [[_ out] (re-matches #"flutter: REPL:(.*)" line)]
+                                         (prn 'repl> out)
+                                         (println line)))
                                      (let [line (.trim line)]
                                        (case state
                                          :idle

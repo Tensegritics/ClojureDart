@@ -732,6 +732,20 @@
      (fn [^foundation/DiagnosticPropertiesBuilder props-builder#]
        (.add props-builder# (foundation/DiagnosticsNode.message (.toString ~expr))))))
 
+(defn ^:macro-support expand-repl [env v forms]
+  `(reify :extends (widgets/StatefulWidget .key ~(:key env))
+     :no-meta true
+     (~'createState [_#]
+      (reify :extends (widgets/State)
+        :no-meta true
+        (~'reassemble [this#]
+         (.reassemble ^{:tag ~'super} this#)
+         (binding [repl/*build-context* (.-context this#)
+                   *out* (repl/prefixing-string-sink *out* "REPL")]
+           (println (repl/-form-exec (Object)))))
+        (~'build [_# ~closest-context]
+         (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))))
+
 (defmacro widget
   "Returns a widget.
    The body is made of forms, dotted parameter names and directives.
@@ -903,7 +917,8 @@
       (if-some [[binding expr & more] (seq v)]
         (let [[opts & more] (collect-options more #{:duration :curve :on-end :lerp})]
           (expand-animate &env env binding expr opts (list* :animate more forms)))
-        `(-widget-cont ~env ~@forms)))))
+        `(-widget-cont ~env ~@forms))
+      :repl (expand-repl env v forms))))
 
 (defmacro -widget-cont
   "PRIVATE DONT USE"
@@ -949,29 +964,11 @@
     `(fn [~closest-context] (-widget-cont {:closest-ctx true} ~argsvec? ~@body))))
 
 (defmacro run
-  "Starts an application, takes a widget body and uses it as the application root widget.
+    "Starts an application, takes a widget body and uses it as the application root widget.
   Hot-reload friendly."
-  [& widget-body]
-  `(widgets/runApp
-     #_~(stateless-flush {} widget-body)
-     (reify :extends (widgets/StatefulWidget)
-       :no-meta true
-       (~'createState [_#]
-         (reify :extends (widgets/State)
-           :no-meta true
-           (~'reassemble [this#]
-            (.reassemble ^{:tag ~'super} this#)
-            (repl/-form-exec (Object)))
-           (~'build [_# ~closest-context]
-            (-widget-cont {:closest-ctx true} ~@widget-body)))))))
-
-
-#_(defmacro run
-  "Starts an application, takes a widget body and uses it as the application root widget.
-  Hot-reload friendly."
-  [& widget-body]
-  `(widgets/runApp
-     ~(stateless-flush {} widget-body)))
+    [& widget-body]
+    `(widgets/runApp
+       ~(stateless-flush {} widget-body)))
 
 (deftype Cell [^Map subs]
   (subto [self s])
