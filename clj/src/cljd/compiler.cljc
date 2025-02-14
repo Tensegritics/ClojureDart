@@ -3427,7 +3427,7 @@
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   [x env]
   (try
-    (let [x (macroexpand-and-inline env x) ;; meta dc-nim
+    (let [x (macroexpand-and-inline env x) ;; meta dc-num
           dart-x
           (cond
             (symbol? x) (emit-symbol x env)
