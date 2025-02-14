@@ -211,7 +211,10 @@
       (println "ClojureDart")
       (binding [compiler/*current-ns* 'sample.counter]
         (compiler/recompile-form '(ns cljd.user
-                                    (:require [cljd.flutter.repl])) (swap! recompile-count inc))
+                                    (:require [cljd.flutter.repl]
+                                              [cljd.flutter :as f]
+                                              ["package:flutter/material.dart" :as m]))
+          (swap! recompile-count inc))
         (loop []
           (print (str compiler/*current-ns* "=> "))
           (flush)

@@ -21,6 +21,7 @@
           (m/Icon m/Icons.add)))
       .body
       m/Center
+      :repl true
       (m/Column .mainAxisAlignment m/MainAxisAlignment.center)
       .children
       [(m/Text "You have pushed the button this many times:")

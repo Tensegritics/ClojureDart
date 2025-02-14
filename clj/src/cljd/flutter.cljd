@@ -732,19 +732,37 @@
      (fn [^foundation/DiagnosticPropertiesBuilder props-builder#]
        (.add props-builder# (foundation/DiagnosticsNode.message (.toString ~expr))))))
 
+(deftype ReplState [f ^:mutable m]
+  :extends widgets/State
+  (build [state ctx]
+    (:child m))
+  (reassemble [state]
+    (.reassemble ^super state)
+    (let [{:keys [child]} m
+          {child' :child} (set! m (f state m))]
+      (when-not (identical? child child')
+        (.setState state (fn []))))))
+
+(defn update-repl-state [state m]
+  (binding [repl/*build-context* (.-context state)
+            *out* (repl/prefixing-string-sink *out* "REPL")]
+    (try
+      (let [v (repl/-form-exec (Object))]
+        (if (instance? widgets/Widget v)
+          (assoc m :child v)
+          (do
+            (println v)
+            (assoc m '*1 v))))
+      (catch Object e
+        (println e)
+        (assoc m '*e e)))))
+
 (defn ^:macro-support expand-repl [env v forms]
   `(reify :extends (widgets/StatefulWidget .key ~(:key env))
      :no-meta true
      (~'createState [_#]
-      (reify :extends (widgets/State)
-        :no-meta true
-        (~'reassemble [this#]
-         (.reassemble ^{:tag ~'super} this#)
-         (binding [repl/*build-context* (.-context this#)
-                   *out* (repl/prefixing-string-sink *out* "REPL")]
-           (println (repl/-form-exec (Object)))))
-        (~'build [_# ~closest-context]
-         (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms))))))
+      (ReplState update-repl-state
+        {:child (-widget-cont ~(assoc env :key nil :closest-ctx false) ~@forms)}))))
 
 (defmacro widget
   "Returns a widget.
