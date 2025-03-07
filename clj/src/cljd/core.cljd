@@ -1964,10 +1964,6 @@
   ([ns name]
    (Symbol. ns name nil -1)))
 
-;; clojure.core/qualified-symbol?
-;; clojure.core/simple-symbol?
-;; clojure.core/special-symbol?
-
 (defprotocol IFind
   "Protocol for implementing entry finding in collections."
   (-find [coll k] "Returns the map entry for key, or nil if key not present."))
@@ -4564,10 +4560,10 @@
   ; is made only from owned references.
   :type-only true
   BitmapNode
-  (inode_lookup [node k not-found]
+  (inode_lookup [node ^int shift k not-found]
     (let [h (hash k)]
       (loop [^BitmapNode node node
-             ^int shift 0]
+             ^int shift shift]
         (if (< shift 32)
           ; regular
           (let [bitmap-hi (.-bitmap_hi node)
@@ -4595,7 +4591,7 @@
                 (== i n) not-found
                 (= (aget arr i) k) (aget arr (inc i))
                 :else (recur (+ 2 i)))))))))
-  (inode_without [node ^int shift ^int h k]
+  (^BitmapNode inode_without [node ^int shift ^int h k]
     (if (< shift 32)
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
             bit (u32-bit-shift-left 1 n)
@@ -4652,7 +4648,7 @@
                 (aset new-arr (inc i) (aget arr (inc n-2))))
               (BitmapNode. (dec cnt) 0 0 new-arr))
             :else (recur (+ 2 i)))))))
-  (inode_assoc [node ^int shift ^int h k v]
+  (^BitmapNode inode_assoc [node ^int shift ^int h k v]
     (if (< shift 32)
       ; regular node
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
@@ -4715,7 +4711,113 @@
                 node
                 (BitmapNode. cnt 0 0 (doto (aclone arr) (aset i+1 v)))))
             :else (recur (+ 2 i)))))))
-  (inode_assoc_transient [node ^int shift ^int h k v]
+  (^BitmapNode inode_merge [a ^int shift ^BitmapNode b]
+    (cond
+      (identical? a b) a
+      (< shift 32)
+      (let [a-kvs (bit-and bitmap-hi bitmap-lo)
+            a-nodes (bit-xor bitmap-hi bitmap-lo)
+            b-kvs (bit-and (.-bitmap_hi b) (.-bitmap_lo b))
+            b-nodes (bit-xor (.-bitmap_hi b) (.-bitmap_lo b))
+            all-sure-nodes (bit-or a-nodes b-nodes) ; underestimate collisions
+            all-maybe-kvs (bit-or a-kvs b-kvs) ; underestimate collisions
+            a-set (bit-or a-kvs a-nodes)
+            b-set (bit-or b-kvs b-nodes)
+            n-set (bit-or a-set b-set)
+            new-arr-size (u32x2-bit-count all-maybe-kvs n-set) ; overestimate size
+            new-arr (#/(List/filled dynamic) new-arr-size nil)
+            barr (.-arr b)]
+        (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int bit 1 ^int kvs 0 ^int cnt 0]
+          (cond
+            (zero? bit) ; done
+            (BitmapNode. cnt kvs n-set new-arr)
+
+            (zero? (bit-and bit a-set)) ; no a
+            (cond
+              (zero? (bit-and bit b-set))  ; no b either, skip
+              (recur ni ai bi (u32-bit-shift-left bit 1) kvs cnt)
+
+              (zero? (bit-and bit b-kvs)) ; b's node
+              (let [bnode ^BitmapNode (aget barr bi)]
+                (doto new-arr
+                  (aset ni bnode))
+                (recur (+ 1 ni) ai (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt bnode))))
+
+              :else
+              (do ; b's kv
+                (doto new-arr
+                  (aset ni (aget barr bi))
+                  (aset (inc ni) (aget barr (inc bi))))
+                (recur (+ 2 ni) ai (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
+
+
+            (zero? (bit-and bit b-set)) ; no b, only a
+            (if (zero? (bit-and bit a-kvs)) ; a's node
+              (let [anode ^BitmapNode (aget arr ai)]
+                (doto new-arr
+                  (aset ni anode))
+                (recur (+ 1 ni) (+ 1 ai) bi (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt anode))))
+              (do ; a's kv
+                (doto new-arr
+                  (aset ni (aget arr ai))
+                  (aset (inc ni) (aget arr (inc ai))))
+                (recur (+ 2 ni) (+ 2 ai) bi (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
+
+            ; a and b are set
+            (zero? (bit-and bit a-kvs)) ; a's node
+            (if (zero? (bit-and bit b-kvs))
+              ; node vs node
+              (let [node (.inode_merge ^BitmapNode (aget arr ai) (+ 5 shift) (aget barr bi))]
+                (doto new-arr
+                  (aset ni node))
+                (recur (+ 1 ni) (+ 1 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
+              ; a's node vs b's kv
+              (let [k (aget barr bi)
+                    v (aget barr (inc bi))
+                    node (.inode_assoc ^BitmapNode (aget arr ai) (+ 5 shift) (hash k) k v)]
+                (doto new-arr
+                  (aset ni node))
+                (recur (+ 1 ni) (+ 1 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node)))))
+
+            ; a is kv
+            (zero? (bit-and bit b-kvs)) ; b's node
+            (let [bnode ^BitmapNode (aget barr bi)
+                  k (aget arr ai)
+                  shift+5 (+ 5 shift)
+                  node
+                  (cond-> bnode
+                    (identical? bnode (.inode_lookup bnode shift+5 k bnode)) (.inode_assoc shift+5 (hash k) k (aget arr (inc ai))))]
+              (doto new-arr
+                (aset ni node))
+              (recur (+ 1 ni) (+ 2 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
+
+            :else ; kv vs kv
+            (let [ak (aget arr ai)
+                  bk (aget barr bi)
+                  bv (aget barr (inc bi))]
+              (if (= ak bk)
+                (do
+                  (doto new-arr
+                    (aset ni bk)
+                    (aset (inc ni) bv))
+                  (recur (+ 2 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt)))
+                (let [shift+5 (+ 5 shift)
+                      node (->
+                             (BitmapNode. 0 0 0 (#/(List/filled dynamic) 4 nil))
+                             (.inode_assoc_transient shift+5 (hash ak) ak (aget arr (inc ai)))
+                             (.inode_assoc_transient shift+5 (hash bk) bk bv))]
+                  (doto new-arr
+                    (aset ni node))
+                  (recur (+ 1 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ 2 cnt))))))))
+      :else ; collision node
+      (let [n (* 2 (.-cnt b))
+            arr (.-arr b)]
+        (loop [node a ^int i 0]
+          (if (== i n)
+            node
+            (recur (.inode_assoc a shift 0 ; 👈 hash doesn't matter for collision node's assoc
+                     (aget arr i) (aget arr (inc i))) (+ 2 i)))))))
+  (^BitmapNode inode_assoc_transient [node ^int shift ^int h k v]
     (if (< shift 32)
       ; regular node
       (let  [n (bit-and (u32-bit-shift-right h shift) 31)
@@ -4802,7 +4904,7 @@
               (aset arr i+1 v))
             :else (recur (+ 2 i))))
         node)))
-  (inode_without_transient [node ^int shift ^int h k]
+  (^BitmapNode inode_without_transient [node ^int shift ^int h k]
     (if (< shift 32)
       (let [n (bit-and (u32-bit-shift-right h shift) 31)
             bit (u32-bit-shift-left 1 n)
@@ -4954,11 +5056,11 @@
   (-lookup [tcoll k not-found]
     (when-not editable
       (throw (ArgumentError. "lookup after persistent!")))
-    (.inode_lookup root k not-found))
+    (.inode_lookup root 0 k not-found))
   (-contains-key? [tcoll k]
     (when-not editable
       (throw (ArgumentError. "lookup after persistent!")))
-    (not (identical? root (.inode_lookup root k root))))
+    (not (identical? root (.inode_lookup root 0 k root))))
   IFn
   (-invoke [tcoll k]
     (-lookup tcoll k))
@@ -5084,8 +5186,17 @@
   (-meta [coll] meta)
   ICollection
   (-conj [coll entry]
-    (if (and (satisfies? IVector entry) (== (-count entry) 2))
+    (cond
+      (and (satisfies? IVector entry) (== (-count entry) 2))
       (-assoc coll (-nth entry 0) (-nth entry 1))
+
+      (instance? PersistentHashMap entry)
+      (let [root' (.-root ^PersistentHashMap entry)]
+        (if (pos? (.-cnt root'))
+          (PersistentHashMap meta (.inode_merge root 0 root') -1)
+          coll))
+
+      :else
       (loop [ret coll s (seq entry)]
         (if (nil? s)
           ret
@@ -5107,14 +5218,14 @@
   (-lookup [coll k]
     (-lookup coll k nil))
   (-lookup [coll k not-found]
-    (.inode_lookup root k not-found))
+    (.inode_lookup root 0 k not-found))
   (-contains-key? [coll k]
     (not (identical? (-lookup coll k coll) coll)))
   IFind
   (-find [coll k]
     ;; NOTE: `coll` is used as a local sentinel here
     (let [v (-lookup coll k coll)]
-      (when-not (identical? coll v)
+      (when-not (identical? coll v) ; FIXME too much of a shortcut?
         (new #/(MapEntry K V) k v))))
   IMap
   (-dissoc [coll k]
