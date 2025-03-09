@@ -4719,7 +4719,6 @@
             a-nodes (bit-xor bitmap-hi bitmap-lo)
             b-kvs (bit-and (.-bitmap_hi b) (.-bitmap_lo b))
             b-nodes (bit-xor (.-bitmap_hi b) (.-bitmap_lo b))
-            all-sure-nodes (bit-or a-nodes b-nodes) ; underestimate collisions
             all-maybe-kvs (bit-or a-kvs b-kvs) ; underestimate collisions
             a-set (bit-or a-kvs a-nodes)
             b-set (bit-or b-kvs b-nodes)
