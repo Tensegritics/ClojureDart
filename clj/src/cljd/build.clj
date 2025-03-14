@@ -204,32 +204,39 @@
        (finally
          (run! remove-tap fns#)))))
 
-(defn repl [{:keys [dart-version analyzer-info recompile-count trigger-reload]}]
-  (binding [compiler/*dart-version* dart-version
-            compiler/analyzer-info analyzer-info]
-    (try
-      (println "ClojureDart")
-      (binding [compiler/*current-ns* 'sample.counter]
-        (compiler/recompile-form '(ns cljd.user
-                                    (:require [cljd.flutter.repl]
-                                              [cljd.flutter :as f]
-                                              ["package:flutter/material.dart" :as m]))
-          (swap! recompile-count inc))
-        (loop []
-          (print (str compiler/*current-ns* "=> "))
-          (flush)
-          (let [expr (read)]
-            ; how to evaluate in one ns?
-            (compiler/recompile-form expr (swap! recompile-count inc))
-            (trigger-reload)
-            (recur))))
-      (catch Exception e
-        (println "REPL session terminated." (.getMessage e))
-        (st/print-stack-trace e)))))
+(defn repl [*repl-outs {:keys [dart-version analyzer-info recompile-count trigger-reload]}]
+  (let [repltag "REPL" #_(name (gensym 'REPL|))
+        semaphore (java.util.concurrent.Semaphore. 1)]
+    (swap! *repl-outs assoc repltag {:out *out*
+                                     :ack! (fn [] (.release semaphore))})
+
+    (binding [compiler/*dart-version* dart-version
+              compiler/analyzer-info analyzer-info]
+      (try
+        (println "ClojureDart")
+        (binding [compiler/*current-ns* 'sample.counter]
+          (compiler/recompile-form '(ns cljd.user
+                                      (:require [cljd.flutter.repl]
+                                                [cljd.flutter :as f]
+                                                ["package:flutter/material.dart" :as m]))
+            (swap! recompile-count inc))
+          (loop []
+            (.acquire semaphore)
+            (print (str compiler/*current-ns* "=> "))
+            (flush)
+            (let [expr (read)]
+              ; how to evaluate in one ns?
+              (compiler/recompile-form expr (swap! recompile-count inc))
+              (trigger-reload)
+              (recur))))
+        (catch Exception e
+          (println "REPL session terminated." (.getMessage e))
+          (st/print-stack-trace e))))))
 
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
-  (let [user-dir (System/getProperty "user.dir")
+  (let [*repl-outs (atom {})
+        user-dir (System/getProperty "user.dir")
         analyzer-dir (ensure-cljd-analyzer!)]
     (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind name) "pub" "get")
     (with-taps
@@ -324,9 +331,14 @@
                                  (loop [state :idle]
                                    (when-some [line (.readLine flutter-stdout)]
                                      (when-not (= :reload-failed state)
-                                       (if-some [[_ out] (re-matches #"flutter: REPL:(.*)" line)]
-                                         (println 'repl> out)
-                                         (println line)))
+                                       (let [[_ repltag mode line'] (re-matches #"flutter: (.*?)([>=!])(.*)" line)]
+                                         (if-some [{:keys [^java.io.Writer out ack!]}
+                                                   (@*repl-outs repltag)]
+                                           (case mode
+                                             "!" (ack!)
+                                             ("=" ">")
+                                             (doto out (.write line') (.write "\n") (.flush)))
+                                           (println line))))
                                      (let [line (.trim line)]
                                        (case state
                                          :idle
@@ -357,7 +369,8 @@
                         .start))
                     (let [^java.net.ServerSocket socket
                           (server/start-server {:port 0 :name "CLJD repl" :accept 'cljd.build/repl
-                                                :args [{:dart-version compiler/*dart-version*
+                                                :args [*repl-outs
+                                                       {:dart-version compiler/*dart-version*
                                                         :analyzer-info compiler/analyzer-info
                                                         :recompile-count recompile-count
                                                         :trigger-reload

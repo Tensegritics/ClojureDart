@@ -744,18 +744,23 @@
         (.setState state (fn []))))))
 
 (defn update-repl-state [state m]
-  (binding [repl/*build-context* (.-context state)
-            *out* (repl/prefixing-string-sink *out* "REPL")]
-    (try
-      (let [v (repl/-form-exec (Object))]
-        (if (instance? widgets/Widget v)
-          (assoc m :child v)
-          (do
-            (println v)
-            (assoc m '*1 v))))
-      (catch Object e
-        (println e)
-        (assoc m '*e e)))))
+  (let [out *out*
+        prout (repl/prefixing-string-sink out "REPL=")
+        ack! #(.writeln out "REPL!")]
+    (binding [repl/*build-context* (.-context state)
+              *out* (repl/prefixing-string-sink out "REPL>")]
+      (try
+        (let [v (repl/-form-exec (Object))]
+          (if (instance? widgets/Widget v)
+            (assoc m :child v)
+            (do
+              (cljd.core/-print v prout)
+              (.write prout "\n")
+              (ack!)
+              (assoc m '*1 v))))
+        (catch Object e
+          (println e)
+          (assoc m '*e e))))))
 
 (defn ^:macro-support expand-repl [env v forms]
   `(reify :extends (widgets/StatefulWidget .key ~(:key env))
