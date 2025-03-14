@@ -4039,6 +4039,17 @@
                 (let [[_ _ dart-then dart-else] x]
                   {:dart/type (merge-types (:dart/type (infer-type dart-then)) (:dart/type (infer-type dart-else)))
                    :dart/const false})
+                dart/case
+                (let [[_ _expr _default-label clauses default-expr] x]
+                  {:dart/type
+                   (reduce (fn [t [_ expr]]
+                             (merge-types t (:dart/type (infer-type expr))))
+                     (:dart/type (infer-type default-expr)) clauses)
+                   :dart/const false})
+                dart/continue
+                ; can only appear in dart/case -- this only makes sense in this context
+                {:dart/type dc-Never
+                 :dart/const false}
                 dart/let (let [[_ bindings expr] x
                                inferred-type (infer-type expr)]
                            (if-not (:dart/const inferred-type)
