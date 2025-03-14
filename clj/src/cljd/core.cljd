@@ -1971,8 +1971,9 @@
 (extend-type fallback
   IFind
   (-find [coll k]
-    (when-not (nil? coll)
-      (throw (Exception. (str "Find not supported on " (.-runtimeType coll)))))))
+    (let [v (get coll k sentinel)]
+      (when-not (identical? sentinel v)
+        (MapEntry k v)))))
 
 (defn ^some find
   "Returns the map entry for key, or nil if key not present."
@@ -4487,6 +4488,81 @@
   (-hash [coll] (hash-ordered-coll coll))
   (-hash-realized? [coll] false))
 
+(defprotocol IJoinable
+  "Protocol for joining values by their keys."
+  (-join-with [a b combine fa fb deletion-marker]
+    "If `a` and `b` cannot be efficiently joined, `nil` is returned.
+     Otherwise, returns a collection of key-value pairs where:
+
+     - `[k (combine va vb)]` if `k` exists in both `a` and `b`, where `va`
+       and `vb` are their respective values.
+     - `[k (fa va)]` if `k` appears only in `a` with value `va`.
+     - `[k (fb vb)]` if `k` appears only in `b` with value `vb`.
+
+     Any of `combine`, `fa`, or `fb` may be `nil`, allowing operations
+     such as union, intersection, difference, and asymmetric difference.
+
+     When a computed value matches `deletion-marker`, the corresponding key
+     is omitted from the output.
+
+     All implementations MUST support `nil` as `b` and treat it as empty.
+
+     When `fa` or `fb` are identical to `identity`, implementations MUST NOT
+     perform `deletion-marker` tests."))
+
+(extend-type Null
+  IJoinable
+  (-join-with [a b combine fa fb del]
+    (when (some? b)
+      (-join-with b nil nil fb nil del))))
+
+(extend-type fallback
+  IJoinable
+  (-join-with [a b combine fa fb del] nil))
+
+(defn join-with
+  "Joins `a` and `b` -- or throws if `a` and `b` can't be joined.
+   Returns a collection of key-value pairs where:
+
+     - `[k (combine va vb)]` if `k` exists in both `a` and `b`, where `va`
+       and `vb` are their respective values.
+     - `[k (fa va)]` if `k` appears only in `a` with value `va`.
+     - `[k (fb vb)]` if `k` appears only in `b` with value `vb`.
+
+     Any of `combine`, `fa`, or `fb` may be `nil`, allowing operations
+     such as union, intersection, difference, and asymmetric difference.
+
+     When `where?` is not `nil` and `(where? computed-v)` returns false,
+     the corresponding key is omitted from the output."
+  ([combine a b]
+   (join-with combine nil nil nil a b))
+  ([combine fa a b]
+   (join-with combine fa nil nil a b))
+  ([combine fa fb a b]
+   (join-with combine fa fb nil a b))
+  ([combine fa fb where? a b]
+   (when (or (some? a) (some? b))
+     (let [del ^:unique (Object)
+           combine (if where?
+                     (fn [a b]
+                       (let [r (combine a b)]
+                         (if (where? r) r del)))
+                     combine)
+           fa (if where?
+                (fn [a]
+                  (let [r (fa a b)]
+                    (if (where? r) r del)))
+                fa)
+           fb (if where?
+                (fn [b]
+                  (let [r (fb b b)]
+                    (if (where? r) r del)))
+                fb)]
+       (or
+         ^some (-join-with a b combine fa fb del)
+         (throw (ArgumentError (str "Can't join instances of " (.-runtimeType a)
+                                 " and " (.-runtimeType b)))))))))
+
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr] :type-only true)
 
 (deftype #/(BitmapIterator E)
@@ -4542,6 +4618,56 @@
           (recur))
         false))))
 
+(def ^BitmapNode -EMPTY-BITMAP-NODE (BitmapNode. 0 0 0 (.empty List)))
+
+(defmacro ^:private else->> [& args]
+  `(->> ~@(reverse args)))
+
+(defmacro ^:private step-join [& args]
+  (let [node-sym `node#
+        {:keys [darr dai dbi] :as args-map} (apply hash-map args)
+        _ (assert (or (nil? darr) (vector? darr)))
+        dni (some-> darr count)
+        [dcnt dhi dlo] (case (count darr)
+                         2 [1 'bit 'bit]
+                         1 [`(.-cnt ~node-sym) nil 'bit]
+                         0 nil)
+        nz (fn [op arg local]
+             (cond->> local
+               (some? arg) (list op arg)))]
+    `(let [~@(case (count darr)
+               (0 2) nil
+               1 [node-sym (first darr)])]
+       ~@(case (count darr)
+           2 `[(aset ~'new-arr ~'ni ~(first darr))
+               (aset ~'new-arr (+ 1 ~'ni) ~(second darr))]
+           1 `[(aset ~'new-arr ~'ni ~(first darr))]
+           0 nil)
+       (recur
+         ~(nz `+ dni 'ni) ~(nz `+ dai 'ai) ~(nz `+ dbi 'bi)
+         (u32-bit-shift-left ~'bit 1)
+         ~(nz `bit-or dhi 'hi) ~(nz `bit-or dlo 'lo)
+         ~(nz `+ dcnt 'cnt)))))
+
+
+(defn- assert-bitmap-node [^BitmapNode {:flds [cnt bitmap_hi bitmap_lo arr] :as node}]
+  (let [kvs (bit-and bitmap_hi bitmap_lo)
+        nodes (bit-xor bitmap_hi bitmap_lo)]
+    (loop [^int i 0 ^int bit 1 ^int n 0]
+      (cond
+        (zero? bit) (do (assert (= n cnt)) nil)
+        (not (zero? (bit-and bit kvs)))
+        (do
+          (assert (not (or (instance? BitmapNode (aget arr i))
+                         (instance? BitmapNode (aget arr (inc i))))))
+          (recur (+ 2 i) (u32-bit-shift-left bit 1) (+ 1 n)))
+        (not (zero? (bit-and bit nodes)))
+        (do
+          (assert (instance? BitmapNode (aget arr i)))
+          (recur (+ 1 i) (u32-bit-shift-left bit 1) (+ (.-cnt ^BitmapNode (aget arr i)) n)))
+        :else
+        (recur i (u32-bit-shift-left bit 1) n)))))
+
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
   ; each node has a max fan-out of 32 children (except for collision nodes which are unbounded)
   ; singleton children (nodes which only contain 1 key-value pair) can be inlined
@@ -4560,426 +4686,607 @@
   ; is made only from owned references.
   :type-only true
   BitmapNode
-  (inode_lookup [node ^int shift k not-found]
-    (let [h (hash k)]
-      (loop [^BitmapNode node node
-             ^int shift shift]
-        (if (< shift 32)
-          ; regular
-          (let [bitmap-hi (.-bitmap_hi node)
-                bitmap-lo (.-bitmap_lo node)
-                n (bit-and (u32-bit-shift-right h shift) 31)
-                bit (u32-bit-shift-left 1 n)
-                mask (dec bit)
-                idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
-                hi (bit-and bitmap-hi bit)
-                lo (bit-and bitmap-lo bit)]
-            (cond
-              (zero? (bit-or hi lo)) ; nothing
-              not-found
-              (zero? (bit-and hi lo)) ; node
-              (recur (aget (.-arr node) idx) (+ 5 shift))
-              :else ; kv
-              (let [arr (.-arr node)
-                    k' (aget arr idx)]
-                (if (= k' k) (aget arr (inc idx)) not-found))))
-          ; collisions node
-          (let [n (* 2 cnt)
-                arr (.-arr node)]
-            (loop [^int i 0]
-              (cond
-                (== i n) not-found
-                (= (aget arr i) k) (aget arr (inc i))
-                :else (recur (+ 2 i)))))))))
-  (^BitmapNode inode_without [node ^int shift ^int h k]
-    (if (< shift 32)
-      (let [n (bit-and (u32-bit-shift-right h shift) 31)
-            bit (u32-bit-shift-left 1 n)
-            mask (dec bit)
-            idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
-            hi (bit-and bitmap-hi bit)
-            lo (bit-and bitmap-lo bit)]
-        (cond
-          ; nothing
-          (zero? (bit-or hi lo)) node
-          ; a node
-          (zero? (bit-and hi lo))
-          (let [^BitmapNode child (aget arr idx)
-                ^BitmapNode new-child (.inode_without child (+ shift 5) h k)]
-            (cond
-              (identical? child new-child) node
-              ;; new-child is just made of a kv: inline it!
-              (and (== 1 (.-cnt new-child)) (zero? (bit-xor (.-bitmap_hi new-child) (.-bitmap_lo new-child))))
-              (let [k (aget (.-arr new-child) 0)
-                    v (aget (.-arr new-child) 1)
-                    size (inc (u32x2-bit-count bitmap-hi bitmap-lo))
-                    new-arr (.filled #/(List dynamic) size v)]
-                (dotimes [i idx] (aset new-arr i (aget arr i)))
-                (aset new-arr idx k)
-                (loop [^int j (inc idx) ^int i (inc j)]
-                  (when (< i size)
-                    (aset new-arr i (aget arr j))
-                    (recur (inc j) (inc i))))
-                (BitmapNode. (dec cnt) (bit-or bitmap-hi bit) (bit-or bitmap-lo bit) new-arr))
-              :else
-              (BitmapNode. (dec cnt) bitmap-hi bitmap-lo (doto (aclone (.-arr node)) (aset idx new-child)))))
-          ; a kv pair but not the right k
-          (not (= k (aget arr idx))) node
-          ; the right kv pair
-          :else
-          (let [size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
-                new-arr (.filled #/ (List dynamic) size nil)]
-            (dotimes [i idx] (aset new-arr i (aget arr i)))
-            (loop [^int i idx ^int j (+ 2 idx)]
-              (when (< i size)
-                (aset new-arr i (aget arr j))
-                (recur (inc i) (inc j))))
-            (BitmapNode. (dec cnt) (bit-xor bitmap-hi bit) (bit-xor bitmap-lo bit) new-arr))))
-      ; collisions node
-      (let [n (* 2 cnt)]
-        (loop [^int i 0]
+  (inode_lookup [node ^int shift ^int h k not-found]
+    (loop [^BitmapNode node node
+           ^int shift shift]
+      (if (< shift 32)
+        ; regular
+        (let [bitmap-hi (.-bitmap_hi node)
+              bitmap-lo (.-bitmap_lo node)
+              n (bit-and (u32-bit-shift-right h shift) 31)
+              bit (u32-bit-shift-left 1 n)
+              mask (dec bit)
+              idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
+              hi (bit-and bitmap-hi bit)
+              lo (bit-and bitmap-lo bit)]
           (cond
-            (== i n) node
-            (= (aget arr i) k)
-            (let [n-2 (- n 2)
-                  new-arr (ashrink arr n-2)]
-              (when-not (== i n-2)
-                (aset new-arr i (aget arr n-2))
-                (aset new-arr (inc i) (aget arr (inc n-2))))
-              (BitmapNode. (dec cnt) 0 0 new-arr))
-            :else (recur (+ 2 i)))))))
-  (^BitmapNode inode_assoc [node ^int shift ^int h k v]
-    (if (< shift 32)
-      ; regular node
-      (let [n (bit-and (u32-bit-shift-right h shift) 31)
-            bit (u32-bit-shift-left 1 n)
-            mask (dec bit)
-            idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
-            hi (bit-and bitmap-hi bit)
-            lo (bit-and bitmap-lo bit)]
-        (cond
-          (zero? (bit-or hi lo)) ; nothing
-          (let [size (+ 2 (u32x2-bit-count bitmap-hi bitmap-lo))
-                new-arr (.filled #/(List dynamic) size v)]
-            (dotimes [i idx] (aset new-arr i (aget arr i)))
-            (aset new-arr idx k)
-            (loop [^int i (+ 2 idx) ^int j idx]
-              (when (< i size)
-                (aset new-arr i (aget arr j))
-                (recur (inc i) (inc j))))
-            (BitmapNode. (inc cnt) (bit-or bitmap-hi bit) (bit-or bitmap-lo bit) new-arr))
-          (zero? (bit-and hi lo)) ; node
-          (let [^BitmapNode child (aget arr idx)
-                ^BitmapNode new-child (.inode_assoc child (+ shift 5) h k v)]
-            (if (identical? child new-child)
-              node
-              (BitmapNode. (+ cnt (- (.-cnt new-child) (.-cnt child)))
-                bitmap-hi bitmap-lo
-                (doto (aclone (.-arr node)) (aset idx new-child)))))
-          :else ; kv
-          (let [k' (aget arr idx)
-                v' (aget arr (inc idx))]
+            (zero? (bit-or hi lo)) ; nothing
+            not-found
+            (zero? (bit-and hi lo)) ; node
+            (recur (aget (.-arr node) idx) (+ 5 shift))
+            :else ; kv
+            (let [arr (.-arr node)
+                  k' (aget arr idx)]
+              (if (= k' k) (aget arr (inc idx)) not-found))))
+        ; collisions node
+        (let [n (* 2 cnt)
+              arr (.-arr node)]
+          (loop [^int i 0]
             (cond
-              ;; TODO not=
-              (not (= k' k))
-              (let [size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
-                    shift' (+ 5 ^int shift)
-                    n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
-                    bit' (u32-bit-shift-left 1 n')
-                    ; create a new child node with extra padding for the new kv pair and then
-                    ; mute is (it's safe it hasn't been shared yet) to assoc the new kv pair
-                    new-node (-> (BitmapNode. 1 bit' bit' #dart ^:fixed [k' v' nil nil]) (.inode_assoc_transient shift' h k v))
-                    new-arr (.filled #/(List dynamic) size new-node)]
-                (dotimes [i idx] (aset new-arr i (aget arr i)))
-                (loop [^int i (inc idx) ^int j (inc i)]
-                  (when (< i size)
-                    (aset new-arr i (aget arr j))
-                    (recur (inc i) (inc j))))
-                (BitmapNode. (inc cnt) (bit-xor bitmap-hi bit) bitmap-lo new-arr))
-              (identical? v v') node
-              :else
-              (BitmapNode. cnt bitmap-hi bitmap-lo (doto (aclone arr) (aset (inc idx) v)))))))
-      ; collisions node
-      (let [n (* 2 cnt)]
-        (loop [^int i 0]
-          (cond
-            (== i n)
-            (BitmapNode. (inc cnt) 0 0 (doto (aresize arr n (+ 2 n) v) (aset n k)))
-            (= (aget arr i) k)
-            (let [i+1 (inc i)]
-              (if (identical? (aget arr i+1) v)
-                node
-                (BitmapNode. cnt 0 0 (doto (aclone arr) (aset i+1 v)))))
-            :else (recur (+ 2 i)))))))
-  (^BitmapNode inode_merge [a ^int shift ^BitmapNode b]
-    (cond
-      (identical? a b) a
-      (< shift 32)
-      (let [a-kvs (bit-and bitmap-hi bitmap-lo)
-            a-nodes (bit-xor bitmap-hi bitmap-lo)
-            b-kvs (bit-and (.-bitmap_hi b) (.-bitmap_lo b))
-            b-nodes (bit-xor (.-bitmap_hi b) (.-bitmap_lo b))
-            all-sure-nodes (bit-or a-nodes b-nodes) ; underestimate collisions
-            all-maybe-kvs (bit-or a-kvs b-kvs) ; underestimate collisions
-            a-set (bit-or a-kvs a-nodes)
-            b-set (bit-or b-kvs b-nodes)
-            n-set (bit-or a-set b-set)
-            new-arr-size (u32x2-bit-count all-maybe-kvs n-set) ; overestimate size
-            new-arr (#/(List/filled dynamic) new-arr-size nil)
-            barr (.-arr b)]
-        (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int bit 1 ^int kvs 0 ^int cnt 0]
-          (cond
-            (zero? bit) ; done
-            (BitmapNode. cnt kvs n-set new-arr)
-
-            (zero? (bit-and bit a-set)) ; no a
-            (cond
-              (zero? (bit-and bit b-set))  ; no b either, skip
-              (recur ni ai bi (u32-bit-shift-left bit 1) kvs cnt)
-
-              (zero? (bit-and bit b-kvs)) ; b's node
-              (let [bnode ^BitmapNode (aget barr bi)]
-                (doto new-arr
-                  (aset ni bnode))
-                (recur (+ 1 ni) ai (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt bnode))))
-
-              :else
-              (do ; b's kv
-                (doto new-arr
-                  (aset ni (aget barr bi))
-                  (aset (inc ni) (aget barr (inc bi))))
-                (recur (+ 2 ni) ai (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
-
-
-            (zero? (bit-and bit b-set)) ; no b, only a
-            (if (zero? (bit-and bit a-kvs)) ; a's node
-              (let [anode ^BitmapNode (aget arr ai)]
-                (doto new-arr
-                  (aset ni anode))
-                (recur (+ 1 ni) (+ 1 ai) bi (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt anode))))
-              (do ; a's kv
-                (doto new-arr
-                  (aset ni (aget arr ai))
-                  (aset (inc ni) (aget arr (inc ai))))
-                (recur (+ 2 ni) (+ 2 ai) bi (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
-
-            ; a and b are set
-            (zero? (bit-and bit a-kvs)) ; a's node
-            (if (zero? (bit-and bit b-kvs))
-              ; node vs node
-              (let [node (.inode_merge ^BitmapNode (aget arr ai) (+ 5 shift) (aget barr bi))]
-                (doto new-arr
-                  (aset ni node))
-                (recur (+ 1 ni) (+ 1 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
-              ; a's node vs b's kv
-              (let [k (aget barr bi)
-                    v (aget barr (inc bi))
-                    node (.inode_assoc ^BitmapNode (aget arr ai) (+ 5 shift) (hash k) k v)]
-                (doto new-arr
-                  (aset ni node))
-                (recur (+ 1 ni) (+ 1 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node)))))
-
-            ; a is kv
-            (zero? (bit-and bit b-kvs)) ; b's node
-            (let [bnode ^BitmapNode (aget barr bi)
-                  k (aget arr ai)
-                  shift+5 (+ 5 shift)
-                  node
-                  (cond-> bnode
-                    (identical? bnode (.inode_lookup bnode shift+5 k bnode)) (.inode_assoc shift+5 (hash k) k (aget arr (inc ai))))]
-              (doto new-arr
-                (aset ni node))
-              (recur (+ 1 ni) (+ 2 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
-
-            :else ; kv vs kv
-            (let [ak (aget arr ai)
-                  bk (aget barr bi)
-                  bv (aget barr (inc bi))]
-              (if (= ak bk)
-                (do
-                  (doto new-arr
-                    (aset ni bk)
-                    (aset (inc ni) bv))
-                  (recur (+ 2 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt)))
-                (let [shift+5 (+ 5 shift)
-                      node (->
-                             (BitmapNode. 0 0 0 (#/(List/filled dynamic) 4 nil))
-                             (.inode_assoc_transient shift+5 (hash ak) ak (aget arr (inc ai)))
-                             (.inode_assoc_transient shift+5 (hash bk) bk bv))]
-                  (doto new-arr
-                    (aset ni node))
-                  (recur (+ 1 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ 2 cnt))))))))
-      :else ; collision node
-      (let [n (* 2 (.-cnt b))
-            arr (.-arr b)]
-        (loop [node a ^int i 0]
-          (if (== i n)
-            node
-            (recur (.inode_assoc a shift 0 ; 👈 hash doesn't matter for collision node's assoc
-                     (aget arr i) (aget arr (inc i))) (+ 2 i)))))))
-  (^BitmapNode inode_assoc_transient [node ^int shift ^int h k v]
-    (if (< shift 32)
-      ; regular node
-      (let  [n (bit-and (u32-bit-shift-right h shift) 31)
+              (== i n) not-found
+              (= (aget arr i) k) (aget arr (inc i))
+              :else (recur (+ 2 i))))))))
+  (^#/(MapEntry? K V) #/(inode_entry_at K V) [node ^int shift ^int h k]
+   (loop [^BitmapNode node node
+          ^int shift shift]
+     (if (< shift 32)
+       ; regular
+       (let [bitmap-hi (.-bitmap_hi node)
+             bitmap-lo (.-bitmap_lo node)
+             n (bit-and (u32-bit-shift-right h shift) 31)
              bit (u32-bit-shift-left 1 n)
              mask (dec bit)
              idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
              hi (bit-and bitmap-hi bit)
              lo (bit-and bitmap-lo bit)]
-        (cond
-          (zero? (bit-or hi lo)) ; nothing
-          (let [net-size (u32x2-bit-count bitmap-hi bitmap-lo)
-                net-size' (+ 2 net-size)
-                idx' (inc idx)
-                from-arr arr]
-            (when (< (.-length arr) net-size')
-              (set! arr (aresize arr net-size (inc (bit-or 7 (dec net-size'))) nil)))
-            (loop [^int i (dec net-size') ^int j (dec net-size)]
-              (when (< idx' i)
-                (aset arr i (aget from-arr j))
-                (recur (dec i) (dec j))))
-            (aset arr idx k)
-            (aset arr idx' v)
-            (set! cnt (inc cnt))
-            (set! bitmap-hi (bit-or bitmap-hi bit))
-            (set! bitmap-lo (bit-or bitmap-lo bit)))
-          (zero? (bit-and hi lo)) ; node
-          (let [^BitmapNode child (aget arr idx)
-                child
-                (if (zero? hi)
-                  ; if child node is not owned
-                  (let [cbitmap-hi (.-bitmap_hi child)
-                        cbitmap-lo (.-bitmap_lo child)
-                        owned-child (BitmapNode. (.-cnt child) (bit-and cbitmap-hi cbitmap-lo) (bit-or cbitmap-hi cbitmap-lo) (aclone (.-arr child)))]
-                    (aset arr idx owned-child)
-                    ; mark as owned
-                    (set! bitmap-hi (bit-xor hi bitmap-hi))
-                    (set! bitmap-lo (bit-xor hi bitmap-lo))
-                    owned-child)
-                  ; if child node is owned
-                  child)
-                old-cnt-child (.-cnt child)]
-            (.inode_assoc_transient child (+ shift 5) h k v)
-            (set! cnt (+ cnt (- (.-cnt child) old-cnt-child))))
-          :else ; kv
-          (let [k' (aget arr idx)
-                v' (aget arr (inc idx))]
-            (cond
-              ;; TODO not=
-              (not (= k' k))
-              (let [net-size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
-                    gross-size (bit-and -8 (+ 7 net-size))
-                    shift' (+ 5 ^int shift)
-                    n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
-                    bit' (u32-bit-shift-left 1 n')
-                    new-node (-> (BitmapNode. 1 bit' bit' (doto (.filled #/(List dynamic) 8 nil) (aset 0 k') (aset 1 v')))
-                               (.inode_assoc_transient shift' h k v))
-                    from-arr arr]
-                (when (< gross-size (.-length arr))
-                  (set! arr (aresize arr idx gross-size nil)))
-                (aset arr idx new-node)
-                (loop [^int i (inc idx) ^int j (inc i)]
-                  (when (< i net-size)
-                    (aset arr i (aget from-arr j))
-                    (recur (inc i) (inc j))))
-                (when (< net-size gross-size) (aset arr net-size nil))
-                (set! cnt (inc cnt))
-                (set! bitmap-lo (bit-xor bitmap-lo lo)))
-              (identical? v v') node
-              :else
-              (aset arr (inc idx) v))))
-        node)
-      ;; collisions node
-      (let [n (* 2 cnt)]
-        (loop [^int i 0]
-          (cond
-            (== i n)
-            (do
-              (set! cnt (inc cnt))
-              (if-not (< i (.-length arr)) ; assuming length is even
-                (set! arr (doto (aresize arr i (+ 4 i) v) (aset i k)))
-                (doto arr (aset i k) (aset (inc i) v))))
-            (= (aget arr i) k)
-            (let [i+1 (inc i)]
-              (aset arr i+1 v))
-            :else (recur (+ 2 i))))
-        node)))
-  (^BitmapNode inode_without_transient [node ^int shift ^int h k]
-    (if (< shift 32)
-      (let [n (bit-and (u32-bit-shift-right h shift) 31)
+         (cond
+           (zero? (bit-or hi lo)) nil ; nothing
+           (zero? (bit-and hi lo))    ; node
+           (recur (aget (.-arr node) idx) (+ 5 shift))
+           :else ; kv
+           (let [arr (.-arr node)
+                 k' (aget arr idx)]
+             (when (= k k') (#/(MapEntry K V) k' (aget arr (inc idx)))))))
+       ; collisions node
+       (let [n (* 2 cnt)
+             arr (.-arr node)]
+         (loop [^int i 0]
+           (when (< i n)
+             (let [k' (aget arr i)]
+               (if (= k k')
+                 (MapEntry k' (aget arr (inc i)))
+                 (recur (+ 2 i))))))))))
+  (^BitmapNode inode_without [node ^int shift ^int h k]
+   (if (< shift 32)
+     (let [n (bit-and (u32-bit-shift-right h shift) 31)
+           bit (u32-bit-shift-left 1 n)
+           mask (dec bit)
+           idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
+           hi (bit-and bitmap-hi bit)
+           lo (bit-and bitmap-lo bit)]
+       (cond
+         ; nothing
+         (zero? (bit-or hi lo)) node
+         ; a node
+         (zero? (bit-and hi lo))
+         (let [^BitmapNode child (aget arr idx)
+               ^BitmapNode new-child (.inode_without child (+ shift 5) h k)]
+           (cond
+             (identical? child new-child) node
+             ;; new-child is just made of a kv: inline it!
+             (and (== 1 (.-cnt new-child)) (zero? (bit-xor (.-bitmap_hi new-child) (.-bitmap_lo new-child))))
+             (let [k (aget (.-arr new-child) 0)
+                   v (aget (.-arr new-child) 1)
+                   size (inc (u32x2-bit-count bitmap-hi bitmap-lo))
+                   new-arr (.filled #/(List dynamic) size v)]
+               (dotimes [i idx] (aset new-arr i (aget arr i)))
+               (aset new-arr idx k)
+               (loop [^int j (inc idx) ^int i (inc j)]
+                 (when (< i size)
+                   (aset new-arr i (aget arr j))
+                   (recur (inc j) (inc i))))
+               (BitmapNode. (dec cnt) (bit-or bitmap-hi bit) (bit-or bitmap-lo bit) new-arr))
+             :else
+             (BitmapNode. (dec cnt) bitmap-hi bitmap-lo (doto (aclone (.-arr node)) (aset idx new-child)))))
+         ; a kv pair but not the right k
+         (not (= k (aget arr idx))) node
+         ; the right kv pair
+         :else
+         (let [size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
+               new-arr (.filled #/ (List dynamic) size nil)]
+           (dotimes [i idx] (aset new-arr i (aget arr i)))
+           (loop [^int i idx ^int j (+ 2 idx)]
+             (when (< i size)
+               (aset new-arr i (aget arr j))
+               (recur (inc i) (inc j))))
+           (BitmapNode. (dec cnt) (bit-xor bitmap-hi bit) (bit-xor bitmap-lo bit) new-arr))))
+     ; collisions node
+     (let [n (* 2 cnt)]
+       (loop [^int i 0]
+         (cond
+           (== i n) node
+           (= (aget arr i) k)
+           (let [n-2 (- n 2)
+                 new-arr (ashrink arr n-2)]
+             (when-not (== i n-2)
+               (aset new-arr i (aget arr n-2))
+               (aset new-arr (inc i) (aget arr (inc n-2))))
+             (BitmapNode. (dec cnt) 0 0 new-arr))
+           :else (recur (+ 2 i)))))))
+  (^BitmapNode inode_assoc [node ^int shift ^int h k v]
+   (if (< shift 32)
+     ; regular node
+     (let [n (bit-and (u32-bit-shift-right h shift) 31)
+           bit (u32-bit-shift-left 1 n)
+           mask (dec bit)
+           idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
+           hi (bit-and bitmap-hi bit)
+           lo (bit-and bitmap-lo bit)]
+       (cond
+         (zero? (bit-or hi lo)) ; nothing
+         (let [size (+ 2 (u32x2-bit-count bitmap-hi bitmap-lo))
+               new-arr (.filled #/(List dynamic) size v)]
+           (dotimes [i idx] (aset new-arr i (aget arr i)))
+           (aset new-arr idx k)
+           (loop [^int i (+ 2 idx) ^int j idx]
+             (when (< i size)
+               (aset new-arr i (aget arr j))
+               (recur (inc i) (inc j))))
+           (BitmapNode. (inc cnt) (bit-or bitmap-hi bit) (bit-or bitmap-lo bit) new-arr))
+         (zero? (bit-and hi lo)) ; node
+         (let [^BitmapNode child (aget arr idx)
+               ^BitmapNode new-child (.inode_assoc child (+ shift 5) h k v)]
+           (if (identical? child new-child)
+             node
+             (BitmapNode. (+ cnt (- (.-cnt new-child) (.-cnt child)))
+               bitmap-hi bitmap-lo
+               (doto (aclone (.-arr node)) (aset idx new-child)))))
+         :else ; kv
+         (let [k' (aget arr idx)
+               v' (aget arr (inc idx))]
+           (cond
+             ;; TODO not=
+             (not (= k' k))
+             (let [size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
+                   shift' (+ 5 ^int shift)
+                   n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
+                   bit' (u32-bit-shift-left 1 n')
+                   ; create a new child node with extra padding for the new kv pair and then
+                   ; mute is (it's safe it hasn't been shared yet) to assoc the new kv pair
+                   new-node (-> (BitmapNode. 1 bit' bit' #dart ^:fixed [k' v' nil nil]) (.inode_assoc_transient shift' h k v))
+                   new-arr (.filled #/(List dynamic) size new-node)]
+               (dotimes [i idx] (aset new-arr i (aget arr i)))
+               (loop [^int i (inc idx) ^int j (inc i)]
+                 (when (< i size)
+                   (aset new-arr i (aget arr j))
+                   (recur (inc i) (inc j))))
+               (BitmapNode. (inc cnt) (bit-xor bitmap-hi bit) bitmap-lo new-arr))
+             (identical? v v') node
+             :else
+             (BitmapNode. cnt bitmap-hi bitmap-lo (doto (aclone arr) (aset (inc idx) v)))))))
+     ; collisions node
+     (let [n (* 2 cnt)]
+       (loop [^int i 0]
+         (cond
+           (== i n)
+           (BitmapNode. (inc cnt) 0 0 (doto (aresize arr n (+ 2 n) v) (aset n k)))
+           (= (aget arr i) k)
+           (let [i+1 (inc i)]
+             (if (identical? (aget arr i+1) v)
+               node
+               (BitmapNode. cnt 0 0 (doto (aclone arr) (aset i+1 v)))))
+           :else (recur (+ 2 i)))))))
+  (^BitmapNode inode_merge [a ^int shift ^BitmapNode b]
+   (cond
+     (identical? a b) a
+     (< shift 32)
+     (let [a-kvs (bit-and bitmap-hi bitmap-lo)
+           a-nodes (bit-xor bitmap-hi bitmap-lo)
+           b-kvs (bit-and (.-bitmap_hi b) (.-bitmap_lo b))
+           b-nodes (bit-xor (.-bitmap_hi b) (.-bitmap_lo b))
+           all-maybe-kvs (bit-or a-kvs b-kvs) ; underestimate collisions
+           a-set (bit-or a-kvs a-nodes)
+           b-set (bit-or b-kvs b-nodes)
+           n-set (bit-or a-set b-set)
+           new-arr-size (u32x2-bit-count all-maybe-kvs n-set) ; overestimate size
+           new-arr (#/(List/filled dynamic) new-arr-size nil)
+           barr (.-arr b)]
+       (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int bit 1 ^int kvs 0 ^int cnt 0]
+         (cond
+           (zero? bit) ; done
+           (BitmapNode. cnt kvs n-set new-arr)
+
+           (zero? (bit-and bit a-set)) ; no a
+           (cond
+             (zero? (bit-and bit b-set)) ; no b either, skip
+             (recur ni ai bi (u32-bit-shift-left bit 1) kvs cnt)
+
+             (zero? (bit-and bit b-kvs)) ; b's node
+             (let [bnode ^BitmapNode (aget barr bi)]
+               (doto new-arr
+                 (aset ni bnode))
+               (recur (+ 1 ni) ai (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt bnode))))
+
+             :else
+             (do ; b's kv
+               (doto new-arr
+                 (aset ni (aget barr bi))
+                 (aset (inc ni) (aget barr (inc bi))))
+               (recur (+ 2 ni) ai (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
+
+
+           (zero? (bit-and bit b-set))     ; no b, only a
+           (if (zero? (bit-and bit a-kvs)) ; a's node
+             (let [anode ^BitmapNode (aget arr ai)]
+               (doto new-arr
+                 (aset ni anode))
+               (recur (+ 1 ni) (+ 1 ai) bi (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt anode))))
+             (do ; a's kv
+               (doto new-arr
+                 (aset ni (aget arr ai))
+                 (aset (inc ni) (aget arr (inc ai))))
+               (recur (+ 2 ni) (+ 2 ai) bi (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
+
+           ; a and b are set
+           (zero? (bit-and bit a-kvs)) ; a's node
+           (if (zero? (bit-and bit b-kvs))
+             ; node vs node
+             (let [node (.inode_merge ^BitmapNode (aget arr ai) (+ 5 shift) (aget barr bi))]
+               (doto new-arr
+                 (aset ni node))
+               (recur (+ 1 ni) (+ 1 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
+             ; a's node vs b's kv
+             (let [k (aget barr bi)
+                   v (aget barr (inc bi))
+                   node (.inode_assoc ^BitmapNode (aget arr ai) (+ 5 shift) (hash k) k v)]
+               (doto new-arr
+                 (aset ni node))
+               (recur (+ 1 ni) (+ 1 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node)))))
+
+           ; a is kv
+           (zero? (bit-and bit b-kvs)) ; b's node
+           (let [bnode ^BitmapNode (aget barr bi)
+                 k (aget arr ai)
+                 h (hash k)
+                 shift+5 (+ 5 shift)
+                 node
+                 (cond-> bnode
+                   (identical? bnode (.inode_lookup bnode shift+5 h k bnode))
+                   (.inode_assoc shift+5 h k (aget arr (inc ai))))]
+             (doto new-arr
+               (aset ni node))
+             (recur (+ 1 ni) (+ 2 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
+
+           :else ; kv vs kv
+           (let [ak (aget arr ai)
+                 bk (aget barr bi)
+                 bv (aget barr (inc bi))]
+             (if (= ak bk)
+               (do
+                 (doto new-arr
+                   (aset ni bk)
+                   (aset (inc ni) bv))
+                 (recur (+ 2 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt)))
+               (let [shift+5 (+ 5 shift)
+                     node (->
+                            (BitmapNode. 0 0 0 (#/(List/filled dynamic) 4 nil))
+                            (.inode_assoc_transient shift+5 (hash ak) ak (aget arr (inc ai)))
+                            (.inode_assoc_transient shift+5 (hash bk) bk bv))]
+                 (doto new-arr
+                   (aset ni node))
+                 (recur (+ 1 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ 2 cnt))))))))
+     :else ; collision node
+     (let [n (* 2 (.-cnt b))
+           arr (.-arr b)]
+       (loop [node a ^int i 0]
+         (if (== i n)
+           node
+           (recur (.inode_assoc a shift 0 ; 👈 hash doesn't matter for collision node's assoc
+                    (aget arr i) (aget arr (inc i))) (+ 2 i)))))))
+  (^BitmapNode inode_join_with [a ^int shift ^BitmapNode b ^some combine ^some fa ^some fb del]
+   (else->>
+     (if-not (< shift 32)
+       ; collision node
+       (else->>
+         (let [n (* 2 (.-cnt b))
+               barr (.-arr b)])
+
+         (loop [node a ^int i 0])
+
+         (if (== i n) node)
+
+         (let [kb (aget barr i)
+               vb (aget barr (inc i))
+               ; 0 because hash doesn't matter for collision node's assoc
+               va (.inode_lookup a shift 0 kb a)
+               v (cond->> vb
+                   (not (identical? a va)) (combine va))
+               a (if (identical? del v)
+                   (.inode_without a shift 0 kb)
+                   (.inode_assoc a shift 0 kb v))])
+
+         (recur a (+ 2 i))))
+
+     ; regular node
+     (let [barr (.-arr b)
+           a-kvs (bit-and bitmap-hi bitmap-lo)
+           a-nodes (bit-xor bitmap-hi bitmap-lo)
+           b-kvs (bit-and (.-bitmap_hi b) (.-bitmap_lo b))
+           b-nodes (bit-xor (.-bitmap_hi b) (.-bitmap_lo b))
+           a-set (bit-or a-kvs a-nodes)
+           b-set (bit-or b-kvs b-nodes)
+           n-set (bit-or a-set b-set)
+           new-arr-size (cond
+                          (zero? a-set) (.-length barr)
+                          (zero? b-set) (.-length arr)
+                          ; overestimate
+                          :else (* 2 (u32-bit-count (bit-or a-set b-set))))
+           new-arr (#/(List/filled dynamic) new-arr-size nil)])
+
+     (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int bit 1 ^int hi 0 ^int lo 0 ^int cnt 0])
+
+     (if (zero? bit) ; done
+       (BitmapNode. cnt hi lo new-arr))
+
+     (let [no-a (zero? (bit-and bit a-set))
+           no-b (zero? (bit-and bit b-set))])
+
+     (if no-a
+       (else->>
+         (if no-b (step-join)) ; nothing
+         ; only b
+         (let [b-is-node (zero? (bit-and bit b-kvs))])
+         (if (nil? fb) ; not interested in b alone, skip
+           (step-join :dbi (if b-is-node 1 2)))
+         (let [bnode-or-k (aget barr bi)])
+         (if-not b-is-node
+           (let [v (fb (aget barr (inc bi)))]
+             (if (identical? del v)
+               (step-join :dbi 2)
+               (step-join :darr [bnode-or-k v] :dbi 2))))
+         (if (identical? identity fb)
+           (step-join :darr [^BitmapNode bnode-or-k] :dbi 1))
+         (let [node (.inode_join_with ^BitmapNode bnode-or-k (+ 5 shift) -EMPTY-BITMAP-NODE nil fb nil del)])
+         (case (.-cnt node)
+           0 (step-join :dbi 1)
+           1 (let [arr (.-arr node)]
+               (step-join :darr [(aget arr 0) (aget arr 1)] :dbi 1))
+           (step-join :darr [node] :dbi 1))))
+
+     (if no-b
+       (else->>
+         ; only a
+         (let [a-is-node (zero? (bit-and bit a-kvs))])
+         (if-not fa ; not interested in a alone, skip
+           (step-join :dai (if a-is-node 1 2)))
+         (let [anode-or-k (aget arr ai)])
+         (if-not a-is-node
+           (let [v (fa (aget arr (inc ai)))]
+             (if (identical? del v)
+               (step-join :dai 2)
+               (step-join :darr [anode-or-k v] :dai 2))))
+         (if (identical? identity fa)
+           (step-join :darr [^BitmapNode anode-or-k] :dai 1))
+         (let [node (.inode_join_with ^BitmapNode anode-or-k (+ 5 shift) -EMPTY-BITMAP-NODE nil fa nil del)])
+         (case (.-cnt node)
+           0 (step-join :dai 1)
+           1 (let [arr (.-arr node)]
+               (step-join :darr [(aget arr 0) (aget arr 1)] :dai 1))
+           (step-join :darr [node] :dai 1))))
+
+     ; a and b are set
+     (let [a-is-node (zero? (bit-and bit a-kvs))
+           b-is-node (zero? (bit-and bit b-kvs))
+           anode-or-k (aget arr ai)
+           bnode-or-k (aget barr bi)])
+
+     (do
+       (assert (= a-is-node (instance? BitmapNode anode-or-k)))
+       (assert (= b-is-node (instance? BitmapNode bnode-or-k)))
+       )
+
+     (if (and (nil? combine) (identical? anode-or-k bnode-or-k))
+       ; not interested in the intersection
+       (step-join :dai (if a-is-node 1 2) :dbi (if b-is-node 1 2)))
+
+     (if-not (or a-is-node b-is-node)
+       ; kv vs kv
+       (else->>
+         (let [av (aget arr (inc ai))
+               bv (aget barr (inc bi))])
+         (if (= anode-or-k bnode-or-k)
+           (else->>
+             (let [v (combine av bv)])
+             (if (identical? del v)
+               (step-join :dai 2 :dbi 2))
+             (step-join :darr [bnode-or-k v] :dai 2 :dbi 2)))
+         (let [av (if fa (fa av) del)
+               bv (if fb (fb bv) del)])
+         (if (identical? del av)
+           (if (identical? del bv)
+             (step-join :dai 2 :dbi 2)
+             (step-join :darr [bnode-or-k bv] :dai 2 :dbi 2)))
+         (if (identical? del bv)
+           (step-join :darr [anode-or-k av] :dai 2 :dbi 2))
+         (let [shift+5 (+ 5 shift)
+               node (->
+                      (BitmapNode. 0 0 0 (#/(List/filled dynamic) 4 nil))
+                      (.inode_assoc_transient shift+5 (hash anode-or-k) anode-or-k av)
+                      (.inode_assoc_transient shift+5 (hash bnode-or-k) bnode-or-k bv))])
+         (step-join :darr [node] :dai 2 :dbi 2)))
+
+     ; at least one node, lift the other if needed
+     (let [shift+5 (+ 5 shift)
+           anode (if a-is-node
+                   ^BitmapNode anode-or-k
+                   (.inode_assoc -EMPTY-BITMAP-NODE
+                     shift+5 (hash anode-or-k) anode-or-k (aget arr (inc ai))))
+           bnode (if b-is-node
+                   ^BitmapNode bnode-or-k
+                   (.inode_assoc -EMPTY-BITMAP-NODE
+                     shift+5 (hash bnode-or-k) bnode-or-k (aget barr (inc bi))))
+           node (.inode_join_with anode shift+5 bnode combine fa fb del)
+           dai (if a-is-node 1 2)
+           dbi (if b-is-node 1 2)])
+
+     (case (.-cnt node)
+       0 (step-join :dai dai :dbi dbi)
+       1 (let [arr (.-arr node)]
+           (step-join :darr [(aget arr 0) (aget arr 1)] :dai dai :dbi dbi))
+       (step-join :darr [node] :dai dai :dbi dbi))))
+  (^BitmapNode inode_assoc_transient [node ^int shift ^int h k v]
+   (if (< shift 32)
+     ; regular node
+     (let  [n (bit-and (u32-bit-shift-right h shift) 31)
             bit (u32-bit-shift-left 1 n)
             mask (dec bit)
             idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
             hi (bit-and bitmap-hi bit)
             lo (bit-and bitmap-lo bit)]
-        (cond
-          ; nothing
-          (zero? (bit-or hi lo)) node
-          ; a node
-          (zero? (bit-and hi lo))
-          (let [^BitmapNode child (aget arr idx)
-                child-cnt (.-cnt child)
-                ^BitmapNode? child'
-                (if (zero? hi)
-                  (let [child' (.inode_without child (+ shift 5) h k)]
-                    (when-not (identical? child child') child'))
-                  (.inode_without_transient child (+ shift 5) h k))]
-            (when child'
-              (if (and (== 1 (.-cnt child')) (zero? (bit-xor (.-bitmap_hi child') (.-bitmap_lo child'))))
-                ; inline kv
-                (let [k (aget (.-arr child') 0)
-                      v (aget (.-arr child') 1)
-                      net-size (inc (u32x2-bit-count bitmap-hi bitmap-lo))
-                      gross-size (bit-and -8 (+ 7 net-size))
-                      from-arr arr]
-                  (when (< (.-length arr) net-size)
-                    (set! arr (aresize arr idx gross-size nil)))
-                  (loop [^int i (dec net-size) ^int i-1 (dec i)]
-                    (when (< idx i-1)
-                      (aset arr i (aget from-arr i-1))
-                      (recur i-1 (dec i-1))))
-                  (aset arr idx k)
-                  (aset arr (inc idx) v)
-                  (set! cnt (dec cnt))
-                  (set! bitmap-hi (bit-or bitmap-hi bit))
-                  (set! bitmap-lo (bit-or bitmap-lo bit)))
-                ; just update in place
-                (aset arr idx child'))))
-          ; the right kv pair
-          (= k (aget arr idx))
-          (let [net-size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
-                gross-size (bit-and -8 (+ 7 net-size))
-                from-arr arr]
-            (when (< gross-size (.-length arr))
-              (set! arr (aresize arr idx gross-size nil)))
-            (loop [^int i idx ^int j (+ 2 idx)]
-              (when (< i net-size)
-                (aset arr i (aget from-arr j))
-                (recur (inc i) (inc j))))
-            (when (identical? arr from-arr)
-              (aset arr net-size nil)
-              (aset arr (inc net-size) nil))
-            (set! cnt (dec cnt))
-            (set! bitmap-hi (bit-xor bitmap-hi bit))
-            (set! bitmap-lo (bit-xor bitmap-lo bit))))
-        node)
-      ; collisions node
-      (let [n (* 2 cnt)]
-        (loop [^int i 0]
-          (cond
-            (== i n) nil
-            (= (aget arr i) k)
-            (let [n-1 (dec n)
-                  n-2 (- n 2)
-                  i+1 (inc i)]
-              (when-not (== i n-2)
-                (doto arr
-                  (aset i (aget arr n-2))
-                  (aset i+1 (aget arr n-1))))
-              (doto arr (aset n-2 nil) (aset n-1 nil))
-              (set! cnt (dec cnt)))
-            :else (recur (+ 2 i))))
-        node))))
+       (cond
+         (zero? (bit-or hi lo)) ; nothing
+         (let [net-size (u32x2-bit-count bitmap-hi bitmap-lo)
+               net-size' (+ 2 net-size)
+               idx' (inc idx)
+               from-arr arr]
+           (when (< (.-length arr) net-size')
+             (set! arr (aresize arr net-size (inc (bit-or 7 (dec net-size'))) nil)))
+           (loop [^int i (dec net-size') ^int j (dec net-size)]
+             (when (< idx' i)
+               (aset arr i (aget from-arr j))
+               (recur (dec i) (dec j))))
+           (aset arr idx k)
+           (aset arr idx' v)
+           (set! cnt (inc cnt))
+           (set! bitmap-hi (bit-or bitmap-hi bit))
+           (set! bitmap-lo (bit-or bitmap-lo bit)))
+         (zero? (bit-and hi lo)) ; node
+         (let [^BitmapNode child (aget arr idx)
+               child
+               (if (zero? hi)
+                 ; if child node is not owned
+                 (let [cbitmap-hi (.-bitmap_hi child)
+                       cbitmap-lo (.-bitmap_lo child)
+                       owned-child (BitmapNode. (.-cnt child) (bit-and cbitmap-hi cbitmap-lo) (bit-or cbitmap-hi cbitmap-lo) (aclone (.-arr child)))]
+                   (aset arr idx owned-child)
+                   ; mark as owned
+                   (set! bitmap-hi (bit-xor hi bitmap-hi))
+                   (set! bitmap-lo (bit-xor hi bitmap-lo))
+                   owned-child)
+                 ; if child node is owned
+                 child)
+               old-cnt-child (.-cnt child)]
+           (.inode_assoc_transient child (+ shift 5) h k v)
+           (set! cnt (+ cnt (- (.-cnt child) old-cnt-child))))
+         :else ; kv
+         (let [k' (aget arr idx)
+               v' (aget arr (inc idx))]
+           (cond
+             ;; TODO not=
+             (not (= k' k))
+             (let [net-size (dec (u32x2-bit-count bitmap-hi bitmap-lo))
+                   gross-size (bit-and -8 (+ 7 net-size))
+                   shift' (+ 5 ^int shift)
+                   n' (bit-and (u32-bit-shift-right (hash k') shift') 31)
+                   bit' (u32-bit-shift-left 1 n')
+                   new-node (-> (BitmapNode. 1 bit' bit' (doto (.filled #/(List dynamic) 8 nil) (aset 0 k') (aset 1 v')))
+                              (.inode_assoc_transient shift' h k v))
+                   from-arr arr]
+               (when (< gross-size (.-length arr))
+                 (set! arr (aresize arr idx gross-size nil)))
+               (aset arr idx new-node)
+               (loop [^int i (inc idx) ^int j (inc i)]
+                 (when (< i net-size)
+                   (aset arr i (aget from-arr j))
+                   (recur (inc i) (inc j))))
+               (when (< net-size gross-size) (aset arr net-size nil))
+               (set! cnt (inc cnt))
+               (set! bitmap-lo (bit-xor bitmap-lo lo)))
+             (identical? v v') node
+             :else
+             (aset arr (inc idx) v))))
+       node)
+     ;; collisions node
+     (let [n (* 2 cnt)]
+       (loop [^int i 0]
+         (cond
+           (== i n)
+           (do
+             (set! cnt (inc cnt))
+             (if-not (< i (.-length arr)) ; assuming length is even
+               (set! arr (doto (aresize arr i (+ 4 i) v) (aset i k)))
+               (doto arr (aset i k) (aset (inc i) v))))
+           (= (aget arr i) k)
+           (let [i+1 (inc i)]
+             (aset arr i+1 v))
+           :else (recur (+ 2 i))))
+       node)))
+  (^BitmapNode inode_without_transient [node ^int shift ^int h k]
+   (if (< shift 32)
+     (let [n (bit-and (u32-bit-shift-right h shift) 31)
+           bit (u32-bit-shift-left 1 n)
+           mask (dec bit)
+           idx (u32x2-bit-count (bit-and mask bitmap-hi) (bit-and mask bitmap-lo))
+           hi (bit-and bitmap-hi bit)
+           lo (bit-and bitmap-lo bit)]
+       (cond
+         ; nothing
+         (zero? (bit-or hi lo)) node
+         ; a node
+         (zero? (bit-and hi lo))
+         (let [^BitmapNode child (aget arr idx)
+               child-cnt (.-cnt child)
+               ^BitmapNode? child'
+               (if (zero? hi)
+                 (let [child' (.inode_without child (+ shift 5) h k)]
+                   (when-not (identical? child child') child'))
+                 (.inode_without_transient child (+ shift 5) h k))]
+           (when child'
+             (if (and (== 1 (.-cnt child')) (zero? (bit-xor (.-bitmap_hi child') (.-bitmap_lo child'))))
+               ; inline kv
+               (let [k (aget (.-arr child') 0)
+                     v (aget (.-arr child') 1)
+                     net-size (inc (u32x2-bit-count bitmap-hi bitmap-lo))
+                     gross-size (bit-and -8 (+ 7 net-size))
+                     from-arr arr]
+                 (when (< (.-length arr) net-size)
+                   (set! arr (aresize arr idx gross-size nil)))
+                 (loop [^int i (dec net-size) ^int i-1 (dec i)]
+                   (when (< idx i-1)
+                     (aset arr i (aget from-arr i-1))
+                     (recur i-1 (dec i-1))))
+                 (aset arr idx k)
+                 (aset arr (inc idx) v)
+                 (set! cnt (dec cnt))
+                 (set! bitmap-hi (bit-or bitmap-hi bit))
+                 (set! bitmap-lo (bit-or bitmap-lo bit)))
+               ; just update in place
+               (aset arr idx child'))))
+         ; the right kv pair
+         (= k (aget arr idx))
+         (let [net-size (- (u32x2-bit-count bitmap-hi bitmap-lo) 2)
+               gross-size (bit-and -8 (+ 7 net-size))
+               from-arr arr]
+           (when (< gross-size (.-length arr))
+             (set! arr (aresize arr idx gross-size nil)))
+           (loop [^int i idx ^int j (+ 2 idx)]
+             (when (< i net-size)
+               (aset arr i (aget from-arr j))
+               (recur (inc i) (inc j))))
+           (when (identical? arr from-arr)
+             (aset arr net-size nil)
+             (aset arr (inc net-size) nil))
+           (set! cnt (dec cnt))
+           (set! bitmap-hi (bit-xor bitmap-hi bit))
+           (set! bitmap-lo (bit-xor bitmap-lo bit))))
+       node)
+     ; collisions node
+     (let [n (* 2 cnt)]
+       (loop [^int i 0]
+         (cond
+           (== i n) nil
+           (= (aget arr i) k)
+           (let [n-1 (dec n)
+                 n-2 (- n 2)
+                 i+1 (inc i)]
+             (when-not (== i n-2)
+               (doto arr
+                 (aset i (aget arr n-2))
+                 (aset i+1 (aget arr n-1))))
+             (doto arr (aset n-2 nil) (aset n-1 nil))
+             (set! cnt (dec cnt)))
+           :else (recur (+ 2 i))))
+       node))))
 
 (comment
   (defn p-assoc [{:keys [nodes kvs] :as input}]
@@ -5056,11 +5363,11 @@
   (-lookup [tcoll k not-found]
     (when-not editable
       (throw (ArgumentError. "lookup after persistent!")))
-    (.inode_lookup root 0 k not-found))
+    (.inode_lookup root 0 (hash k) k not-found))
   (-contains-key? [tcoll k]
     (when-not editable
       (throw (ArgumentError. "lookup after persistent!")))
-    (not (identical? root (.inode_lookup root 0 k root))))
+    (not (identical? root (.inode_lookup root 0 (hash k) k root))))
   IFn
   (-invoke [tcoll k]
     (-lookup tcoll k))
@@ -5194,6 +5501,7 @@
       (let [root' (.-root ^PersistentHashMap entry)]
         (if (pos? (.-cnt root'))
           (PersistentHashMap meta (.inode_merge root 0 root') -1)
+          #_(PersistentHashMap meta (.inode_join_with root 0 root' (fn [_ x] x) identity identity root') -1)
           coll))
 
       :else
@@ -5218,15 +5526,12 @@
   (-lookup [coll k]
     (-lookup coll k nil))
   (-lookup [coll k not-found]
-    (.inode_lookup root 0 k not-found))
+    (.inode_lookup root 0  (hash k) k not-found))
   (-contains-key? [coll k]
     (not (identical? (-lookup coll k coll) coll)))
   IFind
   (-find [coll k]
-    ;; NOTE: `coll` is used as a local sentinel here
-    (let [v (-lookup coll k coll)]
-      (when-not (identical? coll v) ; FIXME too much of a shortcut?
-        (new #/(MapEntry K V) k v))))
+    (#/(.inode_entry_at K V) root 0 (hash k) k))
   IMap
   (-dissoc [coll k]
     (let [new-root (.inode_without root 0 (hash k) k)]
@@ -5272,10 +5577,18 @@
       ;  0 |  1 |     0     |     1
       ;  1 |  1 |     1     |     1
       ;  1 |  0 |     0     |     1
-      (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil))))))
+      (TransientHashMap. true (BitmapNode. (.-cnt root) (bit-and bitmap-hi bitmap-lo) (bit-or bitmap-hi bitmap-lo) (aresize (.-arr root) net-size gross-size nil)))))
+  IJoinable
+  (-join-with [a b combine fa fb del]
+    (when-some [broot (cond
+                        (nil? b) -EMPTY-BITMAP-NODE
+                        (instance? PersistentHashMap b) (.-root ^PersistentHashMap b)
+                        (instance? PersistentHashSet b) (-> ^PersistentHashSet b .-hm .-root))]
+      (let [new-root (.inode_join_with root 0 broot combine fa fb del)]
+        (PersistentHashMap meta new-root -1)))))
 
 (def ^PersistentHashMap -EMPTY-MAP
-  (PersistentHashMap. nil (BitmapNode. 0 0 0 (.empty List)) -1))
+  (PersistentHashMap. nil -EMPTY-BITMAP-NODE -1))
 
 (defn merge
   "Returns a map that consists of the rest of the maps conj-ed onto
@@ -5293,12 +5606,13 @@
   [f & maps]
   (when (some identity maps)
     (let [merge-entry (fn [m e]
-			(let [k (key e) v (val e)]
-			  (if (contains? m k)
-			    (assoc m k (f (get m k) v))
-			    (assoc m k v))))
+			                  (let [k (key e) v (val e)]
+			                    (if (contains? m k)
+			                      (assoc m k (f (get m k) v))
+			                      (assoc m k v))))
           merge2 (fn [m1 m2]
-		   (reduce merge-entry (or m1 {}) (seq m2)))]
+                   (or (-join-with m1 m2 f identity identity ^:unique (Object))
+		                 (reduce merge-entry (or m1 {}) (seq m2))))]
       (reduce merge2 maps))))
 
 (defn keys
@@ -5394,7 +5708,21 @@
       1 (-lookup coll (first more))
       2 (-lookup coll (first more) (second more))))
   IEditableCollection
-  (-as-transient [coll] (TransientHashSet. (-as-transient hm))))
+  (-as-transient [coll] (TransientHashSet. (-as-transient hm)))
+  IJoinable
+  (-join-with [a b combine fa fb del]
+    (if (or (set? b) (nil? b))
+      ; ensure the resulting backing hm entries are all [k k]
+      (let [combine (when combine
+                      (fn [a b]
+                        (if (identical? del (combine a b))
+                          del
+                          b)))
+            fa (when (some? fa) identity)
+            fb (when (some? fb) identity)]
+        (PersistentHashSet. meta (-join-with hm b combine fa fb del) -1))
+      (cond-> (-join-with hm b combine fa fb del)
+          meta (with-meta meta)))))
 
 (deftype TransientHashSet [^:mutable ^TransientHashMap transient-map]
   ;; all editability checks are performed by the transient map
@@ -6929,7 +7257,7 @@
         (recur (-conj l (aget xs i)) i)))))
 
 (defn ^PersistentVector -vec-owning [^List xs]
-  (assert (<= (count xs) 32))
+  #_(assert (<= (count xs) 32))
   (PersistentVector. nil (count xs) 5 (.-root -EMPTY-VECTOR) xs -1))
 
 (def ^:private ^math/Random RNG (math/Random.))
@@ -7842,14 +8170,16 @@ specified.
   Given a map m and a function f of 1-argument, returns a new map where the keys of m
   are mapped to result of applying f to the corresponding values of m."
   [m f]
-  (with-meta
-    (persistent!
-      (reduce-kv (fn [acc k v] (assoc! acc k (f v)))
-        (if (satisfies? IEditableCollection m)
-          (transient m)
-          (transient {}))
-        m))
-    (meta m)))
+  (or
+    (-join-with m nil nil f nil ^:unique (Object))
+    (with-meta
+      (persistent!
+        (reduce-kv (fn [acc k v] (assoc! acc k (f v)))
+          (if (satisfies? IEditableCollection m)
+            (transient m)
+            (transient {}))
+          m))
+      (meta m))))
 
 (defn update-keys
   "m f => {(f k) v ...}
@@ -7927,7 +8257,7 @@ specified.
   :type-only true
   TreapNode
   (^int tnode_leaf_search [node k ^#/(dynamic dynamic -> int) cmp]
-   (assert (even? (alength arr)))
+   #_(assert (even? (alength arr)))
    ; leaf, arr is kvkv...
    ; even on success, odd on failure
    (loop [^int i -1 ^int j (dec (alength arr))]
@@ -7940,7 +8270,7 @@ specified.
            :pos (recur (inc m) j)))
        i)))
   (^int tnode_branch_search [node k ^#/(dynamic dynamic -> int) cmp]
-   (assert (odd? (alength arr)))
+   #_(assert (odd? (alength arr)))
    ; inner node, arr is rkrkr...r
    ; odd on success, even on failure
    (loop [^int i 0 ^int j (dec (alength arr))]
@@ -7953,28 +8283,42 @@ specified.
            :pos (recur (inc m) j)))
        i)))
   (tnode_lookup [node k not-found ^int rank ^#/(dynamic dynamic -> int) cmp]
-    (assert (= (zero? rank) (even? (alength arr))))
-    (if (zero? rank)
-      (let [i (.tnode_leaf_search node k cmp)]
-        (if (even? i)
-          (aget arr (inc i))
-          not-found))
-      (let [i (.tnode_branch_search node k cmp)]
-        (if (odd? i)
-          (.tnode_lookup ^TreapNode (aget arr (inc i)) k not-found (dec rank) cmp) ; guaranteed to be non nil by construction
-          (if-some [^TreapNode child (aget arr i)]
-            (.tnode_lookup child k not-found (dec rank) cmp)
+    (loop [^TreapNode node node ^int rank rank]
+      #_(assert (= (zero? rank) (even? (alength (.-arr node)))))
+      (if (zero? rank)
+        (let [i (.tnode_leaf_search node k cmp)]
+          (if (even? i)
+            (aget (.-arr node) (inc i))
+            not-found))
+        (let [i (.tnode_branch_search node k cmp)
+              ; "even round up" odd i to i+1
+              i (-> i inc (bit-and -2))]
+          (if-some [child (aget (.-arr node) i)]
+            (recur child (dec rank))
             not-found)))))
+  (^#/(MapEntry? K V) #/(tnode_entry_at K V) [node k ^int rank ^#/(dynamic dynamic -> int) cmp]
+    (loop [^TreapNode node node ^int rank rank]
+      #_(assert (= (zero? rank) (even? (alength (.-arr node)))))
+      (if (zero? rank)
+        (let [i (.tnode_leaf_search node k cmp)]
+          (when (even? i)
+            (let [arr (.-arr node)]
+              (#/(MapEntry K V) (aget arr i) (aget arr (inc i))))))
+        (let [i (.tnode_branch_search node k cmp)
+              ; "even round up" odd i to i+1
+              i (-> i inc (bit-and -2))]
+          (some-> (aget (.-arr node) i)
+            (recur (dec rank)))))))
   (^TreapNode tnode_set_leftmost [node ^int rank k v]
-   (assert (= (zero? rank) (even? (alength arr))))
+   #_(assert (= (zero? rank) (even? (alength arr))))
    (TreapNode cnt
      (if (zero? rank)
        (new-array [:insert k v] [:copy arr 2]) ; ok: 2+(even-2)=even
        (new-array [:insert (.tnode_set_leftmost ^TreapNode (aget arr 0) (dec rank) k v)] [:copy arr 1])))) ; ok: 1 + (odd-1)=odd
   (^TreapNode tnode_partial_zip [rnode ^TreapNode lnode ^int rank ^int krank k v]
-   (assert (= (zero? rank) (even? (alength arr))))
+   #_(assert (= (zero? rank) (even? (alength arr))))
    ; partially rezipping a higher split since the new equal k is of lesser rank
-   (assert (<= krank rank))
+   #_(assert (<= krank rank))
    (TreapNode (+ cnt (.-cnt lnode))
      (cond
        (zero? rank)
@@ -7992,8 +8336,8 @@ specified.
          [:insert k (.tnode_set_leftmost ^TreapNode (aget arr 0) (dec rank) k v)]
          [:copy arr 1])))) ; ok: odd + 2 + (odd-1) = odd
   (^TreapNode tnode_zip [rnode ^TreapNode lnode ^int rank]
-   (assert (= (zero? rank) (even? (alength arr))))
-   (assert (pos? (alength arr)))
+   #_(assert (= (zero? rank) (even? (alength arr))))
+   #_(assert (pos? (alength arr)))
    ; fully rezipping for dissoc
    (TreapNode (-> cnt dec (+ (.-cnt lnode)))
      (if (zero? rank)
@@ -8005,7 +8349,7 @@ specified.
            [:insert (.tnode_zip ^TreapNode (aget arr 0) (aget larr ln-1) (dec rank))]
            [:copy arr 1]))))) ; ok: (odd-1) + 1 + (odd-1) = odd
   (^int tnode_split [node ^int rank k v ^List lparr ^int li ^List rparr ^int ri ^#/(dynamic dynamic -> int) cmp]
-   (assert (= (zero? rank) (even? (alength arr))))
+   #_(assert (= (zero? rank) (even? (alength arr))))
    ; returns 0 on update, 1 on insert
    (if (zero? rank)
      (let [i (.tnode_leaf_search node k cmp)]
@@ -8049,8 +8393,8 @@ specified.
            (aset rparr ri (TreapNode rcnt rarr))
            cnt-inc)))))
   (^TreapNode tnode_without [node ^int rank ^int krank k ^#/(dynamic dynamic -> int) cmp]
-   (assert (= (zero? rank) (even? (alength arr))))
-   (assert (<= krank rank))
+   #_(assert (= (zero? rank) (even? (alength arr))))
+   #_(assert (<= krank rank))
    (if (zero? rank)
      (let [i (.tnode_leaf_search node k cmp)]
        (if (even? i) ; found
@@ -8069,8 +8413,8 @@ specified.
              node
              (TreapNode (dec cnt) (new-array [:copy arr 0 i] [:insert child'] [:copy arr (inc i)])))))))) ; ok: even + 1 + odd - (1+even)=1
   (^TreapNode tnode_assoc [node ^int rank ^int krank k v ^#/(dynamic dynamic -> int) cmp]
-   (assert (= (zero? rank) (even? (alength arr))))
-   (assert (<= krank rank))
+   #_(assert (= (zero? rank) (even? (alength arr))))
+   #_(assert (<= krank rank))
    (cond
      (zero? rank)
      (let [i (.tnode_leaf_search node k cmp)]
@@ -8298,8 +8642,7 @@ specified.
     (not (identical? (-lookup coll k coll) coll)))
   IFind
   (-find [coll k]
-    (when-some [v (-lookup coll k nil)]
-      (new #/(MapEntry K V) k v)))
+    (#/(.tnode_entry_at K V) root k top-rank cmp))
   IMap
   (-dissoc [coll k]
     (let [new-root (.tnode_without root top-rank (hashrank k) k cmp)]

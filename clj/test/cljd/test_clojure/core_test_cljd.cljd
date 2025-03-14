@@ -1085,3 +1085,75 @@
 
 (deftest non-strict-subseq
   (is (empty? (subseq (conj (sorted-map) [0 :zero])  <= -1))))
+
+(deftest join-with-on-nil
+  (is (nil? (join-with vector nil nil)))
+  (is (= {} (join-with vector nil {:a 1 :b "c"})))
+  (is (= {} (join-with vector {:a 1 :b "c"} nil)))
+  (is (= {:a 1 :b "c"} (join-with vector identity identity nil {:a 1 :b "c"}))) )
+
+(deftest join-with-hash
+  (let [n 1e6 m1 (zipmap (range 0 n 2) (range)) m2 (zipmap (range 1 n 2) (range))] (time (count (join-with (fn [_ x] x) m1 m2))))
+  (let [m1 {:a 1 :b "c"}
+        m2 {:a 2 :d "e"}]
+    (is (= {:a [1 2]} (join-with vector m1 m2)))
+    (is (= {:a [1 2] :b "Lc"} (join-with vector #(str "L" %) nil m1 m2)))
+    (is (= {:a [1 2] :d "Re"} (join-with vector nil #(str "R" %) m1 m2)))
+    (let [n 1e6 m1 (zipmap (range 0 n 2) (range)) m2 (zipmap (range 1 n 2) (range))]
+      (is (= 499999500000 (reduce + (keys (join-with (fn [_ x] x) identity identity m1 m2)))))))
+
+  (testing "diff"
+    (let [expected
+          (-> {}
+            (into
+              (map (fn [n] [n [:- n nil]]))
+              (range 0 1e6 2))
+            (into
+              (map (fn [n] [n [:+ nil n]]))
+              (range 0 1e6 3))
+            (into
+              (map (fn [n] [n [:= n n]]))
+              (range 0 1e6 6)))
+          m*2 (zipmap (range 0 1e6 2) (range 0 1e6 2))
+          m*3 (zipmap (range 0 1e6 3) (range 0 1e6 3))]
+      (is (= expected
+            (time (join-with
+                    (fn [x y] [:= x y])
+                    (fn [x] [:- x nil])
+                    (fn [y] [:+ nil y])
+                     m*2 m*3))))))
+
+  (testing "update-vals"
+    (let [m (zipmap (range 1e6) (range 1e6))
+          f #(* 2 %)]
+      (is (= (update-vals m f) (join-with nil f nil m {}))))))
+
+(deftest join-with-sets
+  (let [s1 (set "christophe")
+        s2 (set "baptiste")
+        last-win (fn [_ x] x)]
+
+    (testing "basic intersection"
+      (is (= (set "piste") (join-with last-win  s1 s2)))
+      (is (= (set (range 0 1e2 6))
+            (join-with last-win (set (range 0 1e2 2)) (set (range 0 1e2 3))))))
+
+    (testing "basic xor"
+        (is (= (set "broach") (join-with nil identity identity s1 s2))))
+
+    (testing "a map and a set yield a map"
+      (is (= (zipmap s1 s1) (join-with last-win nil identity {} s1))))
+
+    (testing "Joining on sets don't leak values into the backing map"
+      (is (= (zipmap s1 s1)
+            (join-with last-win nil identity {}
+              (join-with last-win nil str/upper-case #{} s1)))))))
+(comment
+  (let [n*2 (set (range 0 1e6 2))
+        n*3 (set (range 0 1e6 3))]
+    (time (count (into #{} (filter n*2) n*3))))
+
+
+  (let [n*2 (set (range 0 1e6 2))
+        n*3 (set (range 0 1e6 3))]
+    (time (count (join-with (fn [_ x] x) n*3 n*2)))))
