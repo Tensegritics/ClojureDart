@@ -4641,12 +4641,39 @@
        ~@(case (count darr)
            2 `[(aset ~'new-arr ~'ni ~(first darr))
                (aset ~'new-arr (+ 1 ~'ni) ~(second darr))]
-           1 `[(aset ~'new-arr ~'ni ~(first darr))]
+           1 `[(aset ~'new-arr ~'ni ~node-sym)]
            0 nil)
        (recur
          ~(nz `+ dni 'ni) ~(nz `+ dai 'ai) ~(nz `+ dbi 'bi)
-         (u32-bit-shift-left ~'bit 1)
+         ~'n-set
          ~(nz `bit-or dhi 'hi) ~(nz `bit-or dlo 'lo)
+         ~(nz `+ dcnt 'cnt)))))
+
+
+(defmacro ^:private step-merge [& args]
+  (let [node-sym `node#
+        {:keys [darr dai dbi] :as args-map} (apply hash-map args)
+        _ (assert (or (nil? darr) (vector? darr)))
+        dni (some-> darr count)
+        [dcnt dkvs] (case (count darr)
+                      2 [1 'bit]
+                      1 [`(.-cnt ~node-sym) nil]
+                      0 nil)
+        nz (fn [op arg local]
+             (cond->> local
+               (some? arg) (list op arg)))]
+    `(let [~@(case (count darr)
+               (0 2) nil
+               1 [node-sym (first darr)])]
+       ~@(case (count darr)
+           2 `[(aset ~'new-arr ~'ni ~(first darr))
+               (aset ~'new-arr (+ 1 ~'ni) ~(second darr))]
+           1 `[(aset ~'new-arr ~'ni ~node-sym)]
+           0 nil)
+       (recur
+         ~(nz `+ dni 'ni) ~(nz `+ dai 'ai) ~(nz `+ dbi 'bi)
+         ~'n-set
+         ~(nz `bit-or dkvs 'kvs)
          ~(nz `+ dcnt 'cnt)))))
 
 
@@ -4663,7 +4690,11 @@
           (recur (+ 2 i) (u32-bit-shift-left bit 1) (+ 1 n)))
         (not (zero? (bit-and bit nodes)))
         (do
-          (assert (instance? BitmapNode (aget arr i)))
+          (assert (instance? BitmapNode (aget arr i))
+            (pr-str {:arr (vec arr)
+                     :cnt cnt
+                     :hi bitmap_hi
+                     :lo bitmap_lo}))
           (recur (+ 1 i) (u32-bit-shift-left bit 1) (+ (.-cnt ^BitmapNode (aget arr i)) n)))
         :else
         (recur i (u32-bit-shift-left bit 1) n)))))
@@ -4877,94 +4908,62 @@
            all-maybe-kvs (bit-or a-kvs b-kvs) ; underestimate collisions
            a-set (bit-or a-kvs a-nodes)
            b-set (bit-or b-kvs b-nodes)
-           n-set (bit-or a-set b-set)
-           new-arr-size (u32x2-bit-count all-maybe-kvs n-set) ; overestimate size
+           all-set (bit-or a-set b-set)
+           new-arr-size (u32x2-bit-count all-maybe-kvs all-set) ; overestimate size
            new-arr (#/(List/filled dynamic) new-arr-size nil)
            barr (.-arr b)]
-       (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int bit 1 ^int kvs 0 ^int cnt 0]
-         (cond
-           (zero? bit) ; done
-           (BitmapNode. cnt kvs n-set new-arr)
+       (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int n-set all-set ^int kvs 0 ^int cnt 0]
+         (else->>
+           (if (zero? n-set) ; done
+             (BitmapNode. cnt kvs all-set new-arr))
 
-           (zero? (bit-and bit a-set)) ; no a
-           (cond
-             (zero? (bit-and bit b-set)) ; no b either, skip
-             (recur ni ai bi (u32-bit-shift-left bit 1) kvs cnt)
+           (let [bit (bit-and n-set (- n-set))
+                 n-set (bit-xor n-set bit)])
 
-             (zero? (bit-and bit b-kvs)) ; b's node
-             (let [bnode ^BitmapNode (aget barr bi)]
-               (doto new-arr
-                 (aset ni bnode))
-               (recur (+ 1 ni) ai (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt bnode))))
+           (if (zero? (bit-and bit a-set))    ; no a
+             (if  (zero? (bit-and bit b-kvs)) ; b's node
+               (step-merge :darr [^BitmapNode (aget barr bi)] :dbi 1)
+               (step-merge :darr [(aget barr bi) (aget barr (inc bi))] :dbi 2)))
 
-             :else
-             (do ; b's kv
-               (doto new-arr
-                 (aset ni (aget barr bi))
-                 (aset (inc ni) (aget barr (inc bi))))
-               (recur (+ 2 ni) ai (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
+           (let [anode-or-k (aget arr ai)])
 
-
-           (zero? (bit-and bit b-set))     ; no b, only a
-           (if (zero? (bit-and bit a-kvs)) ; a's node
-             (let [anode ^BitmapNode (aget arr ai)]
-               (doto new-arr
-                 (aset ni anode))
-               (recur (+ 1 ni) (+ 1 ai) bi (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt anode))))
-             (do ; a's kv
-               (doto new-arr
-                 (aset ni (aget arr ai))
-                 (aset (inc ni) (aget arr (inc ai))))
-               (recur (+ 2 ni) (+ 2 ai) bi (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
-
+           (if (zero? (bit-and bit b-set))   ; no b, only a
+             (if (zero? (bit-and bit a-kvs)) ; a's node
+               (step-merge :darr [^BitmapNode anode-or-k] :dai 1)
+               (step-merge :darr [anode-or-k (aget arr (inc ai))] :dai 2)))
            ; a and b are set
-           (zero? (bit-and bit a-kvs)) ; a's node
-           (if (zero? (bit-and bit b-kvs))
-             ; node vs node
-             (let [node (.inode_merge ^BitmapNode (aget arr ai) (+ 5 shift) (aget barr bi))]
-               (doto new-arr
-                 (aset ni node))
-               (recur (+ 1 ni) (+ 1 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
-             ; a's node vs b's kv
-             (let [k (aget barr bi)
-                   v (aget barr (inc bi))
-                   node (.inode_assoc ^BitmapNode (aget arr ai) (+ 5 shift) (hash k) k v)]
-               (doto new-arr
-                 (aset ni node))
-               (recur (+ 1 ni) (+ 1 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node)))))
+           (let [bnode-or-k (aget barr bi)
+                 a-is-node (zero? (bit-and bit a-kvs))
+                 b-is-node (zero? (bit-and bit b-kvs))])
+
+           (if a-is-node
+             (if b-is-node
+               (step-merge :darr [(.inode_merge ^BitmapNode anode-or-k (+ 5 shift) bnode-or-k)] :dai 1 :dbi 1)
+               (step-merge :darr [(.inode_assoc ^BitmapNode anode-or-k (+ 5 shift) (hash bnode-or-k) bnode-or-k (aget barr (inc bi)))] :dai 1 :dbi 2)))
 
            ; a is kv
-           (zero? (bit-and bit b-kvs)) ; b's node
-           (let [bnode ^BitmapNode (aget barr bi)
-                 k (aget arr ai)
-                 h (hash k)
-                 shift+5 (+ 5 shift)
-                 node
-                 (cond-> bnode
-                   (identical? bnode (.inode_lookup bnode shift+5 h k bnode))
-                   (.inode_assoc shift+5 h k (aget arr (inc ai))))]
-             (doto new-arr
-               (aset ni node))
-             (recur (+ 1 ni) (+ 2 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
+           (if b-is-node
+             (let [h (hash anode-or-k)
+                   shift+5 (+ 5 shift)
+                   bnode ^BitmapNode bnode-or-k
+                   node
+                   (cond-> bnode
+                     (identical? bnode (.inode_lookup bnode shift+5 h anode-or-k bnode))
+                     (.inode_assoc shift+5 h anode-or-k (aget arr (inc ai))))]
+               (step-merge :darr [node] :dai 2 :dbi 1)))
 
-           :else ; kv vs kv
-           (let [ak (aget arr ai)
-                 bk (aget barr bi)
-                 bv (aget barr (inc bi))]
-             (if (= ak bk)
-               (do
-                 (doto new-arr
-                   (aset ni bk)
-                   (aset (inc ni) bv))
-                 (recur (+ 2 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt)))
-               (let [shift+5 (+ 5 shift)
-                     node (->
-                            (BitmapNode. 0 0 0 (#/(List/filled dynamic) 4 nil))
-                            (.inode_assoc_transient shift+5 (hash ak) ak (aget arr (inc ai)))
-                            (.inode_assoc_transient shift+5 (hash bk) bk bv))]
-                 (doto new-arr
-                   (aset ni node))
-                 (recur (+ 1 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ 2 cnt))))))))
+           ; kv vs kv
+           (let [bv (aget barr (inc bi))])
+
+           (if (= anode-or-k bnode-or-k)
+             (step-merge :darr [bnode-or-k bv] :dai 2 :dbi 2)
+             (let [shift+5 (+ 5 shift)
+                   node (->
+                          (BitmapNode. 0 0 0 (#/(List/filled dynamic) 4 nil))
+                          (.inode_assoc_transient shift+5 (hash anode-or-k) anode-or-k (aget arr (inc ai)))
+                          (.inode_assoc_transient shift+5 (hash bnode-or-k) bnode-or-k bv))]
+               (step-merge :darr [node] :dai 2 :dbi 2))))))
+
      :else ; collision node
      (let [n (* 2 (.-cnt b))
            arr (.-arr b)]
@@ -5005,7 +5004,7 @@
            b-nodes (bit-xor (.-bitmap_hi b) (.-bitmap_lo b))
            a-set (bit-or a-kvs a-nodes)
            b-set (bit-or b-kvs b-nodes)
-           n-set (bit-or a-set b-set)
+           all-set (bit-or a-set b-set)
            new-arr-size (cond
                           (zero? a-set) (.-length barr)
                           (zero? b-set) (.-length arr)
@@ -5013,18 +5012,18 @@
                           :else (* 2 (u32-bit-count (bit-or a-set b-set))))
            new-arr (#/(List/filled dynamic) new-arr-size nil)])
 
-     (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int bit 1 ^int hi 0 ^int lo 0 ^int cnt 0])
+     (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int n-set all-set ^int hi 0 ^int lo 0 ^int cnt 0])
 
-     (if (zero? bit) ; done
+     (if (zero? n-set) ; done
        (BitmapNode. cnt hi lo new-arr))
 
-     (let [no-a (zero? (bit-and bit a-set))
+     (let [bit (bit-and n-set (- n-set))
+           n-set (bit-xor bit n-set)
+           no-a (zero? (bit-and bit a-set))
            no-b (zero? (bit-and bit b-set))])
 
      (if no-a
        (else->>
-         (if no-b (step-join)) ; nothing
-         ; only b
          (let [b-is-node (zero? (bit-and bit b-kvs))])
          (if (nil? fb) ; not interested in b alone, skip
            (step-join :dbi (if b-is-node 1 2)))
@@ -5045,7 +5044,6 @@
 
      (if no-b
        (else->>
-         ; only a
          (let [a-is-node (zero? (bit-and bit a-kvs))])
          (if-not fa ; not interested in a alone, skip
            (step-join :dai (if a-is-node 1 2)))
