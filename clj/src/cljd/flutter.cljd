@@ -760,6 +760,7 @@
               (assoc m '*1 v))))
         (catch Object e
           (println e)
+          (ack!)
           (assoc m '*e e))))))
 
 (defn ^:macro-support expand-repl [env v forms]
