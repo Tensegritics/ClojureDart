@@ -1412,42 +1412,44 @@
   "Returns a collection of triples [name dart-code expected-type]
    where name is nil for positional parameters, dart-code MAY NOT BE A DART EXPR
    and thus must be lifted (see lift-args)."
-  [args [fixed-types opts-types :as method-sig] env]
-  #_{:post [(or (every? (fn [[_ _ t]] (some? t)) %) (prn args method-sig))]}
-  (cond
-    (nil? method-sig)
-    (let [[positional-args named-args]
-          (split-with (complement dot-symbol?) args)
-          named-args (cond-> named-args (= '.& (first named-args)) next)]
-      (-> [] (into (map #(vector nil (emit % env) dc-dynamic) positional-args))
-        (into (comp (partition-all 2) (map (fn [[name x]] [(ensure-kw name) (emit x env) dc-dynamic]))) named-args)))
-    ; named parameters
-    (map? opts-types)
-    (let [args (remove '#{.&} args) ; temporary as .& in args is redundant with args starting by a dot and the fact that we know the expected params. It's just some cpmpatibility feature with some very early cljd code
-          positional-args (mapv #(vector nil (emit %1 env) (or %2 dc-dynamic)) args fixed-types)
-          rem-args (drop (count positional-args) args)
-          all-args (into positional-args
-                     (map (fn [[k expr]]
-                            (let [k (ensure-kw k)]
-                              (if-some [[_ type] (find opts-types k)]
-                                [k (emit expr env) (or type dc-dynamic)]
-                                (throw (Exception.
-                                         (str "Not an expected argument name: ." (name k)
-                                           ", valid names: " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))))))
-                     (partition 2 rem-args))]
-      (when-not (= (count positional-args) (count fixed-types))
-        (throw (Exception. (str "Not enough positional arguments: expected " (count fixed-types) " got " (count positional-args)))))
-      (when-not (even? (count rem-args))
-        (case (count rem-args)
-          1 (throw (Exception. (str "Positional argument encountered: " (pr-str (last rem-args)) ", while expecting a parameter name amongst " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))
-          (when-not (even? (count rem-args))
-            (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))))
-      all-args)
-    :else ; positional parameters
-    (let [all-args (mapv #(vector nil (emit %1 env) (or %2 dc-dynamic)) args (concat fixed-types opts-types))]
-      (when-not (<= 0 (- (count args) (count fixed-types)) (count opts-types))
-        (throw (Exception. (str "Wrong argument count: expecting between " (count fixed-types) " and " (+ (count fixed-types) (count opts-types)) " but got " (count args)))))
-      all-args)))
+  ([args method-sig env]
+   (split-args false args method-sig env))
+  ([quoted args [fixed-types opts-types :as method-sig] env]
+   #_{:post [(or (every? (fn [[_ _ t]] (some? t)) %) (prn args method-sig))]}
+   (cond
+     (nil? method-sig)
+     (let [[positional-args named-args]
+           (split-with (complement dot-symbol?) args)
+           named-args (cond-> named-args (= '.& (first named-args)) next)]
+       (-> [] (into (map #(vector nil (emit quoted % env) dc-dynamic) positional-args))
+         (into (comp (partition-all 2) (map (fn [[name x]] [(ensure-kw name) (emit quoted x env) dc-dynamic]))) named-args)))
+     ; named parameters
+     (map? opts-types)
+     (let [args (remove '#{.&} args) ; temporary as .& in args is redundant with args starting by a dot and the fact that we know the expected params. It's just some cpmpatibility feature with some very early cljd code
+           positional-args (mapv #(vector nil (emit quoted %1 env) (or %2 dc-dynamic)) args fixed-types)
+           rem-args (drop (count positional-args) args)
+           all-args (into positional-args
+                      (map (fn [[k expr]]
+                             (let [k (ensure-kw k)]
+                               (if-some [[_ type] (find opts-types k)]
+                                 [k (emit quoted expr env) (or type dc-dynamic)]
+                                 (throw (Exception.
+                                          (str "Not an expected argument name: ." (name k)
+                                            ", valid names: " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))))))
+                      (partition 2 rem-args))]
+       (when-not (= (count positional-args) (count fixed-types))
+         (throw (Exception. (str "Not enough positional arguments: expected " (count fixed-types) " got " (count positional-args)))))
+       (when-not (even? (count rem-args))
+         (case (count rem-args)
+           1 (throw (Exception. (str "Positional argument encountered: " (pr-str (last rem-args)) ", while expecting a parameter name amongst " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))
+           (when-not (even? (count rem-args))
+             (throw (Exception. (str "Trailing argument: " (pr-str (last rem-args))))))))
+       all-args)
+     :else ; positional parameters
+     (let [all-args (mapv #(vector nil (emit quoted %1 env) (or %2 dc-dynamic)) args (concat fixed-types opts-types))]
+       (when-not (<= 0 (- (count args) (count fixed-types)) (count opts-types))
+         (throw (Exception. (str "Wrong argument count: expecting between " (count fixed-types) " and " (+ (count fixed-types) (count opts-types)) " but got " (count args)))))
+       all-args))))
 
 (defn- simple-types
   [{:keys [canon-qname nullable] :as type}]
@@ -1721,7 +1723,7 @@
       (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-dart-list-literal
-  [maybe-quoted-emit x env]
+  [quoted x env]
   (else->>
     (let [item-tag (:tag (meta x) 'dart:core/dynamic)
           list-tag (vary-meta 'dart:core/List assoc :type-params [item-tag])])
@@ -1730,10 +1732,10 @@
         (let [lsym (dart-local (with-meta 'fl {:tag list-tag}) env)]
           (list 'dart/let
             (into
-              [[lsym (with-lifted [item (maybe-quoted-emit item env)] env
+              [[lsym (with-lifted [item (emit quoted item env)] env
                        (list 'dart/. (emit-type list-tag env) "filled" (count x) item))]]
               (map-indexed (fn [i item]
-                             [nil (with-lifted [item (maybe-quoted-emit item env)] env
+                             [nil (with-lifted [item (emit quoted item env)] env
                                     (list 'dart/. lsym "[]=" (inc i) item))]))
               more-items)
             lsym))
@@ -1745,8 +1747,8 @@
                (seq bindings) (list 'dart/let bindings)))))
 
 (defn emit-dart-record-literal
-  [x env]
-  (let [split-args+types (split-args x nil env)
+  [quoted x env]
+  (let [split-args+types (split-args quoted x nil env)
         [bindings dart-record-args] (lift-args split-args+types env)
         sig (map #(if (keyword? %) % (infer-type %)) dart-record-args)
         positional-fields (into [] (take-while (complement keyword?)) sig)
@@ -1759,43 +1761,46 @@
       (seq bindings) (list 'dart/let bindings))))
 
 (defn emit-dart-literal
-  [x env]
+  [quoted x env]
   (cond
     (vector? x)
-    (emit-dart-list-literal emit x env)
+    (emit-dart-list-literal quoted x env)
 
     (list? x)
-    (emit-dart-record-literal x env)
+    (emit-dart-record-literal quoted x env)
     :else
     (throw (ex-info (str "Unsupported dart literal #dart " (pr-str x)) {:form x}))))
 
-(defn emit-coll
-  ([coll env] (emit-coll emit coll env))
-  ([maybe-quoted-emit coll env]
-   (cond
-     (seq (meta coll))
-     (with-lifted [data (maybe-quoted-emit (with-meta coll nil) env)] env
-       (with-lifted [metadata (maybe-quoted-emit (meta coll) env)] env
-         (list (emit 'cljd.core/with-meta env) data metadata)))
-     (seq coll)
-     (let [items (into [] (if (map? coll) cat identity) coll)
-           fn-sym (cond
-                    (map? coll) 'cljd.core/-map-lit
-                    (vector? coll) (if (< 32 (count coll)) 'cljd.core/vec 'cljd.core/-vec-owning)
-                    (set? coll) 'cljd.core/set
-                    (seq? coll) 'cljd.core/-list-lit
-                    :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll}))) ]
-       (with-lifted [fixed-list (emit-dart-list-literal maybe-quoted-emit (with-meta (vec items) {:fixed true}) env)] env
-         (list (emit fn-sym env) fixed-list)))
-     :empty-coll
-     (emit
-       (cond
-         (map? coll) 'cljd.core/-EMPTY-MAP
-         (vector? coll) 'cljd.core/-EMPTY-VECTOR
-         (set? coll) 'cljd.core/-EMPTY-SET
-         (seq? coll) 'cljd.core/-EMPTY-LIST ; should we use apply list?
-         :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
-       env))))
+(defn emit-coll [quoted coll env]
+  (cond
+    (seq (meta coll))
+    (with-lifted [data (emit quoted (with-meta coll nil) env)] env
+      (with-lifted [metadata (emit quoted (meta coll) env)] env
+        (list (emit 'cljd.core/with-meta env) data metadata)))
+    (vector? coll)
+    (let [dart-list (cond->> (tagged-literal 'dart (with-meta coll {:fixed true}))
+                      quoted (list 'quote))]
+      (emit (list 'cljd.core/-vec-lit (count coll) dart-list) env))
+    (seq coll)
+    (let [items (into [] (if (map? coll) cat identity) coll)
+          dart-list (cond->> (tagged-literal 'dart (with-meta items {:fixed true}))
+                      quoted (list 'quote))
+          fn-sym (cond
+                   (map? coll) 'cljd.core/-map-lit
+                   (vector? coll) 'cljd.core/vec
+                   (set? coll) 'cljd.core/set
+                   (seq? coll) 'cljd.core/-list-lit
+                   :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))]
+      (emit (list fn-sym dart-list) env))
+    :empty-coll
+    (emit
+      (cond
+        (map? coll) 'cljd.core/-EMPTY-MAP
+        (vector? coll) 'cljd.core/-EMPTY-VECTOR
+        (set? coll) 'cljd.core/-EMPTY-SET
+        (seq? coll) 'cljd.core/-EMPTY-LIST ; should we use apply list?
+        :else (throw (ex-info (str "Can't emit collection " (pr-str coll)) {:form coll})))
+      env)))
 
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class env)
@@ -3219,14 +3224,8 @@
       (emit (list 'quote (symbol (name (:ns info)) (name (:name info)))) {})
       (throw (Exception. (str "Not a var: " s (source-info)))))))
 
-(defn emit-quoted [x env]
-  (cond
-    (coll? x) (emit-coll emit-quoted x env)
-    (symbol? x) (emit (list 'cljd.core/symbol (namespace x) (name x)) env)
-    :else (emit x env)))
-
 (defn emit-quote [[_ x] env]
-  (emit-quoted x env))
+  (emit true x env))
 
 (defn ns-to-lib [ns-name]
   (str *lib-path* *target-subdir* (replace-all (name ns-name) #"[.]" {"." "/"}) ".dart"))
@@ -3425,85 +3424,93 @@
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
-  [x env]
-  (try
-    (let [x (macroexpand-and-inline env x) ;; meta dc-num
-          dart-x
-          (cond
-            (symbol? x) (emit-symbol x env)
-            #?@(:clj [(char? x) (str x)])
-            (or (number? x) (boolean? x) (string? x)) x
-            (instance? java.util.Date x)
-            (let [[_ s] (re-matches #"#inst *\"(.*)\"" (pr-str x))]
-              (emit (list 'dart:core/DateTime.parse s) env))
-            (instance? java.util.regex.Pattern x)
-            (emit (list 'new 'dart:core/RegExp
-                        #_(list '. 'dart:core/RegExp 'escape (.pattern ^java.util.regex.Pattern x))
-                        (.pattern ^java.util.regex.Pattern x)
-                        #_#_#_'.& :unicode true) env)
-            (keyword? x)
-            (emit (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) env)
-            (nil? x) nil
-            (uuid? x)
-            (emit (list 'cljd.core/UUID. (str x) (cljd-hash (str x))) env)
-            (and (seq? x) (seq x)) ; non-empty seqs only
-            (let [f (first x)
-                  emit (if (symbol? f)
-                         (case f
-                           . emit-dot ;; local inference done
-                           set! emit-set!
-                           dart/is? emit-dart-is ;; local inference done
-                           dart/await emit-dart-await
-                           dart/async-barrier emit-dart-async-barrier
-                           dart/run-zoned emit-dart-run-zoned
-                           dart/assert emit-dart-assert
-                           dart/type-like emit-dart-type-like
-                           throw emit-throw
-                           new emit-new ;; local inference done
-                           ns emit-ns
-                           try emit-try
-                           case* emit-case*
-                           quote emit-quote
-                           do emit-do
-                           var emit-var
-                           let* emit-let*
-                           loop* emit-loop*
-                           recur emit-recur
-                           if emit-if
-                           fn* emit-fn*
-                           letfn emit-letfn
-                           def emit-def
-                           reify* emit-reify*
-                           deftype* emit-deftype*
-                           defprotocol* emit-defprotocol*
-                           extend-type-protocol* emit-extend-type-protocol*
-                           emit-fn-call)
-                         emit-fn-call)]
-              (binding [*source-info* (let [{:keys [line column end-line end-column]} (meta x)]
-                                        (if line
-                                          {:line line :column column
-                                           :end-line end-line :end-column end-column}
-                                          *source-info*))]
-                (emit x env)))
-            (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal (:form x) env)
-            (coll? x) (emit-coll x env)
-            :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
-          {:dart/keys [const type]} (dart-meta x env)
-          inferred-const (:dart/const (meta dart-x))]
-      (when (and const (not inferred-const))
-        (println "🤔 Unexpected ^:const, if it passes Dart compilation, please open a ClojureDart issue" (pr-str x) (source-info)))
-      (when (and (false? const) (not inferred-const))
-        (println "🤔 Useless ^:unique. If you disagree, please open a ClojureDart issue" (source-info)))
-      (when (and const inferred-const)
-        (println "INFO: Useless ^:const, please remove" (source-info)))
-      (cond-> dart-x
-        (some? const) (vary-meta assoc :dart/const const)
-        type (simple-cast type)))
-    (catch Exception e
-      (throw
-       (if-some [stack (::emit-stack (ex-data e))]
-         (ex-info (ex-message e) (assoc (ex-data e) ::emit-stack (conj stack x)) (ex-cause e))
-         (ex-info (str "Error while compiling " *file* " " (pr-str x)) {::emit-stack [x]} e))))))
+  ([quoted x env]
+   (if quoted
+     (cond
+       (coll? x) (emit-coll true x env)
+       (symbol? x) (emit (list 'cljd.core/symbol (namespace x) (name x)) env)
+       (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal true (:form x) env)
+       :else (emit x env))
+     (emit x env)))
+  ([x env]
+   (try
+     (let [x (macroexpand-and-inline env x) ;; meta dc-num
+           dart-x
+           (cond
+             (symbol? x) (emit-symbol x env)
+             #?@(:clj [(char? x) (str x)])
+             (or (number? x) (boolean? x) (string? x)) x
+             (instance? java.util.Date x)
+             (let [[_ s] (re-matches #"#inst *\"(.*)\"" (pr-str x))]
+               (emit (list 'dart:core/DateTime.parse s) env))
+             (instance? java.util.regex.Pattern x)
+             (emit (list 'new 'dart:core/RegExp
+                     #_(list '. 'dart:core/RegExp 'escape (.pattern ^java.util.regex.Pattern x))
+                     (.pattern ^java.util.regex.Pattern x)
+                     #_#_#_'.& :unicode true) env)
+             (keyword? x)
+             (emit (list 'cljd.core/Keyword. (namespace x) (name x) (cljd-hash x)) env)
+             (nil? x) nil
+             (uuid? x)
+             (emit (list 'cljd.core/UUID. (str x) (cljd-hash (str x))) env)
+             (and (seq? x) (seq x)) ; non-empty seqs only
+             (let [f (first x)
+                   emit (if (symbol? f)
+                          (case f
+                            . emit-dot ;; local inference done
+                            set! emit-set!
+                            dart/is? emit-dart-is ;; local inference done
+                            dart/await emit-dart-await
+                            dart/async-barrier emit-dart-async-barrier
+                            dart/run-zoned emit-dart-run-zoned
+                            dart/assert emit-dart-assert
+                            dart/type-like emit-dart-type-like
+                            throw emit-throw
+                            new emit-new ;; local inference done
+                            ns emit-ns
+                            try emit-try
+                            case* emit-case*
+                            quote emit-quote
+                            do emit-do
+                            var emit-var
+                            let* emit-let*
+                            loop* emit-loop*
+                            recur emit-recur
+                            if emit-if
+                            fn* emit-fn*
+                            letfn emit-letfn
+                            def emit-def
+                            reify* emit-reify*
+                            deftype* emit-deftype*
+                            defprotocol* emit-defprotocol*
+                            extend-type-protocol* emit-extend-type-protocol*
+                            emit-fn-call)
+                          emit-fn-call)]
+               (binding [*source-info* (let [{:keys [line column end-line end-column]} (meta x)]
+                                         (if line
+                                           {:line line :column column
+                                            :end-line end-line :end-column end-column}
+                                           *source-info*))]
+                 (emit x env)))
+             (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal false (:form x) env)
+             (coll? x) (emit-coll false x env)
+             :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
+           {:dart/keys [const type]} (dart-meta x env)
+           inferred-const (:dart/const (meta dart-x))]
+       (when (and const (not inferred-const))
+         (println "🤔 Unexpected ^:const, if it passes Dart compilation, please open a ClojureDart issue" (pr-str x) (source-info)))
+       (when (and (false? const) (not inferred-const))
+         (println "🤔 Useless ^:unique. If you disagree, please open a ClojureDart issue" (source-info)))
+       (when (and const inferred-const)
+         (println "INFO: Useless ^:const, please remove" (source-info)))
+       (cond-> dart-x
+         (some? const) (vary-meta assoc :dart/const const)
+         type (simple-cast type)))
+     (catch Exception e
+       (throw
+         (if-some [stack (::emit-stack (ex-data e))]
+           (ex-info (ex-message e) (assoc (ex-data e) ::emit-stack (conj stack x)) (ex-cause e))
+           (ex-info (str "Error while compiling " *file* " " (pr-str x)) {::emit-stack [x]} e)))))))
 
 (defn host-eval
   [x]

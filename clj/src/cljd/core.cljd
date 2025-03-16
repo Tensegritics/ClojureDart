@@ -7254,9 +7254,11 @@
         l
         (recur (-conj l (aget xs i)) i)))))
 
-(defn ^PersistentVector -vec-owning [^List xs]
-  #_(assert (<= (count xs) 32))
-  (PersistentVector. nil (count xs) 5 (.-root -EMPTY-VECTOR) xs -1))
+(defmacro -vec-lit [n tail]
+  (cond
+    (zero? n) `-EMPTY-VECTOR
+    (<= n 32) `(cljd.core/PersistentVector. nil ~n 5 (.-root -EMPTY-VECTOR) ~tail -1)
+    :else `(vec ~tail)))
 
 (def ^:private ^math/Random RNG (math/Random.))
 
