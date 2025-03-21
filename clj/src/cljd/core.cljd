@@ -5070,11 +5070,6 @@
            anode-or-k (aget arr ai)
            bnode-or-k (aget barr bi)])
 
-     (do
-       (assert (= a-is-node (instance? BitmapNode anode-or-k)))
-       (assert (= b-is-node (instance? BitmapNode bnode-or-k)))
-       )
-
      (if (and (nil? combine) (identical? anode-or-k bnode-or-k))
        ; not interested in the intersection
        (step-join :dai (if a-is-node 1 2) :dbi (if b-is-node 1 2)))
