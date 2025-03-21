@@ -300,7 +300,13 @@
                                     (not obj-mode)
                                     (->
                                      (conj gmap)
-                                     (conj `(if (seq? ~gmap) (apply hash-map ~gmap) ~gmap))))
+                                     (conj `(if (seq? ~gmap)
+                                              (if (next ~gmap)
+                                                (seq-to-map-for-destructuring ~gmap)
+                                                (if (seq ~gmap)
+                                                  (first ~gmap)
+                                                  {}))
+                                              ~gmap))))
                               bes (let [transforms
                                         (reduce
                                          (fn [transforms mk]
@@ -9330,3 +9336,15 @@ specified.
       "false" false
       nil)
     (throw (ArgumentError (parsing-err s)))))
+
+(defn seq-to-map-for-destructuring
+  "Builds a map from a seq as described in
+  https://clojure.org/reference/special_forms#keyword-arguments"
+  {:added "1.11"}
+  [s]
+  (loop [m (transient {}) s (seq s)]
+    (if-some [[k & s] s]
+      (if-some [[v & s] s]
+        (recur (assoc! m k v) s)
+        (conj (persistent! m) k))
+      (persistent! m))))
