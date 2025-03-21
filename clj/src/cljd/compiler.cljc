@@ -4054,9 +4054,13 @@
                 dart/case
                 (let [[_ _expr _default-label clauses default-expr] x]
                   {:dart/type
-                   (reduce (fn [t [_ expr]]
-                             (merge-types t (:dart/type (infer-type expr))))
-                     (:dart/type (infer-type default-expr)) clauses)
+                   (let [t
+                         (reduce (fn [t [_ expr]]
+                                   (merge-types t (:dart/type (infer-type expr))))
+                           (:dart/type (infer-type default-expr)) clauses)]
+                     (if (= 'dc.Function (:canon-qname t))
+                       dc-dynamic ; hack because we don't handle function types properly
+                       t))
                    :dart/const false})
                 dart/continue
                 ; can only appear in dart/case -- this only makes sense in this context
