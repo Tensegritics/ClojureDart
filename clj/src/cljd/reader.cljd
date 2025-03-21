@@ -772,7 +772,7 @@
       (mk-read-coll "}"
         (fn [kvs]
           (if (even? (count kvs))
-            (-map-lit kvs)
+            (apply hash-map kvs)
             (throw (FormatException "Map literal must contain an even number of forms"))))))
     (aset (int "}") (unexpected "closing curly brace"))
     (aset (int "[") (mk-read-coll "]" vec))

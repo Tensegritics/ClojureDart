@@ -300,7 +300,7 @@
                                     (not obj-mode)
                                     (->
                                      (conj gmap)
-                                     (conj `(if (seq? ~gmap) (-map-lit (seq ~gmap)) ~gmap))))
+                                     (conj `(if (seq? ~gmap) (apply hash-map ~gmap) ~gmap))))
                               bes (let [transforms
                                         (reduce
                                          (fn [transforms mk]
@@ -4563,7 +4563,9 @@
          (throw (ArgumentError (str "Can't join instances of " (.-runtimeType a)
                                  " and " (.-runtimeType b)))))))))
 
-(deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr] :type-only true)
+(deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
+  :type-only true
+  (^BitmapNode inode_assoc_transient [node ^int shift ^int h k v] node))
 
 (deftype #/(BitmapIterator E)
   [^:mutable ^BitmapNode node
@@ -5757,6 +5759,26 @@
 
 (def ^PersistentHashSet -EMPTY-SET
   (PersistentHashSet. nil {} -1))
+
+(defn- ^:macro-support -has-stable-hash? [x]
+  (or (nil? x) (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (string? x) (boolean? x) (char? x) (keyword? x)))
+
+(defmacro -set-lit [quoted s]
+  (let [meta-expr (cond->> (meta s) quoted (list 'quote))]
+    (cond
+      (seq s)
+      (let [stable-s (transduce (remove -has-stable-hash?) disj s s)
+            rem-s (reduce disj s stable-s)
+            bindings (into {} (for [expr rem-s]
+                                [(gensym 'set-item) (cond->> expr quoted (list 'quote))]))
+            items (concat (keys bindings)
+                    (cond->> stable-s
+                      quoted (map #(list 'quote %))))]
+        `(let [~@(mapcat seq bindings)]
+           (cljd.core/PersistentHashSet ~meta-expr ~(zipmap items items) -1)))
+      meta-expr `(-with-meta -EMPTY-SET ~meta-expr)
+      :else `-EMPTY-SET)))
+
 
 (defn ^List to-array
   [coll]
@@ -7226,14 +7248,52 @@
   ([] #{})
   ([& keys] (into #{} keys)))
 
-(defn ^PersistentHashMap -map-lit [kvs]
-  (if (nil? kvs)
-    {}
-    (let [^List kvs kvs]
-      (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
-        (if (< i (.-length kvs))
-          (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
-          ^PersistentHashMap (-persistent! tm))))))
+(defmacro -map-lit [quoted m]
+  (if (empty? m)
+    (if-some [meta-expr (meta m)]
+      `(-with-meta -EMPTY-MAP ~(cond->> meta-expr quoted (list 'quote)))
+      `-EMPTY-MAP)
+    (let [#?@(:cljd/clj-host [hash cljd.compiler/cljd-hash])
+          stable-m (transduce (remove -has-stable-hash?) dissoc m (keys m))
+          rem-m (reduce dissoc m stable-m)
+          mk-node (fn mk-node [entries shift]
+                    (if (< shift 32)
+                      (let [children
+                            (group-by
+                              (fn [[k expr]]
+                                (bit-and 31 (bit-shift-right (hash k) shift)))
+                              entries)
+                            hi (transduce (map (fn [n]
+                                                 (bit-shift-left 1 n)))
+                                 + 0 (keys children))
+                            lo (transduce (map (fn [[n entries]]
+                                                 (case (count entries)
+                                                   1 (bit-shift-left 1 n)
+                                                   0)))
+                                 + 0 children)
+                            fixed-list
+                            (into ^:fixed []
+                              (mapcat (fn [entries]
+                                        (case (count entries)
+                                          1 (if quoted
+                                              (let [[k v] (first entries)]
+                                                [k (list 'quote v)])
+                                              (first entries)) ; kv
+                                          [(mk-node entries (+ 5 shift))])))
+                              (vals (sort-by key children)))]
+                        `(cljd.core/BitmapNode
+                           ~(count entries) ~hi ~lo ~(tagged-literal 'dart fixed-list)))
+                      ; collision
+                      `(cljd.core/BitmapNode ~(count entries) 0 0
+                         ~(tagged-literal 'dart (with-meta {:fixed true}
+                                                  (into [] cat entries))))))]
+      `(cljd.core/PersistentHashMap
+         ~(cond->> (meta m) quoted (list 'quote))
+         (-> ~(mk-node stable-m 0)
+           ~@(for [[k v] rem-m]
+               `(as-> node# (let [k# ~(cond->> k quoted (list 'quote))] (.inode_assoc_transient node# 0 (hash k#)
+                                                                          k# ~(cond->> v quoted (list 'quote)))))))
+         -1))))
 
 (defn ^PersistentHashMap hash-map
   "keyval => key val
@@ -7254,11 +7314,18 @@
         l
         (recur (-conj l (aget xs i)) i)))))
 
-(defmacro -vec-lit [n tail]
-  (cond
-    (zero? n) `-EMPTY-VECTOR
-    (<= n 32) `(cljd.core/PersistentVector. nil ~n 5 (.-root -EMPTY-VECTOR) ~tail -1)
-    :else `(vec ~tail)))
+(defmacro -vec-lit [quoted v]
+  (let [meta-expr (cond->> (meta v) quoted (list 'quote))
+        dart-list (cond->> (tagged-literal 'dart (with-meta v {:fixed true}))
+                    quoted (list 'quote))]
+    (cond
+      (empty? v) (if meta-expr
+                   `(-with-meta -EMPTY-VECTOR ~meta-expr)
+                   `-EMPTY-VECTOR)
+      (<= (count v) 32)
+      `(cljd.core/PersistentVector. ~meta-expr ~(count v) 5 (.-root -EMPTY-VECTOR)
+         ~dart-list -1)
+      :else `(vec ~dart-list))))
 
 (def ^:private ^math/Random RNG (math/Random.))
 

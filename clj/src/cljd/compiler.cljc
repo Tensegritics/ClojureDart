@@ -1773,14 +1773,16 @@
 
 (defn emit-coll [quoted coll env]
   (cond
+    (vector? coll)
+    (emit (list 'cljd.core/-vec-lit quoted coll) env)
+    (map? coll)
+    (emit (list 'cljd.core/-map-lit quoted coll) env)
+    (set? coll)
+    (emit (list 'cljd.core/-set-lit quoted coll) env)
     (seq (meta coll))
     (with-lifted [data (emit quoted (with-meta coll nil) env)] env
       (with-lifted [metadata (emit quoted (meta coll) env)] env
         (list (emit 'cljd.core/with-meta env) data metadata)))
-    (vector? coll)
-    (let [dart-list (cond->> (tagged-literal 'dart (with-meta coll {:fixed true}))
-                      quoted (list 'quote))]
-      (emit (list 'cljd.core/-vec-lit (count coll) dart-list) env))
     (seq coll)
     (let [items (into [] (if (map? coll) cat identity) coll)
           dart-list (cond->> (tagged-literal 'dart (with-meta items {:fixed true}))
