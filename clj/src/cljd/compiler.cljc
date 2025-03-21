@@ -3969,7 +3969,9 @@
                                                b)]
                 (cond
                   ;; TODO: merging Functions can done better.
-                  (= qna qnb 'dc.Function) dc-Function
+                  (= qna qnb 'dc.Function)
+                  (cond-> dc-Function
+                    (or (:nullable a) (:nullable b)) (assoc :nullable true))
                   ; fast path, also handles dc.Null dc.Null which should not set :nullable true
                   (= qna qnb) (assoc (merge-type-params a b) :nullable (or (:nullable a) (:nullable b))
                                 :type-parameters
