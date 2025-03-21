@@ -2139,6 +2139,8 @@
 (defn- emit-ifn-arities-mixin [fixed-arities base-vararg-arity]
   (let [max-fixed-arity (some->> fixed-arities seq (reduce max))
         min-fixed-arity (some->> fixed-arities seq (reduce min))
+        _ (when (and max-fixed-arity base-vararg-arity (< base-vararg-arity max-fixed-arity))
+            (throw (Exception. "Can't have fixed arity function with more params than variadic function")))
         n (or base-vararg-arity max-fixed-arity)
         mixin-name (munge (str "IFnMixin-" (apply str (map (fn [i] (if (fixed-arities i) "X"  "u")) (range n))) (cond (= base-vararg-arity max-fixed-arity) "Y" base-vararg-arity "Z" :else "X")) {})
         synth-params (mapv #(symbol (str "arg" (inc %))) (range (max n (dec *threshold*))))
