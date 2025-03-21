@@ -4035,7 +4035,8 @@
               (double? x) {:dart/type dc-double :dart/const true}
               (integer? x) {:dart/type dc-int :dart/const true}
               (and (symbol? x) (-> x meta :dart/type :canon-qname (= 'dc.Function)))
-              {:dart/ret-type (-> x meta :dart/signature :return-type)}
+              {:dart/ret-type (or (-> x meta :dart/signature :return-type)
+                                (-> x meta :dart/type :return-type))}
               (seq? x)
               (case (let [x (first x)] (when (symbol? x) x))
                 dart/loop (infer-type (last x))
