@@ -5589,9 +5589,12 @@
   "Returns a map that consists of the rest of the maps conj-ed onto
   the first.  If a key occurs in more than one map, the mapping from
   the latter (left-to-right) will be the mapping in the result."
-  [& maps]
-  (when (some identity maps)
-    (reduce #(conj (or %1 {}) %2) maps)))
+  ([] {})
+  ([m] m)
+  ([m1 m2] (if m1 (conj m1 m2) m2))
+  ([m1 m2 & maps]
+   (when (or m1 m2 (some identity maps))
+     (reduce conj (merge (or m1 {}) m2) maps))))
 
 (defn merge-with
   "Returns a map that consists of the rest of the maps conj-ed onto
@@ -7615,17 +7618,10 @@
 
 (defn select-keys
   "Returns a map containing only those entries in map whose key is in keys"
-  [map keyseq]
-  (loop [ret {} keys (seq keyseq)]
-    (if keys
-      (let [key   (first keys)
-            entry (get map key sentinel)]
-        (recur
-          (if (not (identical?  entry sentinel))
-            (assoc ret key entry)
-            ret)
-          (next keys)))
-      (-with-meta ret (meta map)))))
+  [m keyseq]
+  (or (when (set? keyseq)
+        (-join-with m keyseq (fn [v _] v) nil nil ^:unique (Object)))
+    (-with-meta (into {} (map #(find m %)) keyseq) (meta m))))
 
 (defn ^#/(dynamic dynamic -> int) dart-comparator
   "Takes a fn that might be boolean valued or a comparator,
