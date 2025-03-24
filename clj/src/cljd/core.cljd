@@ -906,7 +906,7 @@
 
 (defn ^bool char?
   "Returns true if x is a Dart string of length one."
-  {:inline (fn [x] `(and (string? ~x) (== 1 (.-length ~x))))
+  {:inline (fn [x] `(let [x# ~x] (and (string? x#) (== 1 (.-length ^String x#)))))
    :inline-arities #{1}}
   [x]
   (and (string? x) (== 1 (.-length ^String x))))
