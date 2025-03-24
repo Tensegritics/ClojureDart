@@ -359,6 +359,7 @@
      List dart:core/List}})
 
 (declare ^:dynamic *current-ns*)
+(def ^:dynamic *loading-nses* {})
 
 (def nses (atom {:libs {"dart:core" {:dart-alias "dc" :ns nil}
                         "dart:async" {:dart-alias "da" :ns nil}} ; dc can't clash with user aliases because they go through dart-global
@@ -4634,14 +4635,17 @@
 
 (defn compile-namespace [ns-name]
   ;; iterate first on file variants then on paths, not the other way!
-  (binding [*current-ns* ns-name]
-      (let [file-paths (ns-to-paths ns-name)
-            cljd-core (when-not (= ns-name 'cljd-core) (get @nses 'cljd.core))]
-        (if-some [[file-path url] (some (fn [p] (some->> (find-resource p) (vector p))) file-paths)]
-          (compile-url file-path url)
-          (throw (ex-info (str "Could not locate "
-                            (str/join " or " file-paths))
-                   {:ns ns-name}))))))
+  (when (*loading-nses* ns-name)
+    (throw (Exception. (str "Cyclic load dependency: " (str/join " -> " (concat (keys (sort-by val *loading-nses*)) [ns-name]))))))
+  (binding [*current-ns* ns-name
+            *loading-nses* (assoc *loading-nses* ns-name (count *loading-nses*))]
+    (let [file-paths (ns-to-paths ns-name)
+          cljd-core (when-not (= ns-name 'cljd-core) (get @nses 'cljd.core))]
+      (if-some [[file-path url] (some (fn [p] (some->> (find-resource p) (vector p))) file-paths)]
+        (compile-url file-path url)
+        (throw (ex-info (str "Could not locate "
+                          (str/join " or " file-paths))
+                 {:ns ns-name}))))))
 
 (defmacro with-dump-modified-files
   "Dump modified Dart files upon succesful execution of the body."
@@ -4722,7 +4726,7 @@
           (doseq [ns nses-to-recompile
                 ; the ns may already have been transitively reloaded
                   :when (nil? (@nses ns))]
-          ; recompiling via ns and not via url because cljd/cljc shadowing
+            ; recompiling via ns and not via url because cljd/cljc shadowing
             (compile-namespace ns)))
         (catch Exception e
           (reset! nses nses-before) ; avoid messy states
