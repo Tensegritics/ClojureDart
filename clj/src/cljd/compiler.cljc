@@ -2800,7 +2800,7 @@
                                       :return-type bare-type
                                       :parameters ctor-params}
              :super (:extends parsed-class-specs)
-             :kaboom (reify Object (hashCode [_] (/ 0)) (toString [_] "💥"))
+             :kaboom (reify Object (hashCode [_] (throw (Exception. "Something that shouldn't be hashed has been hashed. Report to ClojureDart maintainers."))) (toString [_] "💥"))
              :interfaces (:implements parsed-class-specs)
              :mixins (:with parsed-class-specs))
            (into
