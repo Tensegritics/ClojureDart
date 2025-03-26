@@ -2343,7 +2343,7 @@
 
 (defn cljd-closed-overs [expr env]
   (let [dart-locals (closed-overs (emit expr env) env)]
-    (into #{} (keep (fn [[k v]] (when (dart-locals v) k))) env)))
+    (into #{} (keep (fn [[k v]] (when (and (symbol? v) (dart-locals v)) k))) env)))
 
 (defn- emit-dart-fn [async fn-name [params & body] env]
   (let [ret-type (some-> (or (:tag (meta fn-name)) (:tag (meta params))) (emit-type env))
