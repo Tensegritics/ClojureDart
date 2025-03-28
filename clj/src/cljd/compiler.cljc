@@ -361,6 +361,15 @@
 (declare ^:dynamic *current-ns*)
 (def ^:dynamic *loading-nses* {})
 
+(declare ^:dynamic dynamic-warning)
+
+(defn on-dynamic-warn [& args] (apply println "DYNAMIC WARNING:" args))
+
+(defn on-dynamic-fail [& args]
+  (throw (Exception. (apply print-str "DYNAMIC ERROR:" args))))
+
+(def ^:dynamic dynamic-warning on-dynamic-fail)
+
 (def nses (atom {:libs {"dart:core" {:dart-alias "dc" :ns nil}
                         "dart:async" {:dart-alias "da" :ns nil}} ; dc can't clash with user aliases because they go through dart-global
                  ; map from dart aliases to libs
@@ -1887,7 +1896,7 @@
               (throw (Exception. (str member-name " is neither a constructor nor a static member of " (:element-name type!) " " (source-info)))))
           _ (when (not member-info)
               (binding [*out* *err*]
-                (println "DYNAMIC WARNING: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
+                (dynamic-warning "can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info))))
           special-num-op-sig (case (:canon-qname type!) ; see sections 17.30 and 17.31 of Dart lang spec
                                dc.int (case member-name
                                         ("-" "+" "%" "*")
@@ -1983,7 +1992,7 @@
     (cond
       (not member-info)
       (binding [*out* *err*]
-        (println "DYNAMIC WARNING: can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info)))
+        (dynamic-warning "can't resolve member" member-name "on target type" (:element-name type! "dynamic") "of library" (:lib type! "dart:core") (source-info)))
       (not= (:kind member-info) :field)
       (throw (Exception. (str member-name " is not a field of " (:element-name type!) " " (source-info)))))
     [dart-obj-bindings dart-obj member-name (or (:setter-type member-info) dc-dynamic)]))
@@ -3014,7 +3023,7 @@
             super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)
             _ (when (not super-ctor-info)
                 (binding [*out* *err*]
-                  (println "DYNAMIC WARNING: can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
+                  (dynamic-warning "can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
             super-ctor-split-args+types
             (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))
 
@@ -3269,30 +3278,30 @@
 (defn emit-ns [[_ ns-sym & ns-clauses :as ns-form] _]
   (when (or (not *hosted*) *host-eval*)
     (let [[ns-meta ns-clauses] (split-with #(or (string? %) (map? %)) ns-clauses)
-          ns-meta (into {} (map #(if (string? %) [:doc %] % )) ns-meta)
+          ns-meta (into {} (map #(if (string? %) [:doc %] %)) ns-meta)
           refer-clojures (if (= 'cljd.core ns-sym)
                            [[:refer-clojure :only []]]
                            (or (seq (filter #(= :refer-clojure (first %)) ns-clauses)) [[:refer-clojure]]))
           host-ns-directives (some #(when (= :host-ns (first %)) (next %)) ns-clauses)
           require-specs
           (->>
-           (concat
-            (map refer-clojure-to-require refer-clojures)
-            (for [[directive & specs :as clause] ns-clauses
-                  :when clause ; allow nils produced by conditionals
-                  :let [f (case directive
-                            :require #(if (sequential? %) % [%])
-                            :import import-to-require
-                            :use use-to-require
-                            (:refer-clojure :host-ns) nil)]
-                  :when f
-                  spec specs
-                  ; allow nils produced by conditionals
-                  :when spec]
-              (f spec)))
-           (map (fn [[lib & more :as spec]]
-                  (or (some-> (cljdize lib) (cons more))
-                      spec))))
+            (concat
+              (map refer-clojure-to-require refer-clojures)
+              (for [[directive & specs :as clause] ns-clauses
+                    :when clause ; allow nils produced by conditionals
+                    :let [f (case directive
+                              :require #(if (sequential? %) % [%])
+                              :import import-to-require
+                              :use use-to-require
+                              (:refer-clojure :host-ns) nil)]
+                    :when f
+                    spec specs
+                    ; allow nils produced by conditionals
+                    :when spec]
+                (f spec)))
+            (map (fn [[lib & more :as spec]]
+                   (or (some-> (cljdize lib) (cons more))
+                     spec))))
           ns-lib (ns-to-lib ns-sym)
           ns-map (-> ns-prototype
                    (assoc :meta ns-meta)
@@ -3300,56 +3309,60 @@
                    (assoc-in [:imports ns-lib] {:clj-alias (name ns-sym)}))
           ns-map
           (reduce #(%2 %1) ns-map
-                  (for [[lib & {:keys [as refer rename]}] require-specs
-                        :let [_ (when (and (string? lib) (nil? (analyzer-info lib)))
-                                  (throw (Exception. (str "Can't find Dart lib: " lib))))
-                              _ (when-not (or (nil? refer) (and (coll? refer) (every? symbol? refer)))
-                                  (throw (ex-info ":refer expects a collection of symbols; :refer :all is not supported." {:refer refer})))
-                              clj-ns (when-not (string? lib) lib)
-                              dartlib (else->>
-                                       (if (string? lib) lib)
-                                       (if-some [{:keys [lib]} (@nses lib)] lib)
-                                       (if (= ns-sym lib) ns-lib)
-                                       (compile-namespace lib))
-                              dart-alias (global-lib-alias dartlib clj-ns)
-                              clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
-                              to-dart-sym (if clj-ns #(munge % {}) identity)]]
-                    (fn [ns-map]
-                      (-> ns-map
-                          (cond-> (nil? (get (:imports ns-map) dartlib))
-                            (assoc-in [:imports dartlib] {:clj-alias clj-alias}))
-                          (assoc-in [:clj-aliases clj-alias] dartlib)
-                          (update :mappings into
-                                  (let [source (if (string? lib)
-                                                 #(analyzer-info lib (name %))
-                                                 (@nses lib))]
-                                    (for [to refer :let [from (get rename to to)]]
-                                      (if-not (source to)
-                                        (throw (Exception. (str "Can't find " to " in " lib)))
-                                        [from (symbol clj-alias (name to))]))))))))
+            (for [[lib & {:keys [as refer rename]}] require-specs
+                  :let [_ (when (and (string? lib) (nil? (analyzer-info lib)))
+                            (throw (Exception. (str "Can't find Dart lib: " lib))))
+                        _ (when-not (or (nil? refer) (and (coll? refer) (every? symbol? refer)))
+                            (throw (ex-info ":refer expects a collection of symbols; :refer :all is not supported." {:refer refer})))
+                        clj-ns (when-not (string? lib) lib)
+                        dartlib (else->>
+                                  (if (string? lib) lib)
+                                  (if-some [{:keys [lib]} (@nses lib)] lib)
+                                  (if (= ns-sym lib) ns-lib)
+                                  (compile-namespace lib))
+                        dart-alias (global-lib-alias dartlib clj-ns)
+                        clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
+                        to-dart-sym (if clj-ns #(munge % {}) identity)]]
+              (fn [ns-map]
+                (-> ns-map
+                  (cond-> (nil? (get (:imports ns-map) dartlib))
+                    (assoc-in [:imports dartlib] {:clj-alias clj-alias}))
+                  (assoc-in [:clj-aliases clj-alias] dartlib)
+                  (update :mappings into
+                    (let [source (if (string? lib)
+                                   #(analyzer-info lib (name %))
+                                   (@nses lib))]
+                      (for [to refer :let [from (get rename to to)]]
+                        (if-not (source to)
+                          (throw (Exception. (str "Can't find " to " in " lib)))
+                          [from (symbol clj-alias (name to))]))))))))
           host-aliases (into #{}
-                             (for [[op & more] host-ns-directives
-                                   :when (= :require op)
-                                   lib more
-                                   :when (sequential? lib)
-                                   :let [[_ & {:keys [as]}] lib]
-                                   :when as]
-                               as))
+                         (for [[op & more] host-ns-directives
+                               :when (= :require op)
+                               lib more
+                               :when (sequential? lib)
+                               :let [[_ & {:keys [as]}] lib]
+                               :when as]
+                           as))
           host-ns-directives
           (concat
-           host-ns-directives
-           (for [[lib & {:keys [refer as] :as options}] require-specs
-                 :when (not (host-aliases as))
-                 :let [host-ns (some-> (get @nses lib) :host-ns ns-name)]
-                 :when (and host-ns (not= ns-sym lib))
-                 :let [options
-                       (assoc options :refer (filter (comp :macro-support :meta (@nses 'cljd.core)) refer))]]
-             (list :require (into [host-ns] cat options))))
+            host-ns-directives
+            (for [[lib & {:keys [refer as] :as options}] require-specs
+                  :when (not (host-aliases as))
+                  :let [host-ns (some-> (get @nses lib) :host-ns ns-name)]
+                  :when (and host-ns (not= ns-sym lib))
+                  :let [options
+                        (assoc options :refer (filter (comp :macro-support :meta (@nses 'cljd.core)) refer))]]
+              (list :require (into [host-ns] cat options))))
           ns-map (cond-> ns-map
                    *host-eval* (assoc :host-ns (create-host-ns ns-sym host-ns-directives)))]
       (global-lib-alias ns-lib ns-sym)
       (set! *current-ns* ns-sym)
-      (swap! nses assoc ns-sym ns-map))))
+      (swap! nses assoc ns-sym ns-map)))
+  (when-not *host-eval*
+    (set! dynamic-warning (if (get-in @nses [ns-sym :meta :no-dynamic])
+                            on-dynamic-fail
+                            on-dynamic-warn))))
 
 (defn- emit-no-recur [expr env]
   (let [dart-expr (emit expr env)]
@@ -4556,27 +4569,29 @@
   #?(:clj
      (with-cljd-reader
        (let [in (clojure.lang.LineNumberingPushbackReader. in)]
-         (loop []
-           (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
-             (when-not (identical? form in)
-               (try
-                 (binding [*locals-gen* {}] (emit form {}))
-                 (catch Exception e
-                   (throw (if (::emit-stack (ex-data e))
-                            e
-                            (ex-info "Compilation error." {:form form} e)))))
-               (recur))))))))
+         (binding [dynamic-warning on-dynamic-warn]
+           (loop []
+             (let [form (read {:eof in :read-cond :allow :features #{:cljd}} in)]
+               (when-not (identical? form in)
+                 (try
+                   (binding [*locals-gen* {}] (emit form {}))
+                   (catch Exception e
+                     (throw (if (::emit-stack (ex-data e))
+                              e
+                              (ex-info "Compilation error." {:form form} e)))))
+                 (recur)))))))))
 
 (defn host-load-input [in]
   #?(:clj
      (with-cljd-reader
        (let [in (clojure.lang.LineNumberingPushbackReader. in)]
-         (loop []
-           (let [form (read {:eof in :read-cond :allow
-                             :features #{:cljd :cljd/clj-host :clj}} in)]
-             (when-not (identical? form in)
-               (binding [*locals-gen* {}] (host-eval form))
-               (recur))))))))
+         (binding [dynamic-warning on-dynamic-warn]
+           (loop []
+             (let [form (read {:eof in :read-cond :allow
+                               :features #{:cljd :cljd/clj-host :clj}} in)]
+               (when-not (identical? form in)
+                 (binding [*locals-gen* {}] (host-eval form))
+                 (recur)))))))))
 
 (defn- rename-lib [{:keys [libs dart-aliases] :as nses} from to]
   (let [{:keys [ns dart-alias] :as m} (libs from)

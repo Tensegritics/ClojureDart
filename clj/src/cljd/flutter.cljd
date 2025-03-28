@@ -1,4 +1,5 @@
 (ns cljd.flutter
+  {:no-dynamic true}
   (:require ["package:flutter/widgets.dart" :as widgets]
             ["package:flutter/material.dart" :as material]
             ["package:flutter/foundation.dart" :as foundation]
