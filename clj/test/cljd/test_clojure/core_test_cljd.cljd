@@ -1148,6 +1148,7 @@
       (is (= (zipmap s1 s1)
             (join-with last-win nil identity {}
               (join-with last-win nil str/upper-case #{} s1)))))))
+
 (comment
   (let [n*2 (set (range 0 1e6 2))
         n*3 (set (range 0 1e6 3))]

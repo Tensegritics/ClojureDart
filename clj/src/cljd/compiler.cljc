@@ -139,6 +139,7 @@
     m))
 
 (def ^:dynamic ^java.io.Writer *dart-out*)
+(declare ^:dynamic *source-map*)
 
 (defmacro with-dart-str [& body]
   `(let [w# (java.io.StringWriter.)]
@@ -146,13 +147,15 @@
        ~@body)
      (.toString w#)))
 
-(defmacro with-dart-code [& body]
+(defmacro with-dart-code [slug & body]
   `(let [sw# (java.io.StringWriter.)
          lnw# (cljd.lang.LineNumberingWriter. sw#)]
      (binding [*dart-out* lnw#
-               #_*line-mappings*]
-       ~@body)
-     {:str (.toString sw#)}))
+               *source-map* [[1 0 {:line 1 :column 0}]]]
+       ~@body
+       {:str (.toString sw#)
+        :smap *source-map*
+        :slug ~slug})))
 
 ;; analyzer-info is a fn to query info about types and libs
 ;;
@@ -2951,7 +2954,8 @@
                     (map second super-ctor-split-params)))
                   (assoc-in [:super-ctor :args]
                             (into [] (comp cat (remove nil?)) super-ctor-split-params)))]
-    (swap! nses alter-def class-name assoc :dart/code (with-dart-code (write-class class)))
+    (swap! nses alter-def class-name assoc
+      :dart/code (with-dart-code " reify" (write-class class)))
     (let [ctor-split-args (map #(assoc % 0 nil) super-ctor-split-args+types)
           [bindings dart-args] (lift-args ctor-split-args env)
           bindings (concat super-fn-bindings bindings)]
@@ -2984,7 +2988,7 @@
            (assoc spec
                   :dart/name dartname
                   :dart/qname (dart-qualify dartname)
-                  :dart/code (with-dart-code (write-top-field dartname (emit (list 'new (:impl spec)) {})))
+                  :dart/code (with-dart-code (str "/" pname) (write-top-field dartname (emit (list 'new (:impl spec)) {})))
                   :type :protocol))))
 
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
@@ -3054,7 +3058,7 @@
                                 (list dart-expr)
                                 [name dart-expr]))))
                         super-ctor-split-args+types)))]
-        (swap! nses alter-def class-name assoc :dart/code (with-dart-code (write-class class)) :dart/type dart-type)
+        (swap! nses alter-def class-name assoc :dart/code (with-dart-code (str "/" class-name) (write-class class)) :dart/type dart-type)
     (emit class-name env)))))
 
 (defn relocatable-class-name
@@ -3181,7 +3185,7 @@
         (when-not *host-eval* (into [] (map #(emit % env)) (-> form meta :annotations)))
         dart-code
         (when-not *host-eval*
-          (with-dart-code
+          (with-dart-code (str "/" sym)
             (write-annotations dart-annotations)
             (cond
               (:dynamic (meta sym))
@@ -3509,7 +3513,9 @@
                                            {:line line :column column
                                             :end-line end-line :end-column end-column}
                                            *source-info*))]
-                 (emit x env)))
+                 (let [dart-x (emit x env)]
+                   (cond-> dart-x
+                     (instance? clojure.lang.IObj dart-x) (vary-meta merge *source-info*)))))
              (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal false (:form x) env)
              (coll? x) (emit-coll false x env)
              :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
@@ -4126,345 +4132,370 @@
         (dart-print ")"))))
   (dart-print (:post locus)))
 
+(defmacro ^:private with-source-map [source-info & body]
+  `(let [^cljd.lang.LineNumberingWriter lnw#
+         (when (instance? cljd.lang.LineNumberingWriter *dart-out*)
+           *dart-out*)
+         {line# :line :as source-info#} (when lnw# ~source-info)
+         prev-source-info#
+         (else->>
+           (when line#)
+           (let [[prev-line# prev-column# prev-source-info#] (peek *source-map*)])
+           (when-not (= prev-source-info# source-info#))
+           (let[line# (.getLine lnw#)
+                column# (.getColumn lnw#)]
+             (set! *source-map*
+               (cond-> *source-map*
+                 (and (= column# prev-column#) (= line# prev-line#)) pop
+                 :always (conj [line# column# source-info#])))
+             prev-source-info#))
+         res# (do ~@body)]
+     (when prev-source-info#
+       (set! *source-map*
+         (conj *source-map*
+           [(.getLine lnw#) (.getColumn lnw#) prev-source-info#])))
+     res#))
+
 (defn write
   "Takes a dartsexp and a locus.
    Prints valid dart code.
    Returns true when the just-written code is exiting control flow (return throw continue) -- this enable some dead code removal."
   [x locus]
-  (cond
-    (vector? x)
-    (do (print-pre locus)
-        (some-> x meta :dart/type :type-parameters (write-types "<" ">"))
-        (dart-print "[")
-        (run! #(write % arg-locus) x)
-        (dart-print "]")
-        (print-post locus))
-    (seq? x)
-    (case (let [op (first x)] (when (symbol? op) op))
-      dart/record
-      (let [[_ & args] x]
-        (print-pre locus)
-        (write-args args)
-        (print-post locus)
-        (:exit locus))
-      dart/fn
-      (let [[_ fixed-params opt-kind opt-params async body] x]
-        (print-pre locus)
-        (write-params fixed-params opt-kind opt-params)
-        (when async (dart-print " async "))
-        (dart-print "{\n")
-        (write body return-locus)
-        (dart-print "}")
-        (print-post locus))
-      dart/let
-      (let [[_ bindings expr] x]
-        (or
-         (some (fn [[v e]]
-                 (if (= :late v)
-                   (dart-print (declaration (final-locus e)))
-                   (write e
-                     (cond
-                       (nil? v) statement-locus
-                       (and (seq? e) (= 'dart/fn (first e))) (named-fn-locus v)
-                       (-> v meta :dart/const) (const-locus v)
-                       :else (final-locus v)))))
-               bindings)
-         (write expr locus)))
-      dart/try
-      (let [[_ body catches final] x
-            decl (declaration locus)
-            locus (declared locus)
-            _  (some-> decl dart-print)
-            _ (dart-print "try {\n")
-            exit (write body locus)
-            exit
-            (transduce
-             (map (fn [[classname e st expr]]
-                    (dart-print "} on ")
-                    (write-type classname)
-                    (dart-print " catch (")
-                    (dart-print e)
-                    (some->> st (dart-print ","))
-                    (dart-print ") {\n")
-                    (binding [*caught-exception-symbol* e]
-                      (write expr locus))))
-             (completing (fn [a b] (and a b)))
-             exit catches)]
-        (when final
-          (dart-print "} finally {\n")
-          (write final statement-locus))
-        (dart-print "}\n")
-        exit)
-      dart/as
-      (let [[_ expr type] x]
-        (write expr (update locus :casts conj type)))
-      #_(let [[_ expr type] x]
-        (print-pre locus)
-        (dart-print "(")
-        (write expr expr-locus)
-        (dart-print " as ")
-        (write-type type)
-        (dart-print ")")
-        (print-post locus))
-      dart/is
-      (let [[_ expr type] x]
-        (print-pre locus)
-        (dart-print "(")
-        (write expr expr-locus)
-        (dart-print " is ")
-        (write-type type)
-        (dart-print ")")
-        (print-post locus))
-      dart/assert
-      (let [[_ condition msg-expr] x]
-        (dart-print "assert(")
-        (write condition expr-locus)
-        (dart-print ", ")
-        (write msg-expr expr-locus)
-        (dart-print "); // assert\n\n"))
-      dart/await
-      (let [[_ expr] x]
-        (print-pre locus)
-        (dart-print "(await ")
-        (write expr expr-locus)
-        (dart-print ")")
-        (print-post locus))
-      dart/throw
-      (let [[_ expr] x]
-        (if (= expr *caught-exception-symbol*)
-          (dart-print "rethrow;\n")
-          (write expr throw-locus))
-        true)
-      dart/case
-      (let [[_ expr default-label clauses default-expr] x
-            decl (declaration locus)
-            locus (declared locus)
-            _ (some-> decl dart-print)
-            _ (dart-print "switch(")
-            _ (write expr expr-locus)
-            _ (dart-print "){\n")
-            exit (reduce
-                  (fn [exit [vals expr]]
-                    (run! #(do (dart-print "case ") (write % expr-locus) (dart-print ":\n")) vals)
-                    (if (write expr locus)
-                      exit
-                      (dart-print "break;\n")))
-                  true
-                  clauses)
-            _ (when default-label
-                (dart-print default-label)
-                (dart-print ": "))
-            _ (dart-print "default:\n")
-            exit (and (write default-expr locus) exit)]
-        (dart-print "}\n")
-        exit)
-      dart/continue
-      (let [[_ label] x]
-        (dart-print "continue ") (dart-print label) (dart-print ";\n")
-        true)
-      dart/if
-      (let [decl (declaration locus)
-            locus (declared locus)]
-        (some-> decl dart-print)
-        (loop [[_ test then else] x]
-          (dart-print "if(")
-          (write test expr-locus)
-          (dart-print "){\n")
-          (write then locus)
+  (with-source-map (select-keys (meta x) [:line :column])
+    (cond
+      (vector? x)
+      (do (print-pre locus)
+          (some-> x meta :dart/type :type-parameters (write-types "<" ">"))
+          (dart-print "[")
+          (run! #(write % arg-locus) x)
+          (dart-print "]")
+          (print-post locus))
+      (seq? x)
+      (case (let [op (first x)] (when (symbol? op) op))
+        dart/record
+        (let [[_ & args] x]
+          (print-pre locus)
+          (write-args args)
+          (print-post locus)
+          (:exit locus))
+        dart/fn
+        (let [[_ fixed-params opt-kind opt-params async body] x]
+          (print-pre locus)
+          (write-params fixed-params opt-kind opt-params)
+          (when async (dart-print " async "))
+          (dart-print "{\n")
+          (write body return-locus)
+          (dart-print "}")
+          (print-post locus))
+        dart/let
+        (let [[_ bindings expr] x]
+          (or
+            (some (fn [[v e]]
+                    (if (= :late v)
+                      (dart-print (declaration (final-locus e)))
+                      (write e
+                        (cond
+                          (nil? v) statement-locus
+                          (and (seq? e) (= 'dart/fn (first e))) (named-fn-locus v)
+                          (-> v meta :dart/const) (const-locus v)
+                          :else (final-locus v)))))
+              bindings)
+            (write expr locus)))
+        dart/try
+        (let [[_ body catches final] x
+              decl (declaration locus)
+              locus (declared locus)
+              _  (some-> decl dart-print)
+              _ (dart-print "try {\n")
+              exit (write body locus)
+              exit
+              (transduce
+                (map (fn [[classname e st expr]]
+                       (dart-print "} on ")
+                       (write-type classname)
+                       (dart-print " catch (")
+                       (dart-print e)
+                       (some->> st (dart-print ","))
+                       (dart-print ") {\n")
+                       (binding [*caught-exception-symbol* e]
+                         (write expr locus))))
+                (completing (fn [a b] (and a b)))
+                exit catches)]
+          (when final
+            (dart-print "} finally {\n")
+            (write final statement-locus))
+          (dart-print "}\n")
+          exit)
+        dart/as
+        (let [[_ expr type] x]
+          (write expr (update locus :casts conj type)))
+        #_(let [[_ expr type] x]
+            (print-pre locus)
+            (dart-print "(")
+            (write expr expr-locus)
+            (dart-print " as ")
+            (write-type type)
+            (dart-print ")")
+            (print-post locus))
+        dart/is
+        (let [[_ expr type] x]
+          (print-pre locus)
+          (dart-print "(")
+          (write expr expr-locus)
+          (dart-print " is ")
+          (write-type type)
+          (dart-print ")")
+          (print-post locus))
+        dart/assert
+        (let [[_ condition msg-expr] x]
+          (dart-print "assert(")
+          (write condition expr-locus)
+          (dart-print ", ")
+          (write msg-expr expr-locus)
+          (dart-print "); // assert\n\n"))
+        dart/await
+        (let [[_ expr] x]
+          (print-pre locus)
+          (dart-print "(await ")
+          (write expr expr-locus)
+          (dart-print ")")
+          (print-post locus))
+        dart/throw
+        (let [[_ expr] x]
+          (if (= expr *caught-exception-symbol*)
+            (dart-print "rethrow;\n")
+            (write expr throw-locus))
+          true)
+        dart/case
+        (let [[_ expr default-label clauses default-expr] x
+              decl (declaration locus)
+              locus (declared locus)
+              _ (some-> decl dart-print)
+              _ (dart-print "switch(")
+              _ (write expr expr-locus)
+              _ (dart-print "){\n")
+              exit (reduce
+                     (fn [exit [vals expr]]
+                       (run! #(do (dart-print "case ") (write % expr-locus) (dart-print ":\n")) vals)
+                       (if (write expr locus)
+                         exit
+                         (dart-print "break;\n")))
+                     true
+                     clauses)
+              _ (when default-label
+                  (dart-print default-label)
+                  (dart-print ": "))
+              _ (dart-print "default:\n")
+              exit (and (write default-expr locus) exit)]
+          (dart-print "}\n")
+          exit)
+        dart/continue
+        (let [[_ label] x]
+          (dart-print "continue ") (dart-print label) (dart-print ";\n")
+          true)
+        dart/if
+        (let [decl (declaration locus)
+              locus (declared locus)]
+          (some-> decl dart-print)
+          (loop [[_ test then else] x]
+            (dart-print "if(")
+            (write test expr-locus)
+            (dart-print "){\n")
+            (write then locus)
+            (cond
+              (:exit locus)
+              (do
+                (dart-print "}\n")
+                (write else locus))
+              (and (seq? else) (= 'dart/if (first else)))
+              (do
+                (dart-print "}else ")
+                (recur else))
+              :else
+              (do
+                (dart-print "}else{\n")
+                (write else locus)
+                (dart-print "}\n")))))
+        dart/loop
+        (let [[_ bindings expr] x
+              decl (declaration locus)
+              locus (-> locus declared (assoc :loop-bindings (map first bindings)))]
+          (some-> decl dart-print)
+          (doseq [[v e] bindings]
+            (write e (var-locus (or (-> v meta :dart/type) dc-dynamic) v)))
+          (dart-print "do {\n")
+          (when-not (write expr locus)
+            (dart-print "break;\n"))
+          (dart-print "} while(true);\n"))
+        dart/recur
+        (let [[_ & exprs] x
+              {:keys [loop-bindings]} locus
+              expected (count loop-bindings)
+              actual (count exprs)]
+          (when-not loop-bindings
+            (throw (ex-info "Can only recur from tail position." {:x x})))
+          (when-not (= expected actual)
+            (throw (ex-info (str "Mismatched argument count to recur, expected: "
+                              expected " args, got: " actual) {})))
+          (let [loop-rebindings (remove (fn [[v e]] (= v e)) (map vector loop-bindings exprs))
+                vars (into #{} (map first) loop-rebindings)
+                vars-usages (->>
+                              (map (fn [[v e]]
+                                     (into #{} (comp (filter symbol?) (keep (disj vars v)))
+                                       (tree-seq sequential? seq e)))
+                                loop-rebindings)
+                              reverse
+                              (reductions into)
+                              reverse)
+                tmps (into {}
+                       (map (fn [[v e] vs]
+                              (assert (re-matches #".*\$\d+" (name v)))
+                              (when (vs v) [v (with-meta (symbol (str v "tmp")) (meta v))]))
+                         loop-rebindings vars-usages))]
+            (doseq [[v e] loop-rebindings]
+              (write e (if-some [tmp (tmps v)] (final-locus tmp) (assignment-locus v))))
+            (doseq [[v tmp] tmps]
+              (write tmp (assignment-locus v)))
+            (dart-print "continue;\n")
+            true))
+        dart/set!
+        (let [[_ target [tmp val :as tmp-binding]] x]
+          ; dart/set! like clojure set! evaluates to the set value
+          ; when it occurs in non-lifted expression contexts (return, lhr of lets...)
+          ; we have to avoid double evaluation of val, that's why dart/set! provides an
+          ; "emergency binding" to provide a name for the resulting value.
           (cond
-            (:exit locus)
-            (do
-              (dart-print "}\n")
-              (write else locus))
-            (and (seq? else) (= 'dart/if (first else)))
-            (do
-              (dart-print "}else ")
-              (recur else))
+            (:statement locus)
+            (write val
+              (assignment-locus
+                (binding [*dart-out* (java.io.StringWriter.)]
+                  (write target expr-locus)
+                  (str *dart-out*))))
+            (nil? tmp) (throw (ex-info "dart/set! without temp in expression position"))
             :else
+            (write
+              (list 'dart/let [tmp-binding
+                               [nil (list 'dart/set! target [nil tmp])]]
+                tmp) locus)))
+        dart/.-
+        (let [[_ obj fld] x]
+          (print-pre locus)
+          (if (= :class (:kind obj))
+            (write-type obj)
+            (write obj expr-locus))
+          (dart-print (str "." fld))
+          (print-post locus)
+          (:exit locus))
+        dart/.
+        (let [[_ obj meth & args] x
+              [meth & type-params] (cond-> meth (not (sequential? meth)) list)
+              meth (name meth) ; sometimes meth is a symbol
+              is-plain-method (re-matches #"^[a-zA-Z_$].*" meth)
+              ; the :statement test below is not a gratuitous optimization meant to
+              ; remove unnecessary parens.
+              ; this :statement test is to handle the case of the []= operator which
+              ; must not be put into parens and always occur in a statement locus.
+              ; the plain-method & :this-position test however is purely aesthetic to
+              ; avoid over-parenthizing chained method calls.
+              must-wrap (not (or (:statement locus) (and is-plain-method (:this-position locus))))]
+          (print-pre locus)
+          (when must-wrap (dart-print "("))
+          (case meth
+            ;; operators, some are cljd tricks
+            "[]" (do
+                   (write obj expr-locus)
+                   (dart-print "[")
+                   (write (first args) expr-locus)
+                   (dart-print "]"))
+            "[]=" (do
+                    (write obj expr-locus)
+                    (dart-print "[")
+                    (write (first args) expr-locus)
+                    (dart-print "]=")
+                    (write (second args) expr-locus))
+            ("~" "!") (do
+                        (dart-print meth)
+                        (write obj expr-locus))
+            "-" (if args
+                  (do
+                    (write obj expr-locus)
+                    (dart-print " ")
+                    (dart-print meth)
+                    (dart-print " ")
+                    (write (first args) expr-locus))
+                  (do
+                    (assert false "DEAD BRANCH")
+                    (dart-print meth)
+                    (write obj expr-locus)))
+            "unary-" (do
+                       (dart-print "(")
+                       (dart-print "- ")
+                       (write obj expr-locus)
+                       (dart-print ")"))
+            ("&&" "||" "^^" "+" "*" "&" "|" "^")
             (do
-              (dart-print "}else{\n")
-              (write else locus)
-              (dart-print "}\n")))))
-      dart/loop
-      (let [[_ bindings expr] x
-            decl (declaration locus)
-            locus (-> locus declared (assoc :loop-bindings (map first bindings)))]
-        (some-> decl dart-print)
-        (doseq [[v e] bindings]
-          (write e (var-locus (or (-> v meta :dart/type) dc-dynamic) v)))
-        (dart-print "do {\n")
-        (when-not (write expr locus)
-          (dart-print "break;\n"))
-        (dart-print "} while(true);\n"))
-      dart/recur
-      (let [[_ & exprs] x
-            {:keys [loop-bindings]} locus
-            expected (count loop-bindings)
-            actual (count exprs)]
-        (when-not loop-bindings
-          (throw (ex-info "Can only recur from tail position." {:x x})))
-        (when-not (= expected actual)
-          (throw (ex-info (str "Mismatched argument count to recur, expected: "
-                               expected " args, got: " actual) {})))
-        (let [loop-rebindings (remove (fn [[v e]] (= v e)) (map vector loop-bindings exprs))
-              vars (into #{} (map first) loop-rebindings)
-              vars-usages (->>
-                            (map (fn [[v e]]
-                                   (into #{} (comp (filter symbol?) (keep (disj vars v)))
-                                     (tree-seq sequential? seq e)))
-                              loop-rebindings)
-                           reverse
-                           (reductions into)
-                           reverse)
-              tmps (into {}
-                     (map (fn [[v e] vs]
-                            (assert (re-matches #".*\$\d+" (name v)))
-                            (when (vs v) [v (with-meta (symbol (str v "tmp")) (meta v))]))
-                       loop-rebindings vars-usages))]
-          (doseq [[v e] loop-rebindings]
-            (write e (if-some [tmp (tmps v)] (final-locus tmp) (assignment-locus v))))
-          (doseq [[v tmp] tmps]
-            (write tmp (assignment-locus v)))
-          (dart-print "continue;\n")
-          true))
-      dart/set!
-      (let [[_ target [tmp val :as tmp-binding]] x]
-        ; dart/set! like clojure set! evaluates to the set value
-        ; when it occurs in non-lifted expression contexts (return, lhr of lets...)
-        ; we have to avoid double evaluation of val, that's why dart/set! provides an
-        ; "emergency binding" to provide a name for the resulting value.
-        (cond
-          (:statement locus)
-          (write val
-            (assignment-locus
-              (binding [*dart-out* (java.io.StringWriter.)]
-                (write target expr-locus)
-                (str *dart-out*))))
-          (nil? tmp) (throw (ex-info "dart/set! without temp in expression position"))
-          :else
-          (recur
-            (list 'dart/let [tmp-binding
-                             [nil (list 'dart/set! target [nil tmp])]]
-              tmp) locus)))
-      dart/.-
-      (let [[_ obj fld] x]
-        (print-pre locus)
-        (if (= :class (:kind obj))
-          (write-type obj)
-          (write obj expr-locus))
-        (dart-print (str "." fld))
-        (print-post locus)
-        (:exit locus))
-      dart/.
-      (let [[_ obj meth & args] x
-            [meth & type-params] (cond-> meth (not (sequential? meth)) list)
-            meth (name meth) ; sometimes meth is a symbol
-            is-plain-method (re-matches #"^[a-zA-Z_$].*" meth)
-            ; the :statement test below is not a gratuitous optimization meant to
-            ; remove unnecessary parens.
-            ; this :statement test is to handle the case of the []= operator which
-            ; must not be put into parens and always occur in a statement locus.
-            ; the plain-method & :this-position test however is purely aesthetic to
-            ; avoid over-parenthizing chained method calls.
-            must-wrap (not (or (:statement locus) (and is-plain-method (:this-position locus))))]
-        (print-pre locus)
-        (when must-wrap (dart-print "("))
-        (case meth
-          ;; operators, some are cljd tricks
-          "[]" (do
-                 (write obj expr-locus)
-                 (dart-print "[")
-                 (write (first args) expr-locus)
-                 (dart-print "]"))
-          "[]=" (do
-                  (write obj expr-locus)
-                  (dart-print "[")
-                  (write (first args) expr-locus)
-                  (dart-print "]=")
-                  (write (second args) expr-locus))
-          ("~" "!") (do
-                      (dart-print meth)
-                      (write obj expr-locus))
-          "-" (if args
-                (do
-                  (write obj expr-locus)
-                  (dart-print " ")
-                  (dart-print meth)
-                  (dart-print " ")
-                  (write (first args) expr-locus))
-                (do
-                  (assert false "DEAD BRANCH")
-                  (dart-print meth)
-                  (write obj expr-locus)))
-          "unary-" (do
-                     (dart-print "(")
-                     (dart-print "- ")
-                     (write obj expr-locus)
-                     (dart-print ")"))
-          ("&&" "||" "^^" "+" "*" "&" "|" "^")
-          (do
-            (write obj expr-locus)
-            (doseq [arg args]
+              (write obj expr-locus)
+              (doseq [arg args]
+                (dart-print " ")
+                (dart-print meth)
+                (dart-print " ")
+                (write arg expr-locus)))
+            ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" ">>>")
+            (do
+              (assert (= (count args) 1))
+              (write obj expr-locus)
               (dart-print " ")
               (dart-print meth)
               (dart-print " ")
-              (write arg expr-locus)))
-          ("<" ">" "<=" ">=" "==" "!=" "~/" "/" "%" "<<" ">>" ">>>")
-          (do
-            (assert (= (count args) 1))
-            (write obj expr-locus)
-            (dart-print " ")
-            (dart-print meth)
-            (dart-print " ")
-            (write (first args) expr-locus))
-          ;; else plain method
-          (do
-            (assert is-plain-method (str "not a plain method: " meth))
-            (when (:dart/const (meta x)) ; should only be on constructors, see #53
-              (dart-print "const "))
-            (cond
-              (= :class (:kind obj))
-              (write-type obj)
-              (and (number? obj) (neg? obj))
-              (do (dart-print "(")
-                  (write obj expr-locus)
-                  (dart-print ")"))
-              :else
-              (write obj (assoc expr-locus :this-position true)))
-            (dart-print (str "." meth))
-            (write-types type-params "<" ">")
-            (write-args args)))
-        (when must-wrap (dart-print ")"))
-        (print-post locus)
-        (:exit locus))
-      dart/type
-      (when-not (:statement locus)
-        (print-pre locus)
-        (write-type (second x))
-        (print-post locus)
-        (:exit locus))
-      dart/new
-      (let [[_ type & args] x]
-        (print-pre locus)
-        (when (:dart/const (meta x))
-          (dart-print "const "))
-        (write-type type)
-        (write-args args)
-        (print-post locus)
-        (:exit locus))
-      ;; native fn call
-      (let [[f & args] x]
-        (print-pre locus)
-        (write f expr-locus)
-        (write-types (some-> f meta :dart/signature :type-parameters) "<" ">")
-        (write-args args)
-        (print-post locus)
-        (:exit locus)))
-    :else (when-not (:statement locus)
-            (print-pre locus)
-            (write-literal x)
-            (print-post locus)
-            (:exit locus))))
+              (write (first args) expr-locus))
+            ;; else plain method
+            (do
+              (assert is-plain-method (str "not a plain method: " meth))
+              (when (:dart/const (meta x)) ; should only be on constructors, see #53
+                (dart-print "const "))
+              (cond
+                (= :class (:kind obj))
+                (write-type obj)
+                (and (number? obj) (neg? obj))
+                (do (dart-print "(")
+                    (write obj expr-locus)
+                    (dart-print ")"))
+                :else
+                (write obj (assoc expr-locus :this-position true)))
+              (dart-print (str "." meth))
+              (write-types type-params "<" ">")
+              (write-args args)))
+          (when must-wrap (dart-print ")"))
+          (print-post locus)
+          (:exit locus))
+        dart/type
+        (when-not (:statement locus)
+          (print-pre locus)
+          (write-type (second x))
+          (print-post locus)
+          (:exit locus))
+        dart/new
+        (let [[_ type & args] x]
+          (print-pre locus)
+          (when (:dart/const (meta x))
+            (dart-print "const "))
+          (write-type type)
+          (write-args args)
+          (print-post locus)
+          (:exit locus))
+        ;; native fn call
+        (let [[f & args] x]
+          (print-pre locus)
+          (write f expr-locus)
+          (write-types (some-> f meta :dart/signature :type-parameters) "<" ">")
+          (write-args args)
+          (print-post locus)
+          (:exit locus)))
+      :else (when-not (:statement locus)
+              (print-pre locus)
+              (write-literal x)
+              (print-post locus)
+              (:exit locus)))))
 
 (defn relativize-lib [^String src ^String target]
   (if (<= 0 (.indexOf target ":"))
@@ -4491,13 +4522,18 @@
     (dart-print " = ")
     (dart-print type)
     (dart-print ";\n"))
-  (doseq [[sym v] (->> ns-map (filter (comp symbol? key)) (sort-by key))
-          :when (symbol? sym)
-          :let [{:keys [dart/code]} v]
-          :when code]
-    (dart-println "\n// BEGIN" sym)
-    (dart-println (:str code))
-    (dart-println "// END" sym)))
+  (into []
+    (keep (fn [[sym v]]
+           (when (symbol? sym)
+             (let [{:keys [dart/code]} v
+                   line (.getLine ^cljd.lang.LineNumberingWriter *dart-out*)
+                   column (.getColumn ^cljd.lang.LineNumberingWriter *dart-out*)]
+               (when code
+                 (dart-println "\n// BEGIN" sym)
+                 (dart-println (:str code))
+                 (dart-println "// END" sym)
+                 [line column code])))))
+    (->> ns-map (filter (comp symbol? key)) (sort-by key))))
 
 ;; #/[bool bool .foo String]
 ;^{:record-type [bool bool .foo String]} dc.Record
@@ -4662,21 +4698,26 @@
                           (str/join " or " file-paths))
                  {:ns ns-name}))))))
 
+(defn dump-modified-files [nses-before]
+  (doseq [[ns {:keys [lib] :as ns-map}] @nses
+          :when (and (symbol? ns)
+                  (not (identical? ns-map (nses-before ns))))]
+    (with-open [out (-> (java.io.File. ^String lib)
+                       (doto (-> .getParentFile .mkdirs))
+                       java.io.FileOutputStream.
+                       (java.io.OutputStreamWriter. "UTF-8")
+                       java.io.BufferedWriter.
+                       cljd.lang.LineNumberingWriter.)]
+      (binding [*dart-out* out]
+        (let [smap (dump-ns ns ns-map)]
+          (swap! nses assoc-in [:libs lib :smap] smap))))))
+
 (defmacro with-dump-modified-files
   "Dump modified Dart files upon succesful execution of the body."
   [& body]
   `(let [before# @nses]
      ~@body
-     (doseq [[ns# ns-map#] @nses
-             :when (and (symbol? ns#)
-                     (not (identical? ns-map# (before# ns#))))]
-       (with-open [out# (-> (java.io.File. ^String (:lib ns-map#))
-                          (doto (-> .getParentFile .mkdirs))
-                          java.io.FileOutputStream.
-                          (java.io.OutputStreamWriter. "UTF-8")
-                          java.io.BufferedWriter.)]
-        (binding [*dart-out* out#]
-          (dump-ns ns# ns-map#))))))
+     (dump-modified-files before#)))
 
 (defn compile
   [ns]
@@ -4739,7 +4780,7 @@
                   (emit (expand-protocol-impl proto-map) {}))))))
         (binding [*recompile-count* recompile-count]
           (doseq [ns nses-to-recompile
-                ; the ns may already have been transitively reloaded
+                  ; the ns may already have been transitively reloaded
                   :when (nil? (@nses ns))]
             ; recompiling via ns and not via url because cljd/cljc shadowing
             (compile-namespace ns)))

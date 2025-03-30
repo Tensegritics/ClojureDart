@@ -203,6 +203,73 @@
        (finally
          (run! remove-tap fns#)))))
 
+(defn bsearch
+  "pred is monotonic false -> true through v.
+   Returns the last element for which pred is false"
+  [v pred]
+  (cond
+    (empty? v) nil
+    (pred (first v)) nil
+    (not (pred (peek v))) (peek v)
+    :else
+    (loop [i 0 j (count v)]
+      #_(assert (not (pred (nth v i))))
+      (let [m (quot (+ i j) 2)
+            x (nth v m)]
+        (cond
+          (= i m) x
+          (pred x) (recur i m)
+          :else (recur m j))))))
+
+(defn smap-search [lib-smap line col]
+  (when-some [[dart-line dart-col {:keys [slug smap]}]
+              (bsearch lib-smap
+                (fn [[dart-line dart-col smap]]
+                  (or
+                    (< line dart-line)
+                    (and (= line dart-line)
+                      (or (nil? col) (< col dart-col))))))]
+    (let [line (- line (dec dart-line)) ; lines are 1-based
+          col (if (and col (zero? line)) (- col dart-col) col)]
+      (->
+        (bsearch smap
+          (fn [[dart-line dart-col smap]]
+            (or
+              (< line dart-line)
+              (and (= line dart-line)
+                (or (nil? col) (< col dart-col))))))
+        peek
+        (assoc :slug slug)))))
+
+(def smap-line
+  (let [mk-smap-line
+        (fn mk-smap-line []
+          (let [{:keys [libs]} @compiler/nses
+                libspat
+                (->> libs
+                  (keep (fn [[libname {:keys [smap]}]]
+                          (when smap
+                            (-> libname
+                              (str/replace #"^lib/" "/")
+                              java.util.regex.Pattern/quote))))
+                  (str/join "|"))
+                pat (re-pattern (str "(" libspat "):(\\d+)(?::(\\d+))"))]
+            (fn [line]
+              (when (identical? libs (:libs @compiler/nses))
+                (str/replace line pat
+                  (fn [[_ lib line col]]
+                    (let [{:keys [ns smap]} (get libs (str "lib" lib))
+                          {:keys [line column slug]}
+                          (smap-search smap (parse-long line) (some-> col parse-long))]
+                      (str ":" (bright ns) (subs slug 0 1) (bright (subs slug 1)) ":" line ":" column))))))))
+        *smap-line (atom (mk-smap-line))]
+    (fn [line]
+      (if-some [line (@*smap-line line)]
+        line
+        (do
+          (reset! *smap-line (mk-smap-line))
+          (recur line))))))
+
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
   (let [user-dir (System/getProperty "user.dir")
@@ -298,7 +365,8 @@
                       (doto (Thread.
                               #(binding [*ansi* ansi]
                                  (loop [state :idle]
-                                   (when-some [line (.readLine flutter-stdout)]
+                                   (when-some [line (-> (.readLine flutter-stdout)
+                                                      smap-line)]
                                      (when-not (= :reload-failed state)
                                        (println line))
                                      (let [line (.trim line)]
