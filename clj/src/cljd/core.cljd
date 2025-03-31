@@ -7296,8 +7296,10 @@
          ~(cond->> (meta m) quoted (list 'quote))
          (-> ~(mk-node stable-m 0)
            ~@(for [[k v] rem-m]
-               `(as-> node# (let [k# ~(cond->> k quoted (list 'quote))] (.inode_assoc_transient node# 0 (hash k#)
-                                                                          k# ~(cond->> v quoted (list 'quote)))))))
+               `(as-> node#
+                    (let [k# ~(cond->> k quoted (list 'quote))]
+                      (.inode_assoc_transient node# 0 (hash k#)
+                        k# ~(cond->> v quoted (list 'quote)))))))
          -1))))
 
 (defn ^PersistentHashMap hash-map
