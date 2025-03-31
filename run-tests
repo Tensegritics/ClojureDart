@@ -8,8 +8,7 @@ rm -rf tmp/tests
 mkdir -p tmp/tests/src/cljd
 cat > tmp/tests/deps.edn <<EOF
 {:paths ["src"] ; where your cljd files are
- :deps {org.clojure/clojure {:mvn/version "1.10.1"}
-        tensegritics/clojuredart
+ :deps {tensegritics/clojuredart
         {:local/root "../../"}}
  :cljd/opts {:main cljd.run-tests
              :kind :dart}}
