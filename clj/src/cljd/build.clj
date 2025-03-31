@@ -65,6 +65,11 @@
     (str "\u001B[1m" s "\u001B[0m")
     s))
 
+(defn muted [s]
+  (if *ansi*
+    (str "\u001B[2m" s "\u001B[0m")
+    s))
+
 (defn green [s]
   (if *ansi*
     (str "\u001B[1;32m" s "\u001B[0m")
@@ -253,15 +258,15 @@
                               (str/replace #"^lib/" "/")
                               java.util.regex.Pattern/quote))))
                   (str/join "|"))
-                pat (re-pattern (str "(" libspat "):(\\d+)(?::(\\d+))"))]
+                pat (re-pattern (str "\\w+:[^:]+?(" libspat "):(\\d+)(?::(\\d+))"))]
             (fn [line]
               (when (identical? libs (:libs @compiler/nses))
                 (str/replace line pat
-                  (fn [[_ lib line col]]
+                  (fn [[match lib line col]]
                     (let [{:keys [ns smap]} (get libs (str "lib" lib))
                           {:keys [line column slug]}
                           (smap-search smap (parse-long line) (some-> col parse-long))]
-                      (str ":" (bright ns) (subs slug 0 1) (bright (subs slug 1)) ":" line ":" column))))))))
+                      (str (bright ns) (subs slug 0 1) (bright (subs slug 1)) ":" (bright line) ":" (bright column) " " (muted match)))))))))
         *smap-line (atom (mk-smap-line))]
     (fn [line]
       (if-some [line (@*smap-line line)]
@@ -365,7 +370,7 @@
                       (doto (Thread.
                               #(binding [*ansi* ansi]
                                  (loop [state :idle]
-                                   (when-some [line (-> (.readLine flutter-stdout)
+                                   (when-some [line (some-> (.readLine flutter-stdout)
                                                       smap-line)]
                                      (when-not (= :reload-failed state)
                                        (println line))
