@@ -3444,6 +3444,15 @@
 (defn emit-dart-type-like [[_ x like] env]
   (simple-cast (emit x env) (:dart/type (infer-type (emit like env)))))
 
+(defn slap-smap! [dart-x]
+  (let [m (meta dart-x)
+        dart-x (if (and (seq? dart-x) (= 'dart/let (first dart-x)))
+                 (let [[op bindings expr] dart-x]
+                   (list op bindings (slap-smap! expr)))
+                 dart-x)]
+    (cond-> dart-x
+      (instance? clojure.lang.IObj dart-x) (with-meta (merge m *source-info*)))))
+
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
   ([quoted x env]
@@ -3514,8 +3523,7 @@
                                             :end-line end-line :end-column end-column}
                                            *source-info*))]
                  (let [dart-x (emit x env)]
-                   (cond-> dart-x
-                     (instance? clojure.lang.IObj dart-x) (vary-meta merge *source-info*)))))
+                   (slap-smap! dart-x))))
              (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal false (:form x) env)
              (coll? x) (emit-coll false x env)
              :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
@@ -4132,28 +4140,35 @@
         (dart-print ")"))))
   (dart-print (:post locus)))
 
+(defn append-source-map-entry [source-map line column source-info]
+  (else->>
+    (when (:line source-info))
+    (let [[prev-line prev-column prev-source-info] (peek source-map)])
+    (when-not (= prev-source-info source-info))
+    (cond-> source-map
+      (and (= column prev-column) (= line prev-line)) pop
+      :always (conj [line column source-info]))))
+
+(defn append-source-map-entry! [source-info]
+  (let [^cljd.lang.LineNumberingWriter lnw *dart-out*]
+    (when-some [sm (append-source-map-entry *source-map* (.getLine lnw) (.getColumn lnw) source-info)]
+      (let [prev-source-info (-> *source-map* peek peek)]
+        (set! *source-map* sm)
+        (fn []
+          (set! *source-map*
+            (conj *source-map*
+              [(.getLine lnw) (.getColumn lnw) prev-source-info]))
+          prev-source-info)))))
+
 (defmacro ^:private with-source-map [source-info & body]
   `(let [^cljd.lang.LineNumberingWriter lnw#
          (when (instance? cljd.lang.LineNumberingWriter *dart-out*)
            *dart-out*)
-         {line# :line :as source-info#} (when lnw# ~source-info)
-         prev-source-info#
-         (else->>
-           (when line#)
-           (let [[prev-line# prev-column# prev-source-info#] (peek *source-map*)])
-           (when-not (= prev-source-info# source-info#))
-           (let[line# (.getLine lnw#)
-                column# (.getColumn lnw#)]
-             (set! *source-map*
-               (cond-> *source-map*
-                 (and (= column# prev-column#) (= line# prev-line#)) pop
-                 :always (conj [line# column# source-info#])))
-             prev-source-info#))
+
+         restore# (when lnw# (append-source-map-entry! ~source-info))
+
          res# (do ~@body)]
-     (when prev-source-info#
-       (set! *source-map*
-         (conj *source-map*
-           [(.getLine lnw#) (.getColumn lnw#) prev-source-info#])))
+     (when restore# (restore#))
      res#))
 
 (defn write
@@ -4161,7 +4176,8 @@
    Prints valid dart code.
    Returns true when the just-written code is exiting control flow (return throw continue) -- this enable some dead code removal."
   [x locus]
-  (with-source-map (select-keys (meta x) [:line :column])
+  (with-source-map
+    (select-keys (meta x) [:line :column])
     (cond
       (vector? x)
       (do (print-pre locus)
