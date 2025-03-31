@@ -7260,7 +7260,7 @@
       `-EMPTY-MAP)
     (let [#?@(:cljd/clj-host [hash cljd.compiler/cljd-hash])
           stable-m (transduce (remove -has-stable-hash?) dissoc m (keys m))
-          rem-m (reduce dissoc m stable-m)
+          rem-m (reduce dissoc m (keys stable-m))
           mk-node (fn mk-node [entries shift]
                     (if (< shift 32)
                       (let [children
