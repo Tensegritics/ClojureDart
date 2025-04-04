@@ -847,7 +847,7 @@
        returning a function of t (a double usually between 0.0 and 1.0 but some Curve instances can
        generate values out of this range, see Curves.easeInOutBack for example).
      Default interpolation is provided by cljd.flutter/lerp for many types:
-     int, double, Offset, Size, TextStyle, Color... and can be extebded via the ITweenable protocol."
+     int, double, Offset, Size, TextStyle, Color... and can be extended via the ITweenable protocol."
   [& body]
   `(-widget-cont {} ~@body))
 
