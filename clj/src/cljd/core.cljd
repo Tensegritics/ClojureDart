@@ -4549,26 +4549,23 @@
    (join-with combine fa fb nil a b))
   ([combine fa fb where? a b]
    (when (or (some? a) (some? b))
-     (let [del ^:unique (Object)
-           combine (if where?
-                     (fn [a b]
-                       (let [r (combine a b)]
-                         (if (where? r) r del)))
-                     combine)
-           fa (if where?
-                (fn [a]
-                  (let [r (fa a b)]
-                    (if (where? r) r del)))
-                fa)
-           fb (if where?
-                (fn [b]
-                  (let [r (fb b b)]
-                    (if (where? r) r del)))
-                fb)]
-       (or
-         ^some (-join-with a b combine fa fb del)
-         (throw (ArgumentError (str "Can't join instances of " (.-runtimeType a)
-                                 " and " (.-runtimeType b)))))))))
+     (or
+       ^some
+       (let [del sentinel]
+         (if where?
+           (let [combine (fn [a b]
+                           (let [r (combine a b)]
+                             (if (where? r) r del)))
+                 fa (fn [a]
+                      (let [r (fa a b)]
+                        (if (where? r) r del)))
+                 fb (fn [b]
+                      (let [r (fb b b)]
+                        (if (where? r) r del)))]
+             (-join-with a b combine fa fb del))
+           (-join-with a b combine fa fb del)))
+       (throw (ArgumentError (str "Can't join instances of " (.-runtimeType a)
+                               " and " (.-runtimeType b))))))))
 
 (deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
   :type-only true
