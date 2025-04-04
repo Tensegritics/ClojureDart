@@ -1192,7 +1192,7 @@
                 (write ([_]) ([_ _ _])))
               #_(java.io.Writer/nullWriter)]
       (binding [*reader-resolver* nil]
-        ; all nses required are already loaded except thiose
+        ; all nses required are already loaded except those
         ; specified by :host-ns which should be read with the
         ; default resolver
         (eval (list* 'ns sym directives)))
@@ -3356,7 +3356,14 @@
                   :let [host-ns (some-> (get @nses lib) :host-ns ns-name)]
                   :when (and host-ns (not= ns-sym lib))
                   :let [options
-                        (assoc options :refer (filter (comp :macro-support :meta (@nses 'cljd.core)) refer))]]
+                        (assoc options :refer
+                          (into []
+                            (comp
+                              (filter (comp :macro-support :meta (@nses 'cljd.core)))
+                              ; strip metadata otherwise CLJ embeds it in generated
+                              ; class and you get too large of constant
+                              (map #(with-meta % nil)))
+                            refer))]]
               (list :require (into [host-ns] cat options))))
           ns-map (cond-> ns-map
                    *host-eval* (assoc :host-ns (create-host-ns ns-sym host-ns-directives)))]
