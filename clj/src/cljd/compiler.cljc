@@ -4549,13 +4549,15 @@
     (keep (fn [[sym v]]
            (when (symbol? sym)
              (let [{:keys [dart/code]} v
-                   line (.getLine ^cljd.lang.LineNumberingWriter *dart-out*)
-                   column (.getColumn ^cljd.lang.LineNumberingWriter *dart-out*)]
-               (when code
-                 (dart-println "\n// BEGIN" sym)
-                 (dart-println (:str code))
-                 (dart-println "// END" sym)
-                 [line column code])))))
+
+                    ]
+               (when-some [code (:dart/code v)]
+                 (let [_ (dart-println "\n// BEGIN" sym)
+                       line (.getLine ^cljd.lang.LineNumberingWriter *dart-out*)
+                       column (.getColumn ^cljd.lang.LineNumberingWriter *dart-out*)]
+                   (dart-println (:str code))
+                   (dart-println "// END" sym)
+                   [line column code]))))))
     (->> ns-map (filter (comp symbol? key)) (sort-by key))))
 
 ;; #/[bool bool .foo String]
