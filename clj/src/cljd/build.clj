@@ -257,8 +257,8 @@
           _ (dotimes [_ (dec line)] (.readLine r))
           src (.readLine r)]
       (str "\n👉" (subs src 0 (dec column))
-        (inverted (subs src column (dec end-column)))
-        (subs src end-column)))))
+        (inverted (subs src (dec column) (dec end-column)))
+        (subs src (dec end-column))))))
 
 (def smap-line
   (let [mk-smap-line
