@@ -1149,6 +1149,11 @@
             (join-with last-win nil identity {}
               (join-with last-win nil str/upper-case #{} s1)))))))
 
+(deftest ex-message-test
+  (is (= "hello" (ex-message (ex-info "hello" {}))))
+  (is (= nil (ex-message "hello")))
+  (is (<= 0 (str/index-of (ex-message (Exception. 'hello)) "hello"))))
+
 (comment
   (let [n*2 (set (range 0 1e6 2))
         n*3 (set (range 0 1e6 3))]

@@ -11,6 +11,7 @@
   (:require ["dart:math" :as math]
             ["dart:collection" :as dart-coll]
             ["dart:io" :as dart-io]
+            ["dart:isolate" :as dart-isolate]
             ["dart:async" :as dart-async]))
 
 (def ^:private sentinel ^:unique (Object.))
@@ -2386,6 +2387,37 @@
   [val]
   (Volatile. val))
 
+(defprotocol IExMessage
+  (-ex-message [ex]))
+
+(extend-type fallback
+  IExMessage
+  (-ex-message [ex]
+    (when (instance? Exception ex)
+      (str ex))))
+
+(extend-type FormatException
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type dart-isolate/IsolateSpawnException
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type dart-io/OSError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type dart-async/TimeoutException
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(defn ex-message
+  "Returns the message attached to ex. Defaults to str on unsupported Exceptions.
+   Otherwise returns nil."
+  [ex]
+  (-ex-message ex))
+
 (defprotocol IExceptionInfo
   (-ex-data [e]))
 
@@ -2405,6 +2437,8 @@
   (^:getter cause [_] ex)
   IExceptionInfo
   (-ex-data [_] data)
+  IExMessage
+  (-ex-message [_] msg)
   ^:mixin ToStringMixin
   IPrint
   (-print [o ^StringSink sink]
