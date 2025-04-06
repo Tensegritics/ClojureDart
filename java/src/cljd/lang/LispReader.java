@@ -1027,7 +1027,7 @@ public static class MetaReader extends AFn{
 				meta = RT.assoc(meta, LINE_KEY, RT.get(meta, LINE_KEY, line));
 				meta = RT.assoc(meta, COLUMN_KEY, RT.get(meta,COLUMN_KEY, column));
 				meta = RT.assoc(meta, END_LINE_KEY, RT.get(meta, END_LINE_KEY, ((LineNumberingPushbackReader) r).getLineNumber()));
-				meta = RT.assoc(meta, END_COLUMN_KEY, RT.get(meta,END_COLUMN_KEY, ((LineNumberingPushbackReader) r).getColumnNumber()-1));
+				meta = RT.assoc(meta, END_COLUMN_KEY, RT.get(meta,END_COLUMN_KEY, ((LineNumberingPushbackReader) r).getColumnNumber()));
 				}
 			if(o instanceof IReference)
 				{
@@ -1313,7 +1313,7 @@ public static class ListReader extends AFn{
 			meta = RT.assoc(meta, LINE_KEY, RT.get(meta, LINE_KEY, line));
 			meta = RT.assoc(meta, COLUMN_KEY, RT.get(meta,COLUMN_KEY, column));
 			meta = RT.assoc(meta, END_LINE_KEY, RT.get(meta, END_LINE_KEY, ((LineNumberingPushbackReader) r).getLineNumber()));
-			meta = RT.assoc(meta, END_COLUMN_KEY, RT.get(meta,END_COLUMN_KEY, ((LineNumberingPushbackReader) r).getColumnNumber()-1));
+			meta = RT.assoc(meta, END_COLUMN_KEY, RT.get(meta,END_COLUMN_KEY, ((LineNumberingPushbackReader) r).getColumnNumber()));
 			return s.withMeta((IPersistentMap)meta);
 			}
 		else
