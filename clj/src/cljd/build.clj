@@ -70,6 +70,11 @@
     (str "\u001B[2m" s "\u001B[0m")
     s))
 
+(defn inverted [s]
+  (if *ansi*
+    (str "\u001B[7m" s "\u001B[0m")
+    s))
+
 (defn green [s]
   (if *ansi*
     (str "\u001B[1;32m" s "\u001B[0m")
@@ -246,6 +251,15 @@
         peek
         (assoc :slug slug)))))
 
+(defn excerpt-and-highlight [{:keys [line column end-line end-column url]}]
+  (when (= line end-line)
+    (let [r (io/reader url)
+          _ (dotimes [_ (dec line)] (.readLine r))
+          src (.readLine r)]
+      (str "\n👉" (subs src 0 (dec column))
+        (inverted (subs src column (dec end-column)))
+        (subs src end-column)))))
+
 (def smap-line
   (let [mk-smap-line
         (fn mk-smap-line []
@@ -261,12 +275,18 @@
                 pat (re-pattern (str "\\w+:[^:]+?(" libspat "):(\\d+)(?::(\\d+))"))]
             (fn [line]
               (when (identical? libs (:libs @compiler/nses))
-                (str/replace line pat
-                  (fn [[match lib line col]]
-                    (let [{:keys [ns smap]} (get libs (str "lib" lib))
-                          {:keys [line column slug]}
-                          (smap-search smap (parse-long line) (some-> col parse-long))]
-                      (str (bright ns) (subs slug 0 1) (bright (subs slug 1)) ":" (bright line) ":" (bright column) " " (muted match)))))))))
+                (let [*source-info (volatile! nil)
+                      line
+                      (str/replace line pat
+                        (fn [[match lib line col]]
+                          (let [{:keys [ns smap]} (get libs (str "lib" lib))
+                                {:keys [line column slug end-line end-column file url]
+                                 :as source-info}
+                                (smap-search smap (parse-long line) (some-> col parse-long))]
+                            (vreset! *source-info source-info)
+                            (str (bright ns) (subs slug 0 1) (bright (subs slug 1)) " " (bright file) ":" (bright line) ":" (bright column) " " (muted match)))))]
+                  (cond-> line
+                    @*source-info (str (excerpt-and-highlight @*source-info))))))))
         *smap-line (atom (mk-smap-line))]
     (fn [line]
       (if-some [line (@*smap-line line)]

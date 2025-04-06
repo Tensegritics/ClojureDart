@@ -138,8 +138,9 @@
     (assoc m k (f v))
     m))
 
-(def ^:dynamic ^java.io.Writer *dart-out*)
+(declare ^:dynamic ^java.io.Writer *dart-out*)
 (declare ^:dynamic *source-map*)
+(declare ^:dynamic *url*)
 
 (defmacro with-dart-str [& body]
   `(let [w# (java.io.StringWriter.)]
@@ -151,7 +152,7 @@
   `(let [sw# (java.io.StringWriter.)
          lnw# (cljd.lang.LineNumberingWriter. sw#)]
      (binding [*dart-out* lnw#
-               *source-map* [[1 0 {:line 1 :column 0}]]]
+               *source-map* [[1 0 {:line 1 :column 1 :file *file* :url *url*}]]]
        ~@body
        {:str (.toString sw#)
         :smap *source-map*
@@ -3458,7 +3459,10 @@
                    (list op bindings (slap-smap! expr)))
                  dart-x)]
     (cond-> dart-x
-      (instance? clojure.lang.IObj dart-x) (with-meta (merge m *source-info*)))))
+      (instance? clojure.lang.IObj dart-x) (with-meta
+                                             (-> m
+                                               (merge *source-info*)
+                                               (conj {:file *file* :url *url*}))))))
 
 (defn emit
   "Takes a clojure form and a lexical environment and returns a dartsexp."
@@ -3529,10 +3533,15 @@
                                            {:line line :column column
                                             :end-line end-line :end-column end-column}
                                            *source-info*))]
-                 (let [dart-x (emit x env)]
-                   (slap-smap! dart-x))))
+                 (slap-smap! (emit x env))))
              (and (tagged-literal? x) (= 'dart (:tag x))) (emit-dart-literal false (:form x) env)
-             (coll? x) (emit-coll false x env)
+             (coll? x)
+             (binding [*source-info* (let [{:keys [line column end-line end-column]} (meta x)]
+                                       (if line
+                                         {:line line :column column
+                                          :end-line end-line :end-column end-column}
+                                         *source-info*))]
+               (slap-smap! (emit-coll false x env)))
              :else (throw (ex-info (str "Can't compile " (pr-str x)) {:form x})))
            {:dart/keys [const type]} (dart-meta x env)
            inferred-const (:dart/const (meta dart-x))]
@@ -4184,7 +4193,7 @@
    Returns true when the just-written code is exiting control flow (return throw continue) -- this enable some dead code removal."
   [x locus]
   (with-source-map
-    (select-keys (meta x) [:line :column])
+    (select-keys (meta x) [:line :column :end-line :end-column :file :url])
     (cond
       (vector? x)
       (do (print-pre locus)
@@ -4699,7 +4708,8 @@
   "Compiles the resource at the specified url. file-path is purely indicative.
    Returns the libname."
   [^String file-path ^java.net.URL url]
-  (binding [*file* file-path]
+  (binding [*file* file-path
+            *url* url]
     (when *hosted*
       (with-open [in (.openStream url)]
         (host-load-input (java.io.InputStreamReader. in "UTF-8")))
