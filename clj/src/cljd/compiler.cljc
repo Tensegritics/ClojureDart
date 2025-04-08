@@ -3251,6 +3251,12 @@
 
 (declare compile-namespace)
 
+(defn stub-alias-namespace [ns]
+  (let [lib (ns-to-lib ns)]
+    (swap! nses assoc-in [:libs lib] {:ns ns
+                                      :dart-alias "not-a-real-lib"})
+    lib))
+
 (defn- import-to-require [spec]
   (cond
     (symbol? spec) (let [[_ ns id] (re-matches #"(.+)\.(.+)" (name spec))]
@@ -3314,25 +3320,28 @@
                    (assoc-in [:imports ns-lib] {:clj-alias (name ns-sym)}))
           ns-map
           (reduce #(%2 %1) ns-map
-            (for [[lib & {:keys [as refer rename]}] require-specs
+            (for [[lib & {:keys [as refer rename as-alias]}] require-specs
                   :let [_ (when (and (string? lib) (nil? (analyzer-info lib)))
                             (throw (Exception. (str "Can't find Dart lib: " lib))))
                         _ (when-not (or (nil? refer) (and (coll? refer) (every? symbol? refer)))
                             (throw (ex-info ":refer expects a collection of symbols; :refer :all is not supported." {:refer refer})))
                         clj-ns (when-not (string? lib) lib)
+                        alias-only (and as-alias (not (or as refer rename)))
                         dartlib (else->>
                                   (if (string? lib) lib)
                                   (if-some [{:keys [lib]} (@nses lib)] lib)
                                   (if (= ns-sym lib) ns-lib)
+                                  (if alias-only (stub-alias-namespace lib))
                                   (compile-namespace lib))
                         dart-alias (global-lib-alias dartlib clj-ns)
-                        clj-alias (name (or as clj-ns (str "lib:" dart-alias)))
+                        clj-alias (name (or as as-alias clj-ns (str "lib:" dart-alias)))
                         to-dart-sym (if clj-ns #(munge % {}) identity)]]
               (fn [ns-map]
                 (-> ns-map
                   (cond-> (nil? (get (:imports ns-map) dartlib))
                     (assoc-in [:imports dartlib] {:clj-alias clj-alias}))
                   (assoc-in [:clj-aliases clj-alias] dartlib)
+                  (cond-> as-alias (assoc-in [:clj-aliases as-alias] dartlib))
                   (update :mappings into
                     (let [source (if (string? lib)
                                    #(analyzer-info lib (name %))
@@ -4542,7 +4551,8 @@
   ;; used to silence the analyzer when people are using VS Code or other tools
   (dart-print "// ignore_for_file: type=lint, unnecessary_cast, unnecessary_type_check, unused_import, unused_local_variable, unused_label, unnecessary_question_mark, unused_catch_clause, type_check_with_null, dead_code\n")
   (doseq [lib (keys (:imports ns-map))
-          :let [dart-alias (-> @nses :libs (get lib) :dart-alias)]]
+          :let [dart-alias (-> @nses :libs (get lib) :dart-alias)]
+          :when (not= "not-a-real-lib" dart-alias)]
     (dart-print "import ")
     (write-string-literal (relativize-lib ns-lib lib)) ;; TODO: relativize local libs (nses)
     (dart-print " as ")
