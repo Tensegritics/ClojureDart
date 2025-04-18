@@ -5119,7 +5119,7 @@
                bv (aget barr (inc bi))])
          (if (= anode-or-k bnode-or-k)
            (else->>
-             (let [v (combine av bv)])
+             (let [v (if combine (combine av bv) del)])
              (if (identical? del v)
                (step-join :dai 2 :dbi 2))
              (step-join :darr [bnode-or-k v] :dai 2 :dbi 2)))
