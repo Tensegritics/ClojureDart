@@ -858,18 +858,45 @@
      (~'build [_# ~closest-context]
       (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
 
+(deftype GlobalValueKey [value]
+  :extends (widgets/GlobalKey.constructor)
+  ^:mixin cljd.core/ToStringMixin
+  ^:mixin cljd.core/EqualsEquivMixin
+  cljd.core/IEquiv
+  (-equiv [x y]
+    (and (instance? GlobalValueKey y)
+      (= value (.-value ^GlobalValueKey y))))
+  cljd.core/IHash
+  (-hash [x] (hash-combine 0x7d5cf3dd (hash value)))
+  cljd.core/IPrint
+  (-print [o sink]
+    (doto ^StringSink sink
+      (.write "#object[cljd.flutter.GlobalValueKey ")
+      (->> (-print value))
+      (.write "]"))))
+
+(defn global-key
+  "Returns a global key with value semantics."
+  ; for const
+  {:inline (fn [vexpr] `(GlobalValueKey ~vexpr))
+   :inline-arities #{1}}
+  [v]
+  (GlobalValueKey v))
+
 (defn- ^:macro-support expand-directive [&env env k v form & more-forms]
   (let [ksym `k#
         forms (cons form more-forms)]
     (case k
       :key `(let [~ksym (foundation/ValueKey ~v)]
               (-widget-cont ~(assoc env :key ksym) ~@forms))
+      :global-key `(let [~ksym (GlobalValueKey ~v)]
+                     (-widget-cont ~(assoc env :key ksym) ~@forms))
       :let `(let ~v (-widget-cont ~env ~@forms))
       :watch
       (if-some [[binding expr & more] (seq v)]
         (let [[opts & more] (collect-options more
-                                             #(or (qualified-keyword? %)
-                                                  (#{:default :refresh-on :dispose :> :as} %)))]
+                              #(or (qualified-keyword? %)
+                                 (#{:default :refresh-on :dispose :> :as} %)))]
           (expand-watch &env env binding expr opts (list* :watch more forms)))
         `(-widget-cont ~env ~@forms))
       :managed
