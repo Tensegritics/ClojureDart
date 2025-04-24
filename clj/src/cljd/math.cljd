@@ -1,0 +1,535 @@
+;   Copyright (c) Rich Hickey. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+(ns cljd.math
+  "ClojureDart wrapper for math functions"
+  (:require ["dart:math" :as math]
+            ["dart:typed_data" :as td]))
+
+(def ^double E
+  "Constant for e, the base for natural logarithms."
+  math/e)
+
+(def ^double PI
+  "Constant for pi, the ratio of the circumference of a circle to its diameter."
+  math/pi)
+
+(def ^:private ^double DEGREES-TO-RADIANS 0.017453292519943295)
+
+(def ^:private ^double RADIANS-TO-DEGREES 57.29577951308232)
+
+(def ^:private ^int INT-MAX-VALUE 0x7FFFFFFFFFFFFFFF)
+
+(def ^:private ^int INT-MIN-VALUE (- 0x8000000000000000))
+
+(def ^:private SIGNIFICAND-WIDTH32 21)
+
+(def ^:private EXP-BIAS 1023)
+
+(def ^:private EXP-BITMASK32 0x7FF00000)
+
+(def ^:private EXP-MAX EXP-BIAS)
+
+(def ^:private EXP-MIN -1022)
+
+(def ^:private CBRT-EXP (/ 1 3))
+
+(defonce ^:private little-endian? (= td/Endian.host td/Endian.little))
+
+(def ^:private HI (if little-endian? 1 0))
+
+(def ^:private LO (- 1 HI))
+
+(defn sin
+  {:doc "Returns the sine of an angle.
+  If a is ##NaN, ##-Inf, ##Inf => ##NaN
+  If a is zero => zero with the same sign as a"
+   :inline-arities #{1}
+   :inline (fn [a] `(math/sin (double ~a)))}
+  ^double [^double a]
+  (math/sin a))
+
+(defn cos
+  {:doc "Returns the cosine of an angle.
+  If a is ##NaN, ##-Inf, ##Inf => ##NaN"
+   :inline-arities #{1}
+   :inline (fn [a] `(math/cos (double ~a)))}
+  ^double [^double a]
+  (math/cos a))
+
+(defn tan
+  {:doc "Returns the tangent of an angle.
+  If a is ##NaN, ##-Inf, ##Inf => ##NaN
+  If a is zero => zero with the same sign as a"
+   :inline-arities #{1}
+   :inline (fn [a] `(math/tan (double ~a)))}
+  ^double [^double a]
+  (math/tan a))
+
+(defn asin
+  {:doc "Returns the arc sine of an angle, in the range -pi/2 to pi/2.
+  If a is ##NaN or |a|>1 => ##NaN
+  If a is zero => zero with the same sign as a"
+   :inline-arities #{1}
+   :inline (fn [a] `(math/asin (double ~a)))}
+  ^double [^double a]
+  (math/asin a))
+
+(defn acos
+  {:doc "Returns the arc cosine of a, in the range 0.0 to pi.
+  If a is ##NaN or |a|>1 => ##NaN"
+   :inline-arities #{1}
+   :inline (fn [a] `(math/acos (double ~a)))}
+  ^double [^double a]
+  (math/acos a))
+
+(defn atan
+  {:doc "Returns the arc tangent of a, in the range of -pi/2 to pi/2.
+  If a is ##NaN => ##NaN
+  If a is zero => zero with the same sign as a"
+   :inline-arities #{1}
+   :inline (fn [a] `(math/atan (double ~a)))}
+  ^double [^double a]
+  (math/atan a))
+
+(defn to-radians
+  "Converts an angle in degrees to an approximate equivalent angle in radians."
+  ^double [^double deg]
+  (* deg DEGREES-TO-RADIANS))
+
+(defn to-degrees
+  "Converts an angle in radians to an approximate equivalent angle in degrees."
+  ^double [^double r]
+  (* r RADIANS-TO-DEGREES))
+
+(defn exp
+  {:doc "Returns Euler's number e raised to the power of a.
+  If a is ##NaN => ##NaN
+  If a is ##Inf => ##Inf
+  If a is ##-Inf => +0.0"
+   :inline-arities #{1}
+   :inline (fn [a] `(math/exp (double ~a)))}
+  ^double [^double a]
+  (math/exp a))
+
+(defn log
+  {:doc "Returns the natural logarithm (base e) of a.
+  If a is ##NaN or negative => ##NaN
+  If a is ##Inf => ##Inf
+  If a is zero => ##-Inf"
+   :inline-arities #{1}
+   :inline (fn [a] `(math/log (double ~a)))}
+  ^double [^double a]
+  (math/log a))
+
+(defn log10
+  "Returns the logarithm (base 10) of a.
+  If a is ##NaN or negative => ##NaN
+  If a is ##Inf => ##Inf
+  If a is zero => ##-Inf"
+  ^double [^double a]
+  (/ (math/log a) (math/log 10)))
+
+(defn sqrt
+  {:doc "Returns the positive square root of a.
+  If a is ##NaN or negative => ##NaN
+  If a is ##Inf => ##Inf
+  If a is zero => a"
+   :inline-arities #{1}
+   :inline (fn [a] `(math/sqrt (double ~a)))}
+  ^double [^double a]
+  (math/sqrt a))
+
+(defn cbrt
+  "Returns the cube root of a.
+  If a is ##NaN => ##NaN
+  If a is ##Inf or ##-Inf => a
+  If a is zero => zero with sign matching a"
+  [a]
+  (if (or (NaN? a) (infinite? a))
+    a
+    (math/pow a CBRT-EXP)))
+
+(defn IEEE-remainder
+  "Returns the remainder per IEEE 754 such that
+    remainder = dividend - divisor * n
+  where n is the integer closest to the exact value of dividend / divisor.
+  If two integers are equally close, then n is the even one.
+  If the remainder is zero, sign will match dividend.
+  If dividend or divisor is ##NaN, or dividend is ##Inf or ##-Inf, or divisor is zero => ##NaN
+  If dividend is finite and divisor is infinite => dividend"
+  ^double [^double dividend ^double divisor]
+  (if (and (.-isFinite dividend) (infinite? divisor))
+    dividend
+    (let [remainder (- dividend (* divisor (.roundToDouble (/ dividend divisor))))
+          negative? (< (.compareTo dividend 0.0) 0)]
+      (if (and (zero? remainder) negative?)
+        -0.0
+        remainder))))
+
+(defn ceil
+  {:doc "Returns the smallest double greater than or equal to a, and equal to a
+  mathematical integer.
+  If a is ##NaN or ##Inf or ##-Inf or already equal to an integer => a"
+   :inline-arities #{1}
+   :inline (fn [a] `(.ceilToDouble (double ~a)))}
+  ^double [^double a]
+  (.ceilToDouble a))
+
+(defn floor
+  {:doc "Returns the largest double less than or equal to a, and equal to a
+  mathematical integer.
+  If a is ##NaN or ##Inf or ##-Inf or already equal to an integer => a
+  If a is less than zero but greater than -1.0 => -0.0"
+   :inline-arities #{1}
+   :inline (fn [a] `(.floorToDouble (double ~a)))}
+  ^double [^double a]
+  (.floorToDouble a))
+
+(defn rint
+  {:doc "Returns the double closest to a and equal to a mathematical integer.
+  If two values are equally close, return the even one.
+  If a is ##NaN or ##Inf or ##-Inf or zero => a"
+   :inline-arities #{1}
+   :inline (fn [a] `(.roundToDouble (double ~a)))}
+  ^double [^double a]
+  (.roundToDouble a))
+
+(defn atan2
+  {:doc "Returns the angle theta from the conversion of rectangular coordinates (x, y) to polar coordinates (r, theta).
+  Computes the phase theta by computing an arc tangent of y/x in the range of -pi to pi."
+   :inline-arities #{2}
+   :inline (fn [y x] `(math/atan2 (double ~y) (double ~x)))}
+  ^double [^double y ^double x]
+  (math/atan2 y x))
+
+(defn pow
+  "Returns the value of a raised to the power of b."
+  ^double [^double a ^double b]
+  (if (and (= 1 (abs a)) (infinite? b))
+    ##NaN
+    (math/pow a b)))
+
+(defn round
+  "Returns the closest long to a. If equally close to two values, return the one
+  closer to ##Inf.
+  If a is ##NaN => 0
+  If a is ##-Inf or < Long/MIN_VALUE => Long/MIN_VALUE
+  If a is ##Inf or > Long/MAX_VALUE => Long/MAX_VALUE"
+  ^int [^num a]
+  (cond
+    (.-isFinite a) (.round a)
+    (NaN? a) 0
+    (pos? a) INT-MAX-VALUE
+    :else INT-MIN-VALUE))
+
+(defn random
+  {:doc "Returns a positive double between 0.0 and 1.0, chosen pseudorandomly with
+  approximately random distribution."
+   :inline-arities #{0}
+   :inline (fn [] `(rand))}
+  ^double []
+  (rand))
+
+(defn add-exact
+  "Returns the sum of x and y, throws ArithmeticException on overflow."
+  ^int [^int x ^int y]
+  (let [result (+ x y)]
+    (if (or (and (pos? y) (< result x))
+            (and (neg? y) (> result x)))
+      (throw (ex-info "Integer overflow" {:fn "add-exact"}))
+      result)))
+
+(defn subtract-exact
+  "Returns the difference of x and y, throws ArithmeticException on overflow."
+  ^int [^int x ^int y]
+  (let [result (- x y)]
+    (if (or (and (pos? y) (> result x))
+            (and (neg? y) (< result x)))
+      (throw (ex-info "Integer overflow" {:fn "subtract-exact"}))
+      result)))
+
+(defn- multiplication-overflow? [result x y]
+  (if (or (and (pos? x) (pos? y))
+          (and (neg? x) (neg? y)))
+    (or (< result (abs x))
+        (< result (abs y)))
+    (or (< (abs x) result)
+        (< (abs y) result))))
+
+(defn multiply-exact
+  "Returns the product of x and y, throws ArithmeticException on overflow."
+  ^int [^int x ^int y]
+  (let [result (* x y)]
+    (if (multiplication-overflow? result x y)
+      (throw (ex-info "Integer overflow" {:fn "multiply-exact"}))
+      result)))
+
+(defn increment-exact
+  "Returns a incremented by 1, throws ArithmeticException on overflow."
+  ^int [^int a]
+  (if (= INT-MAX-VALUE a)
+    (throw (ex-info "Integer overflow" {:fn "increment-exact"}))
+    (inc a)))
+
+(defn decrement-exact
+  "Returns a decremented by 1, throws ArithmeticException on overflow."
+  ^int [^int a]
+  (if (= INT-MIN-VALUE a)
+    (throw (ex-info "Integer overflow" {:fn "decrement-exact"}))
+    (dec a)))
+
+(defn negate-exact
+  "Returns the negation of a, throws ArithmeticException on overflow."
+  ^int [^int a]
+  (if (= INT-MIN-VALUE a)
+    (throw (ex-info "Integer overflow" {:fn "negate-exact"}))
+    (- a)))
+
+(defn floor-div
+  "Integer division that rounds to negative infinity (as opposed to zero).
+  The special case (floorDiv Long/MIN_VALUE -1) overflows and returns Long/MIN_VALUE."
+  ^int [^int x ^int y]
+  (if (and (= INT-MIN-VALUE x) (= -1 y))
+    INT-MIN-VALUE
+    (.floor (/ x y))))
+
+(defn floor-mod
+  {:doc "Integer modulus x - (floorDiv(x, y) * y). Sign matches y and is in the
+  range -|y| < r < |y|."
+   :inline-arities #{2}
+   :inline (fn [x y] `(.floor (mod ~x ~y)))}
+  ^int [^int x ^int y]
+  (.floor (mod x y)))
+
+(defn get-exponent
+  "Returns the exponent of d.
+  If d is ##NaN, ##Inf, ##-Inf => Double/MAX_EXPONENT + 1
+  If d is zero or subnormal => Double/MIN_EXPONENT - 1"
+  [^double d]
+  (cond
+    (or (NaN? d) (infinite? d)) (inc EXP-MAX)
+    (zero? d) (dec EXP-MIN)
+    :else
+    (let [buffer (doto (td/ByteData. 8) (.setFloat64 0 d td/Endian.little))
+          uint32 (td/Uint32List.view (.-buffer buffer))]
+      (- (bit-shift-right
+           (bit-and (aget uint32 HI) EXP-BITMASK32)
+           (dec SIGNIFICAND-WIDTH32))
+         EXP-BIAS))))
+
+(defn- hi-lo->double [hi lo]
+  (let [buffer (td/ByteData. 8)
+        uint32 (td/Uint32List.view (.-buffer buffer))]
+    (aset uint32 LO lo)
+    (aset uint32 HI hi)
+    (.getFloat64 buffer 0 td/Endian.little)))
+
+(defn- power-of-two [n]
+  (assert (<= EXP-MIN n EXP-MAX))
+  (hi-lo->double
+    (bit-and
+      (bit-shift-left
+        (+ n EXP-BIAS)
+        (dec SIGNIFICAND-WIDTH32))
+      EXP-BITMASK32)
+    0))
+
+(defn ulp
+  "Returns the size of an ulp (unit in last place) for d.
+  If d is ##NaN => ##NaN
+  If d is ##Inf or ##-Inf => ##Inf
+  If d is zero => double.minPositive
+  If d is +/- double.maxFinite => 2^971"
+  ^double [^double d]
+  (cond
+    (NaN? d) ##NaN
+    (infinite? d) ##Inf
+    :else
+    (let [exponent (get-exponent d)]
+      (case exponent
+        1024 (abs d)
+        -1023 double/minPositive
+        (let [exponent (- exponent (+ 31 SIGNIFICAND-WIDTH32))]
+          (if (>= exponent EXP-MIN)
+            (power-of-two exponent)
+            (let [shift (- exponent (- EXP-MIN 31 SIGNIFICAND-WIDTH32))]
+              (if (< shift 32)
+                (hi-lo->double 0 (bit-shift-left 1 shift))
+                (hi-lo->double (bit-shift-left 1 (- shift 32)) 0)))))))))
+
+(defn signum
+  {:doc "Returns the signum function of d - zero for zero, 1.0 if >0, -1.0 if <0.
+  If d is ##NaN => ##NaN"
+   :inline-arities #{1}
+   :inline (fn [d] `(.-sign (double ~d)))}
+  ^double [^double d]
+  (.-sign d))
+
+(defn sinh
+  {:doc "Returns the hyperbolic sine of x, (e^x - e^-x)/2.
+  If x is ##NaN => ##NaN
+  If x is ##Inf or ##-Inf or zero => x"
+   :inline-arities #{1}
+   :inline (fn [x] `(/ (- (math/pow E (double ~x)) (math/pow E (- (double ~x)))) 2))}
+  ^double [^double x]
+  (/ (- (math/pow E x) (math/pow E (- x))) 2))
+
+(defn cosh
+  {:doc "Returns the hyperbolic cosine of x, (e^x + e^-x)/2.
+  If x is ##NaN => ##NaN
+  If x is ##Inf or ##-Inf => ##Inf
+  If x is zero => 1.0"
+   :inline-arities #{1}
+   :inline (fn [x] `(/ (+ (math/pow E (double ~x)) (math/pow E (- (double ~x)))) 2))}
+  ^double [^double x]
+  (/ (+ (math/pow E x) (math/pow E (- x))) 2))
+
+(defn tanh
+  "Returns the hyperbolic tangent of x, sinh(x)/cosh(x).
+  If x is ##NaN => ##NaN
+  If x is zero => zero, with same sign
+  If x is ##Inf => +1.0
+  If x is ##-Inf => -1.0"
+  ^double [^double x]
+  (cond
+    (.-isFinite x) (/ (sinh x) (cosh x))
+    (NaN? x) ##NaN
+    (neg? x) -1.0
+    :else 1.0))
+
+(defn hypot
+  "Returns sqrt(x^2 + y^2).
+  If x or y is ##Inf or ##-Inf => ##Inf
+  If x or y is ##NaN and neither is ##Inf or ##-Inf => ##NaN"
+  ^double [^double x ^double y]
+  (if (or (infinite? x) (infinite? y))
+    ##Inf
+    (sqrt (+ (math/pow x 2) (math/pow y 2)))))
+
+(defn expm1
+  {:doc "Returns e^x - 1.
+  If x is ##NaN => ##NaN
+  If x is ##Inf => #Inf
+  If x is ##-Inf => -1.0
+  If x is zero => x"
+   :inline-arities #{1}
+   :inline (fn [x] `(- (math/pow E (double ~x)) 1.0))}
+  ^double [^double x]
+  (- (math/pow E x) 1.0))
+
+(defn log1p
+  "Returns ln(1+x).
+  If x is ##NaN or < -1 => ##NaN
+  If x is ##Inf => ##Inf
+  If x is -1 => ##-Inf
+  If x is 0 => 0 with sign matching x"
+  ^double [^double x]
+  (if (zero? x)
+    x
+    (math/log (+ 1.0 x))))
+
+(defn copy-sign
+  "Returns a double with the magnitude of the first argument and the sign of
+  the second."
+  ^double [^double magnitude ^double sign]
+  (if (not= (neg? magnitude) (neg? sign))
+    (- magnitude)
+    magnitude))
+
+(defn- next-to-infinity? [start direction]  
+  (or (and (= double/maxFinite start)
+           (= ##Inf direction))
+      (and (= (- double/maxFinite) start)
+           (= ##-Inf direction))))
+
+(defn- next-after-zero [direction]
+  (if (zero? direction)
+    direction
+    (cond-> double/minPositive (neg? direction) -)))
+
+(defn- ->int64 [^double d]
+  (-> (td/ByteData. 8)
+      (doto (.setFloat64 0 d))
+      (.getInt64 0)))
+
+(defn- int64->double [^int int64]
+  (-> (td/ByteData. 8)
+      (doto (.setInt64 0 int64))
+      (.getFloat64 0)))
+
+(defn next-after
+  "Returns the adjacent floating point number to start in the direction of
+  the second argument. If the arguments are equal, the second is returned.
+  If either arg is #NaN => #NaN
+  If both arguments are signed zeros => direction
+  If start is +-double.minPositive and direction would cause a smaller magnitude
+    => zero with sign matching start
+  If start is ##Inf or ##-Inf and direction would cause a smaller magnitude
+    => double.maxFinite with same sign as start
+  If start is equal to +=double.maxFinite and direction would cause a larger magnitude
+    => ##Inf or ##-Inf with sign matching start"
+  ^double [^double start ^double direction]
+  (cond
+    (or (NaN? start) (NaN? direction)) ##NaN
+    (or (= start direction) (next-to-infinity? start direction)) direction
+    (infinite? start) (cond-> double/maxFinite (neg? start) -)
+    (zero? start) (next-after-zero direction)
+    :else
+    (let [int64 (->int64 start)
+          up?   (> direction start)
+          bit   (if (neg? start)
+                  (if up? -1 1)
+                  (if up? 1 -1))
+          bits  (+ int64 bit)]
+      (int64->double bits))))
+
+(defn next-up
+  "Returns the adjacent double of d in the direction of ##Inf.
+  If d is ##NaN => ##NaN
+  If d is ##Inf => ##Inf
+  If d is zero => double.minPositive"
+  ^double [^double d]
+  (cond
+    (NaN? d) ##NaN
+    (<= double/maxFinite d) ##Inf
+    (= ##-Inf d) (- double/maxFinite)
+    (zero? d) double/minPositive
+    :else
+    (let [int64 (->int64 d)
+          bit   (if (neg? d) -1 1)
+          bits  (+ int64 bit)]
+      (int64->double bits))))
+
+(defn next-down
+  "Returns the adjacent double of d in the direction of ##-Inf.
+  If d is ##NaN => ##NaN
+  If d is ##-Inf => ##-Inf
+  If d is zero => -double.minPositive"
+  ^double [^double d]
+  (cond
+    (NaN? d) ##NaN
+    (>= (- double/maxFinite) d) ##-Inf
+    (infinite? d) double/maxFinite
+    (zero? d) (- double/minPositive)
+    :else
+    (let [int64 (->int64 d)
+          bit   (if (neg? d) 1 -1)
+          bits  (+ int64 bit)]
+      (int64->double bits))))
+
+(defn scalb
+  {:doc "Returns d * 2^scaleFactor, scaling by a factor of 2. If the exponent
+  is between Double/MIN_EXPONENT and Double/MAX_EXPONENT, the answer is exact.
+  If d is ##NaN => ##NaN
+  If d is ##Inf or ##-Inf => ##Inf or ##-Inf respectively
+  If d is zero => zero of same sign as d"
+   :inline-arities #{2}
+   :inline (fn [d scaleFactor] `(* (double ~d) (math/pow 2 (int ~scaleFactor))))}
+  ^double [^double d scaleFactor]
+  (* d (math/pow 2 (int scaleFactor))))
