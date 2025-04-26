@@ -1154,6 +1154,14 @@
   (is (= nil (ex-message "hello")))
   (is (<= 0 (str/index-of (ex-message (Exception. 'hello)) "hello"))))
 
+(deftest ex-cause-test
+  (is (nil? (ex-cause nil)))
+  (is (nil? (ex-cause :foo)))
+  (is (nil? (ex-cause (ex-info "without cause" {:foo :bar}))))
+  (let [cause (Exception. "the cause")
+        ex    (ex-info "with cause" {:foo :bar} cause)]
+    (is (= cause (ex-cause ex)))))
+
 (comment
   (let [n*2 (set (range 0 1e6 2))
         n*3 (set (range 0 1e6 3))]

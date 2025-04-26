@@ -28,9 +28,9 @@
   ;; :byte   (byte 7)
   ;; :short  (short 7)
   :int    (int 7)
-  ;; :long   (long 7)
+  :long   (long 7)
   ;; :bigint (bigint 7)
-  ;; :float  (float 7)
+  :float  (float 7)
   :double (double 7)
   ;; :bigdec (bigdec 7)
 
@@ -76,7 +76,7 @@
   ; boolean?
 
   integer?  [:byte :short :int :long :bigint]
-  ;; float?    [:float :double]
+  float?    [:float :double]
   ;; decimal?  [:bigdec]
   ;; ratio?    [:ratio]
   ;; rational? [:byte :short :int :long :bigint :ratio :bigdec]
