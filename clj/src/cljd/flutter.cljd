@@ -480,7 +480,8 @@
 
 (defn get-of
   "Takes a BuildContext, a keyword and optionally a default value.
-   Returns the value bound (via :bind) to this keyword."
+   Returns the value bound (via :bind) to this keyword.
+   DO CREATES A DEPENDENCY. In event handlers, prefer peek-of instead."
   ([ctx k] (get-of ctx k nil))
   ([^widgets/BuildContext ctx k not-found]
    (if-some [inherited-elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)]
@@ -490,6 +491,20 @@
               ^InheritedBindings (.-widget)
               .-bindings)
          k not-found))
+     not-found)))
+
+(defn peek-of
+  "Takes a BuildContext, a keyword and optionally a default value.
+   Returns the value bound (via :bind) to this keyword.
+   Meant to be used in event handlers.
+   DO NOT CREATE A DEPENDENCY. When building widgets prefer :get or get-of."
+  ([ctx k] (peek-of ctx k nil))
+  ([^widgets/BuildContext ctx k not-found]
+   (if-some [inherited-elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)]
+     (get (some-> inherited-elt
+            ^InheritedBindings (.-widget)
+            .-bindings)
+       k not-found)
      not-found)))
 
 (defn ^:macro-support expand-get-inherited [env v forms]
