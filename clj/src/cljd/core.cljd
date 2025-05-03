@@ -9381,17 +9381,17 @@ specified.
 (defn NaN?
   {:doc "Returns true if num is NaN, else false"
    :inline-arities #{1}
-   :inline (fn [num] `(.-isNaN ~num))
+   :inline (fn [num] `(.-isNaN ~(hint-as num `num)))
    :added "1.11"}
-  [^double num]
+  [^num num]
   (.-isNaN num))
 
 (defn infinite?
   {:doc "Returns true if num is negative or positive infinity, else false"
    :inline-arities #{1}
-   :inline (fn [num] `(.-isInfinite ~num))
+   :inline (fn [num] `(.-isInfinite ~(hint-as num `num)))
    :added "1.11"}
-  [^double num]
+  [^num num]
   (.-isInfinite num))
 
 

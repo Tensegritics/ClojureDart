@@ -23,9 +23,23 @@
 
 (def ^:private ^double RADIANS-TO-DEGREES 57.29577951308232)
 
-(def ^:private ^int INT-MAX-VALUE 0x7FFFFFFFFFFFFFFF)
+(def ^:private ^int INT-MAX-VALUE
+  ;; workaround to sniff JS semantics
+  ;; (because kIsWeb may be true with WASM)
+  (if (= 0x20000000000000 (inc 0x20000000000000))
+    0x1FFFFFFFFFFFFF ; js
+    ; bit-shift to prevent an error caused by embedding an unsafe integer
+    ; in JS output
+    (dec (bit-shift-left 1 63))))
 
-(def ^:private ^int INT-MIN-VALUE (- 0x8000000000000000))
+(def ^:private ^int INT-MIN-VALUE
+  ;; workaround to sniff JS semantics
+  ;; (because kIsWeb may be true with WASM)
+  (if (= 0x20000000000000 (inc 0x20000000000000))
+    (- 0x1FFFFFFFFFFFFF) ; js
+    ; bit-shift to prevent an error caused by embedding an unsafe integer
+    ; in JS output
+    (bit-shift-left 1 63)))
 
 (def ^:private SIGNIFICAND-WIDTH32 21)
 
@@ -442,7 +456,7 @@
     (- magnitude)
     magnitude))
 
-(defn- next-to-infinity? [start direction]  
+(defn- next-to-infinity? [start direction]
   (or (and (= double/maxFinite start)
            (= ##Inf direction))
       (and (= (- double/maxFinite) start)
