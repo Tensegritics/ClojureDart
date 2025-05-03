@@ -2929,6 +2929,13 @@
   ; dart does not support negative n values. bit-and acts as a modulo.
   [^int x n] (. x ">>" (bit-and n 63)))
 
+(defn ^int unsigned-bit-shift-right
+  "Bitwise shift right, without sign-extension."
+  {:inline (fn [x n] `(. ~(hint-as x `int) ">>>" (bit-and ~n 63)))
+   :inline-arities #{2}}
+  [^int x n]
+  (. x ">>>" (bit-and n 63)))
+
 (defn ^int bit-clear
   "Clear bit at index n"
   {:inline (fn [x n] `(bit-and ~x (bit-not (bit-shift-left 1 ~n))))
@@ -9370,6 +9377,23 @@ specified.
       "false" false
       nil)
     (throw (ArgumentError (parsing-err s)))))
+
+(defn NaN?
+  {:doc "Returns true if num is NaN, else false"
+   :inline-arities #{1}
+   :inline (fn [num] `(.-isNaN ~num))
+   :added "1.11"}
+  [^double num]
+  (.-isNaN num))
+
+(defn infinite?
+  {:doc "Returns true if num is negative or positive infinity, else false"
+   :inline-arities #{1}
+   :inline (fn [num] `(.-isInfinite ~num))
+   :added "1.11"}
+  [^double num]
+  (.-isInfinite num))
+
 
 (defn seq-to-map-for-destructuring
   "Builds a map from a seq as described in
