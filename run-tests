@@ -17,7 +17,24 @@ EOF
 cd tmp/tests
 clojure -M -m cljd.build init
 dart pub add -d test || true
-clojure -M -m cljd.build compile cljd.test-clojure.core-test-cljd cljd.test-clojure.string cljd.test-clojure.core-test cljd.test-clojure.for cljd.test-clojure.clojure-zip cljd.test-clojure.clojure-set cljd.test-clojure.clojure-walk cljd.test-clojure.other-functions cljd.test-clojure.test-test cljd.test-reader.reader-test cljd.test-clojure.primitives-test cljd.test-clojure.data cljd.test-clojure.parse
+clojure -M -m cljd.build compile \
+  cljd.test-clojure.clojure-set \
+  cljd.test-clojure.clojure-walk \
+  cljd.test-clojure.clojure-zip \
+  cljd.test-clojure.core-test \
+  cljd.test-clojure.core-test-cljd \
+  cljd.test-clojure.data \
+  cljd.test-clojure.for \
+  cljd.test-clojure.math \
+  cljd.test-clojure.numbers \
+  cljd.test-clojure.other-functions \
+  cljd.test-clojure.parse \
+  cljd.test-clojure.predicates \
+  cljd.test-clojure.primitives-test \
+  cljd.test-clojure.string \
+  cljd.test-clojure.test-test \
+  cljd.test-reader.reader-test
+
 # --enable-experiment=records is there for making tests pass even on dart2
 # on dart3 it should be a no op.
 dart --enable-experiment=records test -p vm
