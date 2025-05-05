@@ -218,7 +218,7 @@
                     (locals ts k)))
                 ts form)
               (vector? form)
-              (transduce (remove '#{&}) conj! ts form)
+              (transduce (comp (filter simple-symbol?) (remove '#{&})) conj! ts form)
               :else (throw (ex-info (str "Unexpected binding form " (pr-str form))
                              {:unexpected-form form
                               :whole-form destructuring-form}))))]
