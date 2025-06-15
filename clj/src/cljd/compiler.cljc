@@ -4902,13 +4902,19 @@
           ; remove nses to be recompiled -- but not their libs to keep aliases stable
           (apply swap! nses dissoc nses-to-recompile)
 
-          (doseq [[protocol-ns protocol-name tag] contributions]
+          (doseq [[protocol-ns protocol-name tag :as c] contributions]
             (case tag
               :extensions
               (when-some [proto-map (get-in @nses [protocol-ns protocol-name])]
                 (binding [*current-ns* protocol-ns
                           *locals-gen* {}]
-                  (emit (expand-protocol-impl proto-map) {}))))))
+                  (emit (expand-protocol-impl proto-map) {})))
+              :defmethods
+              (let [[multi-ns multi-name tag] c]
+                (when-some [multi-map (get-in @nses [multi-ns multi-name])]
+                  (binding [*current-ns* multi-ns
+                            *locals-gen* {}]
+                    (emit (expand-method-impl multi-map) {})))))))
         (binding [*recompile-count* recompile-count]
           (doseq [ns nses-to-recompile
                   ; the ns may already have been transitively reloaded
