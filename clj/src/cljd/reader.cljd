@@ -589,7 +589,7 @@
 (defn special-form? [form]
   (contains? '#{. set! dart/is? dart/await dart/async-barrier dart/run-zoned dart/assert dart/type-like
                 throw new ns try case* quote do var let* loop* recur if fn* letfn def reify* deftype*
-                defprotocol* extend-type-protocol*} form))
+                defprotocol* defmethod* defmulti* extend-type-protocol*} form))
 
 (defn- syntax-quote [form]
   (cond

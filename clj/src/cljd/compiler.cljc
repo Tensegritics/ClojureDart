@@ -852,6 +852,9 @@
                     [(list 'dart/is? 'x t) ext]) (sort-by (fn [[x]] (case x Object 1 0)) (dissoc extensions 'fallback)))
           [:else (or ('fallback extensions) `(throw (dart:core/Exception. (.+ (.+ ~(str "No extension of protocol " name " found for type ") (.toString (.-runtimeType ~'x))) "."))))])))))
 
+(defn expand-method-impl [{:keys [table-name defmethods]}]
+  `(def ~table-name (-> {} ~@defmethods)))
+
 (defn- roll-leading-opts [body]
   (loop [[k v & more :as body] (seq body) opts {}]
     (if (and body (keyword? k))
@@ -1144,6 +1147,59 @@
                      (. ^{:tag ~full-iext} (.extensions ~proto ~this) ~name ~@all-args))))))
         (list proto)))))
 
+(defn- check-valid-options
+  "Throws an exception if the given option map contains keys not listed
+  as valid, else returns nil."
+  [options & valid-keys]
+  (when (seq (apply disj (apply hash-set (keys options)) valid-keys))
+    (throw
+      (IllegalArgumentException.
+        (apply str "Only these options are valid: "
+          (first valid-keys)
+          (map #(str ", " %) (rest valid-keys)))))))
+
+(defn- expand-defmulti [mm-name & options]
+  ;; TODO do something with docstrings
+  (let [docstring   (if (string? (first options))
+                      (first options)
+                      nil)
+        options     (if (string? (first options))
+                      (next options)
+                      options)
+        m           (if (map? (first options))
+                      (first options)
+                      {})
+        options     (if (map? (first options))
+                      (next options)
+                      options)
+        dispatch-fn (first options)
+        options     (next options)
+        m           (if docstring
+                      (assoc m :doc docstring)
+                      m)
+        m           (if (meta mm-name)
+                      (conj (meta mm-name) m)
+                      m)
+        mm-name (with-meta mm-name m)]
+    (when (= (count options) 1)
+      (throw (Exception. "The syntax for defmulti has changed. Example: (defmulti name dispatch-fn :default dispatch-value)")))
+    (let [options   (apply hash-map options)
+          default   (get options :default :default)
+          ;hierarchy (get options :hierarchy #'global-hierarchy)
+          dispatch-fn-name (munge mm-name "dispatch" {})
+          table-fn-name (munge mm-name "table" {})]
+      ; :hierarchy not yet supported (if ever) - @dupuchba Fri Jun 13 10:49:49 2025
+      (check-valid-options options :default #_:hierarchy)
+      `(do
+         (def ~dispatch-fn-name ~dispatch-fn)
+         ~(expand-method-impl {:table-name table-fn-name})
+         (defn ~mm-name
+           ~@(cond->> (list '[& args]
+                        `(apply (get ~table-fn-name (apply ~dispatch-fn-name ~'args)) ~'args))
+               (seq m) (cons m)))
+         (~'defmulti* ~mm-name {:table-name ~table-fn-name})
+         ~mm-name))))
+
 (defn- ensure-bodies [body-or-bodies]
   (cond-> body-or-bodies (vector? (first body-or-bodies)) list))
 
@@ -1181,6 +1237,16 @@
             (list 'def extension-instance (list 'new extension-name))
             (list 'extend-type-protocol* type (:ns info) (:name info)
               (symbol (name *current-ns*) (name extension-instance)))))))))
+
+(defn expand-defmethod [mm-name dispatch-val & fn-tail]
+  (when-not *host-eval*
+    (let [[tag info] (resolve-symbol mm-name {})
+          register-method (gensym mm-name)
+          method-name (gensym register-method)]
+      `(do
+         (defn ~method-name ~@fn-tail)
+         (defn ~register-method [m#] (assoc m# ~dispatch-val ~method-name))
+         ~(list 'defmethod* *current-ns* register-method (:ns info) (:name info))))))
 
 (defn create-host-ns [ns-sym directives]
   (let [sym (symbol (str ns-sym "$host"))]
@@ -1268,6 +1334,9 @@
          (env f) form
          (or (= 'cljd.core/defprotocol f) (= 'defprotocol f)) (apply expand-defprotocol args)
          (or (= 'cljd.core/extend-type f) (= 'extend-type f)) (apply expand-extend-type args)
+
+         (or (= 'cljd.core/defmulti f) (= 'defmulti f)) (apply expand-defmulti args)
+         (or (= 'cljd.core/defmethod f) (= 'defmethod f)) (apply expand-defmethod args)
          (= '. f) form
          macro-fn
          (apply macro-fn form (assoc env :nses (assoc @nses :current-ns *current-ns*)
@@ -2992,6 +3061,9 @@
                   :dart/code (with-dart-code (str "/" pname) (write-top-field dartname (emit (list 'new (:impl spec)) {})))
                   :type :protocol))))
 
+(defn emit-defmulti* [[_ mm-name {:keys [table-name] :as spec}] env]
+  (swap! nses assoc-in [*current-ns* mm-name :table-name] table-name))
+
 (defn emit-deftype* [[_ class-name fields opts & specs] env]
   (assert (and (re-matches #"[_$a-zA-Z][_$a-zA-Z0-9]*" (name class-name))
             (not (reserved-words (name class-name))))
@@ -3102,6 +3174,16 @@
     (ensure-contrib protocol-ns contrib-ns contrib-path)
     (binding [*current-ns* protocol-ns]
       (emit (expand-protocol-impl proto-map) env))))
+
+(defn emit-defmethod* [[_ method-ns method-name multi-ns multi-name] env]
+  (let [contrib-ns method-ns
+        contrib-path [multi-ns multi-name :defmethods]
+        {{methods multi-name} multi-ns}
+        (swap! nses update-in contrib-path (fnil conj []) method-name)]
+    (prn 'CACA method-name (get-in @nses contrib-path))
+    (ensure-contrib multi-ns contrib-ns contrib-path)
+    (binding [*current-ns* multi-ns]
+      (emit (expand-method-impl methods) env))))
 
 (defn- fn-kind [x]
   (when (and (seq? x) (= 'fn* (first x)))
@@ -3534,6 +3616,8 @@
                             reify* emit-reify*
                             deftype* emit-deftype*
                             defprotocol* emit-defprotocol*
+                            defmulti* emit-defmulti*
+                            defmethod* emit-defmethod*
                             extend-type-protocol* emit-extend-type-protocol*
                             emit-fn-call)
                           emit-fn-call)]
@@ -3580,6 +3664,8 @@
             def (emit-def x {})
             do (run! host-eval (next x))
             defprotocol* (emit-defprotocol* x {})
+            defmethod* (emit-defmethod* x {})
+            defmulti* (emit-defmulti* x {})
             deftype*
             (let [[_ class-name fields opts & specs] x
                   [class-name & type-params] (cons class-name (:type-params (meta class-name)))
