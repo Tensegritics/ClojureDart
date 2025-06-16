@@ -853,7 +853,7 @@
           [:else (or ('fallback extensions) `(throw (dart:core/Exception. (.+ (.+ ~(str "No extension of protocol " name " found for type ") (.toString (.-runtimeType ~'x))) "."))))])))))
 
 (defn expand-method-impl [{:keys [table-name defmethods]}]
-  `(def ~table-name (-> {} ~@(map #(symbol (name (:method-ns %)) (name (:method-name %))) defmethods))))
+  `(defn ~table-name [] (-> {} ~@(map #(symbol (name (:method-ns %)) (name (:method-name %))) defmethods))))
 
 (defn- roll-leading-opts [body]
   (loop [[k v & more :as body] (seq body) opts {}]
@@ -1195,7 +1195,8 @@
          ~(expand-method-impl {:table-name table-fn-name})
          (defn ~mm-name
            ~@(cond->> (list '[& args]
-                        `(apply (get ~table-fn-name (apply ~dispatch-fn-name ~'args)) ~'args))
+                        `(let [t# (~table-fn-name)]
+                           (apply (get t# (apply ~dispatch-fn-name ~'args)) ~'args)))
                (seq m) (cons m)))
          (~'defmulti* ~mm-name {:table-name ~table-fn-name})
          ~mm-name))))
