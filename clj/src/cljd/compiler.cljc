@@ -853,7 +853,7 @@
           [:else (or ('fallback extensions) `(throw (dart:core/Exception. (.+ (.+ ~(str "No extension of protocol " name " found for type ") (.toString (.-runtimeType ~'x))) "."))))])))))
 
 (defn expand-method-impl [{:keys [table-name defmethods]}]
-  `(def ~table-name (-> {} ~@defmethods)))
+  `(def ~table-name (-> {} ~@(map #(symbol (name (:method-ns %)) (name (:method-name %))) defmethods))))
 
 (defn- roll-leading-opts [body]
   (loop [[k v & more :as body] (seq body) opts {}]
@@ -1241,7 +1241,9 @@
 (defn expand-defmethod [mm-name dispatch-val & fn-tail]
   (when-not *host-eval*
     (let [[tag info] (resolve-symbol mm-name {})
-          register-method (gensym mm-name)
+          _ (when-not (= tag :def)
+              (throw (Exception. (str mm-name " multi method not found."))))
+          register-method (gensym (name mm-name))
           method-name (gensym register-method)]
       `(do
          (defn ~method-name ~@fn-tail)
@@ -3179,8 +3181,7 @@
   (let [contrib-ns method-ns
         contrib-path [multi-ns multi-name :defmethods]
         {{methods multi-name} multi-ns}
-        (swap! nses update-in contrib-path (fnil conj []) method-name)]
-    (prn 'CACA method-name (get-in @nses contrib-path))
+        (swap! nses update-in contrib-path (fnil conj []) {:method-ns method-ns :method-name method-name})]
     (ensure-contrib multi-ns contrib-ns contrib-path)
     (binding [*current-ns* multi-ns]
       (emit (expand-method-impl methods) env))))
