@@ -223,9 +223,9 @@
     (is (= :rect-shape (apply (-get-method bar [::rect ::shape]) [::rect ::shape])))
     ))
 
-#_(defmulti nested-dispatch (fn [m] (-> m :a :b)))
-#_(defmethod nested-dispatch :c [m] :nested-a)
-#_(defmethod nested-dispatch :default [m] :nested-default)
+(defmulti nested-dispatch (fn [m] (-> m :a :b)))
+(defmethod nested-dispatch :c [m] :nested-a)
+(defmethod nested-dispatch :default [m] :nested-default)
 
 #_(defmulti nested-dispatch2 ffirst)
 #_(defmethod nested-dispatch2 :a [m] :nested-a)
@@ -236,8 +236,8 @@
 #_(defmethod foo1 :default [& args] :default-return)
 
 #_(defmulti area :Shape)
-#_(defn rect [wd ht] {:Shape :Rect :wd wd :ht ht})
-#_(defn circle [radius] {:Shape :Circle :radius radius})
+(defn rect [wd ht] {:Shape :Rect :wd wd :ht ht})
+(defn circle [radius] {:Shape :Circle :radius radius})
 #_(defmethod area :Rect [r]
     (* (:wd r) (:ht r)))
 #_(defmethod area :Circle [c]
@@ -278,36 +278,36 @@
 #_(defmethod multi-with-h :gparent [_] :gparent)
 #_(defmethod multi-with-h :parent [_] :parent)
 
-#_(deftest test-multimethods-2
+(deftest test-multimethods-2
   (let [r (rect 4 13)
         c (circle 12)]
     (testing "Testing multimethod edge cases"
       (is (= :nested-a (nested-dispatch {:a {:b :c}})))
-      (is (= :nested-a (nested-dispatch2 [[:a :b]])))
-      (is (= :a-return (foo1 :a)))
-      (is (= :default-return (foo1 1)))
-      (is (= 52 (area r)))
-      (is (= :oops (area {})))
-      ;; CLJS-863
-      (is (= :foo (foo2)))
-      ;; remove method tests
-      (is (= 2 (count (methods bar))))
-      (remove-method bar [::rect ::shape])
-      (is (= 1 (count (methods bar))))
-      (remove-all-methods bar)
-      (is (zero? (count (methods bar))))
-      (is (= [:three '(2)] (apply apply-multi-test [0 1 2])))
-      (is (try
-            (no-dispatch-value {:test :test})
-            (catch js/Error e
-              (not= -1 (.indexOf (.-message e) "cljs.core-test/no-dispatch-value")))))
-      (doseq [m [(obj-map) (array-map) (hash-map) (sorted-map)]]
-        (is (my-map? m)))
-      (doseq [not-m [[] 1 "asdf" :foo]]
-        (is (not (my-map? not-m))))
-      ;; multimethod hashing
-      (is (= foo2' (ffirst {foo2' 1})))
-      (is (= :parent (multi-with-h :child)))
+      ;; (is (= :nested-a (nested-dispatch2 [[:a :b]])))
+      ;; (is (= :a-return (foo1 :a)))
+      ;; (is (= :default-return (foo1 1)))
+      ;; (is (= 52 (area r)))
+      ;; (is (= :oops (area {})))
+      ;; ;; CLJS-863
+      ;; (is (= :foo (foo2)))
+      ;; ;; remove method tests
+      ;; (is (= 2 (count (methods bar))))
+      ;; (remove-method bar [::rect ::shape])
+      ;; (is (= 1 (count (methods bar))))
+      ;; (remove-all-methods bar)
+      ;; (is (zero? (count (methods bar))))
+      ;; (is (= [:three '(2)] (apply apply-multi-test [0 1 2])))
+      ;; (is (try
+      ;;       (no-dispatch-value {:test :test})
+      ;;       (catch js/Error e
+      ;;         (not= -1 (.indexOf (.-message e) "cljs.core-test/no-dispatch-value")))))
+      ;; (doseq [m [(obj-map) (array-map) (hash-map) (sorted-map)]]
+      ;;   (is (my-map? m)))
+      ;; (doseq [not-m [[] 1 "asdf" :foo]]
+      ;;   (is (not (my-map? not-m))))
+      ;; ;; multimethod hashing
+      ;; (is (= foo2' (ffirst {foo2' 1})))
+      ;; (is (= :parent (multi-with-h :child)))
       )))
 
 (deftest test-transducers

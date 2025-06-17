@@ -1194,10 +1194,15 @@
          (def ~dispatch-fn-name ~dispatch-fn)
          ~(expand-method-impl {:table-name table-fn-name})
          (defn ~mm-name
-           ~@(cond->> (list '[& args]
-                        `(let [t# (~table-fn-name)]
-                           (apply (get t# (apply ~dispatch-fn-name ~'args)) ~'args)))
-               (seq m) (cons m)))
+           ~@(cond->>
+                 (list '[& args]
+                   `(let [t# (~table-fn-name)]
+                      (apply (or
+                               (get t# (apply ~dispatch-fn-name ~'args))
+                               (get t# ~default)
+                               (throw (dart:core/ArgumentError.
+                                        (str "No method in multimethod '" ~mm-name "' for dispatch value: " (first ~'args))))) ~'args)))
+                 (seq m) (cons m)))
          (~'defmulti* ~mm-name {:table-name ~table-fn-name})
          ~mm-name))))
 
