@@ -13,7 +13,8 @@
 
 (ns cljd.test-clojure.core-test
   (:require [cljd.set :as set]
-            [cljd.string :as s])
+            [cljd.string :as s]
+            ["dart:math" :as dart:math])
   (:use [cljd.test :only [deftest is testing are]]))
 
 (deftest test-metadata
@@ -227,24 +228,24 @@
 (defmethod nested-dispatch :c [m] :nested-a)
 (defmethod nested-dispatch :default [m] :nested-default)
 
-#_(defmulti nested-dispatch2 ffirst)
-#_(defmethod nested-dispatch2 :a [m] :nested-a)
-#_(defmethod nested-dispatch2 :default [m] :nested-default)
+(defmulti nested-dispatch2 ffirst)
+(defmethod nested-dispatch2 :a [m] :nested-a)
+(defmethod nested-dispatch2 :default [m] :nested-default)
 
-#_(defmulti foo1 (fn [& args] (first args)))
-#_(defmethod foo1 :a [& args] :a-return)
-#_(defmethod foo1 :default [& args] :default-return)
+(defmulti foo1 (fn [& args] (first args)))
+(defmethod foo1 :a [& args] :a-return)
+(defmethod foo1 :default [& args] :default-return)
 
-#_(defmulti area :Shape)
+(defmulti area :Shape)
 (defn rect [wd ht] {:Shape :Rect :wd wd :ht ht})
 (defn circle [radius] {:Shape :Circle :radius radius})
-#_(defmethod area :Rect [r]
-    (* (:wd r) (:ht r)))
-#_(defmethod area :Circle [c]
-    (*  Math/PI (* (:radius c) (:radius c))))
-#_(defmethod area :default [x] :oops)
-#_(defmulti foo2 (fn []))
-#_(defmethod foo2 :default [] :foo)
+(defmethod area :Rect [r]
+  (* (:wd r) (:ht r)))
+(defmethod area :Circle [c]
+  (*  dart:math/pi (* (:radius c) (:radius c))))
+(defmethod area :default [x] :oops)
+(defmulti foo2 (fn []))
+(defmethod foo2 :default [] :foo)
 
 #_(defmulti apply-multi-test (fn ([_] 0) ([_ _] 0) ([_ _ _] 0)))
 #_(defmethod apply-multi-test 0
@@ -283,13 +284,13 @@
         c (circle 12)]
     (testing "Testing multimethod edge cases"
       (is (= :nested-a (nested-dispatch {:a {:b :c}})))
-      ;; (is (= :nested-a (nested-dispatch2 [[:a :b]])))
-      ;; (is (= :a-return (foo1 :a)))
-      ;; (is (= :default-return (foo1 1)))
-      ;; (is (= 52 (area r)))
-      ;; (is (= :oops (area {})))
+      (is (= :nested-a (nested-dispatch2 [[:a :b]])))
+      (is (= :a-return (foo1 :a)))
+      (is (= :default-return (foo1 1)))
+      (is (= 52 (area r)))
+      (is (= :oops (area {})))
       ;; ;; CLJS-863
-      ;; (is (= :foo (foo2)))
+      (is (= :foo (foo2)))
       ;; ;; remove method tests
       ;; (is (= 2 (count (methods bar))))
       ;; (remove-method bar [::rect ::shape])
