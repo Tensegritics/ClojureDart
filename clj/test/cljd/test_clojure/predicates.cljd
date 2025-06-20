@@ -28,9 +28,9 @@
   ;; :byte   (byte 7)
   ;; :short  (short 7)
   :int    (int 7)
-  ;; :long   (long 7)
+  :long   (long 7)
   ;; :bigint (bigint 7)
-  ;; :float  (float 7)
+  :float  (float 7)
   :double (double 7)
   ;; :bigdec (bigdec 7)
 
@@ -76,7 +76,7 @@
   ; boolean?
 
   integer?  [:byte :short :int :long :bigint]
-  ;; float?    [:float :double]
+  float?    [:float :double]
   ;; decimal?  [:bigdec]
   ;; ratio?    [:ratio]
   ;; rational? [:byte :short :int :long :bigint :ratio :bigdec]
@@ -184,8 +184,10 @@
   (is (not (NaN? 5)))
   ; Compilation error in Dart
   ;; (is (not (NaN? -5)))
-  (is (thrown? Error (NaN? nil)))
-  (is (thrown? Error (NaN? :xyz)))
+  (let [nil-value nil
+        kw-value  :xyz]
+    (is (thrown? Error (NaN? nil-value)))
+    (is (thrown? Error (NaN? kw-value))))
 
   (is (infinite? ##Inf))
   (is (infinite? ##-Inf))
@@ -194,6 +196,8 @@
   (is (not (infinite? 5)))
   ; Compilation error in Dart
   ;; (is (not (infinite? -5)))
-  (is (thrown? Error (infinite? nil)))
-  (is (thrown? Error (infinite? :xyz)))
+  (let [nil-value nil
+        kw-value  :xyz]
+    (is (thrown? Error (infinite? nil-value)))
+    (is (thrown? Error (infinite? kw-value))))
   )

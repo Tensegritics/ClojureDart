@@ -24,6 +24,7 @@ clojure -M -m cljd.build compile \
   cljd.test-clojure.core-test \
   cljd.test-clojure.core-test-cljd \
   cljd.test-clojure.data \
+  cljd.test-clojure.edn-test \
   cljd.test-clojure.for \
   cljd.test-clojure.math \
   cljd.test-clojure.numbers \

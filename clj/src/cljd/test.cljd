@@ -280,7 +280,7 @@
          {:type :fail, :message ~msg, :expected '~form,
           :actual (do ~@body)}
          (catch ~klass e#
-           (when-not (re-find ~re (.-message e#))
+           (when-not (re-find ~re (ex-message e#))
              {:type :fail, :message ~msg,
               :expected '~form, :actual e#}))))
     (if (and (sequential? form) (function? env (first form)))
