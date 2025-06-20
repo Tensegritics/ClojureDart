@@ -184,8 +184,10 @@
   (is (not (NaN? 5)))
   ; Compilation error in Dart
   ;; (is (not (NaN? -5)))
-  (is (thrown? Error (NaN? nil)))
-  (is (thrown? Error (NaN? :xyz)))
+  (let [nil-value nil
+        kw-value  :xyz]
+    (is (thrown? Error (NaN? nil-value)))
+    (is (thrown? Error (NaN? kw-value))))
 
   (is (infinite? ##Inf))
   (is (infinite? ##-Inf))
@@ -194,6 +196,8 @@
   (is (not (infinite? 5)))
   ; Compilation error in Dart
   ;; (is (not (infinite? -5)))
-  (is (thrown? Error (infinite? nil)))
-  (is (thrown? Error (infinite? :xyz)))
+  (let [nil-value nil
+        kw-value  :xyz]
+    (is (thrown? Error (infinite? nil-value)))
+    (is (thrown? Error (infinite? kw-value))))
   )

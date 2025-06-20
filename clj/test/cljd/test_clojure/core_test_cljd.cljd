@@ -678,10 +678,10 @@
 (extend-protocol cljd.core/IPrint
   ExtendTypeWorkingOnMultipleNs
   (-print [_ a]
-    (.write ^Sink a "ohoh"))
+    (.write ^StringSink a "ohoh"))
   ExtendTypeWorkingOnMultipleNs2
   (-print [_ a]
-    (.write ^Sink a "ahah")))
+    (.write ^StringSink a "ahah")))
 
 (deftest extend-type-multiple-ns
   (is (= (with-out-str (prn (ExtendTypeWorkingOnMultipleNs)) "ohoh")))
@@ -850,9 +850,10 @@
     (is (identical? x (.-fld obj)))))
 
 (deftest deep-set!
-  (let [obj (MutableBox (MutableBox (MutableBox nil)))]
-    (-> obj .-fld .-fld (.-fld! 1))
-    (is (= 1 (-> obj .-fld .-fld .-fld)))))
+  (letfn [(get-field [^MutableBox box] (.-fld box))]
+    (let [obj (MutableBox (MutableBox (MutableBox nil)))]
+      (-> obj get-field ^MutableBox (get-field) (.-fld! 1))
+      (is (= 1 (-> obj get-field get-field get-field))))))
 
 (deftest testing-set!-prop-not-properly-casted-265
   (let [f (fn [^#/(Map String List) m]

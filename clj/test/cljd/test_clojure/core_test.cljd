@@ -314,7 +314,7 @@
 (deftest test-transducers
   (testing "Testing transducers"
     (is (= (sequence (map inc) #dart [1 2 3]) '(2 3 4)))
-    (is (= (apply str (sequence (map #(.toUpperCase %)) "foo")) "FOO"))
+    (is (= (apply str (sequence (map s/upper-case) "foo")) "FOO"))
     (is (== (hash [1 2 3]) (hash (sequence (map inc) (range 3)))))
     (is (= [1 2 3] (sequence (map inc) (range 3))))
     (is (= (sequence (map inc) (range 3)) [1 2 3]))
@@ -592,9 +592,9 @@
     (is (= 5 (js-invoke o "my sum" 2 3)))))
 
 (deftest memfn-test
-  (let [substr (memfn substring start length)]
+  (let [substr (memfn ^String substring start length)]
     (is (= "c" (substr "abcdefg" 2 3))))
-  (let [trim (memfn trim)]
+  (let [trim (memfn ^String trim)]
     (is (= ["abc" "def"] (map trim ["   abc   " "  def   "])))))
 
 ;; =============================================================================

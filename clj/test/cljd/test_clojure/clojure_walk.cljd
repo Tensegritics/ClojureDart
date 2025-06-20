@@ -51,11 +51,12 @@
 	;;(is (= (type c) (type walked)))
         (if (map? c)
           (is (= (walk #(update-in % [1] inc) #(reduce + (vals %)) c)
-                (reduce + (map (comp inc val) c))))
+                 (reduce + (map (comp inc val) c))))
           (is (= (walk inc #(reduce + %) c)
-                (reduce + (map inc c)))))
-        (when (or (dart/is? c cljd.core/HashRankedWideTreapMap))
-          (is (= (.-cmp c) (.-cmp walked))))))))
+                 (reduce + (map inc c)))))
+        (when (dart/is? c cljd.core/HashRankedWideTreapMap)
+          (is (= (.-cmp ^cljd.core/HashRankedWideTreapMap c)
+                 (.-cmp ^cljd.core/HashRankedWideTreapMap walked))))))))
 
 (deftest walk-mapentry
   "Checks that walk preserves the MapEntry type. See CLJ-2031."
