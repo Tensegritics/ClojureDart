@@ -290,26 +290,76 @@ This tells the compiler: don’t treat this like a compile-time constant; I want
 Use ^:unique whenever identity matters.
 
 
-
 ### Calling static methods
+
+There are two main ways to call a static method in ClojureDart:
+
+```clojure
+(ClassName/methodName ...)   ; old-school style
+(ClassName.methodName ...)   ; modern style
+```
+
+The slash form (ClassName/methodName) is a bit of a legacy carryover — it only works if the class is local or explicitly imported. If you're using an alias, it won’t work.
+
+That’s where the dot form comes in handy. It plays nice with aliases:
+
+```clojure
+(alias/ClassName.methodName ...)
+```
+
+Also worth knowing: Dart doesn't have fully qualified class names like Java does. Once imported, class names are just identifiers under an import prefix — no package-style nesting. This explains why the slash form while prevalent in Clojure feels old-school in ClojureDart.
 
 ### Calling extension methods
 
-[Extension methods](https://dart.dev/language/extension-methods) are some Dart syntactic sugar that ClojureDart hasn't a good equivalent for yet because it's very dependent on the static type of the variable.
+[Extension methods](https://dart.dev/language/extension-methods) in Dart are a bit of syntactic sugar — and ClojureDart doesn’t have a great equivalent yet, mostly because they rely heavily on static typing.
 
-For example `DateTime` has an extension `DateTimeCopyWith` which provides a `copyWith` method.
+Take `DateTime` for example. It has an extension called `DateTimeCopyWith`, which adds a `copyWith` method.
 
-To use an extension in Dart you must have imported the library which defines it.
+But here’s the trick: extension methods aren’t real instance methods. They’re just static methods dressed up to *look* like instance methods.
 
-### Fields
+In ClojureDart, you can still call them — you just have to be a bit more explicit:
 
-### Tear-offs
+```clojure
+;; assuming `dt` is a DateTime
+(-> dt dart:core/DateTimeCopyWith (.copyWith .day 1))
+```
+
+One important caveat: the `(-> dt dart:core/DateTimeCopyWith)` part is not a value by itself. It only makes sense when followed by a method call. We’re piggybacking on Dart’s sugar here, not working with actual objects.
 
 ### `instance?`
 
+In Clojure, `(instance? (identity String) "a")` works just fine — the class can be passed as a value, unwrapped, etc. But in ClojureDart, things are a bit stricter.
+
+That’s because in Dart, the type used in an `is` check must be statically known — it has to appear *literally* in the code. So in ClojureDart, only something like `(instance? String "a")` is valid. You can’t sneak the class in through a variable or a function call.
+
+In short: `instance?` exists, but it’s not a real function — it’s special syntax that must be fed a class name directly.
+
+
 ### Non-nullable types
 
+Here’s another key difference with Java — and one to watch for when writing shared `cljc` code: Dart types are *not* nullable by default.
+
+So if you write `^String x` in Clojure, `x` can still be `nil`. But in ClojureDart, that same type hint means `x` is *not allowed* to be `nil`.
+
+If you want to allow `nil`, you need to say so explicitly with `^String? x`.
+
+In short: nullable types must be marked with a `?`. No question mark, no `nil`.
+
 ### Generics
+
+In Java, generics are erased at runtime, which is why Clojure doesn’t need to care about them.
+
+But Dart *does* preserve generics at runtime, so ClojureDart has to deal with them — and the solution is a bit of a hack (a clever one?).
+
+We piggyback on tagged literals: `#/(Map String Future)` is a tagged literal where the tag is `/`. It reads as `^{:type-params [String Future]} Map`. The key thing to note is that it’s parsed as a *symbol*, which means you can use this syntax *anywhere a symbol is valid* — method names, constructors, wherever.
+
+For nested generics, no need to repeat the tag:
+
+```clojure
+#/(List (Map String Future)) ; equivalent to List<Map<String, Future>> in Dart
+```
+
+Simple and flexible, if a bit quirky.
 
 
 ## UI with `cljd.flutter`
