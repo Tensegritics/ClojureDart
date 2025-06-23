@@ -463,6 +463,30 @@ Which becomes:
 
 ### State Management
 
+## Understanding Flutter
+
+## Understanding Flutter
+
+### The tale of three trees
+
+When working with Flutter, you mostly think in terms of *widgets*—but under the hood, there are actually **three** distinct trees at play: the **widget tree**, the **element tree**, and the **render object tree**.
+
+Let’s break them down:
+
+**The Widget Tree**
+This is the tree you write. It’s immutable—a pure description of what the UI *should* look like. Think of it as a blueprint or configuration.
+Even `StatefulWidget`s are immutable! How is that possible?
+
+Well, `StatefulWidget` only *describes* how to create and manage state—it doesn't actually hold the state. It's like a reducing function in `transduce`: the function is pure and stateless, but its different arities create, update and dispose state. Same idea here.
+
+**The Element Tree**
+This is where the state lives. Each widget in the widget tree is paired with an element in the element tree—there’s a 1:1 mapping.
+When Flutter "updates" a widget (e.g. after a `setState` call), it creates a new widget instance and gives it to the existing element. The element then updates *itself* to reflect the new widget configuration.
+
+**The Render Object Tree**
+Some elements—those that actually take up space on screen—create **render objects**.
+These are the heavy lifters: they handle layout, painting, and hit testing (i.e., touch input). This is the lowest layer of the UI system, and the one that talks directly to the screen or the screen reader.
+
 ## Data, I/O and Side Effects
 
 ## Advanced Topics
