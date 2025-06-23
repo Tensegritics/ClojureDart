@@ -135,6 +135,29 @@ That means you can pass them directly to Dart APIs expecting a function, without
 
 Functions are one of the areas where we’d really like to extend **magicast** in the future. Right now, interop works well with straightforward cases, but adding support for more complex Clojure function shapes (like multi-arity or rest args) would make things a lot smoother.
 
+### Optional parameters (named or positional)
+
+Sometimes interop means you need to implement a Dart function or method that takes optional parameters. Dart has two kinds: named and positional — and ClojureDart has syntax for both.
+
+Here's how it works:
+
+- `[a b c .d .e]`
+  → Three required positional parameters (`a b c`) and two *named* optional parameters: `d` and `e`.
+
+- `[a b c ... d e]`
+  → Three required positional parameters, followed by two *optional positional* ones: `d` and `e`.
+
+You can also specify default values:
+
+- `[.a 42 .e]`
+  → Two named parameters. `a` has a default value of `42`, `e` has no default.
+
+- `[... a 42 b]`
+  → Two optional positional parameters. `a` defaults to `42`, `b` has no default.
+
+The dot (`.`) means “named” and the ellipsis (`...`) means “optional positional.” You’ll get used to it.
+
+
 ### Calling instance methods
 
 Calling instance methods in ClojureDart is almost one-to-one with Dart — just with Clojure syntax.
@@ -309,6 +332,30 @@ That’s where the dot form comes in handy. It plays nice with aliases:
 
 Also worth knowing: Dart doesn't have fully qualified class names like Java does. Once imported, class names are just identifiers under an import prefix — no package-style nesting. This explains why the slash form while prevalent in Clojure feels old-school in ClojureDart.
 
+### Static property access
+
+Static properties in Dart — like `Colors.purple` — are straightforward to use in ClojureDart too.
+
+Just write:
+
+```clojure
+m/Colors.purple
+```
+
+And yes, you can chain them just like in Dart:
+
+```clojure
+m/Colors.purple.shade900
+```
+
+Even method calls at the end of the chain work:
+
+```clojure
+(m/Colors.purple.shade900.withAlpha 128)
+```
+
+Of course you can also write `(.-purple m/Colors)` -- this can be easier when generating code in macros.
+
 ### Calling extension methods
 
 [Extension methods](https://dart.dev/language/extension-methods) in Dart are a bit of syntactic sugar — and ClojureDart doesn’t have a great equivalent yet, mostly because they rely heavily on static typing.
@@ -361,8 +408,58 @@ For nested generics, no need to repeat the tag:
 
 Simple and flexible, if a bit quirky.
 
+We are considering leveraging the `^[]` shorthand  introduced in Clojure 1.12 as an alternative way to denote generics: `^[String Future] Map`, `^[^[String Future] Map] List`.
 
-## UI with `cljd.flutter`
+## UI with `cljd.flutter`: more Flutter, less clutter!
+
+Not a framework — just a handy library to cut down on boilerplate and make Flutter more palatable to Clojurists.
+
+Less ceremony, more joy.
+
+### `f/widget`
+
+The main macro, it evaluates to a `Widget`, and its body is a mix of expressions and directives.
+
+Directives are always keywords followed by one form. Some are general-purpose like `:let`, others are Flutter-specific like `:vsync`.
+
+Expressions? They’re automatically threaded through `.child`.
+
+### `.child`-threading
+
+Inside a `f/widget` body, expressions are threaded through the `.child` named parameter. So this:
+
+```clojure
+(f/widget
+  m/Center
+  (m/Text "hello"))
+```
+
+…expands to:
+
+```clojure
+(m/Center .child (m/Text "hello"))
+```
+
+You can also use dotted symbols to thread through other named parameters:
+
+```clojure
+(f/widget
+  m/MaterialApp
+  .home
+  m/Scaffold
+  .body
+  (m/Text "Don't stop it now!"))
+```
+
+Which becomes:
+
+```clojure
+(m/MaterialApp .home
+  (m/Scaffold .body
+    (m/Text "Don't stop it now!")))
+```
+
+
 
 ### State Management
 
