@@ -164,7 +164,7 @@
   If a is ##NaN => ##NaN
   If a is ##Inf or ##-Inf => a
   If a is zero => zero with sign matching a"
-  [a]
+  [^num a]
   (if (or (NaN? a) (infinite? a))
     a
     (math/pow a CBRT-EXP)))

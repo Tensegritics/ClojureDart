@@ -899,6 +899,11 @@
     (.codeUnitAt ^String x 0)
     (.toInt ^num x)))
 
+(defn ^int long
+  "Coerce to int. Identical to `int`."
+  {:inline (fn [n] `(int ~n))}
+  [x] (int x))
+
 (defn ^String char
   "Coerce to single character string."
   [x]
@@ -2400,6 +2405,22 @@
   IExMessage
   (-ex-message [e] (.-message e)))
 
+(extend-type ArgumentError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type UnsupportedError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type UnimplementedError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type StateError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
 (extend-type dart-isolate/IsolateSpawnException
   IExMessage
   (-ex-message [e] (.-message e)))
@@ -2459,6 +2480,13 @@
    (ExceptionInfo. msg map nil))
   ([msg map cause]
    (ExceptionInfo. msg map cause)))
+
+(defn ex-cause
+  "Returns exception cause if ex is an ExceptionInfo.
+   Otherwise returns nil."
+  [ex]
+  (when (instance? ExceptionInfo ex)
+    (.-cause ^ExceptionInfo ex)))
 
 (defn ^bool not
   "Returns true if x is logical false, false otherwise."
@@ -2862,12 +2890,24 @@
   [^num x]
   (.toDouble x))
 
+(defn ^double float
+  "Coerce to double. Identical to `double`."
+  {:inline (fn [x] `(.num:toDouble ~x))
+   :inline-arities #{1}}
+  [^num x] (.toDouble x))
+
 (defn ^bool double?
   "Return true if x is a Double"
   {:inline (fn [x] `(dart/is? ~x dart:core/double))
    :inline-arities #{1}}
   [x]
   (dart/is? x double))
+
+(defn ^bool float?
+  "Return true if x is a Double. Identical to `double?`."
+  {:inline (fn [x] `(dart/is? ~x dart:core/double))
+   :inline-arities #{1}}
+  [x] (dart/is? x double))
 
 ;; bit ops
 (defn ^int bit-not
