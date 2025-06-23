@@ -2405,6 +2405,22 @@
   IExMessage
   (-ex-message [e] (.-message e)))
 
+(extend-type ArgumentError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type UnsupportedError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type UnimplementedError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type StateError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
 (extend-type dart-isolate/IsolateSpawnException
   IExMessage
   (-ex-message [e] (.-message e)))
