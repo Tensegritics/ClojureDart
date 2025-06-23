@@ -815,26 +815,37 @@
     (.startsWith (name x) ".")))
 
 (defn- parse-dart-params [params]
-  (let [[fixed-params opt-params] (split-with (complement dot-symbol?) params)
-        [delim & opt-params]
-        (case (first opt-params)
-          (... nil) opt-params
-          .& (do
-               (when-not (:cljd/compiler (meta (first opt-params))) ; don't warn users on internal sauce 🤫
-                 (println "DEPRECATION WARNING: named parameters should now be declared like this: .name1 .name2 and no more like that .& name1 .name2 -- old syntax will not be actively maintained anymore. "))
-               opt-params)
-          ; new syntax for named params
-          (cons '.&
-            (for [p opt-params]
-              (cond-> p
-                (dot-symbol? p)
-                (-> name (subs 1) symbol (with-meta (meta p)))))))]
-    {:fixed-params fixed-params
-     :opt-kind (case delim .& :named :positional)
-     :opt-params
-     (for [[p d] (partition-all 2 1 opt-params)
-           :when (symbol? p)]
-       [p (when-not (symbol? d) d)])}))
+  (let [[fixed-params [delim :as opt-params]] (split-with (complement dot-symbol?) params)]
+    (case delim
+      (... nil) ; positional including none
+      {:fixed-params fixed-params
+       :opt-kind :positional
+       :opt-params
+       (for [[p d] (partition-all 2 1 (next opt-params))
+             :when (symbol? p)]
+         [p (when-not (symbol? d) d)])}
+
+      .& (do ; legacy named
+           (when-not (:cljd/compiler (meta delim)) ; don't warn users on internal sauce 🤫
+             (println "DEPRECATION WARNING: named parameters should now be declared like this: .name1 .name2 and no more Likewise that .& name1 .name2 -- old syntax will not be actively maintained anymore. "))
+           {:fixed-params fixed-params
+            :opt-kind :named
+            :opt-params
+            (for [[p d] (partition-all 2 1 (next opt-params))
+                  :when (symbol? p)]
+              [p (when-not (symbol? d) d)])})
+
+      ; "new" named
+      (do
+        (when-not (dot-symbol? delim)
+          (throw (Exception. (str "Unexpected value to start optional params: " delim))))
+        {:fixed-params fixed-params
+         :opt-kind :named
+         :opt-params
+         (for [[p d] (partition-all 2 1 opt-params)
+               :when (dot-symbol? p)]
+           [(-> p name (subs 1) symbol (with-meta (meta p)))
+            (when-not (dot-symbol? d) d)])}))))
 
 (defn expand-protocol-impl [{:keys [name impl iface iext extensions]}]
   (list `deftype impl []

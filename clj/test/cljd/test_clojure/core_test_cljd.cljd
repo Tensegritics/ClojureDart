@@ -1176,3 +1176,9 @@
   (let [n*2 (set (range 0 1e6 2))
         n*3 (set (range 0 1e6 3))]
     (time (count (join-with (fn [_ x] x) n*3 n*2)))))
+
+(deftest const-syms-as-defaults-CLJD344
+  (let [f (fn [.param dart:core/deprecated]
+            param)]
+    (is (= dart:core/deprecated (f)))
+    (is (= 42 (f .param 42)))))
