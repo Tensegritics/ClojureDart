@@ -1041,7 +1041,11 @@
         x (eduction (map (fn [_] (swap! a inc))) [nil])
         l (lazy-seq x)]
     (dotimes [_ 10]
-      (is (= [1] l)))))
+      (is (= [1] (vec l))))))
+
+(deftest test-cljs-3240-overflow-regress ; typo should be 3420
+  (let [things (zipmap (range 15000) (repeat 0))]
+    (is (zero? (count (filter #(-> % key string?) things))))))
 
 (deftest transducer-sentinels-test
   (testing "sentinels"
