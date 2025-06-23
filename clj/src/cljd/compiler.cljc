@@ -3353,8 +3353,7 @@
 
 (defn stub-alias-namespace [ns]
   (let [lib (ns-to-lib ns)]
-    (swap! nses assoc-in [:libs lib] {:ns ns
-                                      :dart-alias "not-a-real-lib"})
+    (swap! nses assoc-in [:libs lib :ns] ns)
     lib))
 
 (defn- import-to-require [spec]
@@ -3438,7 +3437,7 @@
                         to-dart-sym (if clj-ns #(munge % {}) identity)]]
               (fn [ns-map]
                 (-> ns-map
-                  (cond-> (nil? (get (:imports ns-map) dartlib))
+                  (cond-> (and (not alias-only) (nil? (get (:imports ns-map) dartlib)))
                     (assoc-in [:imports dartlib] {:clj-alias clj-alias}))
                   (assoc-in [:clj-aliases clj-alias] dartlib)
                   (cond-> as-alias (assoc-in [:clj-aliases as-alias] dartlib))
@@ -4655,8 +4654,7 @@
   ;; used to silence the analyzer when people are using VS Code or other tools
   (dart-print "// ignore_for_file: type=lint, unnecessary_cast, unnecessary_type_check, unused_import, unused_local_variable, unused_label, unnecessary_question_mark, unused_catch_clause, type_check_with_null, dead_code\n")
   (doseq [lib (keys (:imports ns-map))
-          :let [dart-alias (-> @nses :libs (get lib) :dart-alias)]
-          :when (not= "not-a-real-lib" dart-alias)]
+          :let [dart-alias (-> @nses :libs (get lib) :dart-alias)]]
     (dart-print "import ")
     (write-string-literal (relativize-lib ns-lib lib)) ;; TODO: relativize local libs (nses)
     (dart-print " as ")
