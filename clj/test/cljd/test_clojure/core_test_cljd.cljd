@@ -1046,7 +1046,9 @@
 
 (deftest test-cljs-3240-overflow-regress ; typo should be 3420
   (let [things (zipmap (range 15000) (repeat 0))]
-    (is (zero? (count (filter #(-> % key string?) things))))))
+    (is (zero? (count (filter #(-> % key string?) things)))))
+  ; trying harder at stack overflow
+  (is (nil? (first (remove any? (range 1e6))))))
 
 (deftest transducer-sentinels-test
   (testing "sentinels"

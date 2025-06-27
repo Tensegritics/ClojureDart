@@ -3640,22 +3640,16 @@
       (loop [ls s]
         (if (dart/is? ls LazySeq)
           (recur (.sval ^LazySeq ls))
-          (do (set! s ls)
-              (seq s))))))
+          (set! s (-seq ls))))))
   ISeq
   (-first [coll]
-    (-seq coll)
-    (when-not (nil? s)
-      (first s)))
+    (some-> coll -seq -first))
   (-rest [coll]
-    (-seq coll)
-    (if-not (nil? s)
+    (if-some [s (-seq coll)]
       (rest s)
       ()))
   (-next [coll]
-    (-seq coll)
-    (when-not (nil? s)
-      (next s)))
+    (some-> coll -seq next))
   ICollection
   (-conj [coll o] (cons o coll))
   IEmptyableCollection
