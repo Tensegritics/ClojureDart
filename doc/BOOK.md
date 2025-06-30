@@ -410,64 +410,9 @@ Simple and flexible, if a bit quirky.
 
 We are considering leveraging the `^[]` shorthand  introduced in Clojure 1.12 as an alternative way to denote generics: `^[String Future] Map`, `^[^[String Future] Map] List`.
 
-## UI with `cljd.flutter`: more Flutter, less clutter!
+## UI with Flutter and `cljd.flutter`
 
-Not a framework — just a handy library to cut down on boilerplate and make Flutter more palatable to Clojurists.
-
-Less ceremony, more joy.
-
-### `f/widget`
-
-The main macro, it evaluates to a `Widget`, and its body is a mix of expressions and directives.
-
-Directives are always keywords followed by one form. Some are general-purpose like `:let`, others are Flutter-specific like `:vsync`.
-
-Expressions? They’re automatically threaded through `.child`.
-
-### `.child`-threading
-
-Inside a `f/widget` body, expressions are threaded through the `.child` named parameter. So this:
-
-```clojure
-(f/widget
-  m/Center
-  (m/Text "hello"))
-```
-
-…expands to:
-
-```clojure
-(m/Center .child (m/Text "hello"))
-```
-
-You can also use dotted symbols to thread through other named parameters:
-
-```clojure
-(f/widget
-  m/MaterialApp
-  .home
-  m/Scaffold
-  .body
-  (m/Text "Don't stop it now!"))
-```
-
-Which becomes:
-
-```clojure
-(m/MaterialApp .home
-  (m/Scaffold .body
-    (m/Text "Don't stop it now!")))
-```
-
-
-
-### State Management
-
-## Understanding Flutter
-
-## Understanding Flutter
-
-### The tale of three trees
+### Flutter architecture: the three trees
 
 When working with Flutter, you mostly think in terms of *widgets*—but under the hood, there are actually **three** distinct trees at play: the **widget tree**, the **element tree**, and the **render object tree**.
 
@@ -486,6 +431,134 @@ When Flutter "updates" a widget (e.g. after a `setState` call), it creates a new
 **The Render Object Tree**
 Some elements—those that actually take up space on screen—create **render objects**.
 These are the heavy lifters: they handle layout, painting, and hit testing (i.e., touch input). This is the lowest layer of the UI system, and the one that talks directly to the screen or the screen reader.
+
+### `cljd.flutter`
+
+ClojureDart includes the `cljd.flutter` library — a small set of helpers to simplify interop with Flutter and reduce boilerplate.
+It’s not a framework or an abstraction layer: just some utilities to make things smoother.
+
+Flutter in Dart tends to be verbose.
+In Clojure, we lean on macros instead of IDE autocompletion.
+
+### `f/widget` the ultimate flattener
+
+The main macro provided by `cljd.flutter` is `f/widget` (assuming you use the alias `f`).
+`f/run` and `f/build` follow the same structure.
+
+**`f/widget` is a threading macro tailored for building Flutter UIs.**
+
+Flutter uses fine-grained widgets, which often leads to deep nesting.
+Most of these widgets take a single child, usually via the named `.child` argument. For example:
+
+```clojure
+(m/DefaultTextStyle.merge
+  .style (m/TextStyle .fontSize 36)
+  .child
+  (m/DecoratedBox
+    .decoration (m/BoxDecoration .color m/Colors.pink)
+    .child
+    (m/Center
+      .child
+      (m/Text "Hello ?"))))
+```
+
+With `f/widget`, you can flatten this code into a more readable sequence:
+
+```clojure
+(f/widget
+  (m/DefaultTextStyle.merge
+    .style (m/TextStyle .fontSize 36))
+  .child
+  (m/DecoratedBox
+    .decoration (m/BoxDecoration .color m/Colors.pink))
+  .child
+  (m/Center)
+  .child
+  (m/Text "Hello ?"))
+```
+
+It works by threading each form into the one above it, using the preceding named argument.
+
+Since `.child` is by far the most common, you can omit it:
+
+```clojure
+(f/widget
+  (m/DefaultTextStyle.merge
+    .style (m/TextStyle .fontSize 36))
+  (m/DecoratedBox
+    .decoration (m/BoxDecoration .color m/Colors.pink))
+  (m/Center) ; these parens could be omitted
+  (m/Text "Hello ?"))
+```
+
+This keeps the structure flat and easier to follow — with no magic and no abstraction over Flutter itself.
+
+### `f/widget` directives
+
+`f/widget` supports a few extra forms known as **directives**.
+Each top-level keyword is treated as a directive, and the form that follows it defines how the directive behaves.
+
+If that sounds abstract, here’s a simple example using the `:let` directive:
+
+```clojure
+(f/widget
+  (m/DefaultTextStyle.merge
+    .style (m/TextStyle .fontSize 36))
+  (m/DecoratedBox
+    .decoration (m/BoxDecoration .color m/Colors.pink))
+  (m/Center)
+  :let [msg "Hello ?"]
+  (m/Text msg))
+```
+
+In this case, `:let` just introduces a local binding without needing to wrap the whole expression in a separate `let`.
+
+Simple keywords without a namespace are reserved for `cljd.flutter` itself.
+**Namespaced keywords can be used for custom or third-party directives** — we’ll cover those later on.
+
+### Managing state: the `:watch` directive
+
+The `:watch` directive works a lot like `:let`: it takes a binding vector.
+But there’s one key difference — it doesn’t bind the left-hand symbol to the value you give it. Instead, it binds it to whatever value comes *out of* the right-hand expression.
+
+Here’s a simple example:
+`:watch [x (atom 42)]` will bind `x` to `42`, not the atom.
+That’s because `:watch` automatically derefs the right-hand value.
+
+But that’s just the beginning. `:watch` works with anything that implements the `cljd.flutter/Subscribable` protocol. That includes:
+
+- `nil` — surprisingly useful,
+- Atoms,
+- Streams — no need for `StreamBuilder`,
+- Futures — no need for `FutureBuilder`,
+- `ValueListenable` — no need for `ValueListenableBuilder`,
+- `Listenable` — no need for `ListenableBuilder`.
+
+And since it’s a protocol, you can extend it for your own types.
+
+Sometimes you want more than just the dereferenced value.
+`:watch` lets you attach options right after the binding pair.
+
+Let’s say you need access to the atom itself, not just its value. You can do this:
+
+```clojure
+:watch [x (atom 42) :as my-atom]
+```
+
+Now x holds the value, and my-atom holds the atom.
+
+Here are the available options:
+
+- `:as name` — gives you the original value (e.g., the atom or stream),
+- `:default val` — used if the value isn’t immediately available (like with streams or futures),
+- `:> expr` — applies `(-> value expr)` to extract the actual value (useful for Listenable),
+- `:dispose expr` — used to clean up when the watchable is no longer needed (applied as `(-> value expr)`),
+- `:refresh-on expr` — forces the right-hand expression to be re-evaluated when `expr` changes.
+By default, it re-evaluates if any local used in the right-hand side changes.
+Use `:refresh-on nil` (or any constant) to turn reevaluation off completely.
+
+> A quick note: `:refresh-on` is there when you really need it, but it might be a sign your design could use a rethink.
+
 
 ## Data, I/O and Side Effects
 
