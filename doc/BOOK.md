@@ -570,6 +570,7 @@ Last but not least, :watch is destructuring-aware:
 ```
 
 > Even if the atom holds a large map, this `:watch` will only trigger a rebuild when `:the-key` actually changes. Handy when you want to stay efficient and avoid unnecessary UI updates.
+
 ### Managing state: the `:managed` directive
 
 The `:managed` directive is for resources that need to live and die with the widget — things like controllers or other stateful/expensive objects.
@@ -616,13 +617,13 @@ Here’s a function that returns a text input widget, initialized with a string 
       .onSubmitted (fn [s] (update! s) nil))))
 ```
 
-A common gotcha is calling `update!`` on every change. That often leads to triggering a rebuild, which in turn disposes and recreates the controller — and you lose caret position and IME state.
+A common gotcha is calling `update!` on every change. That often leads to triggering a rebuild, which in turn disposes and recreates the controller — and you lose caret position and IME state.
 
 There are two main ways to avoid this:
 
 You can use `:refresh-on` to prevent rebuilds when `init` changes — but that might create other headaches.
 Or you accept that not everything needs to live in global state. Some transient state is fine.
-And that’s totally reasonable here. `TextEditingController` implements `ValueListenable`, which means it’s :watch`-compatible.
+And that’s totally reasonable here. `TextEditingController` implements `ValueListenable`, which means it’s `:watch`-compatible.
 So other parts of the UI can react to text field changes without wiring up callbacks. Clean and efficient.
 
 ## Data, I/O and Side Effects
