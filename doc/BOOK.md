@@ -518,6 +518,8 @@ Simple keywords without a namespace are reserved for `cljd.flutter` itself.
 
 ### Managing state: the `:watch` directive
 
+The `:watch` directive causes widgets below it to rebuild when watched objects change.
+
 The `:watch` directive works a lot like `:let`: it takes a binding vector.
 But there’s one key difference — it doesn’t bind the left-hand symbol to the value you give it. Instead, it binds it to whatever value comes *out of* the right-hand expression.
 
@@ -559,6 +561,69 @@ Use `:refresh-on nil` (or any constant) to turn reevaluation off completely.
 
 > A quick note: `:refresh-on` is there when you really need it, but it might be a sign your design could use a rethink.
 
+**Destructuring support**
+
+Last but not least, :watch is destructuring-aware:
+
+```clojure
+:watch [{:keys [the-key]} busy-atom]
+```
+
+> Even if the atom holds a large map, this `:watch` will only trigger a rebuild when `:the-key` actually changes. Handy when you want to stay efficient and avoid unnecessary UI updates.
+### Managing state: the `:managed` directive
+
+The `:managed` directive is for resources that need to live and die with the widget — things like controllers or other stateful/expensive objects.
+
+It looks a lot like `:watch`: same binding vector, same optional keyword-based options.  
+But it behaves more like `:let`: it binds the left-hand symbol to the right-hand value.  
+The key difference is that `:managed` keeps that value around — it doesn’t re-evaluate it on every rebuild.
+
+Just like `:watch`, `:managed` will re-evaluate its value when any of the locals it depends on change. You can control that behavior with options:
+
+- `:dispose expr` — used to clean up the resource when it's no longer needed. Applied as `(-> value expr)`.  
+  By default, it calls `.dispose`. Use `nil` or `false` to disable cleanup.
+- `:refresh-on expr` — forces the right-hand side to be re-evaluated when `expr` changes.  
+  Defaults to tracking any dependent locals. Use `:refresh-on nil` (or a constant) to turn it off completely.
+
+There’s a bit of overlap between `:managed` and `:watch` — that’s by design. Some patterns become simpler this way:
+
+```clojure
+(f/widget
+  :watch [n (atom 0) :as counter]
+  ...)
+```
+Is just shorthand for:
+
+```clojure
+(f/widget
+  :managed [counter (atom 0) :dispose nil]
+  :watch [n counter]
+  ...)
+```
+
+**Example**
+
+Flutter has a lot of `*Controller` classes. These are a great use case for :managed because they’re stateful and need to be disposed cleanly.
+
+Here’s a function that returns a text input widget, initialized with a string and calling `update!`` when the user submits:
+
+```clojure
+(defn text-input [init update!]
+  (f/widget
+    :managed [ctrl (m/TextEditingController .text init)]
+    (m/TextField
+      .controller ctrl
+      .onSubmitted (fn [s] (update! s) nil))))
+```
+
+A common gotcha is calling `update!`` on every change. That often leads to triggering a rebuild, which in turn disposes and recreates the controller — and you lose caret position and IME state.
+
+There are two main ways to avoid this:
+
+You can use `:refresh-on` to prevent rebuilds when `init` changes — but that might create other headaches.
+Or you accept that not everything needs to live in global state. Some transient state is fine.
+And that’s totally reasonable here. `TextEditingController` implements `ValueListenable`, which means it’s :watch`-compatible.
+So other parts of the UI can react to text field changes without wiring up callbacks. Clean and efficient.
 
 ## Data, I/O and Side Effects
 
