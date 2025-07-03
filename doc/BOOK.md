@@ -624,7 +624,20 @@ There are two main ways to avoid this:
 You can use `:refresh-on` to prevent rebuilds when `init` changes — but that might create other headaches.
 Or you accept that not everything needs to live in global state. Some transient state is fine.
 And that’s totally reasonable here. `TextEditingController` implements `ValueListenable`, which means it’s `:watch`-compatible.
-So other parts of the UI can react to text field changes without wiring up callbacks. Clean and efficient.
+**So other parts of the UI can react to text field changes without wiring up callbacks.** Clean and efficient.
+
+### Telling siblings apart: the `:key` directive
+
+In its eagerness to be fast, Flutter may conclude too hastily that two *stateful* objects are the same if they are of the same class. Two `TextField` next to each other in a `Row`? Swap them and... nothing happens because they have compatible states!
+
+The rule is simple: when you have siblings (usually introduced by `.children` or `.slivers` but they can be created on demand too by constructors such as `ListView.builder`) you'd better put a `:key` on them!
+
+In `:key k`, `k` can be any value, it just has to be unique amongst siblings, not globally (see `:global-key` for that).
+
+You can skip keys when the number or the order of siblings isn't going to change, that is for most `Column`s and `Row`s.
+
+When you want to optionally display an item in a column, you should also consider using `:when` rather than altering the siblings list.
+
 
 ## Data, I/O and Side Effects
 
