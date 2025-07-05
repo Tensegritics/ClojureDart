@@ -36,6 +36,11 @@ clojure -M -m cljd.build compile \
   cljd.test-clojure.test-test \
   cljd.test-reader.reader-test
 
-# --enable-experiment=records is there for making tests pass even on dart2
-# on dart3 it should be a no op.
-dart --enable-experiment=records test -p vm
+DART_MAJOR=$(dart --version | awk '{print $4}' | cut -d. -f1)
+if [ "$DART_MAJOR" -eq 2 ]; then
+  # --enable-experiment=records is there for making tests pass even on dart2
+  dart --enable-experiment=records test -p vm
+else
+  # records experiment removed in 3.8.1
+  dart test -p vm
+fi
