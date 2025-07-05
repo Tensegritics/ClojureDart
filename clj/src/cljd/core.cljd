@@ -7917,7 +7917,7 @@
 
   IEquiv
   (-equiv [_ other]
-    (and (dart/is? other UUID) (identical? uuid (.-uuid ^UUID other))))
+    (and (dart/is? other UUID) (= uuid (.-uuid ^UUID other))))
 
   IPrint
   (-print [o ^StringSink sink]
