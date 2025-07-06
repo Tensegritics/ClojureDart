@@ -493,6 +493,8 @@
   (testing "Testing UUID"
     (is (= (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
            (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")))
+    (is (= (cljd.core/uuid (apply str "550e8400-e29b-41d4-a716-446655440000"))
+           (cljd.core/uuid (apply str "550e8400-e29b-41d4-a716-446655440000"))))
     (is (not (identical? (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
                          (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000"))))
     (is (= 42 (get {(cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000") 42}
