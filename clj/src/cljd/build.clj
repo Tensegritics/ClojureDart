@@ -694,10 +694,10 @@
   []
   (when-let [f (java.io.File. (System/getProperty "clojure.basis"))]
     (if (and f (.exists f))
-      (let [{:keys [aliases basis-config] :as basis} (deps/slurp-deps f)]
+      (let [{:keys [aliases basis-config] :as basis} (deps/create-basis (deps/slurp-deps f))]
         (assoc basis
           :cljd/opts
-          (reduce merge-cljd-opts (:cljd/opts basis) (keep (comp :cljd/opts aliases) (:aliases basis-config)))))
+          (reduce merge-cljd-opts (:cljd/opts basis) (keep (comp :cljd/opts aliases first) (:aliases basis-config)))))
       (throw (IllegalArgumentException. "No basis declared in clojure.basis system property")))))
 
 
