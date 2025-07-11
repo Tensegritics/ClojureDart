@@ -109,7 +109,7 @@ Map<String, dynamic> emitType(LibraryElement rootLib, DartType t) {
     };
   }
   if (t is TypeParameterType) {
-    var res = emitTypeParameter(rootLib, t.element);
+    var res = emitTypeArgument(rootLib, t.element);
     res[":nullable"] =
         t.isDartCoreNull || t.nullabilitySuffix == NullabilitySuffix.question;
     return res;
@@ -155,6 +155,18 @@ Map<String, dynamic> emitTypeParameter(
     ":canon-qname": "${tp.displayName}",
     ":is-param": true,
     ":bound": fnil(f, tp.bound, null)
+  };
+}
+
+Map<String, dynamic> emitTypeArgument(
+    LibraryElement rootLib, TypeParameterElement tp) {
+  var f = (t) => emitType(rootLib, t);
+  return {
+    ":kind": ":class",
+    ":element-name": "\"${tp.displayName}\"",
+    ":qname": "${tp.displayName}",
+    ":canon-qname": "${tp.displayName}",
+    ":is-param": true
   };
 }
 
