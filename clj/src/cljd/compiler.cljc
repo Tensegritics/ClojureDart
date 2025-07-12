@@ -12,6 +12,10 @@
             [clojure.java.io :as io]
             [clojure.edn :as edn]))
 
+(defmacro ^:private imply=> [a b] `(or (not ~a) ~b))
+
+(defmacro ^:private equiv<=> [a b] `(let [a# ~a b# ~b] (if a# b# (not b#))))
+
 (defn read [opts in]
   (cljd.lang.LispReader/read in opts))
 
@@ -947,9 +951,9 @@
 
 (defn dart-member-lookup
   "member is a symbol or a string"
-  ([class member env]
-   (dart-member-lookup class member (meta member) env))
-  ([class member member-meta {:keys [type-vars] :as env}]
+  ([class member static env]
+   (dart-member-lookup class member (meta member) static env))
+  ([class member member-meta static {:keys [type-vars] :as env}]
    (let [member-type-arguments (map #(resolve-type % type-vars) (:type-params member-meta))
          member (name member)
          member (if (and (.endsWith member ".new")
@@ -961,14 +965,19 @@
                    (or
                      (when-some [member-info (class-info member)]
                        [identity member-info])
-                     (some #(dart-member-lookup % member env)
-                       (concat (class-info :mixins) (some-> (:super class-info) list)
-                         (mapcat class-info [:interfaces :on]))))]
-         [(comp ; ordering matters
-            (type-env-for member member-type-arguments (:type-parameters member-info))
-            (type-env-for class (:type-parameters class) (:type-parameters class-info))
-            type-env)
-          member-info])))))
+                     (when-not static
+                       (some #(dart-member-lookup % member false env)
+                         (concat (class-info :mixins) (some-> (:super class-info) list)
+                           (mapcat class-info [:interfaces :on])))))]
+         (let [static-like
+               (or (:static member-info)
+                 (= (:kind member-info) :constructor))]
+           (when (equiv<=> static static-like)
+             [(comp ; ordering matters
+                (type-env-for member member-type-arguments (:type-parameters member-info))
+                (type-env-for class (:type-parameters class) (:type-parameters class-info))
+                type-env)
+              member-info])))))))
 
 (declare actual-parameters)
 
@@ -1045,11 +1054,11 @@
       (nil? (:tag m))
       (vary-meta assoc :tag (:tag (meta decl))))))
 
-(defn resolve-dart-method
+(defn resolve-dart-instance-method
   [type mname args type-env]
   (if-some [member-info
             (some->
-              (dart-member-lookup type mname
+              (dart-member-lookup type mname false
                 {:type-vars (into (or type-env #{}) (:type-params (meta mname)))})
               actual-member)] ; TODO are there special cases for operators? eg unary-
     (case (:kind member-info)
@@ -1325,7 +1334,7 @@
       (when-some [type (resolve-type (symbol (namespace sym) t) #{} nil)]
         (let [[_ alias t] (re-matches #"(.+)\.(.+)" (name (:qname type)))]
           (into [(with-meta (symbol (str "$lib:" alias) t) (meta sym))]
-                (map symbol) (str/split members #"[.]")))))))
+            (map symbol) (str/split members #"[.]")))))))
 
 (declare cljd-closed-overs)
 
@@ -1536,7 +1545,7 @@
                                (if-some [[_ type] (find opts-types k)]
                                  [k (emit quoted expr env) (or type dc-dynamic)]
                                  (throw (Exception.
-                                          (str "Not an expected argument name: ." (name k)
+                                          (str (pr-str (keys opts-types))"Not an expected argument name: ." (name k)
                                             ", valid names: " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))))))
                       (partition 2 rem-args))]
        (when-not (= (count positional-args) (count fixed-types))
@@ -1656,7 +1665,7 @@
 (defn has-cast-method? [type]
   (if-some [member-info
             (some->
-              (dart-member-lookup type "cast" {:type-vars #{}})
+              (dart-member-lookup type "cast" false {:type-vars #{}})
               actual-member)]
     ; TODO check the return type
     (case (:kind member-info)
@@ -1908,7 +1917,7 @@
 
 (defn emit-new [[_ class & args] env]
   (let [dart-type (emit-type class env)
-        member-info (some-> (dart-member-lookup dart-type (:element-name dart-type) env) actual-member)
+        member-info (some-> (dart-member-lookup dart-type (:element-name dart-type) true env) actual-member)
         _ (when-not (= :constructor (:kind member-info))
             (throw (Exception. (str "Can't resolve default constructor for type " (:element-name dart-type "dynamic") " of library " (:lib dart-type "dart:core") " " (source-info)))))
         method-sig (some-> member-info dart-method-sig)
@@ -1956,16 +1965,16 @@
           member-info (some->
                         (else->>
                           (if-some [mi (fake-member-lookup type! member-name+ (count args))] mi)
-                          (let [[_ member-info :as mi] (dart-member-lookup type! member-name+ (meta member) env)])
+                          (let [[_ member-info :as mi] (dart-member-lookup type! member-name+ (meta member) static env)])
                           ;; in case a property/method has the same name of a named constructor
-                          (or (when-not (and static (not (:static member-info))) mi))
-                          (if static (dart-member-lookup type! (str (:element-name static) "." member-name) env))
-                          (dart-member-lookup dc-Object member-name+ env))
+                          (or (when (imply=> static (:static member-info)) mi))
+                          (if static (dart-member-lookup type! (str (:element-name static) "." member-name) static env))
+                          (dart-member-lookup dc-Object member-name+ static env))
                         actual-member)
           ; trying to munge name, just in case (and for records etc.)
           member-name' (when-not member-info (munge member-name {}))
           member-info (or member-info
-                        (some-> (dart-member-lookup type! member-name' (meta member) env) actual-member))
+                        (some-> (dart-member-lookup type! member-name' (meta member) static env) actual-member))
           member-name (if (and member-name' member-info) member-name' member-name)
           ; end of trying to munge name
           member-name (:member-name member-info member-name)
@@ -2059,11 +2068,11 @@
         member-info (some->
                       (else->>
                         (let [[_ member-info :as mi]
-                              (dart-member-lookup type! member-name (meta member) env)])
+                              (dart-member-lookup type! member-name (meta member) static env)])
                         ;; in case a property/method has the same name of a named constructor
                         (or (when-not (and static (not (:static member-info))) mi))
-                        (if static (dart-member-lookup type! (str (:element-name static) "." member-name) env))
-                        (dart-member-lookup dc-Object member-name env))
+                        (if static (dart-member-lookup type! (str (:element-name static) "." member-name) static env))
+                        (dart-member-lookup dc-Object member-name static env))
                       actual-member)
         dart-obj (cond
                    (:type-params (meta obj)) ; static only
@@ -2750,7 +2759,7 @@
           :class
           (let [dart-type (:dart/type type)]
             (or
-              (resolve-dart-method dart-type mname arglist type-env)
+              (resolve-dart-instance-method dart-type mname arglist type-env)
               (throw (Exception. (str "In class " owner-spec ", can't resolve method " mname (vec arglist) " on class " (:element-name dart-type) " from lib " (:lib dart-type) (source-info)))))))
         mname (vary-meta mname' merge (meta mname))
         parsed-arglist' (parse-dart-params arglist')
@@ -2979,7 +2988,7 @@
         (when-some [dart-super-type (:extends class)]
           (let [meth (-> class :super-ctor :method)
                 super-ctor-meth (cond-> (:element-name dart-super-type) meth (str "." meth))
-                super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)]
+                super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth true env) actual-member)]
             (when-not (= :constructor (:kind super-ctor-info))
               (throw (Exception. (str "Can't resolve constructor " super-ctor-meth " for type " (:element-name dart-super-type "dynamic") " of library " (:lib dart-super-type "dart:core") " " (source-info)))))
             (-> class :super-ctor :args (split-args (some-> super-ctor-info dart-method-sig) env))))
@@ -3116,7 +3125,7 @@
             dart-super-type (:extends class) ; should never
             meth (-> class :super-ctor :method)
             super-ctor-meth (cond-> (:element-name dart-super-type) meth (str "." meth))
-            super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth env) actual-member)
+            super-ctor-info (some-> (dart-member-lookup dart-super-type super-ctor-meth true env) actual-member)
             _ (when (not super-ctor-info)
                 (binding [*out* *err*]
                   (dynamic-warning "can't resolve constructor " super-ctor-meth "for type" (:element-name dart-super-type "dynamic") "of library" (:lib dart-super-type "dart:core") (source-info))))
