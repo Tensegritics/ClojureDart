@@ -9444,3 +9444,44 @@ specified.
         (recur (assoc! m k v) s)
         (conj (persistent! m) k))
       (persistent! m))))
+
+(defmacro with-open
+  "bindings => [binding-form init (:directive form)* ...]
+
+  Evaluates `body` with each `binding-form` bound to the value of its `init`.
+  On exit (normal or exceptional), all values are disposed in reverse order,
+  by default via `(.dispose value)`.
+
+  A binding pair may be followed by directive pairs to override behavior:
+
+  - `:dispose form` — dispose using `(-> value form)` instead of `(.dispose value)`
+
+  Unlike in Clojure, `binding-form` is not limited to symbols. In ClojureDart it's
+  common to use destructuring to access fields or tear off methods, so any binding
+  form is accepted."
+  [bindings & body]
+  #_(assert-args
+     (vector? bindings) "a vector for its binding"
+     (even? (count bindings)) "an even number of forms in binding vector"
+     (not (keyword? (first bindings))) "a binding form as first element")
+  (let [triples
+        (when-some [[binding expr & bindings] (seq bindings)]
+          (reduce
+            (fn [triples [l r]]
+              (if (keyword? l)
+                (let [[[binding expr opts] & triples] triples]
+                  (case l
+                    :dispose (cons [binding expr (assoc opts l r)] triples)))
+                (cons [l r {}] triples)))
+            [[binding expr {}]] (partition 2 bindings)))]
+    (reduce
+      (fn [body-expr [binding expr {:keys [dispose] :or {dispose '.dispose}}]]
+        (let [sym (if (symbol? binding) binding `disposable#)
+              body-expr (if (= binding sym) body-expr `(let [~binding ~sym] ~body-expr))]
+          `(let [~sym ~expr]
+             (try
+               ~body-expr
+               (finally
+                 (-> ~sym ~dispose))))))
+      `(do ~@body)
+      triples)))

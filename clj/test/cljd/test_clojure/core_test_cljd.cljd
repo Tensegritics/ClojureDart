@@ -1184,3 +1184,18 @@
             param)]
     (is (= dart:core/deprecated (f)))
     (is (= 42 (f .param 42)))))
+
+(deftype Disposable [^:mutable disposed]
+  (dispose [_] (set! disposed true)))
+
+(deftest with-open-test
+  (let [$ (atom nil)]
+    (with-open [{:flds [disposed] :as d} (Disposable false)]
+      (is (false? disposed))
+      (reset! $ d))
+    (is (true? (.-disposed ^Disposable @$))))
+  (let [$ (atom nil)]
+    (with-open [a (atom true) :dispose (reset! false)]
+      (is (true? @a))
+      (reset! $ a))
+    (is (false? @@$))))
