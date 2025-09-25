@@ -224,20 +224,56 @@
                               :whole-form destructuring-form}))))]
     (-> #{} transient (locals destructuring-form) persistent!)))
 
+(defn ^:macro-support value-sym [binding]
+  (cond
+    (map? binding) (:as binding)
+    (vector? binding)
+    (when (= :as (nth binding (- (count binding) 2) nil))
+      (peek binding))
+    (simple-symbol? binding) binding))
+
 (defn ^:macro-support expand-watch
-  [&env env binding expr {:keys [dispose] subscribable-binding :as :as opts} forms]
+  [&env env binding expr {:as opts
+                          :keys [dispose dispose-value]
+                          subscribable-binding :as} forms]
   (let [expr (list 'dart/async-barrier expr)
         accessor (:> opts)
+        value-accessor (:value> opts)
+        dispose (if (true? dispose) '.dispose dispose)
+        dispose-value (if (true? dispose-value) '.dispose dispose-value)
         destructured-locals (when-not (symbol? binding)
                               (destructuring-bound-locals binding))
-        dispose (if (true? dispose) '.dispose dispose)
-        refresh-on (refresh-on-expr opts &env expr)
+        user-vsym (value-sym binding)
+        _ (assert (or destructured-locals user-vsym)
+            "No user provided name for value should only happen with destructuring.")
+        misses-value-sym-for-disposal (and dispose-value (nil? user-vsym))
+        vsym `v#
+        destructured-locals (when destructured-locals
+                              (cond
+                                misses-value-sym-for-disposal
+                                (into [vsym] destructured-locals)
+                                dispose-value
+                                (into [user-vsym] (disj destructured-locals user-vsym))
+                                :else (vec destructured-locals)))
+        [binding-for-value-disposal disposable-value]
+        (when dispose-value
+          (if-some [[disposable-value] destructured-locals]
+            [[disposable-value] disposable-value]
+            [user-vsym user-vsym]))
+        refresh-on (refresh-on-expr opts &env
+                     `[(doto ~expr
+                         ~(or accessor `->)
+                         ~(or dispose `->))
+                       (fn [~(or user-vsym vsym)]
+                         (doto ~(or user-vsym vsym)
+                           ~(or value-accessor `->)
+                           ~(or dispose-value `->)))])
         ; destructuring may depend on existing locals (for defaults
         ; or even for key names) so we must take this into account
         destructuring-refresh-on
-        (when (seq destructured-locals)
+        (when destructured-locals
           (refresh-on-expr nil &env `(fn [~binding]
-                                       ~(vec destructured-locals))))
+                                       ~destructured-locals)))
         refresh-on
         (cond
           (not (and destructuring-refresh-on refresh-on))
@@ -252,23 +288,38 @@
           [refresh-on destructuring-refresh-on])
         state `state#
         subscribable `subscribable#
-        update-state (if (or accessor destructured-locals)
-                       (let [vsym `v#
-                             vexpr (if accessor `(-> ~subscribable ~accessor) vsym)
-                             vval `vval#
-                             set-state-expr
-                             (if (:dedup opts true)
-                               `(when-not (= ~vval (.-latest ~state))
-                                  (~state ~vval))
-                               `(~state ~vval))]
-                         `(fn [~vsym]
-                            ~(if destructured-locals
-                               `(let [~binding ~vexpr
-                                      ~vval [~@destructured-locals]]
-                                  ~set-state-expr)
-                               `(let [~vval ~vexpr]
-                                  ~set-state-expr))))
-                       state)
+        update-state
+        (let [needs-value-refinement (or accessor value-accessor)
+              dlsym `dlsym#
+              new-val-sym (if destructured-locals dlsym user-vsym)
+              expr
+              `(fn [~(cond
+                       accessor `_#
+                       (or needs-value-refinement misses-value-sym-for-disposal) vsym
+                       :else binding)]
+                 (let [~@(when needs-value-refinement
+                           `[~(if misses-value-sym-for-disposal vsym binding)
+                             (-> ~(if accessor
+                                    `(-> ~subscribable ~accessor)
+                                    vsym)
+                               ~(or value-accessor `->))])
+                       ~@(cond
+                           misses-value-sym-for-disposal
+                           (do
+                             (assert destructured-locals)
+                             `[~binding ~vsym
+                               ~dlsym [~vsym ~@destructured-locals]])
+                           destructured-locals
+                           `[~dlsym ~destructured-locals])]
+                   ~(cond->> `(~state ~new-val-sym)
+                      dispose-value
+                      (list `let `[~binding-for-value-disposal (.-latest ~state)]
+                        `(some-> ~disposable-value ~dispose-value))
+                      (:dedup opts true)
+                      (list `when-not `(= ~new-val-sym (.-latest ~state))))))]
+          (if (= expr `(fn [~binding] (~state ~binding))) ; peephole
+            state
+            expr))
         subscribe-call
         `(let [update# ~update-state
                sub# (-subscribe ~subscribable update#)]
@@ -281,22 +332,27 @@
        (~'createState [_#] (WatchState nil nil nil nil))
        cljd.flutter/StateLifecycle
        (~'-init-state [_# state#]
-         (let [~state ^WatchState state#
-               ~subscribable ~expr]
-           (doto ~state
-             (.-k! ~refresh-on)
-             (.-subscribable! ~subscribable)
-             (.-subscription! ~subscribe-call))))
+        (let [~state ^WatchState state#
+              ~subscribable ~expr]
+          (doto ~state
+            (.-k! ~refresh-on)
+            (.-subscribable! ~subscribable)
+            (.-subscription! ~subscribe-call))))
        (~'-dispose-state [_# state#]
-         (let [state# ^WatchState state#]
-           (doto (.-subscribable state#)
-             (-unsubscribe (.-subscription state#))
-             ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
-           (doto state#
-             (.-k! nil)
-             (.-subscribable! nil)
-             (.-subscription! nil)
-             (.-latest! nil))))
+        (let [state# ^WatchState state#]
+          (doto state#
+            (.-k! nil)
+            ~@(when dispose-value
+                [`(-> .-latest
+                    (as-> ~binding-for-value-disposal
+                        (some-> ~disposable-value ~dispose-value)))])
+            (.-latest! nil)
+            (-> .-subscribable
+              (doto
+                  (-unsubscribe (.-subscription state#))
+                  ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)])))
+            (.-subscribable! nil)
+            (.-subscription! nil))))
        (~'-build [_# state# ctx#]
         (let [~state ^WatchState state#
               ~(if destructured-locals (vec destructured-locals) binding) (.-latest ~state)
@@ -306,17 +362,17 @@
           (-widget-cont ~(assoc env :key nil :closest-ctx true)
             ~@forms)))
        (~'-update-state [_# state#]
-         (let [~state ^WatchState state#
-               k# ~refresh-on]
-           (when-not (= k# (.-k ~state))
-             (doto (.-subscribable ~state)
-               (-unsubscribe (.-subscription ~state))
-               ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
-             (let [~subscribable ~expr]
-               (doto ~state
-                 (.-k! k#)
-                 (.-subscribable! ~subscribable)
-                 (.-subscription! ~subscribe-call)))))))))
+        (let [~state ^WatchState state#
+              k# ~refresh-on]
+          (when-not (= k# (.-k ~state))
+            (doto (.-subscribable ~state)
+              (-unsubscribe (.-subscription ~state))
+              ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
+            (let [~subscribable ~expr]
+              (doto ~state
+                (.-k! k#)
+                (.-subscribable! ~subscribable)
+                (.-subscription! ~subscribe-call)))))))))
 
 (defn ^:macro-support expand-bg-watcher
   [&env env binding expr {:keys [dispose] :as opts} body forms]
@@ -811,7 +867,7 @@
      Out of the box it means: atoms, Streams, Futures, Listenables,
      ValueListenable and... nil.
      These bindings can take options (in the same way as :managed bindings do).
-     Supported options are :as, :default, :refresh-on, :dispose, :dedup and :>
+     Supported options are
      - :as -- gives a name to the watched resource (e.g. to be able to swap! on
        it if it's an atom)
      - :default -- provides an interim value to use while the first actual value
@@ -822,8 +878,13 @@
      - :dispose form -- if the object under watch also needs to be managed use
        this option. Works like :dispose for :managed except for \":dispose true\"
        which is a shortcut for \":dispose .dispose\".
+     - :dispose-value form -- if the produced  values need to be managed use
+       this option. Works like :dispose for :managed except for \":dispose-value true\"
+       which is a shortcut for \":dispose .dispose\".
      - :dedup boolean -- defaults to true, set it to false to rebuild on every
        change
+     - :value> form -- transform produced values as per (-> produced-value form),
+       this is useful to preprocess values before destructuring/deduping.
      - :> form -- this one is meant to be used with Listenable instances because
        they don't produce values, just a change notification. So if this option
        is not used you only get trues from the subscription.
@@ -911,7 +972,8 @@
       (if-some [[binding expr & more] (seq v)]
         (let [[opts & more] (collect-options more
                               #(or (qualified-keyword? %)
-                                 (#{:default :refresh-on :dispose :> :as} %)))]
+                                 (#{:default :refresh-on :dispose :> :as
+                                    :value> :dispose-value} %)))]
           (expand-watch &env env binding expr opts (list* :watch more forms)))
         `(-widget-cont ~env ~@forms))
       :managed
