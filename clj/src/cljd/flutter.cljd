@@ -140,10 +140,11 @@
   (updateShouldNotify [this prev-this]
     (not= bindings (.-bindings ^InheritedBindings prev-this)))
   (updateShouldNotifyDependent [this prev-this aspects]
+    ; aspects is a set of vectors of keywords
     (let [prev-bindings (.-bindings ^InheritedBindings prev-this)]
       (boolean
         (some (fn [ks]
-                ; should we rather use identity?
+                ; should we rather use identity? No
                 (some (fn [k] (not= (prev-bindings k) (bindings k))) ks))
           aspects)))))
 
@@ -609,7 +610,7 @@
                               [sym
                                `(->
                                   (get ~bindings-sym ~type-or-kw)
-                                  ~(or (seq args) `do))])
+                                  ~(or (seq args) `->))])
                             inherited-bindings)]
                     (.dependOnInheritedElement ~closest-context
                       inherited-elt#
@@ -619,13 +620,14 @@
   :extends (widgets/StatelessWidget .key k)
   (build [_ ctx]
    (let [elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)
-         prev-bindings (some-> elt ^InheritedBindings (.-widget) .-bindings)
-         non-shadowed-keys (remove #(contains? bindings %) (keys prev-bindings))]
+         parent-bindings (some-> elt ^InheritedBindings (.-widget) .-bindings)
+         non-shadowed-keys (vec (keys (join-with nil identity parent-bindings bindings)))]
      (when (seq non-shadowed-keys)
        (.dependOnInheritedElement ctx elt .aspect non-shadowed-keys))
-     (cljd.flutter/InheritedBindings. (merge prev-bindings bindings) child))))
+     (cljd.flutter/InheritedBindings. (merge parent-bindings bindings) child))))
 
 (defn ^:macro-support expand-bind [env bindings-map forms]
+  (assert (map? bindings-map) ":bind expects a map")
   `(Bind ~(:key env) ~bindings-map (f/widget ~@forms)))
 
 (defn ^:macro-support expand-vsync [env name forms]
