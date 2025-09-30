@@ -314,8 +314,8 @@
                            `[~dlsym ~destructured-locals])]
                    ~(cond->> `(~state ~new-val-sym)
                       dispose-value
-                      (list `let `[~binding-for-value-disposal (.-latest ~state)]
-                        `(some-> ~disposable-value ~dispose-value))
+                      (list `do `(let [~binding-for-value-disposal (.-latest ~state)]
+                                   (some-> ~disposable-value ~dispose-value)))
                       (:dedup opts true)
                       (list `when-not `(= ~new-val-sym (.-latest ~state))))))]
           (if (= expr `(fn [~binding] (~state ~binding))) ; peephole
