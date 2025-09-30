@@ -277,7 +277,7 @@
       (str " at line: " line ", column: " column ", file: " *file*)
       " (no source location)")))
 
-(defmacro ^:private else->> [& forms]
+(defmacro ^:private warp->> [& forms]
   `(->> ~@(reverse forms)))
 
 (defmacro ^:private expect-some
@@ -422,7 +422,7 @@
   (let [{:keys [libs] :as nses} @nses
         typename (name clj-sym)
         typens (namespace clj-sym)]
-    (else->>
+    (warp->>
       (when-not (.endsWith (name clj-sym) "."))
       (if ('#{void dart:core/void} clj-sym)
         dc-void)
@@ -507,7 +507,7 @@
         {:keys [mappings clj-aliases typedefs] :as current-ns} (nses *current-ns*)
         ensure-class (fn [v] (when (= :class (:type v)) v))
         resolve (fn [sym ensure-right-type]
-                  (else->>
+                  (warp->>
                     (if-some [v (ensure-right-type (get current-ns sym))] [:def v])
                     (if-some [v (get mappings sym)]
                       (recur (with-meta v (meta sym)) ensure-right-type))
@@ -733,7 +733,7 @@
     (or (when (reserved-words s) (str "$" s "_"))
       (replace-all s #"__(\d+)|__auto__|(^-)|[^a-zA-Z0-9]"
         (fn [[x n leading-dash]]
-          (else->>
+          (warp->>
             (if leading-dash "$_")
             (if n (str "$" n "_"))
             (if (= "__auto__" x) "$AUTO_")
@@ -748,7 +748,7 @@
   (let [s (name x)]
     (replace-all s #"__(\d+)|__auto__|(^-)|[^a-zA-Z0-9]"
       (fn [[x n leading-dash]]
-        (else->>
+        (warp->>
           (if leading-dash "$_")
           (if n (str "$" n "_"))
           (if (= "__auto__" x) "$AUTO_")
@@ -1835,7 +1835,7 @@
 
 (defn emit-dart-list-literal
   [quoted x env]
-  (else->>
+  (warp->>
     (let [item-tag (:tag (meta x) 'dart:core/dynamic)
           list-tag (vary-meta 'dart:core/List assoc :type-params [item-tag])])
     (if (:fixed (meta x))
@@ -1963,7 +1963,7 @@
           member-name (if (and (= "-" member-name) (empty? args)) "unary-" member-name)
           member-name+ (case member-name "!=" "==" member-name)
           member-info (some->
-                        (else->>
+                        (warp->>
                           (if-some [mi (fake-member-lookup type! member-name+ (count args))] mi)
                           (let [[_ member-info :as mi] (dart-member-lookup type! member-name+ (meta member) static env)])
                           ;; in case a property/method has the same name of a named constructor
@@ -2066,7 +2066,7 @@
         type (or static (:dart/type (infer-type dart-obj)))
         type! (dissoc type :nullable)
         member-info (some->
-                      (else->>
+                      (warp->>
                         (let [[_ member-info :as mi]
                               (dart-member-lookup type! member-name (meta member) static env)])
                         ;; in case a property/method has the same name of a named constructor
@@ -3435,7 +3435,7 @@
                             (throw (ex-info ":refer expects a collection of symbols; :refer :all is not supported." {:refer refer})))
                         clj-ns (when-not (string? lib) lib)
                         alias-only (and as-alias (not (or as refer rename)))
-                        dartlib (else->>
+                        dartlib (warp->>
                                   (if (string? lib) lib)
                                   (if-some [{:keys [lib]} (@nses lib)] lib)
                                   (if (= ns-sym lib) ns-lib)
@@ -4278,7 +4278,7 @@
   (dart-print (:post locus)))
 
 (defn append-source-map-entry [source-map line column source-info]
-  (else->>
+  (warp->>
     (when (:line source-info))
     (let [[prev-line prev-column prev-source-info] (peek source-map)])
     (when-not (= prev-source-info source-info))
