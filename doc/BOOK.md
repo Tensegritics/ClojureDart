@@ -553,8 +553,10 @@ Here are the available options:
 
 - `:as name` — gives you the original value (e.g., the atom or stream),
 - `:default val` — used if the value isn’t immediately available (like with streams or futures),
-- `:> expr` — applies `(-> value expr)` to extract the actual value (useful for Listenable),
+- `:> expr` — applies `(-> watched-object expr)` to extract the actual value (useful for Listenable),
 - `:dispose expr` — used to clean up when the watchable is no longer needed (applied as `(-> value expr)`),
+- `:value> expr` — applies `(-> watched-object expr)` to transform the actual value before deduping/destructuring,
+- `:dispose-value expr` — used to clean up manageable values when a new value is produced or the watchable is no longer needed (applied as `(-> value expr)`),
 - `:refresh-on expr` — forces the right-hand expression to be re-evaluated when `expr` changes.
 By default, it re-evaluates if any local used in the right-hand side changes.
 Use `:refresh-on nil` (or any constant) to turn reevaluation off completely.
@@ -570,6 +572,49 @@ Last but not least, :watch is destructuring-aware:
 ```
 
 > Even if the atom holds a large map, this `:watch` will only trigger a rebuild when `:the-key` actually changes. Handy when you want to stay efficient and avoid unnecessary UI updates.
+
+**`:value>`**
+
+Normally, `:watch` binds you directly to the values produced by its source expression. With `:value>`, you can transform those values before binding, deduplication and destructuring will apply on the transformed value.
+
+```clojure
+:watch [binding expr :value> form]
+```
+
+Each time `expr` produces a new value, `form` is applied to it (via `->`) and the result is what gets bound.
+
+Example:
+
+```clojure
+:watch [{:keys [username]} app-state
+        :value> clojure.string/lower-case]
+```
+
+Here, whenever `app-state` changes, the `username` field is automatically lower-cased before being made available to the widget.
+
+This avoids boilerplate “post-processing” in the body of the widget and potentiually unneeded rebuilds — the watch itself delivers the transformed values.
+
+**`:dispose-value`**
+
+Sometimes, values produced by a watch hold resources, most of the time it's because you are watching on Future for some initialization. When a new value replaces the old one, you may want to clean up the old resource. `:dispose-value` lets you do that.
+
+```clojure
+:watch [binding expr :dispose-value form]
+```
+
+Each time `expr` produces a new value, the previous value (if non-nil) is passed through `form` (again via `->`) before being discarded.
+
+Example:
+
+```clojure
+:watch [controller (make-controller opts)
+        :dispose-value .dispose]
+```
+
+Now, whenever the controller is replaced, the previous one is properly disposed.
+
+If you don’t need customization, `:dispose-value true` is shorthand for `:dispose-value .dispose`.
+
 
 ### Managing state: the `:managed` directive
 
