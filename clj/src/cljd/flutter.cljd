@@ -1238,3 +1238,12 @@
   [& async-try-body]
   `(doto (Retriable (fn [] (try ~@async-try-body)) nil (Map))
      retry!))
+
+(extend-type foundation/ValueListenable
+  cljd.core/IDeref
+  (-deref [vl] (.-value vl)))
+
+(extend-type foundation/ValueNotifier
+  cljd.core/IReset
+  (-reset! [vn new-value]
+    (.-value! vn new-value)))
