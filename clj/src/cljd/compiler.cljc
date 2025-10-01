@@ -503,6 +503,7 @@
       (str "cljd." sub-ns))))
 
 (defn- resolve-non-local-symbol [sym type-vars]
+  (assert *current-ns* "Undefined current-ns, a lazy seq must have escaped. Call maintainers.")
   (let [{:keys [libs dart-aliases] :as nses} @nses
         {:keys [mappings clj-aliases typedefs] :as current-ns} (nses *current-ns*)
         ensure-class (fn [v] (when (= :class (:type v)) v))
@@ -577,21 +578,27 @@
                    (if-some [{:keys [fixed-params-types opt-kind opt-params-types ret-type]} (:fn-type (meta sym))]
                      (assoc info
                        :parameters
-                       (concat
-                         (map (fn [t] {:kind :positional :type (resolve-type t type-vars')}) fixed-params-types)
-                         (case opt-kind
-                           :named
-                           (map (fn [[n t]]
-                                  {:name n
-                                   :kind :named
-                                   :optional true ; TODO handle required
-                                   :type (resolve-type t type-vars')}) opt-params-types)
-                           (map (fn [t]
-                                  {:kind :positional
-                                   :optional true
-                                   :type (resolve-type t type-vars')}) opt-params-types)))
+                       (-> []
+                         (into
+                           (map (fn [t] {:kind :positional
+                                         :type (resolve-type t type-vars')}))
+                           fixed-params-types)
+                         (into
+                           (map
+                             (case opt-kind
+                               :named
+                               (fn [[n t]]
+                                 {:name n
+                                  :kind :named
+                                  :optional true ; TODO handle required
+                                  :type (resolve-type t type-vars')})
+                               (fn [t]
+                                 {:kind :positional
+                                  :optional true
+                                  :type (resolve-type t type-vars')})))
+                           opt-params-types))
                        :return-type (resolve-type ret-type type-vars')
-                       :type-parameters (map #(resolve-dart-type % type-vars') (:type-params (meta sym))))
+                       :type-parameters (mapv #(resolve-dart-type % type-vars') (:type-params (meta sym))))
                      info))
                  info))
        :def (case (:type info)
@@ -2708,12 +2715,14 @@
   (let [[bindings dart-body] (extract-super-calls (peek method) this-super)]
     [bindings (conj (pop method) dart-body)]))
 
-(declare write-class)
+(declare write-class relocatable-class-name)
 
 (defn do-def [nses sym m]
   (let [the-ns *current-ns*
         m (assoc m :ns the-ns :name sym)
-        msym (meta sym)]
+        {:keys [tag] :as msym} (meta sym)
+        msym (cond-> msym
+               tag (assoc :tag (relocatable-class-name tag)))]
     (cond
       *host-eval* ; first def during host pass
       (let [{:keys [host-ns]} (nses the-ns)
@@ -3165,9 +3174,9 @@
 (defn relocatable-class-name
   "Returns a clojure (as in: usable in clojure code, not dart-sexp) symbol which works in
    any namespace, irrespective of the requires/imports"
-  [class-name env]
+  [class-name]
   (case class-name
-    fallback class-name
+    (fallback some) class-name
     (let [dart-type (resolve-type class-name #{})
           relocatable-type
           (binding [*current-ns* nil]
@@ -3195,7 +3204,7 @@
 
 (defn emit-extend-type-protocol* [[_ class-name protocol-ns protocol-name extension-instance] env]
   (let [contrib-ns (-> extension-instance namespace symbol)
-        class-name (relocatable-class-name class-name env)
+        class-name (relocatable-class-name class-name)
         contrib-path [protocol-ns protocol-name :extensions class-name]
         {{proto-map protocol-name} protocol-ns}
         (swap! nses assoc-in contrib-path extension-instance)]
