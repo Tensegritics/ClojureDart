@@ -1289,16 +1289,26 @@
        ~child)))
 
 (defmacro doto-layer
-  "(doto-layer canvas [rect-or-nil paint] & body)
+  "(doto-layer canvas [paint rect?]? & body)
 
-  Like `(doto canvas ...)`, but the body runs inside a
-  `Canvas.saveLayer`/`Canvas.restore` scope. This applies filters
-  and blend modes to the entire layer.
+  Like `(doto canvas ...)`, but executes the body in a scoped
+  `Canvas.saveLayer`/`restore` when `paint` (and optionally `rect`) is
+  provided, or in a `Canvas.save`/`restore` otherwise.
 
-  See `Canvas.saveLayer` for details on `rect-or-nil` and `paint`."
-  [canvas layer-args & doto-body]
+  On exit, transforms and clipping paths are restored.
+
+  With a `paint`, the offscreen layer is composited back using it.
+
+  See `Canvas.save` and `Canvas.saveLayer` for details on `rect` and `paint`."
+  [canvas layer-args? & doto-body]
+  (let [doto-body (cond->> doto-body
+                    (and layer-args? (not (vector? layer-args?)))
+                    (cons layer-args?))
+        layer-args? (when (and (vector? layer-args?)) layer-args?)])
   `(doto ~canvas
-     (.saveLayer ~@layer-args)
+     ~(if-some [[paint rect?] layer-args?]
+        `(.saveLayer ~rect? ~paint)
+        `.save)
      ~@doto-body
      .restore))
 
