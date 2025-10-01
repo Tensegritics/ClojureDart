@@ -575,15 +575,15 @@ Last but not least, :watch is destructuring-aware:
 
 The `:managed` directive is for resources that need to live and die with the widget — things like controllers or other stateful/expensive objects.
 
-It looks a lot like `:watch`: same binding vector, same optional keyword-based options.  
-But it behaves more like `:let`: it binds the left-hand symbol to the right-hand value.  
+It looks a lot like `:watch`: same binding vector, same optional keyword-based options.
+But it behaves more like `:let`: it binds the left-hand symbol to the right-hand value.
 The key difference is that `:managed` keeps that value around — it doesn’t re-evaluate it on every rebuild.
 
 Just like `:watch`, `:managed` will re-evaluate its value when any of the locals it depends on change. You can control that behavior with options:
 
-- `:dispose expr` — used to clean up the resource when it's no longer needed. Applied as `(-> value expr)`.  
+- `:dispose expr` — used to clean up the resource when it's no longer needed. Applied as `(-> value expr)`.
   By default, it calls `.dispose`. Use `nil` or `false` to disable cleanup.
-- `:refresh-on expr` — forces the right-hand side to be re-evaluated when `expr` changes.  
+- `:refresh-on expr` — forces the right-hand side to be re-evaluated when `expr` changes.
   Defaults to tracking any dependent locals. Use `:refresh-on nil` (or a constant) to turn it off completely.
 
 There’s a bit of overlap between `:managed` and `:watch` — that’s by design. Some patterns become simpler this way:
@@ -634,12 +634,99 @@ The rule is simple: when you have siblings (usually introduced by `.children` or
 
 In `:key k`, `k` can be any value, it just has to be unique amongst siblings, not globally (see `:global-key` for that).
 
-You can skip keys when the number or the order of siblings isn't going to change, that is for most `Column`s and `Row`s.
+You can skip keys if your siblings’ number and order never change, like in most simple `Column`s and `Row`s.
 
-When you want to optionally display an item in a column, you should also consider using `:when` rather than altering the siblings list.
+If you want to conditionally show or hide an item in a column, consider using `:when` instead of removing or adding items to the siblings list.
 
+### Reacting to changes without rebuilding `::f/with-notifier`
+
+Sometimes you need a widget to react not by rebuilding, but by nudging a `CustomPainter` or some other object living outside the widget tree. Flutter has `ValueNotifier` for that; ClojureDart has `::f/with-notifier`.
+
+```clojure
+::f/with-notifier ([name init] widget-directives... expr)
+```
+
+This directive binds `name` to a `ValueNotifier` initialized with `init`. The notifier is then updated with the value of `expr` each time it changes. From the widget’s point of view, `name` is just another binding — but it lives beyond the tree, ticking away with new values.
+
+Example:
+
+```clojure
+::f/with-notifier ([progress-notifier 0]
+                   :watch [{:keys [progress]} app-state]
+                   :animate [progress progress]
+                   progress)
+```
+
+Here, `progress-notifier` receives interpolated (animated) values of `progress`. You can pass it down to a `CustomPainter` to trigger repaints without forcing the whole widget tree to rebuild. It’s a simple way to decouple “data changes” from “widget rebuilds.”
 
 ## Data, I/O and Side Effects
+
+## Drawing
+
+## `doto-layer`
+
+Drawing on a canvas is often scoped: you want to apply a transform, clipping, filter or blend mode to a group of operations as a whole.
+
+Flutter gives you two main tools: `Canvas.save`/`restore` (for transforms and clipping) and `Canvas.saveLayer`/`restore` (which adds full offscreen compositing with a `Paint`).
+
+In ClojureDart, you don’t need to remember which one to use: just call `doto-layer`.
+
+```clojure
+(doto-layer canvas [paint rect?]? & body)
+```
+
+It works like `(doto canvas ...)`, but with an implicit scope.
+
+* If `[paint rect?]` is provided, the body runs inside a `saveLayer`/`restore`.
+  The offscreen result is then composited back onto the canvas with the given `paint`.
+* If no arguments are provided, the body runs inside a plain `save`/`restore`.
+
+In both cases, on exit, transforms and clipping are restored to their initial values.
+
+**Example**
+
+```clojure
+(doto-layer canvas [blend-paint nil]
+  (.translate 50 50)
+  (.drawRect (f/Rect.fromLTWH 0 0 40 40) red-paint)
+  (.drawRect (f/Rect.fromLTWH 20 20 40 40) blue-paint))
+```
+
+Here the two overlapping rectangles are drawn offscreen and then blended back onto the canvas according to `blend-paint`.
+
+If you just wanted to scop the transform it could have been:
+
+```clojure
+(doto-layer canvas ; no vector
+  (.translate 50 50)
+  (.drawRect (f/Rect.fromLTWH 0 0 40 40) red-paint)
+  (.drawRect (f/Rect.fromLTWH 20 20 40 40) blue-paint))
+```
+
+See [`Canvas.save`](https://api.flutter.dev/flutter/dart-ui/Canvas/save.html) and [`Canvas.saveLayer`](https://api.flutter.dev/flutter/dart-ui/Canvas/saveLayer.html) for the fine details of `rect` and `paint`.
+
+## `doto-image-canvas`
+
+Sometimes you don’t want to draw directly to the screen. You want an offscreen buffer, an `Image`, that you can later paint anywhere, reuse, or cache. Enter `doto-image-canvas`.
+
+```clojure
+(doto-image-canvas [w h] & body)
+```
+
+It creates an offscreen canvas of size `w × h`, runs the body as a `(doto canvas ...)`, and returns the resulting `Image`.
+
+Example:
+
+```clojure
+(def star-image
+  (doto-image-canvas [100 100]
+    (.drawPath star-shape star-paint)))
+```
+
+Here `star-image` is just a regular Flutter `Image`, built offscreen. You can paint it on a canvas later with `.drawImage`, or wrap it in an `Image` widget if you prefer.
+
+Note: returned images are lazy at a low level — they may not be rendered by the GPU immediately. The Clojure code runs eagerly and produces a list of GPU operations, but the actual rendering can be deferred until later.
+
 
 ## Advanced Topics
 
