@@ -193,7 +193,7 @@
                         ; when one arity, look at meta
                         (-> fdecl ffirst meta :tag))
                     (:tag (meta fname)))
-              m (assoc m :tag tag :schroupt (list 'quote (first fdecl)))
+              m (assoc m :tag tag)
               m (conj (if (meta fname) (meta fname) {}) m)]
           (list 'def (with-meta fname m)
                 ;;todo - restore propagation of fn name
@@ -2350,47 +2350,46 @@
   [coll]
   (-empty coll))
 
-(defprotocol IVolatile
-  "Protocol for adding volatile functionality."
-  (-vreset! [o new-value]
-    "Sets the value of volatile o to new-value without regard for the
-     current value. Returns new-value."))
+(deftype Volatile [^:mutable value]
+  :type-only true
+  IDeref
+  (-deref [_] value)
+  IPrint
+  (-print [o sink]
+    (doto ^StringSink sink
+      (.write "#object[cljd.core.Volatile ")
+      (.write {:val value})
+      (.write "]"))))
+
+(defn volatile!
+  "Creates and returns a Volatile with an initial value of val."
+  {:inline (fn [val] `(cljd.core/Volatile ~val))
+   :inline-arities #{1}}
+  ^Volatile [val]
+  (Volatile val))
 
 (defn ^bool volatile?
   "Returns true if x is a volatile."
-  [x] (satisfies? IVolatile x))
+  {:inline (fn [x] `(instance? Volatile ~x))
+   :inline-arities #{1}}
+  [x] (instance? Volatile x))
 
 (defn vreset!
   "Sets the value of volatile to newval without regard for the
    current value. Returns newval."
+  {:inline (fn [v x] `(let [^Volatile v# ~v]
+                        (.-value! v# ~x)))
+   :inline-arities #{2}}
   [vol newval]
-  (-vreset! vol newval))
+  (.-value! ^Volatile vol newval))
 
 (defmacro vswap!
   "Non-atomically swaps the value of the volatile as if:
    (apply f current-value-of-vol args). Returns the value that
    was swapped in."
   [vol f & args]
-  `(-vreset! ~vol (~f (-deref ~vol) ~@args)))
-
-(deftype Volatile [^:mutable state]
-  :type-only true
-  IVolatile
-  (-vreset! [_ new-state]
-    (set! state new-state))
-  IDeref
-  (-deref [_] state)
-  IPrint
-  (-print [o sink]
-    (doto ^StringSink sink
-      (.write "#object[cljd.core.Volatile ")
-      (.write {:val state})
-      (.write "]"))))
-
-(defn ^Volatile volatile!
-  "Creates and returns a Volatile with an initial value of val."
-  [val]
-  (Volatile. val))
+  `(let [^Volatile v# ~vol]
+     (.-value! v# (~f (.-value v#) ~@args))))
 
 (defprotocol IExMessage
   (-ex-message [ex]))
