@@ -4,6 +4,7 @@
             ["package:flutter/material.dart" :as material]
             ["package:flutter/foundation.dart" :as foundation]
             ["dart:async" :as dart:async]
+            ["dart:ui" :as dart:ui]
             [cljd.string :as str])
   (:host-ns
    (:require [clojure.string :as str])))
@@ -927,7 +928,9 @@
      Default interpolation is provided by cljd.flutter/lerp for many types:
      int, double, Offset, Size, TextStyle, Color... and can be extended via the ITweenable protocol."
   [& body]
-  `(-widget-cont {} ~@body))
+  (with-meta
+    `(-widget-cont {} ~@body)
+    (meta &form)))
 
 (defn- ^:macro-support stateless-flush [env forms]
   `(reify :extends (widgets/StatelessWidget .key ~(:key env))
@@ -1016,10 +1019,10 @@
   [env form & more-forms]
   (let [[last-maybe-prop last-expr] (take-last 2 more-forms)]
     (cond
-      (-> last-maybe-prop meta ::threaded-in)
+      (and (-> &form meta ::threaded-in) (not (symbol? last-expr)))
       `(let [threaded-in-form# ~last-expr]
          (-widget-cont ~env ~form ~@(drop-last 2 more-forms)
-           ~(vary-meta last-maybe-prop dissoc  ::threaded-in)
+           ~last-maybe-prop
            threaded-in-form#))
       (simple-keyword? form) (apply expand-directive &env env form more-forms)
       (:key env)
@@ -1040,9 +1043,9 @@
               more-forms
               (cons '.child more-forms))
             env (dissoc env :closest-ctx)]
-        (-> `(~@form ~(vary-meta prop assoc ::threaded-in true)
+        (-> `(~@form ~prop
               (-widget-cont ~env ~@more-forms))
-          (with-meta (meta form))))
+          (with-meta (assoc (meta form) ::threaded-in true))))
       :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms})))))
 
 (defmacro build
@@ -1247,3 +1250,67 @@
   cljd.core/IReset
   (-reset! [vn new-value]
     (.-value! vn new-value)))
+
+(defmacro with-notifier
+  "Custom directive for `f/widget`.
+
+  Usage:
+    ::f/with-notifier ([name init] widget-directives... expr)
+
+  Binds `name` to a `ValueNotifier` initialized with `init`.
+  The notifier is updated with the value of `expr` whenever
+  it changes.
+
+  Example usage:
+
+    ::f/with-notifier ([progress-notifier 0]
+                       :watch [{:keys [progress]} app-state]
+                       :animate [progress progress]
+                       progress)
+
+  This creates a `ValueNotifier` named `progress-notifier` that
+  provides interpolated (animated) progress values between actual
+  progress values.
+  It can then be passed, for instance, to a `CustomPainter`
+  to trigger repaints without rebuilding the widget tree."
+  [[[name init] & body] child-prop child]
+  (let [body (vec body)
+        expr (peek body)
+        body (pop body)]
+    (prn 'NAME name 'EXPR expr 'child-prop child-prop
+      (meta child-prop))
+    `(f/widget
+       :managed [notifier# (#/(m/ValueNotifier dynamic) ~init)]
+       :let [~name notifier#]
+       (f/widget
+         ~@body
+         :let [_ (reset! notifier# ~expr)])
+       ~child-prop
+       ~child)))
+
+(defmacro doto-layer
+  "(doto-layer canvas [rect-or-nil paint] & body)
+
+  Like `(doto canvas ...)`, but the body runs inside a
+  `Canvas.saveLayer`/`Canvas.restore` scope. This applies filters
+  and blend modes to the entire layer.
+
+  See `Canvas.saveLayer` for details on `rect-or-nil` and `paint`."
+  [canvas layer-args & doto-body]
+  `(doto ~canvas
+     (.saveLayer ~@layer-args)
+     ~@doto-body
+     .restore))
+
+(defmacro doto-image-canvas
+  "(doto-image-canvas [w h] & body)
+
+  Like `(doto canvas ...)`, but draws into an offscreen canvas
+  and returns an `Image` of the given dimensions."
+  [[w h] & doto-body]
+  `(let [recorder# (doto (dart:ui/PictureRecorder)
+                     (-> dart:ui/Canvas (doto ~@doto-body)))
+         picture# (.endRecording recorder#)]
+     (try
+       (.toImageSync picture# (int ~w) (int ~h))
+       (finally (.dispose picture#)))))
