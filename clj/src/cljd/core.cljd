@@ -4704,7 +4704,7 @@
 
 (def ^BitmapNode -EMPTY-BITMAP-NODE (BitmapNode. 0 0 0 (.empty List)))
 
-(defmacro ^:private else->> [& args]
+(defmacro ^:private warp->> [& args]
   `(->> ~@(reverse args)))
 
 (defmacro ^:private step-join [& args]
@@ -4997,7 +4997,7 @@
            new-arr (#/(List/filled dynamic) new-arr-size nil)
            barr (.-arr b)]
        (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int n-set all-set ^int kvs 0 ^int cnt 0]
-         (else->>
+         (warp->>
            (if (zero? n-set) ; done
              (BitmapNode. cnt kvs all-set new-arr))
 
@@ -5057,10 +5057,10 @@
            (recur (.inode_assoc a shift 0 ; 👈 hash doesn't matter for collision node's assoc
                     (aget arr i) (aget arr (inc i))) (+ 2 i)))))))
   (^BitmapNode inode_join_with [a ^int shift ^BitmapNode b ^some combine ^some fa ^some fb del]
-   (else->>
+   (warp->>
      (if-not (< shift 32)
        ; collision node
-       (else->>
+       (warp->>
          (let [n (* 2 (.-cnt b))
                barr (.-arr b)])
 
@@ -5107,7 +5107,7 @@
            no-b (zero? (bit-and bit b-set))])
 
      (if no-a
-       (else->>
+       (warp->>
          (let [b-is-node (zero? (bit-and bit b-kvs))])
          (if (nil? fb) ; not interested in b alone, skip
            (step-join :dbi (if b-is-node 1 2)))
@@ -5127,7 +5127,7 @@
            (step-join :darr [node] :dbi 1))))
 
      (if no-b
-       (else->>
+       (warp->>
          (let [a-is-node (zero? (bit-and bit a-kvs))])
          (if-not fa ; not interested in a alone, skip
            (step-join :dai (if a-is-node 1 2)))
@@ -5158,11 +5158,11 @@
 
      (if-not (or a-is-node b-is-node)
        ; kv vs kv
-       (else->>
+       (warp->>
          (let [av (aget arr (inc ai))
                bv (aget barr (inc bi))])
          (if (= anode-or-k bnode-or-k)
-           (else->>
+           (warp->>
              (let [v (if combine (combine av bv) del)])
              (if (identical? del v)
                (step-join :dai 2 :dbi 2))
@@ -5603,7 +5603,7 @@
   (-lookup [coll k]
     (-lookup coll k nil))
   (-lookup [coll k not-found]
-    (.inode_lookup root 0  (hash k) k not-found))
+    (.inode_lookup root 0 (hash k) k not-found))
   (-contains-key? [coll k]
     (not (identical? (-lookup coll k coll) coll)))
   IFind
