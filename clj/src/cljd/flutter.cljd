@@ -1277,8 +1277,6 @@
   (let [body (vec body)
         expr (peek body)
         body (pop body)]
-    (prn 'NAME name 'EXPR expr 'child-prop child-prop
-      (meta child-prop))
     `(f/widget
        :managed [notifier# (#/(m/ValueNotifier dynamic) ~init)]
        :let [~name notifier#]
