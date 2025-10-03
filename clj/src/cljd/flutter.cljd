@@ -456,8 +456,12 @@
 
 (defn ^:macro-support expand-resource
   [&env env binding expr opts forms]
-  (let [dispose (:dispose opts '.dispose)
-        refresh-on (refresh-on-expr opts &env expr)
+  (let [dispose (or (:dispose opts '.dispose) `comment)
+        update (:update opts)
+        refresh-on (refresh-on-expr opts &env (if update
+                                                `(fn [expr#]
+                                                   (-> expr# (dart/type-like ~expr) ~update))
+                                                expr))
         expr (list 'dart/async-barrier expr)]
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
@@ -471,7 +475,7 @@
        (~'-dispose-state [_# ^ResourceState state#]
         (doto ^ResourceState state#
           (.-k! nil)
-          ~@(when dispose [`(-> .-resource (dart/type-like ~expr) ~dispose)])
+          (-> .-resource (dart/type-like ~expr) ~dispose)
           (.-resource! nil)))
        (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
          (let [~binding (dart/type-like (.-resource ^ResourceState state#) ~expr)
@@ -479,13 +483,19 @@
            (-widget-cont ~(assoc env :key nil :closest-ctx true)
              ~@forms)))
        (~'-update-state [_# ^ResourceState state#]
-         (let [k# ~refresh-on]
-           (when-not (= k# (.-k state#))
-             (doto state#
-               ~@(when dispose
-                   [`(-> .-resource (dart/type-like ~expr) ~dispose)])
-               (.-k! k#)
-               (.-resource! ~expr))))))))
+        (let [k# ~refresh-on]
+          (when-not (= k# (.-k state#))
+            (doto state#
+              ~@(if update
+                  [`(as-> state#
+                        (let [old-resource# (-> state# .-resource (dart/type-like ~expr))
+                              new-resource# (-> old-resource# ~update)]
+                          (when-not (identical? old-resource# new-resource#)
+                            (-> old-resource# ~dispose)
+                            (.-resource! state# new-resource#))))]
+                  [`(-> .-resource (dart/type-like ~expr) ~dispose)
+                   `(.-resource! ~expr)])
+              (.-k! k#))))))))
 
 ;; Shoulde we merge ResourceState and KeepAliveState in a single
 ;; map-holding generic class?
@@ -849,14 +859,19 @@
      be tied to the widget) and will be disposed in due time by a call to
      its .dispose method.
      Supported options are :refresh-on and :dispose.
-     - :dispose form -- specify another method to use (eg .close or .cancel)
-       to properly dispose the managed resource. If arguments are required for this
-       method or function you may provide a list like (.meth a b) and it will
-       expand to (.meth resource a b).
+     - :dispose form -- specify how to properly dispose the managed resource.
+       Defaults to `.dispose`.
+       Will be evaluated as (-> resource form) unless form is `nil` or `false`
+       in which case, the resource won't be disposed (just garbage collected).
+     - :update form -- specify how to update the resources when needed.
+       By default resources are disposed and recreated.
+       When :update is specified (-> resource form) will be evaluated to provide
+       an updated resource. In case the returned resource is not the one passed
+       in, the old resource will be disposed.
      - :refresh-on expr -- the managed resource will be cycled (disposed and
        recreated) each time expr evaluates to a new value.
        Default behavior is to refresh-on on all locals (free variables) used by
-       found in expr.
+       the resource creation expr or the update form (which takes precedence).
        Use `:refresh-on :never` to avoid refreshing (or any other constant
        instead of :never).
    :watch [bindings] -- for each \"binding expr\" pair, subscribe to expr and
@@ -983,7 +998,7 @@
         `(-widget-cont ~env ~@forms))
       :managed
       (if-some [[binding expr & more] (seq v)]
-        (let [[opts & more] (collect-options more  #{:dispose :refresh-on})]
+        (let [[opts & more] (collect-options more  #{:dispose :refresh-on :update})]
           (expand-resource &env env binding expr opts (list* :managed more forms)))
         `(-widget-cont ~env ~@forms))
       :keep-alive
