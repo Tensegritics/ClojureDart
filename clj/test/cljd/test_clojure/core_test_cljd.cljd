@@ -1107,7 +1107,12 @@
     (is (= {:a [1 2] :b "Lc"} (join-with vector #(str "L" %) nil m1 m2)))
     (is (= {:a [1 2] :d "Re"} (join-with vector nil #(str "R" %) m1 m2)))
     (let [n 1e6 m1 (zipmap (range 0 n 2) (range)) m2 (zipmap (range 1 n 2) (range))]
-      (is (= 499999500000 (reduce + (keys (join-with (fn [_ x] x) identity identity m1 m2)))))))
+      (is (= 499999500000 (reduce + (keys (join-with (fn [_ x] x) identity identity m1 m2))))))
+    (is (= {:a [1 2]} (join-with (fn [a b] (when-not (= a b) [a b]))
+                        nil nil
+                        some?
+                        {:a 1 :z 1 :b "c"}
+                        {:a 2 :z 1 :d "e"}))))
 
   (testing "diff"
     (let [expected
