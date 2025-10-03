@@ -1112,7 +1112,12 @@
                         nil nil
                         some?
                         {:a 1 :z 1 :b "c"}
-                        {:a 2 :z 1 :d "e"}))))
+                        {:a 2 :z 1 :d "e"})))
+    (is (= {:a [1 2] :d "e!"} (join-with (fn [a b] (when-not (= a b) [a b]))
+                                nil #(str % "!")
+                                some?
+                                {:a 1 :z 1 :b "c"}
+                                {:a 2 :z 1 :d "e"}))))
 
   (testing "diff"
     (let [expected

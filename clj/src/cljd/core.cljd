@@ -4637,11 +4637,11 @@
                                (if (where? r) r del))))
                  fa (when fa
                       (fn [a]
-                        (let [r (fa a b)]
+                        (let [r (fa a)]
                           (if (where? r) r del))))
                  fb (when fb
                       (fn [b]
-                        (let [r (fb b b)]
+                        (let [r (fb b)]
                           (if (where? r) r del))))]
              (-join-with a b combine fa fb del))
            (-join-with a b combine fa fb del)))
