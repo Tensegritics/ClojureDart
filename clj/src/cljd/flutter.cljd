@@ -863,11 +863,11 @@
        Defaults to `.dispose`.
        Will be evaluated as (-> resource form) unless form is `nil` or `false`
        in which case, the resource won't be disposed (just garbage collected).
-     - :update form -- specify how to update the resources when needed.
-       By default resources are disposed and recreated.
-       When :update is specified (-> resource form) will be evaluated to provide
-       an updated resource. In case the returned resource is not the one passed
-       in, the old resource will be disposed.
+     - `:update form` -- customizes how the resource is refreshed.
+       By default, resources are disposed and recreated.
+       With `:update`, `(-> resource form)` is evaluated to produce
+       an updated resource. If the returned resource is not identical
+       to the original, the old one is disposed.
      - :refresh-on expr -- the managed resource will be cycled (disposed and
        recreated) each time expr evaluates to a new value.
        Default behavior is to refresh-on on all locals (free variables) used by
