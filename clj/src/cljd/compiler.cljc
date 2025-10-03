@@ -1552,7 +1552,7 @@
                                (if-some [[_ type] (find opts-types k)]
                                  [k (emit quoted expr env) (or type dc-dynamic)]
                                  (throw (Exception.
-                                          (str (pr-str (keys opts-types))"Not an expected argument name: ." (name k)
+                                          (str "Not an expected argument name: ." (name k)
                                             ", valid names: " (str/join ", " (map #(str "." (name %)) (keys opts-types))))))))))
                       (partition 2 rem-args))]
        (when-not (= (count positional-args) (count fixed-types))
