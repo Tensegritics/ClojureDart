@@ -488,7 +488,7 @@
             (doto state#
               ~@(if update
                   [`(as-> state#
-                        (let [old-resource# (-> state# .-resource (dart/type-like ~expr))
+                        (let [old-resource# (.-resource state#)
                               new-resource# (-> old-resource# ~update)]
                           (when-not (identical? old-resource# new-resource#)
                             (-> old-resource# ~dispose)
