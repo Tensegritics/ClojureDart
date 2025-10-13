@@ -49,6 +49,6 @@ public class LineNumberingWriter extends FilterWriter {
     }
 
     public int getColumn() {
-        return line;
+        return column;
     }
 }

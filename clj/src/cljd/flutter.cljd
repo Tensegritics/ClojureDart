@@ -1,8 +1,10 @@
 (ns cljd.flutter
+  {:no-dynamic true}
   (:require ["package:flutter/widgets.dart" :as widgets]
             ["package:flutter/material.dart" :as material]
             ["package:flutter/foundation.dart" :as foundation]
             ["dart:async" :as dart:async]
+            ["dart:ui" :as dart:ui]
             [cljd.string :as str]
             [cljd.flutter.repl :as repl])
   (:host-ns
@@ -140,10 +142,11 @@
   (updateShouldNotify [this prev-this]
     (not= bindings (.-bindings ^InheritedBindings prev-this)))
   (updateShouldNotifyDependent [this prev-this aspects]
+    ; aspects is a set of vectors of keywords
     (let [prev-bindings (.-bindings ^InheritedBindings prev-this)]
       (boolean
         (some (fn [ks]
-                ; should we rather use identity?
+                ; should we rather use identity? No
                 (some (fn [k] (not= (prev-bindings k) (bindings k))) ks))
           aspects)))))
 
@@ -218,26 +221,62 @@
                     (locals ts k)))
                 ts form)
               (vector? form)
-              (transduce (remove '#{&}) conj! ts form)
+              (transduce (comp (filter simple-symbol?) (remove '#{&})) conj! ts form)
               :else (throw (ex-info (str "Unexpected binding form " (pr-str form))
                              {:unexpected-form form
                               :whole-form destructuring-form}))))]
     (-> #{} transient (locals destructuring-form) persistent!)))
 
+(defn ^:macro-support value-sym [binding]
+  (cond
+    (map? binding) (:as binding)
+    (vector? binding)
+    (when (= :as (nth binding (- (count binding) 2) nil))
+      (peek binding))
+    (simple-symbol? binding) binding))
+
 (defn ^:macro-support expand-watch
-  [&env env binding expr {:keys [dispose] subscribable-binding :as :as opts} forms]
+  [&env env binding expr {:as opts
+                          :keys [dispose dispose-value]
+                          subscribable-binding :as} forms]
   (let [expr (list 'dart/async-barrier expr)
         accessor (:> opts)
+        value-accessor (:value> opts)
+        dispose (if (true? dispose) '.dispose dispose)
+        dispose-value (if (true? dispose-value) '.dispose dispose-value)
         destructured-locals (when-not (symbol? binding)
                               (destructuring-bound-locals binding))
-        dispose (if (true? dispose) '.dispose dispose)
-        refresh-on (refresh-on-expr opts &env expr)
+        user-vsym (value-sym binding)
+        _ (assert (or destructured-locals user-vsym)
+            "No user provided name for value should only happen with destructuring.")
+        misses-value-sym-for-disposal (and dispose-value (nil? user-vsym))
+        vsym `v#
+        destructured-locals (when destructured-locals
+                              (cond
+                                misses-value-sym-for-disposal
+                                (into [vsym] destructured-locals)
+                                dispose-value
+                                (into [user-vsym] (disj destructured-locals user-vsym))
+                                :else (vec destructured-locals)))
+        [binding-for-value-disposal disposable-value]
+        (when dispose-value
+          (if-some [[disposable-value] destructured-locals]
+            [[disposable-value] disposable-value]
+            [user-vsym user-vsym]))
+        refresh-on (refresh-on-expr opts &env
+                     `[(doto ~expr
+                         ~(or accessor `->)
+                         ~(or dispose `->))
+                       (fn [~(or user-vsym vsym)]
+                         (doto ~(or user-vsym vsym)
+                           ~(or value-accessor `->)
+                           ~(or dispose-value `->)))])
         ; destructuring may depend on existing locals (for defaults
         ; or even for key names) so we must take this into account
         destructuring-refresh-on
-        (when (seq destructured-locals)
+        (when destructured-locals
           (refresh-on-expr nil &env `(fn [~binding]
-                                       ~(vec destructured-locals))))
+                                       ~destructured-locals)))
         refresh-on
         (cond
           (not (and destructuring-refresh-on refresh-on))
@@ -252,23 +291,38 @@
           [refresh-on destructuring-refresh-on])
         state `state#
         subscribable `subscribable#
-        update-state (if (or accessor destructured-locals)
-                       (let [vsym `v#
-                             vexpr (if accessor `(-> ~subscribable ~accessor) vsym)
-                             vval `vval#
-                             set-state-expr
-                             (if (:dedup opts true)
-                               `(when-not (= ~vval (.-latest ~state))
-                                  (~state ~vval))
-                               `(~state ~vval))]
-                         `(fn [~vsym]
-                            ~(if destructured-locals
-                               `(let [~binding ~vexpr
-                                      ~vval [~@destructured-locals]]
-                                  ~set-state-expr)
-                               `(let [~vval ~vexpr]
-                                  ~set-state-expr))))
-                       state)
+        update-state
+        (let [needs-value-refinement (or accessor value-accessor)
+              dlsym `dlsym#
+              new-val-sym (if destructured-locals dlsym user-vsym)
+              expr
+              `(fn [~(cond
+                       accessor `_#
+                       (or needs-value-refinement misses-value-sym-for-disposal) vsym
+                       :else binding)]
+                 (let [~@(when needs-value-refinement
+                           `[~(if misses-value-sym-for-disposal vsym binding)
+                             (-> ~(if accessor
+                                    `(-> ~subscribable ~accessor)
+                                    vsym)
+                               ~(or value-accessor `->))])
+                       ~@(cond
+                           misses-value-sym-for-disposal
+                           (do
+                             (assert destructured-locals)
+                             `[~binding ~vsym
+                               ~dlsym [~vsym ~@destructured-locals]])
+                           destructured-locals
+                           `[~dlsym ~destructured-locals])]
+                   ~(cond->> `(~state ~new-val-sym)
+                      dispose-value
+                      (list `do `(let [~binding-for-value-disposal (.-latest ~state)]
+                                   (some-> ~disposable-value ~dispose-value)))
+                      (:dedup opts true)
+                      (list `when-not `(= ~new-val-sym (.-latest ~state))))))]
+          (if (= expr `(fn [~binding] (~state ~binding))) ; peephole
+            state
+            expr))
         subscribe-call
         `(let [update# ~update-state
                sub# (-subscribe ~subscribable update#)]
@@ -281,22 +335,27 @@
        (~'createState [_#] (WatchState nil nil nil nil))
        cljd.flutter/StateLifecycle
        (~'-init-state [_# state#]
-         (let [~state ^WatchState state#
-               ~subscribable ~expr]
-           (doto ~state
-             (.-k! ~refresh-on)
-             (.-subscribable! ~subscribable)
-             (.-subscription! ~subscribe-call))))
+        (let [~state ^WatchState state#
+              ~subscribable ~expr]
+          (doto ~state
+            (.-k! ~refresh-on)
+            (.-subscribable! ~subscribable)
+            (.-subscription! ~subscribe-call))))
        (~'-dispose-state [_# state#]
-         (let [state# ^WatchState state#]
-           (doto (.-subscribable state#)
-             (-unsubscribe (.-subscription state#))
-             ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
-           (doto state#
-             (.-k! nil)
-             (.-subscribable! nil)
-             (.-subscription! nil)
-             (.-latest! nil))))
+        (let [state# ^WatchState state#]
+          (doto state#
+            (.-k! nil)
+            ~@(when dispose-value
+                [`(-> .-latest
+                    (as-> ~binding-for-value-disposal
+                        (some-> ~disposable-value ~dispose-value)))])
+            (.-latest! nil)
+            (-> .-subscribable
+              (doto
+                  (-unsubscribe (.-subscription state#))
+                  ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)])))
+            (.-subscribable! nil)
+            (.-subscription! nil))))
        (~'-build [_# state# ctx#]
         (let [~state ^WatchState state#
               ~(if destructured-locals (vec destructured-locals) binding) (.-latest ~state)
@@ -306,17 +365,17 @@
           (-widget-cont ~(assoc env :key nil :closest-ctx true)
             ~@forms)))
        (~'-update-state [_# state#]
-         (let [~state ^WatchState state#
-               k# ~refresh-on]
-           (when-not (= k# (.-k ~state))
-             (doto (.-subscribable ~state)
-               (-unsubscribe (.-subscription ~state))
-               ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
-             (let [~subscribable ~expr]
-               (doto ~state
-                 (.-k! k#)
-                 (.-subscribable! ~subscribable)
-                 (.-subscription! ~subscribe-call)))))))))
+        (let [~state ^WatchState state#
+              k# ~refresh-on]
+          (when-not (= k# (.-k ~state))
+            (doto (.-subscribable ~state)
+              (-unsubscribe (.-subscription ~state))
+              ~@(when dispose [`(-> (dart/type-like ~expr) ~dispose)]))
+            (let [~subscribable ~expr]
+              (doto ~state
+                (.-k! k#)
+                (.-subscribable! ~subscribable)
+                (.-subscription! ~subscribe-call)))))))))
 
 (defn ^:macro-support expand-bg-watcher
   [&env env binding expr {:keys [dispose] :as opts} body forms]
@@ -398,8 +457,12 @@
 
 (defn ^:macro-support expand-resource
   [&env env binding expr opts forms]
-  (let [dispose (:dispose opts '.dispose)
-        refresh-on (refresh-on-expr opts &env expr)
+  (let [dispose (or (:dispose opts '.dispose) `comment)
+        update (:update opts)
+        refresh-on (refresh-on-expr opts &env (if update
+                                                `(fn [expr#]
+                                                   (-> expr# (dart/type-like ~expr) ~update))
+                                                expr))
         expr (list 'dart/async-barrier expr)]
     `(reify :extends (widgets/StatefulWidget .key ~(:key env))
        :no-meta true
@@ -413,7 +476,7 @@
        (~'-dispose-state [_# ^ResourceState state#]
         (doto ^ResourceState state#
           (.-k! nil)
-          ~@(when dispose [`(-> .-resource (dart/type-like ~expr) ~dispose)])
+          (-> .-resource (dart/type-like ~expr) ~dispose)
           (.-resource! nil)))
        (~'-build [_# ^ResourceState state# ^widgets/BuildContext ctx#]
          (let [~binding (dart/type-like (.-resource ^ResourceState state#) ~expr)
@@ -421,13 +484,19 @@
            (-widget-cont ~(assoc env :key nil :closest-ctx true)
              ~@forms)))
        (~'-update-state [_# ^ResourceState state#]
-         (let [k# ~refresh-on]
-           (when-not (= k# (.-k state#))
-             (doto state#
-               ~@(when dispose
-                   [`(-> .-resource (dart/type-like ~expr) ~dispose)])
-               (.-k! k#)
-               (.-resource! ~expr))))))))
+        (let [k# ~refresh-on]
+          (when-not (= k# (.-k state#))
+            (doto state#
+              ~@(if update
+                  [`(as-> state#
+                        (let [old-resource# (.-resource state#)
+                              new-resource# (-> old-resource# ~update)]
+                          (when-not (identical? old-resource# new-resource#)
+                            (-> old-resource# ~dispose)
+                            (.-resource! state# new-resource#))))]
+                  [`(-> .-resource (dart/type-like ~expr) ~dispose)
+                   `(.-resource! ~expr)])
+              (.-k! k#))))))))
 
 ;; Shoulde we merge ResourceState and KeepAliveState in a single
 ;; map-holding generic class?
@@ -480,7 +549,8 @@
 
 (defn get-of
   "Takes a BuildContext, a keyword and optionally a default value.
-   Returns the value bound (via :bind) to this keyword."
+   Returns the value bound (via :bind) to this keyword.
+   DO CREATES A DEPENDENCY. In event handlers, prefer peek-of instead."
   ([ctx k] (get-of ctx k nil))
   ([^widgets/BuildContext ctx k not-found]
    (if-some [inherited-elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)]
@@ -490,6 +560,20 @@
               ^InheritedBindings (.-widget)
               .-bindings)
          k not-found))
+     not-found)))
+
+(defn peek-of
+  "Takes a BuildContext, a keyword and optionally a default value.
+   Returns the value bound (via :bind) to this keyword.
+   Meant to be used in event handlers.
+   DO NOT CREATE A DEPENDENCY. When building widgets prefer :get or get-of."
+  ([ctx k] (peek-of ctx k nil))
+  ([^widgets/BuildContext ctx k not-found]
+   (if-some [inherited-elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)]
+     (get (some-> inherited-elt
+            ^InheritedBindings (.-widget)
+            .-bindings)
+       k not-found)
      not-found)))
 
 (defn ^:macro-support expand-get-inherited [env v forms]
@@ -538,7 +622,7 @@
                               [sym
                                `(->
                                   (get ~bindings-sym ~type-or-kw)
-                                  ~(or (seq args) `do))])
+                                  ~(or (seq args) `->))])
                             inherited-bindings)]
                     (.dependOnInheritedElement ~closest-context
                       inherited-elt#
@@ -548,13 +632,14 @@
   :extends (widgets/StatelessWidget .key k)
   (build [_ ctx]
    (let [elt (#/(.getElementForInheritedWidgetOfExactType InheritedBindings) ctx)
-         prev-bindings (some-> elt ^InheritedBindings (.-widget) .-bindings)
-         non-shadowed-keys (remove #(contains? bindings %) (keys prev-bindings))]
+         parent-bindings (some-> elt ^InheritedBindings (.-widget) .-bindings)
+         non-shadowed-keys (vec (keys (join-with nil identity parent-bindings bindings)))]
      (when (seq non-shadowed-keys)
        (.dependOnInheritedElement ctx elt .aspect non-shadowed-keys))
-     (cljd.flutter/InheritedBindings. (merge prev-bindings bindings) child))))
+     (cljd.flutter/InheritedBindings. (merge parent-bindings bindings) child))))
 
 (defn ^:macro-support expand-bind [env bindings-map forms]
+  (assert (map? bindings-map) ":bind expects a map")
   `(Bind ~(:key env) ~bindings-map (f/widget ~@forms)))
 
 (defn ^:macro-support expand-vsync [env name forms]
@@ -813,14 +898,19 @@
      be tied to the widget) and will be disposed in due time by a call to
      its .dispose method.
      Supported options are :refresh-on and :dispose.
-     - :dispose form -- specify another method to use (eg .close or .cancel)
-       to properly dispose the managed resource. If arguments are required for this
-       method or function you may provide a list like (.meth a b) and it will
-       expand to (.meth resource a b).
+     - :dispose form -- specify how to properly dispose the managed resource.
+       Defaults to `.dispose`.
+       Will be evaluated as (-> resource form) unless form is `nil` or `false`
+       in which case, the resource won't be disposed (just garbage collected).
+     - `:update form` -- customizes how the resource is refreshed.
+       By default, resources are disposed and recreated.
+       With `:update`, `(-> resource form)` is evaluated to produce
+       an updated resource. If the returned resource is not identical
+       to the original, the old one is disposed.
      - :refresh-on expr -- the managed resource will be cycled (disposed and
        recreated) each time expr evaluates to a new value.
        Default behavior is to refresh-on on all locals (free variables) used by
-       found in expr.
+       the resource creation expr or the update form (which takes precedence).
        Use `:refresh-on :never` to avoid refreshing (or any other constant
        instead of :never).
    :watch [bindings] -- for each \"binding expr\" pair, subscribe to expr and
@@ -834,7 +924,7 @@
      Out of the box it means: atoms, Streams, Futures, Listenables,
      ValueListenable and... nil.
      These bindings can take options (in the same way as :managed bindings do).
-     Supported options are :as, :default, :refresh-on, :dispose, :dedup and :>
+     Supported options are
      - :as -- gives a name to the watched resource (e.g. to be able to swap! on
        it if it's an atom)
      - :default -- provides an interim value to use while the first actual value
@@ -845,8 +935,13 @@
      - :dispose form -- if the object under watch also needs to be managed use
        this option. Works like :dispose for :managed except for \":dispose true\"
        which is a shortcut for \":dispose .dispose\".
+     - :dispose-value form -- if the produced  values need to be managed use
+       this option. Works like :dispose for :managed except for \":dispose-value true\"
+       which is a shortcut for \":dispose .dispose\".
      - :dedup boolean -- defaults to true, set it to false to rebuild on every
        change
+     - :value> form -- transform produced values as per (-> produced-value form),
+       this is useful to preprocess values before destructuring/deduping.
      - :> form -- this one is meant to be used with Listenable instances because
        they don't produce values, just a change notification. So if this option
        is not used you only get trues from the subscription.
@@ -885,9 +980,11 @@
        returning a function of t (a double usually between 0.0 and 1.0 but some Curve instances can
        generate values out of this range, see Curves.easeInOutBack for example).
      Default interpolation is provided by cljd.flutter/lerp for many types:
-     int, double, Offset, Size, TextStyle, Color... and can be extebded via the ITweenable protocol."
+     int, double, Offset, Size, TextStyle, Color... and can be extended via the ITweenable protocol."
   [& body]
-  `(-widget-cont {} ~@body))
+  (with-meta
+    `(-widget-cont {} ~@body)
+    (meta &form)))
 
 (defn- ^:macro-support stateless-flush [env forms]
   `(reify :extends (widgets/StatelessWidget .key ~(:key env))
@@ -896,23 +993,51 @@
      (~'build [_# ~closest-context]
       (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms))))
 
+(deftype GlobalValueKey [value]
+  :extends (widgets/GlobalKey.constructor)
+  ^:mixin cljd.core/ToStringMixin
+  ^:mixin cljd.core/EqualsEquivMixin
+  cljd.core/IEquiv
+  (-equiv [x y]
+    (and (instance? GlobalValueKey y)
+      (= value (.-value ^GlobalValueKey y))))
+  cljd.core/IHash
+  (-hash [x] (hash-combine 0x7d5cf3dd (hash value)))
+  cljd.core/IPrint
+  (-print [o sink]
+    (doto ^StringSink sink
+      (.write "#object[cljd.flutter.GlobalValueKey ")
+      (->> (-print value))
+      (.write "]"))))
+
+(defn global-key
+  "Returns a global key with value semantics."
+  ; for const
+  {:inline (fn [vexpr] `(GlobalValueKey ~vexpr))
+   :inline-arities #{1}}
+  [v]
+  (GlobalValueKey v))
+
 (defn- ^:macro-support expand-directive [&env env k v form & more-forms]
   (let [ksym `k#
         forms (cons form more-forms)]
     (case k
       :key `(let [~ksym (foundation/ValueKey ~v)]
               (-widget-cont ~(assoc env :key ksym) ~@forms))
+      :global-key `(let [~ksym (GlobalValueKey ~v)]
+                     (-widget-cont ~(assoc env :key ksym) ~@forms))
       :let `(let ~v (-widget-cont ~env ~@forms))
       :watch
       (if-some [[binding expr & more] (seq v)]
         (let [[opts & more] (collect-options more
-                                             #(or (qualified-keyword? %)
-                                                  (#{:default :refresh-on :dispose :> :as} %)))]
+                              #(or (qualified-keyword? %)
+                                 (#{:default :refresh-on :dispose :> :as
+                                    :value> :dispose-value} %)))]
           (expand-watch &env env binding expr opts (list* :watch more forms)))
         `(-widget-cont ~env ~@forms))
       :managed
       (if-some [[binding expr & more] (seq v)]
-        (let [[opts & more] (collect-options more  #{:dispose :refresh-on})]
+        (let [[opts & more] (collect-options more  #{:dispose :refresh-on :update})]
           (expand-resource &env env binding expr opts (list* :managed more forms)))
         `(-widget-cont ~env ~@forms))
       :keep-alive
@@ -949,10 +1074,10 @@
   [env form & more-forms]
   (let [[last-maybe-prop last-expr] (take-last 2 more-forms)]
     (cond
-      (-> last-maybe-prop meta ::threaded-in)
+      (and (-> &form meta ::threaded-in) (not (symbol? last-expr)))
       `(let [threaded-in-form# ~last-expr]
          (-widget-cont ~env ~form ~@(drop-last 2 more-forms)
-           ~(vary-meta last-maybe-prop dissoc  ::threaded-in)
+           ~last-maybe-prop
            threaded-in-form#))
       (simple-keyword? form) (apply expand-directive &env env form more-forms)
       (:key env)
@@ -973,9 +1098,9 @@
               more-forms
               (cons '.child more-forms))
             env (dissoc env :closest-ctx)]
-        (-> `(~@form ~(vary-meta prop assoc ::threaded-in true)
+        (-> `(~@form ~prop
               (-widget-cont ~env ~@more-forms))
-          (with-meta (meta form))))
+          (with-meta (assoc (meta form) ::threaded-in true))))
       :else (throw (ex-info (str "Unexpected widget form: " (pr-str form)) {:form form :more-forms more-forms})))))
 
 (defmacro build
@@ -1171,3 +1296,84 @@
   [& async-try-body]
   `(doto (Retriable (fn [] (try ~@async-try-body)) nil (Map))
      retry!))
+
+(extend-type foundation/ValueListenable
+  cljd.core/IDeref
+  (-deref [vl] (.-value vl)))
+
+(extend-type foundation/ValueNotifier
+  cljd.core/IReset
+  (-reset! [vn new-value]
+    (.-value! vn new-value)))
+
+(defmacro with-notifier
+  "Custom directive for `f/widget`.
+
+  Usage:
+    ::f/with-notifier ([name init] widget-directives... expr)
+
+  Binds `name` to a `ValueNotifier` initialized with `init`.
+  The notifier is updated with the value of `expr` whenever
+  it changes.
+
+  Example usage:
+
+    ::f/with-notifier ([progress-notifier 0]
+                       :watch [{:keys [progress]} app-state]
+                       :animate [progress progress]
+                       progress)
+
+  This creates a `ValueNotifier` named `progress-notifier` that
+  provides interpolated (animated) progress values between actual
+  progress values.
+  It can then be passed, for instance, to a `CustomPainter`
+  to trigger repaints without rebuilding the widget tree."
+  [[[name init] & body] child-prop child]
+  (let [body (vec body)
+        expr (peek body)
+        body (pop body)]
+    `(f/widget
+       :managed [notifier# (#/(m/ValueNotifier dynamic) ~init)]
+       :let [~name notifier#]
+       (f/widget
+         ~@body
+         :let [_ (reset! notifier# ~expr)])
+       ~child-prop
+       ~child)))
+
+(defmacro doto-layer
+  "(doto-layer canvas [paint rect?]? & body)
+
+  Like `(doto canvas ...)`, but executes the body in a scoped
+  `Canvas.saveLayer`/`restore` when `paint` (and optionally `rect`) is
+  provided, or in a `Canvas.save`/`restore` otherwise.
+
+  On exit, transforms and clipping paths are restored.
+
+  With a `paint`, the offscreen layer is composited back using it.
+
+  See `Canvas.save` and `Canvas.saveLayer` for details on `rect` and `paint`."
+  [canvas layer-args? & doto-body]
+  (let [doto-body (cond->> doto-body
+                    (and layer-args? (not (vector? layer-args?)))
+                    (cons layer-args?))
+        layer-args? (when (and (vector? layer-args?)) layer-args?)])
+  `(doto ~canvas
+     ~(if-some [[paint rect?] layer-args?]
+        `(.saveLayer ~rect? ~paint)
+        `.save)
+     ~@doto-body
+     .restore))
+
+(defmacro doto-image-canvas
+  "(doto-image-canvas [w h] & body)
+
+  Like `(doto canvas ...)`, but draws into an offscreen canvas
+  and returns an `Image` of the given dimensions."
+  [[w h] & doto-body]
+  `(let [recorder# (doto (dart:ui/PictureRecorder)
+                     (-> dart:ui/Canvas (doto ~@doto-body)))
+         picture# (.endRecording recorder#)]
+     (try
+       (.toImageSync picture# (int ~w) (int ~h))
+       (finally (.dispose picture#)))))

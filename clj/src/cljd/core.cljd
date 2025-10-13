@@ -7,9 +7,11 @@
 ;   You must not remove this notice, or any other, from this software.
 
 (ns cljd.core
+  {:no-dynamic true}
   (:require ["dart:math" :as math]
             ["dart:collection" :as dart-coll]
             ["dart:io" :as dart-io]
+            ["dart:isolate" :as dart-isolate]
             ["dart:async" :as dart-async]))
 
 (def ^:private sentinel ^:unique (Object.))
@@ -191,7 +193,7 @@
                         ; when one arity, look at meta
                         (-> fdecl ffirst meta :tag))
                     (:tag (meta fname)))
-              m (assoc m :tag tag :schroupt (list 'quote (first fdecl)))
+              m (assoc m :tag tag)
               m (conj (if (meta fname) (meta fname) {}) m)]
           (list 'def (with-meta fname m)
                 ;;todo - restore propagation of fn name
@@ -300,7 +302,13 @@
                                     (not obj-mode)
                                     (->
                                      (conj gmap)
-                                     (conj `(if (seq? ~gmap) (-map-lit (seq ~gmap)) ~gmap))))
+                                     (conj `(if (seq? ~gmap)
+                                              (if (next ~gmap)
+                                                (seq-to-map-for-destructuring ~gmap)
+                                                (if (seq ~gmap)
+                                                  (first ~gmap)
+                                                  {}))
+                                              ~gmap))))
                               bes (let [transforms
                                         (reduce
                                          (fn [transforms mk]
@@ -891,6 +899,11 @@
     (.codeUnitAt ^String x 0)
     (.toInt ^num x)))
 
+(defn ^int long
+  "Coerce to int. Identical to `int`."
+  {:inline (fn [n] `(int ~n))}
+  [x] (int x))
+
 (defn ^String char
   "Coerce to single character string."
   [x]
@@ -900,7 +913,7 @@
 
 (defn ^bool char?
   "Returns true if x is a Dart string of length one."
-  {:inline (fn [x] `(and (string? ~x) (== 1 (.-length ~x))))
+  {:inline (fn [x] `(let [x# ~x] (and (string? x#) (== 1 (.-length ^String x#)))))
    :inline-arities #{1}}
   [x]
   (and (string? x) (== 1 (.-length ^String x))))
@@ -2337,47 +2350,93 @@
   [coll]
   (-empty coll))
 
-(defprotocol IVolatile
-  "Protocol for adding volatile functionality."
-  (-vreset! [o new-value]
-    "Sets the value of volatile o to new-value without regard for the
-     current value. Returns new-value."))
+(deftype Volatile [^:mutable value]
+  :type-only true
+  IDeref
+  (-deref [_] value)
+  IPrint
+  (-print [o sink]
+    (doto ^StringSink sink
+      (.write "#object[cljd.core.Volatile ")
+      (.write {:val value})
+      (.write "]"))))
+
+(defn volatile!
+  "Creates and returns a Volatile with an initial value of val."
+  {:inline (fn [val] `(cljd.core/Volatile ~val))
+   :inline-arities #{1}}
+  ^Volatile [val]
+  (Volatile val))
 
 (defn ^bool volatile?
   "Returns true if x is a volatile."
-  [x] (satisfies? IVolatile x))
+  {:inline (fn [x] `(instance? Volatile ~x))
+   :inline-arities #{1}}
+  [x] (instance? Volatile x))
 
 (defn vreset!
   "Sets the value of volatile to newval without regard for the
    current value. Returns newval."
+  {:inline (fn [v x] `(let [^Volatile v# ~v]
+                        (.-value! v# ~x)))
+   :inline-arities #{2}}
   [vol newval]
-  (-vreset! vol newval))
+  (.-value! ^Volatile vol newval))
 
 (defmacro vswap!
   "Non-atomically swaps the value of the volatile as if:
    (apply f current-value-of-vol args). Returns the value that
    was swapped in."
   [vol f & args]
-  `(-vreset! ~vol (~f (-deref ~vol) ~@args)))
+  `(let [^Volatile v# ~vol]
+     (.-value! v# (~f (.-value v#) ~@args))))
 
-(deftype Volatile [^:mutable state]
-  :type-only true
-  IVolatile
-  (-vreset! [_ new-state]
-    (set! state new-state))
-  IDeref
-  (-deref [_] state)
-  IPrint
-  (-print [o sink]
-    (doto ^StringSink sink
-      (.write "#object[cljd.core.Volatile ")
-      (.write {:val state})
-      (.write "]"))))
+(defprotocol IExMessage
+  (-ex-message [ex]))
 
-(defn ^Volatile volatile!
-  "Creates and returns a Volatile with an initial value of val."
-  [val]
-  (Volatile. val))
+(extend-type fallback
+  IExMessage
+  (-ex-message [ex]
+    (when (instance? Exception ex)
+      (str ex))))
+
+(extend-type FormatException
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type ArgumentError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type UnsupportedError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type UnimplementedError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type StateError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type dart-isolate/IsolateSpawnException
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type dart-io/OSError
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(extend-type dart-async/TimeoutException
+  IExMessage
+  (-ex-message [e] (.-message e)))
+
+(defn ex-message
+  "Returns the message attached to ex. Defaults to str on unsupported Exceptions.
+   Otherwise returns nil."
+  [ex]
+  (-ex-message ex))
 
 (defprotocol IExceptionInfo
   (-ex-data [e]))
@@ -2398,6 +2457,8 @@
   (^:getter cause [_] ex)
   IExceptionInfo
   (-ex-data [_] data)
+  IExMessage
+  (-ex-message [_] msg)
   ^:mixin ToStringMixin
   IPrint
   (-print [o ^StringSink sink]
@@ -2418,6 +2479,13 @@
    (ExceptionInfo. msg map nil))
   ([msg map cause]
    (ExceptionInfo. msg map cause)))
+
+(defn ex-cause
+  "Returns exception cause if ex is an ExceptionInfo.
+   Otherwise returns nil."
+  [ex]
+  (when (instance? ExceptionInfo ex)
+    (.-cause ^ExceptionInfo ex)))
 
 (defn ^bool not
   "Returns true if x is logical false, false otherwise."
@@ -2821,12 +2889,24 @@
   [^num x]
   (.toDouble x))
 
+(defn ^double float
+  "Coerce to double. Identical to `double`."
+  {:inline (fn [x] `(.num:toDouble ~x))
+   :inline-arities #{1}}
+  [^num x] (.toDouble x))
+
 (defn ^bool double?
   "Return true if x is a Double"
   {:inline (fn [x] `(dart/is? ~x dart:core/double))
    :inline-arities #{1}}
   [x]
   (dart/is? x double))
+
+(defn ^bool float?
+  "Return true if x is a Double. Identical to `double?`."
+  {:inline (fn [x] `(dart/is? ~x dart:core/double))
+   :inline-arities #{1}}
+  [x] (dart/is? x double))
 
 ;; bit ops
 (defn ^int bit-not
@@ -2887,6 +2967,13 @@
    :inline-arities #{2}}
   ; dart does not support negative n values. bit-and acts as a modulo.
   [^int x n] (. x ">>" (bit-and n 63)))
+
+(defn ^int unsigned-bit-shift-right
+  "Bitwise shift right, without sign-extension."
+  {:inline (fn [x n] `(. ~(hint-as x `int) ">>>" (bit-and ~n 63)))
+   :inline-arities #{2}}
+  [^int x n]
+  (. x ">>>" (bit-and n 63)))
 
 (defn ^int bit-clear
   "Clear bit at index n"
@@ -3532,10 +3619,7 @@
     (if (nil? fn)
       s
       (do
-        (loop [ls (fn)]
-          (if (dart/is? ls LazySeq)
-            (recur (.sval ^LazySeq ls))
-            (set! s (seq ls))))
+        (set! s (fn))
         (set! fn nil)
         s)))
   IPending
@@ -3545,25 +3629,26 @@
   (-with-meta [coll new-meta]
     (if (identical? new-meta meta)
       coll
-      (LazySeq. new-meta #(.sval coll) nil __hash)))
+      (LazySeq. new-meta #(-seq coll) nil __hash)))
   IMeta
   (-meta [coll] meta)
   ISeqable
-  (-seq [coll] (.sval coll))
+  (-seq [coll]
+    (.sval coll)
+    (when-not (nil? s)
+      (loop [ls s]
+        (if (dart/is? ls LazySeq)
+          (recur (.sval ^LazySeq ls))
+          (set! s (-seq ls))))))
   ISeq
   (-first [coll]
-    (.sval coll)
-    (when-not (nil? s)
-      (-first s)))
+    (some-> coll -seq -first))
   (-rest [coll]
-    (.sval coll)
-    (if-not (nil? s)
-      (-rest s)
+    (if-some [s (-seq coll)]
+      (rest s)
       ()))
   (-next [coll]
-    (.sval coll)
-    (when-not (nil? s)
-      (-next s)))
+    (some-> coll -seq next))
   ICollection
   (-conj [coll o] (cons o coll))
   IEmptyableCollection
@@ -4542,28 +4627,30 @@
    (join-with combine fa fb nil a b))
   ([combine fa fb where? a b]
    (when (or (some? a) (some? b))
-     (let [del ^:unique (Object)
-           combine (if where?
-                     (fn [a b]
-                       (let [r (combine a b)]
-                         (if (where? r) r del)))
-                     combine)
-           fa (if where?
-                (fn [a]
-                  (let [r (fa a b)]
-                    (if (where? r) r del)))
-                fa)
-           fb (if where?
-                (fn [b]
-                  (let [r (fb b b)]
-                    (if (where? r) r del)))
-                fb)]
-       (or
-         ^some (-join-with a b combine fa fb del)
-         (throw (ArgumentError (str "Can't join instances of " (.-runtimeType a)
-                                 " and " (.-runtimeType b)))))))))
+     (or
+       ^some
+       (let [del sentinel]
+         (if where?
+           (let [combine (when combine
+                           (fn [a b]
+                             (let [r (combine a b)]
+                               (if (where? r) r del))))
+                 fa (when fa
+                      (fn [a]
+                        (let [r (fa a)]
+                          (if (where? r) r del))))
+                 fb (when fb
+                      (fn [b]
+                        (let [r (fb b)]
+                          (if (where? r) r del))))]
+             (-join-with a b combine fa fb del))
+           (-join-with a b combine fa fb del)))
+       (throw (ArgumentError (str "Can't join instances of " (.-runtimeType a)
+                               " and " (.-runtimeType b))))))))
 
-(deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr] :type-only true)
+(deftype BitmapNode [^:mutable ^int cnt ^:mutable ^int bitmap-hi ^:mutable ^int bitmap-lo ^:mutable ^List arr]
+  :type-only true
+  (^BitmapNode inode_assoc_transient [node ^int shift ^int h k v] node))
 
 (deftype #/(BitmapIterator E)
   [^:mutable ^BitmapNode node
@@ -4620,7 +4707,7 @@
 
 (def ^BitmapNode -EMPTY-BITMAP-NODE (BitmapNode. 0 0 0 (.empty List)))
 
-(defmacro ^:private else->> [& args]
+(defmacro ^:private warp->> [& args]
   `(->> ~@(reverse args)))
 
 (defmacro ^:private step-join [& args]
@@ -4641,12 +4728,39 @@
        ~@(case (count darr)
            2 `[(aset ~'new-arr ~'ni ~(first darr))
                (aset ~'new-arr (+ 1 ~'ni) ~(second darr))]
-           1 `[(aset ~'new-arr ~'ni ~(first darr))]
+           1 `[(aset ~'new-arr ~'ni ~node-sym)]
            0 nil)
        (recur
          ~(nz `+ dni 'ni) ~(nz `+ dai 'ai) ~(nz `+ dbi 'bi)
-         (u32-bit-shift-left ~'bit 1)
+         ~'n-set
          ~(nz `bit-or dhi 'hi) ~(nz `bit-or dlo 'lo)
+         ~(nz `+ dcnt 'cnt)))))
+
+
+(defmacro ^:private step-merge [& args]
+  (let [node-sym `node#
+        {:keys [darr dai dbi] :as args-map} (apply hash-map args)
+        _ (assert (or (nil? darr) (vector? darr)))
+        dni (some-> darr count)
+        [dcnt dkvs] (case (count darr)
+                      2 [1 'bit]
+                      1 [`(.-cnt ~node-sym) nil]
+                      0 nil)
+        nz (fn [op arg local]
+             (cond->> local
+               (some? arg) (list op arg)))]
+    `(let [~@(case (count darr)
+               (0 2) nil
+               1 [node-sym (first darr)])]
+       ~@(case (count darr)
+           2 `[(aset ~'new-arr ~'ni ~(first darr))
+               (aset ~'new-arr (+ 1 ~'ni) ~(second darr))]
+           1 `[(aset ~'new-arr ~'ni ~node-sym)]
+           0 nil)
+       (recur
+         ~(nz `+ dni 'ni) ~(nz `+ dai 'ai) ~(nz `+ dbi 'bi)
+         ~'n-set
+         ~(nz `bit-or dkvs 'kvs)
          ~(nz `+ dcnt 'cnt)))))
 
 
@@ -4663,7 +4777,11 @@
           (recur (+ 2 i) (u32-bit-shift-left bit 1) (+ 1 n)))
         (not (zero? (bit-and bit nodes)))
         (do
-          (assert (instance? BitmapNode (aget arr i)))
+          (assert (instance? BitmapNode (aget arr i))
+            (pr-str {:arr (vec arr)
+                     :cnt cnt
+                     :hi bitmap_hi
+                     :lo bitmap_lo}))
           (recur (+ 1 i) (u32-bit-shift-left bit 1) (+ (.-cnt ^BitmapNode (aget arr i)) n)))
         :else
         (recur i (u32-bit-shift-left bit 1) n)))))
@@ -4877,94 +4995,62 @@
            all-maybe-kvs (bit-or a-kvs b-kvs) ; underestimate collisions
            a-set (bit-or a-kvs a-nodes)
            b-set (bit-or b-kvs b-nodes)
-           n-set (bit-or a-set b-set)
-           new-arr-size (u32x2-bit-count all-maybe-kvs n-set) ; overestimate size
+           all-set (bit-or a-set b-set)
+           new-arr-size (u32x2-bit-count all-maybe-kvs all-set) ; overestimate size
            new-arr (#/(List/filled dynamic) new-arr-size nil)
            barr (.-arr b)]
-       (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int bit 1 ^int kvs 0 ^int cnt 0]
-         (cond
-           (zero? bit) ; done
-           (BitmapNode. cnt kvs n-set new-arr)
+       (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int n-set all-set ^int kvs 0 ^int cnt 0]
+         (warp->>
+           (if (zero? n-set) ; done
+             (BitmapNode. cnt kvs all-set new-arr))
 
-           (zero? (bit-and bit a-set)) ; no a
-           (cond
-             (zero? (bit-and bit b-set)) ; no b either, skip
-             (recur ni ai bi (u32-bit-shift-left bit 1) kvs cnt)
+           (let [bit (bit-and n-set (- n-set))
+                 n-set (bit-xor n-set bit)])
 
-             (zero? (bit-and bit b-kvs)) ; b's node
-             (let [bnode ^BitmapNode (aget barr bi)]
-               (doto new-arr
-                 (aset ni bnode))
-               (recur (+ 1 ni) ai (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt bnode))))
+           (if (zero? (bit-and bit a-set))    ; no a
+             (if  (zero? (bit-and bit b-kvs)) ; b's node
+               (step-merge :darr [^BitmapNode (aget barr bi)] :dbi 1)
+               (step-merge :darr [(aget barr bi) (aget barr (inc bi))] :dbi 2)))
 
-             :else
-             (do ; b's kv
-               (doto new-arr
-                 (aset ni (aget barr bi))
-                 (aset (inc ni) (aget barr (inc bi))))
-               (recur (+ 2 ni) ai (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
+           (let [anode-or-k (aget arr ai)])
 
-
-           (zero? (bit-and bit b-set))     ; no b, only a
-           (if (zero? (bit-and bit a-kvs)) ; a's node
-             (let [anode ^BitmapNode (aget arr ai)]
-               (doto new-arr
-                 (aset ni anode))
-               (recur (+ 1 ni) (+ 1 ai) bi (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt anode))))
-             (do ; a's kv
-               (doto new-arr
-                 (aset ni (aget arr ai))
-                 (aset (inc ni) (aget arr (inc ai))))
-               (recur (+ 2 ni) (+ 2 ai) bi (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt))))
-
+           (if (zero? (bit-and bit b-set))   ; no b, only a
+             (if (zero? (bit-and bit a-kvs)) ; a's node
+               (step-merge :darr [^BitmapNode anode-or-k] :dai 1)
+               (step-merge :darr [anode-or-k (aget arr (inc ai))] :dai 2)))
            ; a and b are set
-           (zero? (bit-and bit a-kvs)) ; a's node
-           (if (zero? (bit-and bit b-kvs))
-             ; node vs node
-             (let [node (.inode_merge ^BitmapNode (aget arr ai) (+ 5 shift) (aget barr bi))]
-               (doto new-arr
-                 (aset ni node))
-               (recur (+ 1 ni) (+ 1 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
-             ; a's node vs b's kv
-             (let [k (aget barr bi)
-                   v (aget barr (inc bi))
-                   node (.inode_assoc ^BitmapNode (aget arr ai) (+ 5 shift) (hash k) k v)]
-               (doto new-arr
-                 (aset ni node))
-               (recur (+ 1 ni) (+ 1 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node)))))
+           (let [bnode-or-k (aget barr bi)
+                 a-is-node (zero? (bit-and bit a-kvs))
+                 b-is-node (zero? (bit-and bit b-kvs))])
+
+           (if a-is-node
+             (if b-is-node
+               (step-merge :darr [(.inode_merge ^BitmapNode anode-or-k (+ 5 shift) bnode-or-k)] :dai 1 :dbi 1)
+               (step-merge :darr [(.inode_assoc ^BitmapNode anode-or-k (+ 5 shift) (hash bnode-or-k) bnode-or-k (aget barr (inc bi)))] :dai 1 :dbi 2)))
 
            ; a is kv
-           (zero? (bit-and bit b-kvs)) ; b's node
-           (let [bnode ^BitmapNode (aget barr bi)
-                 k (aget arr ai)
-                 h (hash k)
-                 shift+5 (+ 5 shift)
-                 node
-                 (cond-> bnode
-                   (identical? bnode (.inode_lookup bnode shift+5 h k bnode))
-                   (.inode_assoc shift+5 h k (aget arr (inc ai))))]
-             (doto new-arr
-               (aset ni node))
-             (recur (+ 1 ni) (+ 2 ai) (+ 1 bi) (u32-bit-shift-left bit 1) kvs (+ cnt (.-cnt node))))
+           (if b-is-node
+             (let [h (hash anode-or-k)
+                   shift+5 (+ 5 shift)
+                   bnode ^BitmapNode bnode-or-k
+                   node
+                   (cond-> bnode
+                     (identical? bnode (.inode_lookup bnode shift+5 h anode-or-k bnode))
+                     (.inode_assoc shift+5 h anode-or-k (aget arr (inc ai))))]
+               (step-merge :darr [node] :dai 2 :dbi 1)))
 
-           :else ; kv vs kv
-           (let [ak (aget arr ai)
-                 bk (aget barr bi)
-                 bv (aget barr (inc bi))]
-             (if (= ak bk)
-               (do
-                 (doto new-arr
-                   (aset ni bk)
-                   (aset (inc ni) bv))
-                 (recur (+ 2 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) (bit-or bit kvs) (inc cnt)))
-               (let [shift+5 (+ 5 shift)
-                     node (->
-                            (BitmapNode. 0 0 0 (#/(List/filled dynamic) 4 nil))
-                            (.inode_assoc_transient shift+5 (hash ak) ak (aget arr (inc ai)))
-                            (.inode_assoc_transient shift+5 (hash bk) bk bv))]
-                 (doto new-arr
-                   (aset ni node))
-                 (recur (+ 1 ni) (+ 2 ai) (+ 2 bi) (u32-bit-shift-left bit 1) kvs (+ 2 cnt))))))))
+           ; kv vs kv
+           (let [bv (aget barr (inc bi))])
+
+           (if (= anode-or-k bnode-or-k)
+             (step-merge :darr [bnode-or-k bv] :dai 2 :dbi 2)
+             (let [shift+5 (+ 5 shift)
+                   node (->
+                          (BitmapNode. 0 0 0 (#/(List/filled dynamic) 4 nil))
+                          (.inode_assoc_transient shift+5 (hash anode-or-k) anode-or-k (aget arr (inc ai)))
+                          (.inode_assoc_transient shift+5 (hash bnode-or-k) bnode-or-k bv))]
+               (step-merge :darr [node] :dai 2 :dbi 2))))))
+
      :else ; collision node
      (let [n (* 2 (.-cnt b))
            arr (.-arr b)]
@@ -4974,10 +5060,10 @@
            (recur (.inode_assoc a shift 0 ; 👈 hash doesn't matter for collision node's assoc
                     (aget arr i) (aget arr (inc i))) (+ 2 i)))))))
   (^BitmapNode inode_join_with [a ^int shift ^BitmapNode b ^some combine ^some fa ^some fb del]
-   (else->>
+   (warp->>
      (if-not (< shift 32)
        ; collision node
-       (else->>
+       (warp->>
          (let [n (* 2 (.-cnt b))
                barr (.-arr b)])
 
@@ -5005,7 +5091,7 @@
            b-nodes (bit-xor (.-bitmap_hi b) (.-bitmap_lo b))
            a-set (bit-or a-kvs a-nodes)
            b-set (bit-or b-kvs b-nodes)
-           n-set (bit-or a-set b-set)
+           all-set (bit-or a-set b-set)
            new-arr-size (cond
                           (zero? a-set) (.-length barr)
                           (zero? b-set) (.-length arr)
@@ -5013,18 +5099,18 @@
                           :else (* 2 (u32-bit-count (bit-or a-set b-set))))
            new-arr (#/(List/filled dynamic) new-arr-size nil)])
 
-     (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int bit 1 ^int hi 0 ^int lo 0 ^int cnt 0])
+     (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int n-set all-set ^int hi 0 ^int lo 0 ^int cnt 0])
 
-     (if (zero? bit) ; done
+     (if (zero? n-set) ; done
        (BitmapNode. cnt hi lo new-arr))
 
-     (let [no-a (zero? (bit-and bit a-set))
+     (let [bit (bit-and n-set (- n-set))
+           n-set (bit-xor bit n-set)
+           no-a (zero? (bit-and bit a-set))
            no-b (zero? (bit-and bit b-set))])
 
      (if no-a
-       (else->>
-         (if no-b (step-join)) ; nothing
-         ; only b
+       (warp->>
          (let [b-is-node (zero? (bit-and bit b-kvs))])
          (if (nil? fb) ; not interested in b alone, skip
            (step-join :dbi (if b-is-node 1 2)))
@@ -5044,8 +5130,7 @@
            (step-join :darr [node] :dbi 1))))
 
      (if no-b
-       (else->>
-         ; only a
+       (warp->>
          (let [a-is-node (zero? (bit-and bit a-kvs))])
          (if-not fa ; not interested in a alone, skip
            (step-join :dai (if a-is-node 1 2)))
@@ -5070,23 +5155,18 @@
            anode-or-k (aget arr ai)
            bnode-or-k (aget barr bi)])
 
-     (do
-       (assert (= a-is-node (instance? BitmapNode anode-or-k)))
-       (assert (= b-is-node (instance? BitmapNode bnode-or-k)))
-       )
-
      (if (and (nil? combine) (identical? anode-or-k bnode-or-k))
        ; not interested in the intersection
        (step-join :dai (if a-is-node 1 2) :dbi (if b-is-node 1 2)))
 
      (if-not (or a-is-node b-is-node)
        ; kv vs kv
-       (else->>
+       (warp->>
          (let [av (aget arr (inc ai))
                bv (aget barr (inc bi))])
          (if (= anode-or-k bnode-or-k)
-           (else->>
-             (let [v (combine av bv)])
+           (warp->>
+             (let [v (if combine (combine av bv) del)])
              (if (identical? del v)
                (step-join :dai 2 :dbi 2))
              (step-join :darr [bnode-or-k v] :dai 2 :dbi 2)))
@@ -5526,7 +5606,7 @@
   (-lookup [coll k]
     (-lookup coll k nil))
   (-lookup [coll k not-found]
-    (.inode_lookup root 0  (hash k) k not-found))
+    (.inode_lookup root 0 (hash k) k not-found))
   (-contains-key? [coll k]
     (not (identical? (-lookup coll k coll) coll)))
   IFind
@@ -5594,9 +5674,12 @@
   "Returns a map that consists of the rest of the maps conj-ed onto
   the first.  If a key occurs in more than one map, the mapping from
   the latter (left-to-right) will be the mapping in the result."
-  [& maps]
-  (when (some identity maps)
-    (reduce #(conj (or %1 {}) %2) maps)))
+  ([] {})
+  ([m] m)
+  ([m1 m2] (if m1 (conj m1 m2) m2))
+  ([m1 m2 & maps]
+   (when (or m1 m2 (some identity maps))
+     (reduce conj (merge (or m1 {}) m2) maps))))
 
 (defn merge-with
   "Returns a map that consists of the rest of the maps conj-ed onto
@@ -5759,6 +5842,26 @@
 
 (def ^PersistentHashSet -EMPTY-SET
   (PersistentHashSet. nil {} -1))
+
+(defn- ^:macro-support -has-stable-hash? [x]
+  (or (nil? x) (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (string? x) (boolean? x) (char? x) (keyword? x)))
+
+(defmacro -set-lit [quoted s]
+  (let [meta-expr (cond->> (meta s) quoted (list 'quote))]
+    (cond
+      (seq s)
+      (let [stable-s (transduce (remove -has-stable-hash?) disj s s)
+            rem-s (reduce disj s stable-s)
+            bindings (into {} (for [expr rem-s]
+                                [(gensym 'set-item) (cond->> expr quoted (list 'quote))]))
+            items (concat (keys bindings)
+                    (cond->> stable-s
+                      quoted (map #(list 'quote %))))]
+        `(let [~@(mapcat seq bindings)]
+           (cljd.core/PersistentHashSet ~meta-expr ~(zipmap items items) -1)))
+      meta-expr `(-with-meta -EMPTY-SET ~meta-expr)
+      :else `-EMPTY-SET)))
+
 
 (defn ^List to-array
   [coll]
@@ -7228,14 +7331,54 @@
   ([] #{})
   ([& keys] (into #{} keys)))
 
-(defn ^PersistentHashMap -map-lit [kvs]
-  (if (nil? kvs)
-    {}
-    (let [^List kvs kvs]
-      (loop [^TransientHashMap tm (-as-transient {}) ^int i 0]
-        (if (< i (.-length kvs))
-          (recur (-assoc! tm (aget kvs i) (aget kvs (+ i 1))) (+ i 2))
-          ^PersistentHashMap (-persistent! tm))))))
+(defmacro -map-lit [quoted m]
+  (if (empty? m)
+    (if-some [meta-expr (meta m)]
+      `(-with-meta -EMPTY-MAP ~(cond->> meta-expr quoted (list 'quote)))
+      `-EMPTY-MAP)
+    (let [#?@(:cljd/clj-host [hash cljd.compiler/cljd-hash])
+          stable-m (transduce (remove -has-stable-hash?) dissoc m (keys m))
+          rem-m (reduce dissoc m (keys stable-m))
+          mk-node (fn mk-node [entries shift]
+                    (if (< shift 32)
+                      (let [children
+                            (group-by
+                              (fn [[k expr]]
+                                (bit-and 31 (bit-shift-right (hash k) shift)))
+                              entries)
+                            hi (transduce (map (fn [n]
+                                                 (bit-shift-left 1 n)))
+                                 + 0 (keys children))
+                            lo (transduce (map (fn [[n entries]]
+                                                 (case (count entries)
+                                                   1 (bit-shift-left 1 n)
+                                                   0)))
+                                 + 0 children)
+                            fixed-list
+                            (into ^:fixed []
+                              (mapcat (fn [entries]
+                                        (case (count entries)
+                                          1 (if quoted
+                                              (let [[k v] (first entries)]
+                                                [k (list 'quote v)])
+                                              (first entries)) ; kv
+                                          [(mk-node entries (+ 5 shift))])))
+                              (vals (sort-by key children)))]
+                        `(cljd.core/BitmapNode
+                           ~(count entries) ~hi ~lo ~(tagged-literal 'dart fixed-list)))
+                      ; collision
+                      `(cljd.core/BitmapNode ~(count entries) 0 0
+                         ~(tagged-literal 'dart (with-meta {:fixed true}
+                                                  (into [] cat entries))))))]
+      `(cljd.core/PersistentHashMap
+         ~(cond->> (meta m) quoted (list 'quote))
+         (-> ~(mk-node stable-m 0)
+           ~@(for [[k v] rem-m]
+               `(as-> node#
+                    (let [k# ~(cond->> k quoted (list 'quote))]
+                      (.inode_assoc_transient node# 0 (hash k#)
+                        k# ~(cond->> v quoted (list 'quote)))))))
+         -1))))
 
 (defn ^PersistentHashMap hash-map
   "keyval => key val
@@ -7256,9 +7399,18 @@
         l
         (recur (-conj l (aget xs i)) i)))))
 
-(defn ^PersistentVector -vec-owning [^List xs]
-  #_(assert (<= (count xs) 32))
-  (PersistentVector. nil (count xs) 5 (.-root -EMPTY-VECTOR) xs -1))
+(defmacro -vec-lit [quoted v]
+  (let [meta-expr (cond->> (meta v) quoted (list 'quote))
+        dart-list (cond->> (tagged-literal 'dart (with-meta v {:fixed true}))
+                    quoted (list 'quote))]
+    (cond
+      (empty? v) (if meta-expr
+                   `(-with-meta -EMPTY-VECTOR ~meta-expr)
+                   `-EMPTY-VECTOR)
+      (<= (count v) 32)
+      `(cljd.core/PersistentVector. ~meta-expr ~(count v) 5 (.-root -EMPTY-VECTOR)
+         ~dart-list -1)
+      :else `(vec ~dart-list))))
 
 (def ^:private ^math/Random RNG (math/Random.))
 
@@ -7553,17 +7705,10 @@
 
 (defn select-keys
   "Returns a map containing only those entries in map whose key is in keys"
-  [map keyseq]
-  (loop [ret {} keys (seq keyseq)]
-    (if keys
-      (let [key   (first keys)
-            entry (get map key sentinel)]
-        (recur
-          (if (not (identical?  entry sentinel))
-            (assoc ret key entry)
-            ret)
-          (next keys)))
-      (-with-meta ret (meta map)))))
+  [m keyseq]
+  (or (when (set? keyseq)
+        (-join-with m keyseq (fn [v _] v) nil nil ^:unique (Object)))
+    (-with-meta (into {} (map #(find m %)) keyseq) (meta m))))
 
 (defn ^#/(dynamic dynamic -> int) dart-comparator
   "Takes a fn that might be boolean valued or a comparator,
@@ -7774,7 +7919,7 @@
 
   IEquiv
   (-equiv [_ other]
-    (and (dart/is? other UUID) (identical? uuid (.-uuid ^UUID other))))
+    (and (dart/is? other UUID) (= uuid (.-uuid ^UUID other))))
 
   IPrint
   (-print [o ^StringSink sink]
@@ -9272,3 +9417,73 @@ specified.
       "false" false
       nil)
     (throw (ArgumentError (parsing-err s)))))
+
+(defn NaN?
+  {:doc "Returns true if num is NaN, else false"
+   :inline-arities #{1}
+   :inline (fn [num] `(.-isNaN ~(hint-as num `num)))
+   :added "1.11"}
+  [^num num]
+  (.-isNaN num))
+
+(defn infinite?
+  {:doc "Returns true if num is negative or positive infinity, else false"
+   :inline-arities #{1}
+   :inline (fn [num] `(.-isInfinite ~(hint-as num `num)))
+   :added "1.11"}
+  [^num num]
+  (.-isInfinite num))
+
+
+(defn seq-to-map-for-destructuring
+  "Builds a map from a seq as described in
+  https://clojure.org/reference/special_forms#keyword-arguments"
+  {:added "1.11"}
+  [s]
+  (loop [m (transient {}) s (seq s)]
+    (if-some [[k & s] s]
+      (if-some [[v & s] s]
+        (recur (assoc! m k v) s)
+        (conj (persistent! m) k))
+      (persistent! m))))
+
+(defmacro with-open
+  "bindings => [binding-form init (:directive form)* ...]
+
+  Evaluates `body` with each `binding-form` bound to the value of its `init`.
+  On exit (normal or exceptional), all values are disposed in reverse order,
+  by default via `(.dispose value)`.
+
+  A binding pair may be followed by directive pairs to override behavior:
+
+  - `:dispose form` — dispose using `(-> value form)` instead of `(.dispose value)`
+
+  Unlike in Clojure, `binding-form` is not limited to symbols. In ClojureDart it's
+  common to use destructuring to access fields or tear off methods, so any binding
+  form is accepted."
+  [bindings & body]
+  #_(assert-args
+     (vector? bindings) "a vector for its binding"
+     (even? (count bindings)) "an even number of forms in binding vector"
+     (not (keyword? (first bindings))) "a binding form as first element")
+  (let [triples
+        (when-some [[binding expr & bindings] (seq bindings)]
+          (reduce
+            (fn [triples [l r]]
+              (if (keyword? l)
+                (let [[[binding expr opts] & triples] triples]
+                  (case l
+                    :dispose (cons [binding expr (assoc opts l r)] triples)))
+                (cons [l r {}] triples)))
+            [[binding expr {}]] (partition 2 bindings)))]
+    (reduce
+      (fn [body-expr [binding expr {:keys [dispose] :or {dispose '.dispose}}]]
+        (let [sym (if (symbol? binding) binding `disposable#)
+              body-expr (if (= binding sym) body-expr `(let [~binding ~sym] ~body-expr))]
+          `(let [~sym ~expr]
+             (try
+               ~body-expr
+               (finally
+                 (-> ~sym ~dispose))))))
+      `(do ~@body)
+      triples)))

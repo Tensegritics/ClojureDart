@@ -8,8 +8,7 @@ rm -rf tmp/tests
 mkdir -p tmp/tests/src/cljd
 cat > tmp/tests/deps.edn <<EOF
 {:paths ["src"] ; where your cljd files are
- :deps {org.clojure/clojure {:mvn/version "1.10.1"}
-        tensegritics/clojuredart
+ :deps {tensegritics/clojuredart
         {:local/root "../../"}}
  :cljd/opts {:main cljd.run-tests
              :kind :dart}}
@@ -18,7 +17,30 @@ EOF
 cd tmp/tests
 clojure -M -m cljd.build init
 dart pub add -d test || true
-clojure -M -m cljd.build compile cljd.test-clojure.core-test-cljd cljd.test-clojure.string cljd.test-clojure.core-test cljd.test-clojure.for cljd.test-clojure.clojure-zip cljd.test-clojure.clojure-set cljd.test-clojure.clojure-walk cljd.test-clojure.other-functions cljd.test-clojure.test-test cljd.test-reader.reader-test cljd.test-clojure.primitives-test cljd.test-clojure.data cljd.test-clojure.parse
-# --enable-experiment=records is there for making tests pass even on dart2
-# on dart3 it should be a no op.
-dart --enable-experiment=records test -p vm
+clojure -M -m cljd.build compile \
+  cljd.test-clojure.clojure-set \
+  cljd.test-clojure.clojure-walk \
+  cljd.test-clojure.clojure-zip \
+  cljd.test-clojure.core-test \
+  cljd.test-clojure.core-test-cljd \
+  cljd.test-clojure.data \
+  cljd.test-clojure.edn-test \
+  cljd.test-clojure.for \
+  cljd.test-clojure.math \
+  cljd.test-clojure.numbers \
+  cljd.test-clojure.other-functions \
+  cljd.test-clojure.parse \
+  cljd.test-clojure.predicates \
+  cljd.test-clojure.primitives-test \
+  cljd.test-clojure.string \
+  cljd.test-clojure.test-test \
+  cljd.test-reader.reader-test
+
+DART_MAJOR=$(dart --version | awk '{print $4}' | cut -d. -f1)
+if [ "$DART_MAJOR" -eq 2 ]; then
+  # --enable-experiment=records is there for making tests pass even on dart2
+  dart --enable-experiment=records test -p vm
+else
+  # records experiment removed in 3.8.1
+  dart test -p vm
+fi

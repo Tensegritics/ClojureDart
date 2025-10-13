@@ -123,7 +123,7 @@
   (is (= 'abc:def/ghi:jkl.mno (r/read-string "abc:def/ghi:jkl.mno")))
   (is (dart/is?  (r/read-string "alphabet") cljd.core/Symbol))
   (is (= "foo//" (str (r/read-string "foo//"))))
-  (is (true? (-> (r/read-string "##NaN") .-isNaN)))
+  (is (true? (-> (r/read-string "##NaN") NaN?)))
   (is (= double/infinity (r/read-string "##Inf")))
   (is (= double/negativeInfinity (r/read-string "##-Inf")))
   (is (dart/is? (r/read-string "#inst \"2023-01-01T00:00:00.000-00:00\"") DateTime)))
@@ -230,7 +230,7 @@
   #_(is (= (.-pattern #"(?i)abc")
           (.-pattern (r/read-string "#\"(?i)abc\""))))
   (is (= (.-pattern #"\[\]?(\")\\")
-        (.-pattern (r/read-string "#\"\\[\\]?(\\\")\\\\\"")))))
+         (.-pattern ^RegExp (r/read-string "#\"\\[\\]?(\\\")\\\\\"")))))
 
 (deftest read-quote
   (is (= ''foo (r/read-string "'foo"))))

@@ -678,10 +678,10 @@
 (extend-protocol cljd.core/IPrint
   ExtendTypeWorkingOnMultipleNs
   (-print [_ a]
-    (.write ^Sink a "ohoh"))
+    (.write ^StringSink a "ohoh"))
   ExtendTypeWorkingOnMultipleNs2
   (-print [_ a]
-    (.write ^Sink a "ahah")))
+    (.write ^StringSink a "ahah")))
 
 (deftest extend-type-multiple-ns
   (is (= (with-out-str (prn (ExtendTypeWorkingOnMultipleNs)) "ohoh")))
@@ -850,9 +850,10 @@
     (is (identical? x (.-fld obj)))))
 
 (deftest deep-set!
-  (let [obj (MutableBox (MutableBox (MutableBox nil)))]
-    (-> obj .-fld .-fld (.-fld! 1))
-    (is (= 1 (-> obj .-fld .-fld .-fld)))))
+  (letfn [(get-field [^MutableBox box] (.-fld box))]
+    (let [obj (MutableBox (MutableBox (MutableBox nil)))]
+      (-> obj get-field ^MutableBox (get-field) (.-fld! 1))
+      (is (= 1 (-> obj get-field get-field get-field))))))
 
 (deftest testing-set!-prop-not-properly-casted-265
   (let [f (fn [^#/(Map String List) m]
@@ -1041,7 +1042,13 @@
         x (eduction (map (fn [_] (swap! a inc))) [nil])
         l (lazy-seq x)]
     (dotimes [_ 10]
-      (is (= [1] l)))))
+      (is (= [1] (vec l))))))
+
+(deftest test-cljs-3240-overflow-regress ; typo should be 3420
+  (let [things (zipmap (range 15000) (repeat 0))]
+    (is (zero? (count (filter #(-> % key string?) things)))))
+  ; trying harder at stack overflow
+  (is (nil? (first (remove any? (range 1e6))))))
 
 (deftest transducer-sentinels-test
   (testing "sentinels"
@@ -1100,7 +1107,17 @@
     (is (= {:a [1 2] :b "Lc"} (join-with vector #(str "L" %) nil m1 m2)))
     (is (= {:a [1 2] :d "Re"} (join-with vector nil #(str "R" %) m1 m2)))
     (let [n 1e6 m1 (zipmap (range 0 n 2) (range)) m2 (zipmap (range 1 n 2) (range))]
-      (is (= 499999500000 (reduce + (keys (join-with (fn [_ x] x) identity identity m1 m2)))))))
+      (is (= 499999500000 (reduce + (keys (join-with (fn [_ x] x) identity identity m1 m2))))))
+    (is (= {:a [1 2]} (join-with (fn [a b] (when-not (= a b) [a b]))
+                        nil nil
+                        some?
+                        {:a 1 :z 1 :b "c"}
+                        {:a 2 :z 1 :d "e"})))
+    (is (= {:a [1 2] :d "e!"} (join-with (fn [a b] (when-not (= a b) [a b]))
+                                nil #(str % "!")
+                                some?
+                                {:a 1 :z 1 :b "c"}
+                                {:a 2 :z 1 :d "e"}))))
 
   (testing "diff"
     (let [expected
@@ -1148,6 +1165,20 @@
       (is (= (zipmap s1 s1)
             (join-with last-win nil identity {}
               (join-with last-win nil str/upper-case #{} s1)))))))
+
+(deftest ex-message-test
+  (is (= "hello" (ex-message (ex-info "hello" {}))))
+  (is (= nil (ex-message "hello")))
+  (is (<= 0 (str/index-of (ex-message (Exception. 'hello)) "hello"))))
+
+(deftest ex-cause-test
+  (is (nil? (ex-cause nil)))
+  (is (nil? (ex-cause :foo)))
+  (is (nil? (ex-cause (ex-info "without cause" {:foo :bar}))))
+  (let [cause (Exception. "the cause")
+        ex    (ex-info "with cause" {:foo :bar} cause)]
+    (is (= cause (ex-cause ex)))))
+
 (comment
   (let [n*2 (set (range 0 1e6 2))
         n*3 (set (range 0 1e6 3))]
@@ -1157,3 +1188,24 @@
   (let [n*2 (set (range 0 1e6 2))
         n*3 (set (range 0 1e6 3))]
     (time (count (join-with (fn [_ x] x) n*3 n*2)))))
+
+(deftest const-syms-as-defaults-CLJD344
+  (let [f (fn [.param dart:core/deprecated]
+            param)]
+    (is (= dart:core/deprecated (f)))
+    (is (= 42 (f .param 42)))))
+
+(deftype Disposable [^:mutable disposed]
+  (dispose [_] (set! disposed true)))
+
+(deftest with-open-test
+  (let [$ (atom nil)]
+    (with-open [{:flds [disposed] :as d} (Disposable false)]
+      (is (false? disposed))
+      (reset! $ d))
+    (is (true? (.-disposed ^Disposable @$))))
+  (let [$ (atom nil)]
+    (with-open [a (atom true) :dispose (reset! false)]
+      (is (true? @a))
+      (reset! $ a))
+    (is (false? @@$))))

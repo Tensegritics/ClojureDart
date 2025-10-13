@@ -66,6 +66,16 @@
     (str "\u001B[1m" s "\u001B[0m")
     s))
 
+(defn muted [s]
+  (if *ansi*
+    (str "\u001B[2m" s "\u001B[0m")
+    s))
+
+(defn inverted [s]
+  (if *ansi*
+    (str "\u001B[7m" s "\u001B[0m")
+    s))
+
 (defn green [s]
   (if *ansi*
     (str "\u001B[1;32m" s "\u001B[0m")
@@ -233,6 +243,88 @@
           (println "REPL session terminated." (.getMessage e))
           (st/print-stack-trace e))))))
 
+(defn bsearch
+  "pred is monotonic false -> true through v.
+   Returns the last element for which pred is false"
+  [v pred]
+  (cond
+    (empty? v) nil
+    (pred (first v)) nil
+    (not (pred (peek v))) (peek v)
+    :else
+    (loop [i 0 j (count v)]
+      #_(assert (not (pred (nth v i))))
+      (let [m (quot (+ i j) 2)
+            x (nth v m)]
+        (cond
+          (= i m) x
+          (pred x) (recur i m)
+          :else (recur m j))))))
+
+(defn smap-search [lib-smap line col]
+  (when-some [[dart-line dart-col {:keys [slug smap]}]
+              (bsearch lib-smap
+                (fn [[dart-line dart-col smap]]
+                  (or
+                    (< line dart-line)
+                    (and (= line dart-line)
+                      (or (nil? col) (< col dart-col))))))]
+    (let [line (- line (dec dart-line)) ; lines are 1-based
+          col (if (and col (zero? line)) (- col dart-col) col)]
+      (->
+        (bsearch smap
+          (fn [[dart-line dart-col smap]]
+            (or
+              (< line dart-line)
+              (and (= line dart-line)
+                (or (nil? col) (< col dart-col))))))
+        peek
+        (assoc :slug slug)))))
+
+(defn excerpt-and-highlight [{:keys [line column end-line end-column url]}]
+  (when (= line end-line)
+    (let [r (io/reader url)
+          _ (dotimes [_ (dec line)] (.readLine r))
+          src (.readLine r)]
+      (str "\n👉" (subs src 0 (dec column))
+        (inverted (subs src (dec column) (dec end-column)))
+        (subs src (dec end-column))))))
+
+(def smap-line
+  (let [mk-smap-line
+        (fn mk-smap-line []
+          (let [{:keys [libs]} @compiler/nses
+                libspat
+                (->> libs
+                  (keep (fn [[libname {:keys [smap]}]]
+                          (when smap
+                            (-> libname
+                              (str/replace #"^lib/" "/")
+                              java.util.regex.Pattern/quote))))
+                  (str/join "|"))
+                pat (re-pattern (str "\\w+:[^:]+?(" libspat "):(\\d+)(?::(\\d+))"))]
+            (fn [line]
+              (when (identical? libs (:libs @compiler/nses))
+                (let [*source-info (volatile! nil)
+                      line
+                      (str/replace line pat
+                        (fn [[match lib line col]]
+                          (let [{:keys [ns smap]} (get libs (str "lib" lib))
+                                {:keys [line column slug end-line end-column file url]
+                                 :as source-info}
+                                (smap-search smap (parse-long line) (some-> col parse-long))]
+                            (vreset! *source-info source-info)
+                            (str (bright ns) (subs slug 0 1) (bright (subs slug 1)) " " (bright file) ":" (bright line) ":" (bright column) " " (muted match)))))]
+                  (cond-> line
+                    @*source-info (str (excerpt-and-highlight @*source-info))))))))
+        *smap-line (atom (mk-smap-line))]
+    (fn [line]
+      (if-some [line (@*smap-line line)]
+        line
+        (do
+          (reset! *smap-line (mk-smap-line))
+          (recur line))))))
+
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
   (let [*repl-outs (atom {})
@@ -329,7 +421,8 @@
                       (doto (Thread.
                               #(binding [*ansi* ansi]
                                  (loop [state :idle]
-                                   (when-some [line (.readLine flutter-stdout)]
+                                   (when-some [line (some-> (.readLine flutter-stdout)
+                                                      smap-line)]
                                      (when-not (= :reload-failed state)
                                        (let [[_ repltag mode line'] (re-matches #"flutter: (.*?)([>=!])(.*)" line)]
                                          (if-some [{:keys [^java.io.Writer out ack!]}

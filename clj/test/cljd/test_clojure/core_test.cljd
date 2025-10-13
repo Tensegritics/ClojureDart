@@ -13,7 +13,8 @@
 
 (ns cljd.test-clojure.core-test
   (:require [cljd.set :as set]
-            [cljd.string :as s])
+            [cljd.string :as s]
+            ["dart:math" :as dart:math])
   (:use [cljd.test :only [deftest is testing are]]))
 
 (deftest test-metadata
@@ -223,28 +224,28 @@
     (is (= :rect-shape (apply (-get-method bar [::rect ::shape]) [::rect ::shape])))
     ))
 
-#_(defmulti nested-dispatch (fn [m] (-> m :a :b)))
-#_(defmethod nested-dispatch :c [m] :nested-a)
-#_(defmethod nested-dispatch :default [m] :nested-default)
+(defmulti nested-dispatch (fn [m] (-> m :a :b)))
+(defmethod nested-dispatch :c [m] :nested-a)
+(defmethod nested-dispatch :default [m] :nested-default)
 
-#_(defmulti nested-dispatch2 ffirst)
-#_(defmethod nested-dispatch2 :a [m] :nested-a)
-#_(defmethod nested-dispatch2 :default [m] :nested-default)
+(defmulti nested-dispatch2 ffirst)
+(defmethod nested-dispatch2 :a [m] :nested-a)
+(defmethod nested-dispatch2 :default [m] :nested-default)
 
-#_(defmulti foo1 (fn [& args] (first args)))
-#_(defmethod foo1 :a [& args] :a-return)
-#_(defmethod foo1 :default [& args] :default-return)
+(defmulti foo1 (fn [& args] (first args)))
+(defmethod foo1 :a [& args] :a-return)
+(defmethod foo1 :default [& args] :default-return)
 
-#_(defmulti area :Shape)
-#_(defn rect [wd ht] {:Shape :Rect :wd wd :ht ht})
-#_(defn circle [radius] {:Shape :Circle :radius radius})
-#_(defmethod area :Rect [r]
-    (* (:wd r) (:ht r)))
-#_(defmethod area :Circle [c]
-    (*  Math/PI (* (:radius c) (:radius c))))
-#_(defmethod area :default [x] :oops)
-#_(defmulti foo2 (fn []))
-#_(defmethod foo2 :default [] :foo)
+(defmulti area :Shape)
+(defn rect [wd ht] {:Shape :Rect :wd wd :ht ht})
+(defn circle [radius] {:Shape :Circle :radius radius})
+(defmethod area :Rect [r]
+  (* (:wd r) (:ht r)))
+(defmethod area :Circle [c]
+  (*  dart:math/pi (* (:radius c) (:radius c))))
+(defmethod area :default [x] :oops)
+(defmulti foo2 (fn []))
+(defmethod foo2 :default [] :foo)
 
 #_(defmulti apply-multi-test (fn ([_] 0) ([_ _] 0) ([_ _ _] 0)))
 #_(defmethod apply-multi-test 0
@@ -278,7 +279,7 @@
 #_(defmethod multi-with-h :gparent [_] :gparent)
 #_(defmethod multi-with-h :parent [_] :parent)
 
-#_(deftest test-multimethods-2
+(deftest test-multimethods-2
   (let [r (rect 4 13)
         c (circle 12)]
     (testing "Testing multimethod edge cases"
@@ -288,32 +289,32 @@
       (is (= :default-return (foo1 1)))
       (is (= 52 (area r)))
       (is (= :oops (area {})))
-      ;; CLJS-863
+      ;; ;; CLJS-863
       (is (= :foo (foo2)))
-      ;; remove method tests
-      (is (= 2 (count (methods bar))))
-      (remove-method bar [::rect ::shape])
-      (is (= 1 (count (methods bar))))
-      (remove-all-methods bar)
-      (is (zero? (count (methods bar))))
-      (is (= [:three '(2)] (apply apply-multi-test [0 1 2])))
-      (is (try
-            (no-dispatch-value {:test :test})
-            (catch js/Error e
-              (not= -1 (.indexOf (.-message e) "cljs.core-test/no-dispatch-value")))))
-      (doseq [m [(obj-map) (array-map) (hash-map) (sorted-map)]]
-        (is (my-map? m)))
-      (doseq [not-m [[] 1 "asdf" :foo]]
-        (is (not (my-map? not-m))))
-      ;; multimethod hashing
-      (is (= foo2' (ffirst {foo2' 1})))
-      (is (= :parent (multi-with-h :child)))
+      ;; ;; remove method tests
+      ;; (is (= 2 (count (methods bar))))
+      ;; (remove-method bar [::rect ::shape])
+      ;; (is (= 1 (count (methods bar))))
+      ;; (remove-all-methods bar)
+      ;; (is (zero? (count (methods bar))))
+      ;; (is (= [:three '(2)] (apply apply-multi-test [0 1 2])))
+      ;; (is (try
+      ;;       (no-dispatch-value {:test :test})
+      ;;       (catch js/Error e
+      ;;         (not= -1 (.indexOf (.-message e) "cljs.core-test/no-dispatch-value")))))
+      ;; (doseq [m [(obj-map) (array-map) (hash-map) (sorted-map)]]
+      ;;   (is (my-map? m)))
+      ;; (doseq [not-m [[] 1 "asdf" :foo]]
+      ;;   (is (not (my-map? not-m))))
+      ;; ;; multimethod hashing
+      ;; (is (= foo2' (ffirst {foo2' 1})))
+      ;; (is (= :parent (multi-with-h :child)))
       )))
 
 (deftest test-transducers
   (testing "Testing transducers"
     (is (= (sequence (map inc) #dart [1 2 3]) '(2 3 4)))
-    (is (= (apply str (sequence (map #(.toUpperCase %)) "foo")) "FOO"))
+    (is (= (apply str (sequence (map s/upper-case) "foo")) "FOO"))
     (is (== (hash [1 2 3]) (hash (sequence (map inc) (range 3)))))
     (is (= [1 2 3] (sequence (map inc) (range 3))))
     (is (= (sequence (map inc) (range 3)) [1 2 3]))
@@ -492,6 +493,8 @@
   (testing "Testing UUID"
     (is (= (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
            (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")))
+    (is (= (cljd.core/uuid (apply str "550e8400-e29b-41d4-a716-446655440000"))
+           (cljd.core/uuid (apply str "550e8400-e29b-41d4-a716-446655440000"))))
     (is (not (identical? (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000")
                          (cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000"))))
     (is (= 42 (get {(cljd.core/uuid "550e8400-e29b-41d4-a716-446655440000") 42}
@@ -591,9 +594,9 @@
     (is (= 5 (js-invoke o "my sum" 2 3)))))
 
 (deftest memfn-test
-  (let [substr (memfn substring start length)]
+  (let [substr (memfn ^String substring start length)]
     (is (= "c" (substr "abcdefg" 2 3))))
-  (let [trim (memfn trim)]
+  (let [trim (memfn ^String trim)]
     (is (= ["abc" "def"] (map trim ["   abc   " "  def   "])))))
 
 ;; =============================================================================
@@ -1910,3 +1913,34 @@
     (is (= "^{:hello :world} {}" (pr-meta ^{:hello :world} {})))
     (is (= "^{:hello :world} hi" (pr-meta (with-meta 'hi {:hello :world}))))
     (is (= "^{:hello :world} ()" (pr-meta (with-meta (list) {:hello :world}))))))
+
+(deftest singleton-map-in-destructure-context
+  (let [sample-map {:a 1 :b 2}
+        {:keys [a] :as m1} (list sample-map)]
+    (is (= m1 sample-map))
+    (is (= a 1))))
+
+(deftest trailing-map-destructuring
+  (let [sample-map {:a 1 :b 2}
+        add  (fn [& {:keys [a b]}] (+ a b))
+        addn (fn [n & {:keys [a b]}] (+ n a b))]
+    (testing "that kwargs are applied properly given a map in place of the key/val pairs"
+      (is (= 3 (add  :a 1 :b 2)))
+      (is (= 3 (add  {:a 1 :b 2})))
+      (is (= 13 (addn 10 :a 1 :b 2)))
+      (is (= 13 (addn 10 {:a 1 :b 2})))
+      (is (= 103 ((partial addn 100) :a 1 {:b 2})))
+      (is (= 103 ((partial addn 100 :a 1) {:b 2})))
+      (is (= 107 ((partial addn 100 :a 1) {:a 5 :b 2}))))
+    (testing "built maps"
+      (let [{:as m1} (list :a 1 :b 2)
+            {:as m2} (list :a 1 :b 2 {:c 3})
+            {:as m3} (list :a 1 :b 2 {:a 0})
+            {:keys [a4] :as m4} (list nil)]
+        (= m1 {:a 1 :b 2})
+        (= m2 {:a 1 :b 2 :c 3})
+        (= m3 {:a 0 :b 2})
+        (= m1 (seq-to-map-for-destructuring (list :a 1 :b 2)))
+        (= m2 (seq-to-map-for-destructuring (list :a 1 :b 2 {:c 3})))
+        (= m3 (seq-to-map-for-destructuring (list :a 1 :b 2 {:a 0})))
+        (= a4 nil)))))
