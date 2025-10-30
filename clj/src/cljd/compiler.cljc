@@ -2843,7 +2843,13 @@
                                 :dart [{:type :class :dart/type x} spec]
                                 (throw (Exception. (str "Can't resolve " spec (source-info)))))))
               [meths more-specs] (split-with seq? more-specs)
-              meths (into {} (comp (map #(resolve-method-spec spec type % type-env)) (map (fn [[mname :as meth]] [mname meth])))meths)]
+              ; keys in the meths map are not very important: they are just there to detect conflicts
+              ; only values are kept in the returned value
+              meths (into {}
+                      (comp
+                        (map #(resolve-method-spec spec type % type-env))
+                        (map (fn [[mname :as meth]] [(cond-> mname (-> mname meta :setter) (str  "=")) meth])))
+                      meths)]
           (recur
             (cond-> specs-order (not (resolved-specs spec)) (conj spec))
             (update resolved-specs spec #(merge-with resolve-conflicting-meths % meths))
