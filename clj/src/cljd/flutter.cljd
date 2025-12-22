@@ -1358,13 +1358,13 @@
   (let [doto-body (cond->> doto-body
                     (and layer-args? (not (vector? layer-args?)))
                     (cons layer-args?))
-        layer-args? (when (and (vector? layer-args?)) layer-args?)])
-  `(doto ~canvas
-     ~(if-some [[paint rect?] layer-args?]
-        `(.saveLayer ~rect? ~paint)
-        `.save)
-     ~@doto-body
-     .restore))
+        layer-args? (when (and (vector? layer-args?)) layer-args?)]
+    `(doto ~canvas
+       ~(if-some [[paint rect?] layer-args?]
+          `(.saveLayer ~rect? ~paint)
+          `.save)
+       ~@doto-body
+       .restore)))
 
 (defmacro doto-image-canvas
   "(doto-image-canvas [w h] & body)
