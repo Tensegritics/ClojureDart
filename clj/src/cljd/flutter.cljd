@@ -822,16 +822,41 @@
    A directive is a keyword followed by a form.
    The following directives are supported:
    :key, :let, :get, :bind, :vsync, :managed, :keep-alive, :watch, :bg-watcher,
-   :spy and :context.
+   :spy, :context, :builder (and all keywords ending with Builder).
+
    Forms and directives are threaded (a bit like with ->>) to nest them.
    The outermost form comes first.
+
    For example:
    (widget m/Center ...) expands to (m/Center .child (widget ...))
    (widget (m/Center .widthFactor 1.1)  ...) expands
    to (m/Center .widthFactor 1.1 .child (widget ...))
-   .child threading is the default may you can opt to choose another param name:
+   .child threading is the default but you can opt to choose another param name:
    (widget (m/Scaffold .appBar (m/AppBar)) .body ...) expands
    to (m/Scaffold .appBar (m/AppBar) .body (widget ...))
+
+   If a threading property has metadata :builder on then the body will be thread as
+   a builder.
+
+   For example:
+   (widget
+     (m/ListView.builder .itemCount 123)
+     ^:builder .itemBuilder [i] ; context is implicit and retrieved by :context when needed
+     :height 48
+     (m/Text (str i)))
+   is equivalent to:
+   (m/ListView.builder
+     .itemCount 123
+     .itemBuilder (f/build [i]
+                    :height 48
+                    (m/Text (str i))))
+   However when the builder propname ends with builder one can write:
+   (widget
+     (m/ListView.builder .itemCount 123)
+     :itemBuilder [i]
+     :height 48
+     (m/Text (str i)))
+
    Directives:
    :key k -- use k (a regular value, nil even!) as the key for this widget.
      It's important to put a key on widgets when they can be reordered and/or the
@@ -941,7 +966,10 @@
        returning a function of t (a double usually between 0.0 and 1.0 but some Curve instances can
        generate values out of this range, see Curves.easeInOutBack for example).
      Default interpolation is provided by cljd.flutter/lerp for many types:
-     int, double, Offset, Size, TextStyle, Color... and can be extended via the ITweenable protocol."
+     int, double, Offset, Size, TextStyle, Color... and can be extended via the ITweenable protocol.
+   :builder [arg1 .. argN] -- equivalent to `.builder (f/build [arg1 .. argN] remaining body)` without the nesting
+   :.+Builder [arg1 .. argN] -- like :builder but for any symbol ending with Builder; see ^:builder metadata on
+     threaded symbols too."
   [& body]
   (with-meta
     `(-widget-cont {} ~@body)
@@ -1053,9 +1081,22 @@
       (seq? form)
       (let [[maybe-prop] more-forms
             [prop & more-forms]
-            (if (and more-forms (simple-symbol? maybe-prop)
-                  (.startsWith (name maybe-prop) "."))
+            (cond
+              (and more-forms (simple-symbol? maybe-prop)
+                (.startsWith (name maybe-prop) ".")
+                (not (-> maybe-prop meta :builder)))
               more-forms
+              (and more-forms
+                (or (and simple-symbol? (-> maybe-prop meta :builder))
+                  (and (simple-keyword? maybe-prop)
+                    (re-matches #"(?:b|.+B)uilder" (name maybe-prop)))))
+              (do
+                (assert (vector? (second more-forms)))
+                [(if (keyword? maybe-prop)
+                   (symbol (str "." (name maybe-prop)))
+                   maybe-prop)
+                 `(build ~@(next more-forms))])
+              :else
               (cons '.child more-forms))
             env (dissoc env :closest-ctx)]
         (-> `(~@form ~prop
