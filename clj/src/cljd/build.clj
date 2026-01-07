@@ -416,6 +416,28 @@
           (println (str "Another ClojureDart process is running (PID " pid ")"))
           (System/exit 1))))))
 
+(defn parse-repl-line [line]
+  (when-some [[_ repltag mode cont text]
+              ; lines coming from flutter have this shape:
+              ; flutter: [id mode)>actual content_
+              ; where > is the continuation flag
+              ; and _ is a sentinel to prevent line trimming
+              ;
+              ; the mismatched brackets [id) are there on purpose so that's it's unlikely
+              ; to match some spurious output.
+              ;
+              ; The existing modes are: !, =, o, and e
+              ; resp. acknowledge, evaluation result, stdout, stderr
+              ;
+              ; The continuation flag can be either: space (or newline), /, or >
+              ; resp.:
+              ; - end of line (the newline is part of the output and the output must be flushed),
+              ; - flush (end of line is not part of the ouput and the output must be flushed)
+              ; - multiline (end of line is not part of the ouput and the output should not
+              ;   be flushed)
+              (re-matches #".*?flutter.*?: \[([^ )]+) ([^)]*)\)(?:([>/ ])(.*))?_" line)]
+    {:repltag repltag :mode mode :cont (or cont " ") :text (or text "")}))
+
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
   (let [*repl-states (atom {:cnt 0})
@@ -544,41 +566,25 @@
                                 (recur :waiting-end-of-restart pending-reload))
 
                               :else
-                              (let [{:keys [kind line]} (.take q)]
-                                (when (and line (not= :reload-failed state))
-                                  (let [line (smap-line line)
-                                        [_ repltag mode cont line']
-                                        ; lines coming from flutter have this shape:
-                                        ; flutter: [id mode)>actual content_
-                                        ; where > is the continuation flag
-                                        ; and _ is a sentinel to prevent line trimming
-                                        ;
-                                        ; the mismatched brackets [id) are there on purpose so that's it's unlikely
-                                        ; to match some spurious output.
-                                        ;
-                                        ; The existing modes are: !, =, o, and e
-                                        ; resp. acknowledge, evaluation result, stdout, stderr
-                                        ;
-                                        ; The continuation flag can be either: space (or newline), /, or >
-                                        ; resp.:
-                                        ; - end of line (the newline is part of the output and the output must be flushed),
-                                        ; - flush (end of line is not part of the ouput and the output must be flushed)
-                                        ; - multiline (end of line is not part of the ouput and the output should not
-                                        ;   be flushed)
-                                        (re-matches #"flutter: \[([^ )]+) ([^)]*)\)(?:([>/ ])(.*))?_" line)
-                                        cont (or cont " ")]
-                                    (when-not (and (= repltag "*") (= mode "RDY"))
-                                      (if-some [{:keys [^java.io.Writer out ack!]}
-                                                (@*repl-states repltag)]
-                                        (case mode
-                                          "!" (ack! line')
-                                          ("=" "o" "e")
-                                          (doto out
-                                            (.write (or line' ""))
-                                            (cond->
-                                                (= cont " ") (doto (.write "\n"))
-                                                (not= cont ">") (doto .flush))))
-                                        (println line)))))
+                              (let [{:keys [kind line]} (.take q)
+                                    line (some-> line smap-line)
+                                    {:keys [repltag mode cont text]} (some-> line parse-repl-line)
+                                    is-ready-message (and (= repltag "*") (= mode "RDY"))]
+                                (when-not (or
+                                            (nil? line)
+                                            (= :reload-failed state)
+                                            is-ready-message)
+                                  (if-some [{:keys [^java.io.Writer out ack!]}
+                                            (@*repl-states repltag)]
+                                    (case mode
+                                      "!" (ack! text)
+                                      ("=" "o" "e")
+                                      (doto out
+                                        (.write text)
+                                        (cond->
+                                            (= cont " ") (doto (.write "\n"))
+                                            (not= cont ">") (doto .flush))))
+                                    (println line)))
 
                                 (case kind
                                   :reload (recur state true)
@@ -609,8 +615,8 @@
                                                 .flush))
                                             :restarting)
                                           :waiting-end-of-restart
-                                          (when (= "flutter: [* RDY)_" line) :idle))]
-                                    (when (= "flutter: [* RDY)_" line)
+                                          (when is-ready-message :idle))]
+                                    (when is-ready-message
                                       (when-some [port @*repl-port]
                                         (newline)
                                         (println (title "🤫 ClojureDart REPL")
