@@ -312,6 +312,12 @@ This tells the compiler: don’t treat this like a compile-time constant; I want
 
 Use ^:unique whenever identity matters.
 
+`^:unique` is just shorthand for `^{:const false}` — it tells the compiler *not* to use a const value.
+Be careful though: `^{:const nil}` doesn’t mean “not const,” it means “no opinion.” The compiler will still infer constness if it can.
+
+On the other hand, `^:const` and `^{:const true}` are effectively ignored. They’re remnants from before const inference became pervasive.
+
+If you want to go the other way — to *guarantee* that something is a const and fail if it isn’t — use `^{:const :required}`, that’s the assertive form: “this must be const, or don’t compile.”
 
 ### Calling static methods
 
