@@ -12,7 +12,8 @@
             [clojure.tools.deps :as deps]
             [clojure.string :as str]
             [clojure.stacktrace :as st]
-            [clojure.java.io :as io]))
+            [clojure.java.io :as io]
+            [clojure.core.server :as server]))
 
 (def ^:dynamic *ansi* false)
 (def ^:dynamic *deps*)
@@ -213,6 +214,113 @@
        (finally
          (run! remove-tap fns#)))))
 
+(defn eval-to-repl [repltag expr-or-throwable *compiler-state trigger-reload p]
+  (loop [expr-or-throwable expr-or-throwable
+         throwable-phase (when (instance? Throwable expr-or-throwable)
+                           :read-source)]
+
+    (assert (= (some? throwable-phase)
+              (instance? Throwable expr-or-throwable)))
+
+    (let [expr (if throwable-phase
+                 `(throw '~(-> expr-or-throwable
+                             Throwable->map
+                             (assoc :phase throwable-phase)))
+                 expr-or-throwable)
+          {N :recompile-count} (swap! *compiler-state update :recompile-count inc)
+          throwable
+          (try
+            (compiler/recompile-form expr N repltag)
+            (trigger-reload)
+            nil
+            (catch Throwable t t))]
+      (when throwable
+        (if throwable-phase
+          ; failed handling error, throw it for good
+          (deliver p throwable)
+          (recur throwable :compilation))))))
+
+(defn repl [*repl-states {:keys [dart-version analyzer-info *compiler-state trigger-reload
+                                 repltag]}]
+  (binding [compiler/*dart-version* dart-version
+            compiler/*hosted* true
+            compiler/analyzer-info analyzer-info
+            compiler/dynamic-warning compiler/on-dynamic-warn
+            *in* (clojure.lang.LineNumberingPushbackReader. *in*)]
+    (compiler/with-cljd-reader
+      (try
+        (binding [compiler/*current-ns* 'cljd.core]
+          (loop [expr-or-throwable '(ns cljd.user
+                                      (:require #_[cljd.flutter.repl-impl]
+                                                [cljd.flutter.repl :refer [pick! mount!]]
+                                                [cljd.flutter :as f]
+                                                ["package:flutter/material.dart" :as m]))]
+            (locking *compiler-state
+              (let [p (promise)
+                    _ (swap! *repl-states assoc-in [repltag :ack!] #(deliver p %))
+                    _ (eval-to-repl repltag expr-or-throwable *compiler-state trigger-reload p)
+                    str-or-throwable @p]
+                (if (instance? Throwable str-or-throwable)
+                  (throw str-or-throwable)
+                  (set! compiler/*current-ns* (symbol str-or-throwable)))))
+            (let [x (try
+                      (compiler/read {:eof *in* :read-cond :allow :features #{:cljd}} *in*)
+                      (catch Throwable t t))]
+              (when-not (identical? *in* x)
+                (recur x)))))
+        (catch java.io.IOException e (throw e))
+        (catch Exception e
+          (println "REPL session terminated." (.getMessage e))
+          (st/print-stack-trace e))))))
+
+(defmacro ^:private daemon [& forms]
+  `(doto (Thread. (fn [] ~@forms))
+    (.setDaemon true)
+    .start))
+
+(defn restartable-repl [*repl-states options]
+  (let [{:keys [cnt]} (swap! *repl-states update :cnt inc)
+        repltag (Long/toString cnt 36)
+        true-in *in*
+        true-out *out*
+        reset-repl-state!
+        (fn self []
+          (let [reader (java.io.PipedReader.)
+                writer (java.io.PipedWriter. reader)
+                [{prev repltag} {curr repltag}] (swap-vals! *repl-states
+                                                  assoc repltag
+                                                  {:out true-out
+                                                   :writer writer
+                                                   :reader reader
+                                                   :restart! self})]
+            (some-> ^java.io.Writer (:writer prev) .close)
+            curr))
+        {:keys [reader writer]} (reset-repl-state!)]
+
+    (daemon ; copy true-in to actual in of the repl
+      (let [^chars buffer (make-array Character/TYPE 1024)]
+        (loop [size 0 ^java.io.Writer writer writer]
+          (case size
+            -1 nil
+            0 (recur (.read true-in buffer) writer)
+            (if (try
+                  (.write writer buffer 0 size)
+                  true
+                  (catch java.io.IOException e
+                    (when-not (= "Pipe closed" (.getMessage e))
+                      (throw e))))
+              (recur 0 writer)
+              (recur size (:writer (@*repl-states repltag))))))))
+
+    (loop [reader reader]
+      (binding [*in* reader]
+        (repl *repl-states (assoc options :repltag repltag)))
+      (let [reader' (:reader (@*repl-states repltag))]
+        (when-not (identical? reader reader')
+          ; pipe cycled by a restart
+          (recur reader'))))))
+
+
 (defn bsearch
   "pred is monotonic false -> true through v.
    Returns the last element for which pred is false"
@@ -295,9 +403,23 @@
           (reset! *smap-line (mk-smap-line))
           (recur line))))))
 
+(defn ensure-no-existing!
+  "exit if active REPL"
+  []
+  (let [f (java.io.File. "REPL.lock")]
+    (when (.exists f)
+      (let [[port pid] (re-seq #"\S+" (slurp f))]
+        (when (some-> pid parse-long
+                java.lang.ProcessHandle/of
+                ^java.lang.ProcessHandle (.orElse nil)
+                .isAlive)
+          (println (str "Another ClojureDart process is running (PID " pid ")"))
+          (System/exit 1))))))
+
 (defn compile-cli
   [& {:keys [watch namespaces flutter] :or {watch false}}]
-  (let [user-dir (System/getProperty "user.dir")
+  (let [*repl-states (atom {:cnt 0})
+        user-dir (System/getProperty "user.dir")
         analyzer-dir (ensure-cljd-analyzer!)]
     (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind name) "pub" "get")
     (with-taps
@@ -326,7 +448,8 @@
                                  (when root paths))
                          (vals (:libs *deps*)))))
               dirty-nses (volatile! #{})
-              recompile-count (volatile! 0)
+              *compiler-state (atom {:recompile-count 0
+                                     :restart-count 0})
               compile-nses
               (fn [nses]
                 (let [nses (into @dirty-nses nses)]
@@ -336,32 +459,34 @@
                     (println (title "Compiling to Dart...") (timestamp))
                     (run! #(println " " %) (sort nses))
                     (try
-                      (compiler/recompile nses (vswap! recompile-count inc))
+                      (compiler/recompile nses (:recompile-count (swap! *compiler-state update :recompile-count inc)))
                       (println (success) (timestamp))
                       true
                       (catch Exception e
                         (vreset! dirty-nses nses)
-                        (print-exception e)
+                        (println e)
+                        #_(print-exception e)
                         false)))))
               compilation-success (compile-nses namespaces)]
           (if (or watch flutter)
             (let [compile-files
                   (fn [^java.io.Writer flutter-stdin]
                     (fn [_ files]
-                      (when (some->
-                              (for [^java.io.File f files
-                                    :let [fp (.toPath f)]
-                                    ^java.io.File d dirs
-                                    :let [dp (.toPath d)]
-                                    :when (.startsWith fp dp)
-                                    :let [ns (compiler/peek-ns f)]
-                                    :when ns]
-                                ns)
-                              seq
-                              compile-nses)
-                        (when flutter-stdin
-                          (locking flutter-stdin
-                            (doto flutter-stdin (.write "r") .flush))))))]
+                      (locking *compiler-state
+                        (when (some->
+                                (for [^java.io.File f files
+                                      :let [fp (.toPath f)]
+                                      ^java.io.File d dirs
+                                      :let [dp (.toPath d)]
+                                      :when (.startsWith fp dp)
+                                      :let [ns (compiler/peek-ns f)]
+                                      :when ns]
+                                  ns)
+                                seq
+                                compile-nses)
+                          (when flutter-stdin
+                            (locking flutter-stdin
+                              (doto flutter-stdin (.write "r") .flush)))))))]
               (watch-dirs-until true? (or (boolean compilation-success) :first)
                 dirs
                 (fn [state changes]
@@ -376,52 +501,139 @@
                 (try
                   (let [flutter-stdin (some-> p .getOutputStream (java.io.OutputStreamWriter. "UTF-8"))
                         flutter-stdout (some-> p .getInputStream (java.io.InputStreamReader. "UTF-8") java.io.BufferedReader.)
-                        ansi *ansi*]
+                        ansi *ansi*
+                        q (java.util.concurrent.SynchronousQueue.)
+                        true-out *out*
+                        trigger-reload #(.put q {:kind :reload})
+                        *repl-port (atom nil)]
                     ; Unimplemented handling of missing static target
                     (when (and flutter-stdin flutter-stdout)
-                      (doto (Thread. #(while true
-                                        (let [s (read-line)]
-                                          (locking flutter-stdin
-                                            (doto flutter-stdin
-                                              (.write (case s "" "R" s))
-                                              .flush)))))
-                        (.setDaemon true)
-                        .start)
-                      (doto (Thread.
-                              #(binding [*ansi* ansi]
-                                 (loop [state :idle]
-                                   (when-some [line (some-> (.readLine flutter-stdout)
-                                                      smap-line)]
-                                     (when-not (= :reload-failed state)
-                                       (println line))
-                                     (let [line (.trim line)]
-                                       (case state
-                                         :idle
-                                         (condp = line
-                                           "Performing hot reload..." (recur :reloading)
-                                           "Performing hot restart..." (recur :restarting)
-                                           (recur state))
-                                         :reloading
-                                         (condp = line
-                                           "Unimplemented handling of missing static target" (recur :reload-failed)
-                                           (recur state))
-                                         :reload-failed
-                                         (if (re-matches #"Reloaded .+ of .+ libraries in .+." line)
-                                           (do
-                                             (newline)
-                                             (println (bright "Hot reload failed, attempting hot restart!"))
-                                             (locking flutter-stdin
-                                               (doto flutter-stdin
-                                                 (.write "R")
-                                                 .flush))
-                                             (recur :restarting))
-                                           (recur state))
-                                         :restarting
-                                         (if (re-matches #"Restarted application .+" line)
-                                           (recur :idle)
-                                           (recur state))))))))
-                        (.setDaemon true)
-                        .start))
+                      (daemon
+                        (while true
+                          (let [s (read-line)]
+                            (locking flutter-stdin
+                              (doto flutter-stdin
+                                (.write (case s "" "R" s))
+                                .flush)))))
+
+                      (daemon
+                        (loop []
+                          (when-some [line (some-> (.readLine flutter-stdout) smap-line)]
+                            (.put q {:kind :line :line line})
+                            (recur)))
+                        (.put q {:kind :eof}))
+
+                      (daemon
+                        (binding [*ansi* ansi]
+                          (loop [state :idle pending-reload false]
+                            (cond
+                              (and (= :idle state) pending-reload)
+                              (do
+                                (locking flutter-stdin
+                                  (doto flutter-stdin
+                                    (.write "r")
+                                    .flush))
+                                (recur :idle false))
+
+                              (= :restarting state)
+                              (do
+                                (doseq [{:keys [restart! out]} (vals (dissoc @*repl-states :cnt))]
+                                  (binding [*out* out]
+                                    (println "\n\n;;;; App restarting. Abandon all state!\n"))
+                                  (restart!))
+                                (recur :waiting-end-of-restart pending-reload))
+
+                              :else
+                              (let [{:keys [kind line]} (.take q)]
+                                (when (and line (not= :reload-failed state))
+                                  (let [line (smap-line line)
+                                        [_ repltag mode cont line']
+                                        ; lines coming from flutter have this shape:
+                                        ; flutter: [id mode)>actual content_
+                                        ; where > is the continuation flag
+                                        ; and _ is a sentinel to prevent line trimming
+                                        ;
+                                        ; the mismatched brackets [id) are there on purpose so that's it's unlikely
+                                        ; to match some spurious output.
+                                        ;
+                                        ; The existing modes are: !, =, o, and e
+                                        ; resp. acknowledge, evaluation result, stdout, stderr
+                                        ;
+                                        ; The continuation flag can be either: space (or newline), /, or >
+                                        ; resp.:
+                                        ; - end of line (the newline is part of the output and the output must be flushed),
+                                        ; - flush (end of line is not part of the ouput and the output must be flushed)
+                                        ; - multiline (end of line is not part of the ouput and the output should not
+                                        ;   be flushed)
+                                        (re-matches #"flutter: \[([^ )]+) ([^)]*)\)(?:([>/ ])(.*))?_" line)
+                                        cont (or cont " ")]
+                                    (when-not (and (= repltag "*") (= mode "RDY"))
+                                      (if-some [{:keys [^java.io.Writer out ack!]}
+                                                (@*repl-states repltag)]
+                                        (case mode
+                                          "!" (ack! line')
+                                          ("=" "o" "e")
+                                          (doto out
+                                            (.write (or line' ""))
+                                            (cond->
+                                                (= cont " ") (doto (.write "\n"))
+                                                (not= cont ">") (doto .flush))))
+                                        (println line)))))
+
+                                (case kind
+                                  :reload (recur state true)
+                                  :eof nil
+                                  :line
+                                  (let [line (.trim line)
+                                        state'
+                                        (case state
+                                          :idle
+                                          (condp = line
+                                            "Performing hot reload..." :reloading
+                                            "Performing hot restart..." (do
+                                                                          (swap! *compiler-state
+                                                                            update :restart-count inc)
+                                                                          :restarting)
+                                            state)
+                                          :reloading
+                                          (cond
+                                            (re-matches #"Reloaded .+ of .+ libraries in .+." line) :idle
+                                            (= "Unimplemented handling of missing static target" line) :reload-failed)
+                                          :reload-failed
+                                          (when (re-matches #"Reloaded .+ of .+ libraries in .+." line)
+                                            (newline)
+                                            (println (bright "Hot reload failed, attempting hot restart!"))
+                                            (locking flutter-stdin
+                                              (doto flutter-stdin
+                                                (.write "R")
+                                                .flush))
+                                            :restarting)
+                                          :waiting-end-of-restart
+                                          (when (= "flutter: [* RDY)_" line) :idle))]
+                                    (when (= "flutter: [* RDY)_" line)
+                                      (when-some [port @*repl-port]
+                                        (newline)
+                                        (println (title "🤫 ClojureDart REPL")
+                                          (cond->> "listening on port"
+                                            (pos? (:restart-count @*compiler-state)) (str "still "))
+                                          (title port))
+                                        (newline)))
+                                    (recur (or state' state) pending-reload)))))))))
+
+                    (let [^java.net.ServerSocket socket
+                          (server/start-server {:port 0 :name "CLJD repl" :accept 'cljd.build/restartable-repl
+                                                :args [*repl-states
+                                                       {:dart-version compiler/*dart-version*
+                                                        :analyzer-info compiler/analyzer-info
+                                                        :*compiler-state *compiler-state
+                                                        :trigger-reload trigger-reload}]})
+                          port (.getLocalPort socket)]
+                      (reset! *repl-port port)
+                      (doto (java.io.File. "REPL.lock")
+                        .deleteOnExit
+                        (spit (str port " " (-> (java.lang.ProcessHandle/current) .pid) "\n")))
+                      #_#_(println (title "ClojureDart REPL (experimental 💥)") "listening on port" (title port))
+                      (newline))
                     (watch-dirs-until (fn [_] (some-> p .isAlive not)) nil dirs (compile-files flutter-stdin))
                     (when p
                       (println (str "💀 Flutter sub-process exited with " (.exitValue p)))))
@@ -715,14 +927,17 @@
           "help" (print-help commands)
           "init" (init-project args)
           ("compile" "watch")
-          (compile-cli
-            :namespaces (or (seq (map symbol args))
-                          (some-> *deps* :cljd/opts :main list))
-            :watch (= cmd "watch"))
+          (do
+            (ensure-no-existing!)
+            (compile-cli
+             :namespaces (or (seq (map symbol args))
+                           (some-> *deps* :cljd/opts :main list))
+             :watch (= cmd "watch")))
           "test"
           (let [[nses [delim & dart-test-args]] (split-with (complement #{"--" "++"}) args)
                 nses (map symbol nses)
                 opts-dart-test-args (-> *deps* :cljd/opts :dart-test-args)]
+            (ensure-no-existing!)
             (ensure-test-dev-dep!)
             (test-cli
               :dart-test-args (case delim
@@ -745,6 +960,7 @@
                 flutter-args (if delim flutter-args args)
                 args (if delim args nil)
                 opts-flutter-run-args (-> *deps* :cljd/opts :flutter-run-args)]
+            (ensure-no-existing!)
             (compile-cli
               :namespaces
               (or (seq (map symbol args))

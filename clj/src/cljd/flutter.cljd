@@ -3,9 +3,12 @@
   (:require ["package:flutter/widgets.dart" :as widgets]
             ["package:flutter/material.dart" :as material]
             ["package:flutter/foundation.dart" :as foundation]
+            ["package:flutter/rendering.dart" :as rendering]
             ["dart:async" :as dart:async]
+            ["dart:math" :as dart:math]
             ["dart:ui" :as dart:ui]
-            [cljd.string :as str])
+            [cljd.string :as str]
+            [cljd.flutter.repl-impl :as repl-impl])
   (:host-ns
    (:require [clojure.string :as str])))
 
@@ -226,12 +229,19 @@
                               :whole-form destructuring-form}))))]
     (-> #{} transient (locals destructuring-form) persistent!)))
 
-(defn ^:macro-support value-sym [binding]
+(defn ^:macro-support value-sym [ensured-binding]
   (cond
-    (map? binding) (:as binding)
+    (map? ensured-binding) (:as ensured-binding)
+    (vector? ensured-binding) (peek ensured-binding)
+    (simple-symbol? ensured-binding) ensured-binding))
+
+(defn ^:macro-support ensure-value-sym [binding]
+  (cond
+    (map? binding) (cond-> binding (not (:as binding)) (assoc :as `^::ensured m#))
     (vector? binding)
-    (when (= :as (nth binding (- (count binding) 2) nil))
-      (peek binding))
+    (if (= :as (nth binding (- (count binding) 2) nil))
+      binding
+      (conj binding :as `^::ensured v#))
     (simple-symbol? binding) binding))
 
 (defn ^:macro-support expand-watch
@@ -243,39 +253,32 @@
         value-accessor (:value> opts)
         dispose (if (true? dispose) '.dispose dispose)
         dispose-value (if (true? dispose-value) '.dispose dispose-value)
-        destructured-locals (when-not (symbol? binding)
-                              (destructuring-bound-locals binding))
-        user-vsym (value-sym binding)
-        _ (assert (or destructured-locals user-vsym)
-            "No user provided name for value should only happen with destructuring.")
-        misses-value-sym-for-disposal (and dispose-value (nil? user-vsym))
-        vsym `v#
-        destructured-locals (when destructured-locals
-                              (cond
-                                misses-value-sym-for-disposal
-                                (into [vsym] destructured-locals)
-                                dispose-value
-                                (into [user-vsym] (disj destructured-locals user-vsym))
-                                :else (vec destructured-locals)))
-        [binding-for-value-disposal disposable-value]
-        (when dispose-value
-          (if-some [[disposable-value] destructured-locals]
-            [[disposable-value] disposable-value]
-            [user-vsym user-vsym]))
+        binding (cond-> binding dispose-value ensure-value-sym)
+        vsym (value-sym binding)
+        _ (assert (if dispose-value vsym true)
+            "dispose-value needs a whole value binding")
+        bound-locals (destructuring-bound-locals binding)
+        bound-locals (-> []  ; put the whole value sym first (if any)
+                       (cond-> vsym (conj vsym))
+                       (into  (disj bound-locals vsym)))
+        [first-bound-local & more-bound-locals] bound-locals
+        [pack-sym :as packing-bindings] (when more-bound-locals
+                                          [`pack# bound-locals])
+        new-val-sym (or pack-sym first-bound-local)
+        binding-for-value-disposal (if packing-bindings [vsym] vsym)
         refresh-on (refresh-on-expr opts &env
-                     `[(doto ~expr
+                     [`(doto ~expr
                          ~(or accessor `->)
                          ~(or dispose `->))
-                       (fn [~(or user-vsym vsym)]
-                         (doto ~(or user-vsym vsym)
-                           ~(or value-accessor `->)
-                           ~(or dispose-value `->)))])
+                      (when vsym
+                        `(fn [~vsym]
+                           (doto ~vsym
+                             ~(or value-accessor `->)
+                             ~(or dispose-value `->))))])
         ; destructuring may depend on existing locals (for defaults
         ; or even for key names) so we must take this into account
         destructuring-refresh-on
-        (when destructured-locals
-          (refresh-on-expr nil &env `(fn [~binding]
-                                       ~destructured-locals)))
+        (refresh-on-expr nil &env `(fn [~binding] ~bound-locals))
         refresh-on
         (cond
           (not (and destructuring-refresh-on refresh-on))
@@ -291,37 +294,40 @@
         state `state#
         subscribable `subscribable#
         update-state
-        (let [needs-value-refinement (or accessor value-accessor)
-              dlsym `dlsym#
-              new-val-sym (if destructured-locals dlsym user-vsym)
-              expr
-              `(fn [~(cond
-                       accessor `_#
-                       (or needs-value-refinement misses-value-sym-for-disposal) vsym
-                       :else binding)]
-                 (let [~@(when needs-value-refinement
-                           `[~(if misses-value-sym-for-disposal vsym binding)
-                             (-> ~(if accessor
-                                    `(-> ~subscribable ~accessor)
-                                    vsym)
-                               ~(or value-accessor `->))])
-                       ~@(cond
-                           misses-value-sym-for-disposal
-                           (do
-                             (assert destructured-locals)
-                             `[~binding ~vsym
-                               ~dlsym [~vsym ~@destructured-locals]])
-                           destructured-locals
-                           `[~dlsym ~destructured-locals])]
-                   ~(cond->> `(~state ~new-val-sym)
-                      dispose-value
-                      (list `do `(let [~binding-for-value-disposal (.-latest ~state)]
-                                   (some-> ~disposable-value ~dispose-value)))
-                      (:dedup opts true)
-                      (list `when-not `(= ~new-val-sym (.-latest ~state))))))]
-          (if (= expr `(fn [~binding] (~state ~binding))) ; peephole
-            state
-            expr))
+        (if-not (or (not (symbol? binding)) (:dedup opts true)
+                  accessor value-accessor dispose-value)
+          ; simplest case
+          state
+          ; common case
+          (let [[sym-for-accessor & accessor-bindings]
+                (when (or accessor value-accessor)
+                  `[p#
+                    ~binding
+                    (-> p#
+                      ~(if accessor
+                         `(do (-> ~subscribable ~accessor))
+                         `->)
+                      ~(or value-accessor `->))])
+                ; binding has been destructured, either in accessor-bindings or in the arglist
+                no-equal-for-vsym (if (-> vsym meta ::ensured)
+                                    `(-> next)
+                                    `->)]
+            `(fn [~(or sym-for-accessor binding)]
+               (let [~@accessor-bindings
+                     ~@packing-bindings]
+                 (->>
+                   ~@(->>
+                       [(when (:dedup opts true)
+                          `(when-not (= (-> ~new-val-sym
+                                          ~no-equal-for-vsym)
+                                       (-> (.-latest ~state)
+                                         ~no-equal-for-vsym))))
+                        (when dispose-value
+                          `(do ; the do is to make sure we are not inside this disposing let
+                             (let [~binding-for-value-disposal (.-latest ~state)]
+                               (some-> ~vsym ~dispose-value))))
+                        `(~state ~new-val-sym)]
+                       rseq (remove nil?)))))))
         subscribe-call
         `(let [update# ~update-state
                sub# (-subscribe ~subscribable update#)]
@@ -344,10 +350,11 @@
         (let [state# ^WatchState state#]
           (doto state#
             (.-k! nil)
-            ~@(when dispose-value
-                [`(-> .-latest
-                    (as-> ~binding-for-value-disposal
-                        (some-> ~disposable-value ~dispose-value)))])
+            ~(if dispose-value
+               `(-> .-latest
+                 (as-> ~binding-for-value-disposal
+                     (some-> ~vsym ~dispose-value)))
+               `->)
             (.-latest! nil)
             (-> .-subscribable
               (doto
@@ -357,7 +364,8 @@
             (.-subscription! nil))))
        (~'-build [_# state# ctx#]
         (let [~state ^WatchState state#
-              ~(if destructured-locals (vec destructured-locals) binding) (.-latest ~state)
+              ~(cond-> bound-locals
+                 (not (next bound-locals)) first) (.-latest ~state)
               ~closest-context ctx#
               ~@(when subscribable-binding
                   [subscribable-binding `(dart/type-like (.-subscribable ~state) ~expr)])]
@@ -639,7 +647,7 @@
 
 (defn ^:macro-support expand-bind [env bindings-map forms]
   (assert (map? bindings-map) ":bind expects a map")
-  `(Bind ~(:key env) ~bindings-map (f/widget ~@forms)))
+  `(Bind ~(:key env) ~bindings-map (widget ~@forms)))
 
 (defn ^:macro-support expand-vsync [env name forms]
   `(reify :extends (widgets/StatefulWidget .key ~(:key env))
@@ -1007,6 +1015,39 @@
   [v]
   (GlobalValueKey v))
 
+(defn ^:macro-support expand-repl-point
+  [&env env _ forms]
+  (let [userk (:key env)
+        ksym-or-nil (when userk `k#)]
+    `(let [~@(when ksym-or-nil
+               [ksym-or-nil `(when-not foundation/kDebugMode
+                               ~userk)])
+           child# (-widget-cont ~(assoc env :key ksym-or-nil) ~@forms)]
+       (if foundation/kDebugMode
+         (-widget-cont+ctx ; ensures we have a context and the key is flushed
+           ~env
+           (cond->> child#
+             (get-of ~closest-context ::repl)
+             (ReplPointWidget
+               ~(-> (select-keys (meta (first forms)) [:line :column])
+                  (assoc :ns `'~(-> &env :nses :current-ns)))
+               (fn []
+                 (apply hash-map
+                   ~(tagged-literal 'dart
+                        (into [] (mapcat (fn [x]
+                                           (when (and (simple-symbol? x)
+                                                   #_(re-matches #"\$|[^$]+" (name x)))
+                                             [`'~x x])))
+                          (keys (dissoc &env '_)))))
+                 ; 👇 emits too much code, hence ☝️
+                 #_~(into {}
+                      (keep (fn [x]
+                              (when (and (simple-symbol? x)
+                                      #_(re-matches #"\$|[^$]+" (name x)))
+                                [`'~x x])))
+                      (keys (dissoc &env '_)))))))
+         child#))))
+
 (defn- ^:macro-support expand-directive [&env env k v form & more-forms]
   (let [ksym `k#
         forms (cons form more-forms)]
@@ -1015,6 +1056,7 @@
               (-widget-cont ~(assoc env :key ksym) ~@forms))
       :global-key `(let [~ksym (GlobalValueKey ~v)]
                      (-widget-cont ~(assoc env :key ksym) ~@forms))
+      :-impl-repl-point (expand-repl-point &env env v forms)
       :let `(let ~v (-widget-cont ~env ~@forms))
       :watch
       (if-some [[binding expr & more] (seq v)]
@@ -1057,6 +1099,18 @@
           (expand-animate &env env binding expr opts (list* :animate more forms)))
         `(-widget-cont ~env ~@forms)))))
 
+(defn ^:macro-support ensure-repl-point-after-directives [directive [op :as forms]]
+  (cond->> forms
+    (and (not= :-impl-repl-point directive) (not (keyword? op)) (seq forms))
+    (list* :-impl-repl-point nil)))
+
+(defmacro -widget-cont+ctx
+  "PRIVATE DONT USE"
+  [env & forms]
+  (if (:closest-ctx env)
+    `(-widget-cont ~env ~@forms)
+    (stateless-flush env forms)))
+
 (defmacro -widget-cont
   "PRIVATE DONT USE"
   [env form & more-forms]
@@ -1067,12 +1121,15 @@
          (-widget-cont ~env ~form ~@(drop-last 2 more-forms)
            ~last-maybe-prop
            threaded-in-form#))
-      (simple-keyword? form) (apply expand-directive &env env form more-forms)
+      (simple-keyword? form)
+      (let [[options & more-forms] more-forms]
+        (apply expand-directive &env env form options
+          (ensure-repl-point-after-directives form more-forms)))
       (:key env)
       (stateless-flush env (cons form more-forms))
       (qualified-keyword? form)
       (let [[options & more-forms] more-forms]
-        `(-widget-cont ~env (~(symbol form) ~options) ~@more-forms))
+        `(-widget-cont ~env (~(symbol form) ~options) ~@(ensure-repl-point-after-directives form more-forms)))
       (nil? more-forms) form
       (= '.child form) ; for nested f/widgets ending by a directive
       `(-widget-cont ~env ~@more-forms)
@@ -1113,12 +1170,196 @@
     `(fn ^widgets/Widget [~closest-context ~@argsvec?] (-widget-cont {:closest-ctx true} ~@body))
     `(fn [~closest-context] (-widget-cont {:closest-ctx true} ~argsvec? ~@body))))
 
+(deftype ReplPointWidget [source-loc get-envmap child]
+  :extends (widgets/StatefulWidget)
+  (createState [_]
+    (ReplState {})))
+
+(deftype ReplState [^:mutable m]
+  :extends #/(widgets/State ReplPointWidget)
+  (build [state ctx]
+    (when-not (:*active-state m)
+      (set! m
+        (assoc m :*active-state
+          (if-some [{{:keys [*active-state]} .-m}
+                    (#/(.findAncestorStateOfType ReplState) ctx)]
+            *active-state
+            (when-not (:disabled m) (atom state))))))
+    (or (:child m)
+      (-> state ^ReplPointWidget (.-widget) .-child)))
+  (reassemble [state]
+    #_(assert (not (when (:disabled m) (identical? state @(:*active-state m)))))
+    (.reassemble ^super state)
+    (let [{active-is-mounted .-mounted :as active-state}  ^widgets/State @(:*active-state m)
+          is-active (identical? state active-state)]
+      (assert (or active-is-mounted (not is-active)))
+      (when (or is-active (not active-is-mounted))
+        (when-not active-is-mounted
+          (-> (global-key ::app-root) .-currentContext (peek-of ::repl-impl/hud-enabled)
+            (reset! nil))
+          (reset! (:*active-state m) state))
+        (widgets/WidgetsBinding.instance.addPostFrameCallback
+          (fn [_]
+            (repl-impl/repl-exec))
+          .debugLabel "repl")))))
+
+(def ^:dynamic *-repl-control-* nil)
+
+(defn spawn-repl! [tag]
+  (let [out *out*
+        prval (repl-impl/prefixing-string-sink out (str "[" tag " =)"))
+        prack (repl-impl/prefixing-string-sink out (str "[" tag " !)"))
+        ack! #(.writeln prack ">") ; the trailing > is to pass the regexp in build.clj
+        {:flds [sink stream close]} (dart:async/StreamController .sync true)]
+    (binding [*out* (repl-impl/prefixing-string-sink out (str "[" tag " o)"))
+              *err* (repl-impl/prefixing-string-sink out (str "[" tag " e)"))
+              *print-length* 40
+              *print-level* 6
+              *1 nil
+              *2 nil
+              *3 nil
+              *e nil
+              *st nil
+              *env nil
+              *ns* 'repl.uninitialized
+              *-repl-control-* nil]
+      (println "ClojureDart\n")
+      (println "Use `(pick!)` to toggle the widget picker. The picked widget becomes `*1`.")
+      (println "Use `(mount!)` to replace the picked widget by `*1`.")
+      (println "`*env` contains the lexical scope for the picked widget.\nBuildContext at `(:ctx *env)`.")
+
+      (.forEach stream
+        (fn [[f mode]]
+          (let [prev-ns *ns*]
+            (try
+              (let [r (f)]
+                (set! *3 *2)
+                (set! *2 *1)
+                (set! *1 r)
+                (case mode
+                  :user (binding [*out* prval] (prn r))
+                  :tooling nil))
+              (catch dart:core/Object e# st#
+                     (set! *e e#)
+                     (set! *st st#)
+                     (binding [*out* *err*]
+                       (println "Error: " (or (ex-message e#)
+                                            (:cause e#))))
+                     nil)
+              (finally
+                (case mode
+                  :user (print (str *ns* "=> "))
+                  :tooling (when-not (= *ns* prev-ns)
+                             (print (str "\n" *ns* "=> "))))
+                (.flush ^repl-impl/PrefixingStringSink *out*)
+                (.writeln prack (str *ns*)))))))
+      (set! *-repl-control-*
+        (fn
+          ([] (close))
+          ([f mode] (.add sink [f mode])))))))
+
+(defonce ^:private *repls (atom {}))
+
+(defn dispatch-to-repl! [tag thunk mode]
+  (let [repl (or (@*repls tag)
+               (doto (spawn-repl! tag)
+                 (->> (swap! *repls assoc tag))))]
+    (repl thunk mode)))
+
+(defn repl-hud [child]
+  (widget
+    :managed [*hud-enabled (atom nil) :dispose nil
+              _ (println "[* RDY)_") :dispose nil]
+    (widgets/Stack
+      .alignment widgets/AlignmentGeometry.topLeft
+      .fit widgets/StackFit.expand
+      .children
+      [(widget
+         :bind {::repl-impl/hud-enabled *hud-enabled}
+         :global-key ::app-root
+         child)
+       (widget
+         :watch [set-env *hud-enabled]
+         :when set-env
+         :managed [*hud-state (atom {}) :dispose nil]
+         (widgets/Listener
+           .behavior widgets/HitTestBehavior.opaque
+           .onPointerDown
+           (fn [^widgets/PointerDownEvent e]
+             (let [result (rendering/BoxHitTestResult)]
+               (-> ::app-root
+                 global-key
+                 ^widgets/Element (.-currentContext)
+                 ^rendering/RenderBox (.-renderObject)
+                 (.hitTest result .position (.-position e)))
+               #_(rendering/RendererBinding.instance.hitTest result (.-position e))
+               (when-some [^widgets/Element target
+                           (some (fn [^rendering/HitTestEntry {:flds [target]}]
+                                   (when (instance? rendering/RenderObject target)
+                                     (some->  ^rendering/RenderObject target
+                                       ^widgets/DebugCreator (.-debugCreator)
+                                       .-element)))
+                             (-> result .-path))]
+                 (let [repl-elts #dart ^widgets/StatefulElement []]
+                   (.visitAncestorElements target
+                     (fn [^widgets/Element anc]
+                       (when (and (instance? widgets/StatefulElement anc)
+                               (instance? ReplState (.-state ^widgets/StatefulElement anc)))
+                         (.add repl-elts anc))
+                       true))
+                   (when-some [^ReplState state (some-> repl-elts .-first .-state)]
+                     (set-env state)
+                     (-> state .-m :*active-state (reset! state)))
+                   (swap! *hud-state assoc :repl-elts (-> repl-elts .-reversed vec)))))))
+         ::with-notifier
+         ([*rects nil]
+          :watch [{:keys [repl-elts]} *hud-state]
+          :let [rects (into []
+                        (keep (fn [^widgets/Element {ro .-renderObject}]
+                                (when ro
+                                  (rendering/MatrixUtils.transformRect
+                                    (.getTransformTo ro nil)
+                                    (.-paintBounds ro)))))
+                        repl-elts)]
+          rects)
+         (widgets/CustomPaint
+           .painter
+           (reify :extends
+             (widgets/CustomPainter .repaint *rects)
+             :no-meta true
+             (paint [_ canvas size]
+               (let [{:flds [hue] :as color} (widgets/HSVColor.fromColor (widgets/Color.fromRGBO 255 0 255 0.7))
+                     paint (doto (widgets/Paint)
+                             (.-style! widgets/PaintingStyle.stroke))
+                     min-w 1
+                     max-w 6
+                     rects @*rects
+                     N-1 (dec (count rects))]
+                 (reduce-kv
+                   (fn [_ i rect]
+                     (.drawRect canvas
+                       rect (doto paint
+                              (.-strokeWidth!
+                                (+ min-w (* (- max-w min-w) (dart:math/pow 0.5 (- N-1 i)))))
+                              (.-color! (-> color
+                                          (.withHue (mod (+ hue (* i 41.5)) 360.0))
+                                          .toColor)))))
+                   nil
+                   rects))
+               nil)
+             (shouldRepaint
+                 [this old]
+                 true))))])))
+
 (defmacro run
   "Starts an application, takes a widget body and uses it as the application root widget.
   Hot-reload friendly."
   [& widget-body]
   `(widgets/runApp
-     ~(stateless-flush {} widget-body)))
+     (cond->
+         ~(stateless-flush {}
+            (list* :bind `{::repl foundation/kDebugMode} widget-body))
+       foundation/kDebugMode repl-hud)))
 
 (deftype Cell [^Map subs]
   (subto [self s])
@@ -1333,10 +1574,10 @@
   (let [body (vec body)
         expr (peek body)
         body (pop body)]
-    `(f/widget
-       :managed [notifier# (#/(m/ValueNotifier dynamic) ~init)]
+    `(widget
+       :managed [notifier# (#/(widgets/ValueNotifier dynamic) ~init)]
        :let [~name notifier#]
-       (f/widget
+       (widget
          ~@body
          :let [_ (reset! notifier# ~expr)])
        ~child-prop
@@ -1349,7 +1590,7 @@
   `Canvas.saveLayer`/`restore` when `paint` (and optionally `rect`) is
   provided, or in a `Canvas.save`/`restore` otherwise.
 
-  On exit, transforms and clipping paths are restored.
+  On exit, transforms and clipp paths are restored.
 
   With a `paint`, the offscreen layer is composited back using it.
 

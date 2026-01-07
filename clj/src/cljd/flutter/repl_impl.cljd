@@ -1,0 +1,84 @@
+(ns cljd.flutter.repl-impl
+  (:require
+   ["dart:convert" :as dart:convert]
+   ["package:flutter/widgets.dart" :as widgets]))
+
+(defmacro ^:private warp->> [& body] `(->> ~@(reverse body)))
+
+(deftype PrefixingStringSink [^StringSink sink ^String prefix ^int maxwidth ^StringBuffer buf]
+  PrefixingStringSink
+  (flush [_]
+    (when-not (.-isEmpty buf)
+      (doto sink (.write prefix) (.write "/") (.write buf) (.write "_\n"))
+      (.clear buf))
+    nil)
+  dart:convert/ClosableStringSink
+  (write [_ x]
+    (warp->>
+      (let [s (str x)
+            _ (.write buf s)
+            has-nl (.contains s "\n")
+            is-full (<= maxwidth (.-length buf))])
+      (when (or is-full has-nl))
+      (let [s (.toString buf)] (.clear buf))
+      (loop [i 0 j 0])
+      (when (< i (.-length s)))
+      (let [j (if (< i j) j (.indexOf s "\n" i))
+            j' (min j (+ i maxwidth))
+            has-nl (= j' j)])
+      (if (neg? j) (.write buf (subs s i)))
+      (do
+        (doto sink
+          (.write prefix)
+          (.write (if has-nl " " ">"))
+          (.write (subs s i j'))
+          (.write "_\n")) ; the trailing _ is to prevent trimming
+        (recur (cond-> j' has-nl inc) j)))
+    nil)
+  (writeAll [this xs ... sep ""]
+    (when-some [[x & xs] (seq xs)]
+      (.write this x)
+      (doseq [x xs]
+        (.write this sep)
+        (.write this x)))
+    nil)
+  (writeCharCode [this char-code]
+    (.write this (String/fromCharCode char-code))
+    nil)
+  (writeln [this ... x ""]
+    (doto this
+      (.write x)
+      (.write "\n"))
+    nil)
+  (close [this]
+    (.flush this)
+    nil))
+
+(defn ^PrefixingStringSink prefixing-string-sink [^StringSink sink ^String prefix]
+  (PrefixingStringSink sink prefix
+    (- 80 (count prefix) 2) ; 2 for continuation flag and trailing _
+    (StringBuffer)))
+
+(defcontrib* ReplHackContrib
+  {:contrib/expand
+   (fn [{:keys [contrib/contributions] :as args}]
+     (let [fn-class (some->>
+                      contributions
+                      (sort-by key >)
+                      first second first second)]
+       `(defn ~'repl-exec [] ~(when fn-class `((~fn-class))))))
+   :contrib/type :repl-hack
+   :name ReplHackContrib
+   :ns cljd.flutter.repl-impl})
+
+(defmacro form-exec [form]
+  (let [cname 'FormExec]
+    `(do
+       (deftype ~cname []
+         :type-only true
+         cljd.core/IFn
+         (~'-invoke [_] ~form))
+       ~(list 'contribute* :repl-hack 'cljd.flutter.repl-impl/ReplHackContrib
+          #?(:cljd/clj-host (.toEpochMilli (java.time.Instant/now))
+             :cljd (.-millisecondsSinceEpoch (DateTime/now)))
+          cname))))

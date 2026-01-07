@@ -1,0 +1,64 @@
+(ns cljd.flutter.repl
+  (:require
+   ["dart:async" :as dart:async]
+   ["package:flutter/widgets.dart" :as widgets]
+   [cljd.flutter :as f]
+   [cljd.flutter.repl-impl :as impl]))
+
+(def ^:dynamic ^widgets/BuildContext? *context* nil)
+
+(defn pick!
+  "Toggle widget picker."
+  ([] (pick! :toggle))
+  ([enable-picker]
+   (let [repl-zone dart:async/Zone.current
+         *hub-enabled
+         (-> (f/global-key ::f/app-root) .-currentContext (f/peek-of ::impl/hud-enabled))
+         enable-picker (case enable-picker :toggle (nil? @*hub-enabled) enable-picker)]
+     (println (if enable-picker "Widget picker enabled!" "Widget picker disabled."))
+     (reset! *hub-enabled
+       (when enable-picker
+         (fn [^f/ReplState state]
+           (let [^widgets/Element ctx (.-context state)
+                 ^f/ReplPointWidget {:flds [get_envmap
+                                            source_loc]}
+                 (.-widget ctx)
+                 full-env (get_envmap)
+                 env (into {:ctx ctx
+                            :source-loc source_loc
+                            :full-env full-env}
+                       (remove (fn [[k v]] (.endsWith (name k) "__auto__")))
+                       full-env)
+                 {:keys [line column ns]} source_loc]
+             (.run repl-zone
+               (fn []
+                 (println "; widget picked\n; Repl now at" (str ns ":" line ":" column))
+                 (set! *env env)
+                 (f/*-repl-control-* (fn [] (-> state .-widget .-child)) :user))))))))))
+
+(defn ancestors
+  ([] (some-> *env :ctx ancestors))
+  ([^widgets/Element e]
+   (.debugGetDiagnosticChain e)))
+
+(defn mount!
+  "Replace the current widget (see pick!) by the provided widget (or *1).
+   If nil is passed in, reset to the original widget.
+   Returns the replaced widget."
+  ([] (mount! *1))
+  ([w]
+   (when-not (instance? widgets/Widget? w)
+     (throw (Exception "Only widgets (or nil to reset) can be mounted.")))
+   (pick! false)
+   (when-some [^f/ReplState {active-is-mounted .-mounted  :as active-state}
+               (some-> *env ^widgets/BuildContext (:ctx)
+                 #/(.findAncestorStateOfType f/ReplState)
+                 .-m :*active-state deref)]
+     (when active-is-mounted
+       (let [{old-child :child :as m} (.-m active-state)]
+         (when-not (identical? old-child w)
+           (doto active-state
+             (.-m!
+               (assoc m :child w))
+             (.setState (fn []))))
+         (or old-child (-> active-state .-widget .-child)))))))

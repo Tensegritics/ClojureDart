@@ -14,6 +14,14 @@
             ["dart:isolate" :as dart-isolate]
             ["dart:async" :as dart-async]))
 
+(def ^:dynamic *1 nil)
+(def ^:dynamic *2 nil)
+(def ^:dynamic *3 nil)
+(def ^:dynamic *e nil)
+(def ^:dynamic *env nil)
+(def ^:dynamic *st nil)
+(def ^:dynamic *ns* nil)
+
 (def ^:private sentinel ^:unique (Object.))
 
 (def ^:macro-support  argument-error
@@ -350,7 +358,7 @@
                  (symbol? b) (-> bvec (conj b) (conj v))
                  (vector? b) (pvec bvec b v)
                  (map? b) (pmap bvec b v)
-                 :else (throw (new Exception (str "Unsupported binding form: " b))))))
+                 :else (throw (new Exception (str "Unsupported binding form: " (pr-str b)))))))
         process-entry (fn [bvec b] (pb bvec (first b) (second b)))]
     (if (every? symbol? (map first bents))
       bindings
@@ -424,6 +432,35 @@
 (definterface IProtocol
   (extensions [x])
   (satisfies [x]))
+
+
+(defmacro or
+  "Evaluates exprs one at a time, from left to right. If a form
+  returns a logical true value, or returns that value and doesn't
+  evaluate any of the other expressions, otherwise it returns the
+  value of the last expression. (or) returns nil."
+  {:added "1.0"}
+  ([] nil)
+  ([x] x)
+  ([x & next]
+      `(let [or# ~x]
+         (if or# or# (or ~@next)))))
+
+(defmacro cond
+  "Takes a set of test/expr pairs. It evaluates each test one at a
+  time.  If a test returns logical true, cond evaluates and returns
+  the value of the corresponding expr and doesn't evaluate any of the
+  other tests or exprs. (cond) returns nil."
+  {:added "1.0"}
+  [& clauses]
+    (when clauses
+      (list 'if (first clauses)
+            (if (next clauses)
+                (second clauses)
+                (throw (argument-error
+                         "cond requires an even number of forms")))
+            (cons 'cljd.core/cond (next (next clauses))))))
+
 
 (defprotocol Fn
   "Marker protocol, used to mark multiple/variable arities cljd functions.")
@@ -667,33 +704,6 @@
     `(when-let [xs# (seq ~xs)]
        (let [~x (first xs#)]
          ~@body))))
-
-(defmacro or
-  "Evaluates exprs one at a time, from left to right. If a form
-  returns a logical true value, or returns that value and doesn't
-  evaluate any of the other expressions, otherwise it returns the
-  value of the last expression. (or) returns nil."
-  {:added "1.0"}
-  ([] nil)
-  ([x] x)
-  ([x & next]
-      `(let [or# ~x]
-         (if or# or# (or ~@next)))))
-
-(defmacro cond
-  "Takes a set of test/expr pairs. It evaluates each test one at a
-  time.  If a test returns logical true, cond evaluates and returns
-  the value of the corresponding expr and doesn't evaluate any of the
-  other tests or exprs. (cond) returns nil."
-  {:added "1.0"}
-  [& clauses]
-    (when clauses
-      (list 'if (first clauses)
-            (if (next clauses)
-                (second clauses)
-                (throw (argument-error
-                         "cond requires an even number of forms")))
-            (cons 'cljd.core/cond (next (next clauses))))))
 
 (defmacro cond->
   "Takes an expression and a set of test/form pairs. Threads expr (via ->)
@@ -5064,24 +5074,59 @@
      (if-not (< shift 32)
        ; collision node
        (warp->>
-         (let [n (* 2 (.-cnt b))
-               barr (.-arr b)])
+         (let [bn (* 2 (.-cnt b))
+               an (* 2 cnt)
+               barr (.-arr b)
+               arr  (new-array [:copy arr 0] [:pad bn])])
 
-         (loop [node a ^int i 0])
+         (loop [^int i 0 ^int mn 0 ^int mx an])
 
-         (if (== i n) node)
+         (if (== i mx) (BitmapNode mx 0 0 arr))
 
          (let [kb (aget barr i)
-               vb (aget barr (inc i))
-               ; 0 because hash doesn't matter for collision node's assoc
-               va (.inode_lookup a shift 0 kb a)
-               v (cond->> vb
-                   (not (identical? a va)) (combine va))
-               a (if (identical? del v)
-                   (.inode_without a shift 0 kb)
-                   (.inode_assoc a shift 0 kb v))])
+               i+1 (inc i)
+               vb (aget barr i+1)
+               i+2 (inc i+1)
+               delta
+               (loop [^int j mn]
+                 (cond
+                   (== j mx)
+                   (let [mn+1 (inc mn)
+                         mx+1 (inc mx)]
+                     (doto arr
+                       (aset mx (aget arr mn))
+                       (aset mx+1 (aget arr mn+1))
+                       (aset mn kb)
+                       (aget mn+1 vb))
+                     2)
+                   (= (aget arr j) kb)
+                   (let [j+1 (inc j)
+                         v (if combine
+                             (combine (aget arr j+1) vb)
+                             del)]
+                     (if (identical? del v)
+                       (let [mx-1 (dec mx)
+                             mx-2 (dec mx-1)]
+                         (doto arr
+                           (aset j (aget arr mx-2))
+                           (aset j+1 (aget arr mx-1)))
+                         -2)
+                       (let [mn+1 (inc mn)]
+                         (doto arr
+                           (aset j (aget arr mn))
+                           (aset j+1 (aget arr mn+1))
+                           (aset mn kb)
+                           (aget mn+1 v))
+                         0)))
+                   :else (recur (+ 2 j))))]
+           (when (pos? delta)
+             (doto arr
+               (aset mx (aget arr mn))
+               (aset (inc mx) (aget arr (inc mn)))
+               (aset mn kb)
+               (aset (inc mn) vb))))
 
-         (recur a (+ 2 i))))
+         (recur (+ 2 i) (cond-> mn (pos? delta) (+ delta)) (+ mx delta))))
 
      ; regular node
      (let [barr (.-arr b)
@@ -5412,7 +5457,10 @@
       (vector? o)
       (-assoc! tcoll (-nth o 0) (-nth o 1))
       :else
-      (reduce -conj! tcoll o)))
+      (do
+        #_(assert (or (not (string? o)) (not= "" o))
+          "conj!-ing a string on a map results in a stack verflow")
+        (reduce -conj! tcoll o))))
   (-persistent! [tcoll]
     (when-not editable
       (throw (ArgumentError. "persistent! called twice")))
@@ -7538,6 +7586,7 @@
         nil))))
 
 (def ^:dynamic ^StringSink *out* (print-sink dart:core/print) #_dart-io/stdout)
+(def ^:dynamic ^StringSink *err* (print-sink dart:core/print) #_dart-io/stdout)
 
 (defmacro with-out-str
   "Evaluates exprs in a context in which *out* is bound to a fresh
@@ -8133,7 +8182,7 @@ specified.
            ;; TODO: cast ME to K & V
            (seq (concat [~@(map #(list 'new 'dart:core/MapEntry (keyword %) %) fields)]  ~extmap-sym)))
          'cljd.core/IAssociative
-         (let [v (gensym "val")]
+         (let [v `val#]
            `(~'-assoc [coll# k# ~v]
              (case k#
                ~@(mapcat (fn [fld]
@@ -8160,39 +8209,35 @@ specified.
              (-assoc coll# (-nth o# 0) (-nth o# 1))
              (reduce -conj coll# o#)))
          'cljd.core/IWithMeta
-         (let [meta (gensym "meta")]
-           `(~'-with-meta [o# meta#]
-             (new ~name ~@fields meta# ~extmap-sym ~hash-sym)))
+         `(~'-with-meta [o# meta#]
+           (new ~name ~@fields meta# ~extmap-sym ~hash-sym))
          'cljd.core/IMeta
          `(~'-meta [o#] ~meta-sym)
          'cljd.core/IKVReduce
          `(~'-kv-reduce [coll# f# init#]
            (reduce (fn [ret# [k# v#]] (f# ret# k# v#)) init# coll#))
          (with-meta `dart-coll/MapMixin {:mixin true :type-params '(K V)})
-         (let [coll (gensym "coll")]
-           `(~'entries [~coll]
-             (-> ~(tagged-literal 'dart
-                    ;; TODO: cast ME to K V
-                    (with-meta (into [] (map #(list 'new 'dart:core/MapEntry (keyword %) %) fields))
-                      {:fixed true}))
-               (.followedBy (.-entries ~extmap-sym))
-               ~(with-meta
-                  '.cast {:type-params [(with-meta 'dart:core/MapEntry
-                                         {:type-params '(K V)})]}))))
-         (let [coll (gensym "coll")]
-           `(~(with-meta 'keys {:tag (with-meta 'Iterable {:type-params '(K)})}) [~coll]
+         `(~'entries [coll#]
+           (-> ~(tagged-literal 'dart
+                  ;; TODO: cast ME to K V
+                  (with-meta (into [] (map #(list 'new 'dart:core/MapEntry (keyword %) %) fields))
+                    {:fixed true}))
+             (.followedBy (.-entries ~extmap-sym))
+             ~(with-meta
+                '.cast {:type-params [(with-meta 'dart:core/MapEntry
+                                        {:type-params '(K V)})]})))
+         `(~(with-meta 'keys {:tag (with-meta 'Iterable {:type-params '(K)})}) [coll#]
              (-> ~(tagged-literal 'dart
                     (with-meta (into [] (map keyword) fields)
                       {:fixed true}))
                (.followedBy (.-keys ~extmap-sym))
-               ^{:type-params [~'K]} .cast)))
-         (let [coll (gensym "coll")]
-           `(~'values [~coll]
-             (-> ~(tagged-literal 'dart
-                    (with-meta (vec fields)
-                      {:fixed true}))
-               (.followedBy (.-values ~extmap-sym))
-               ^{:type-params [~'V]} .cast)))
+               ^{:type-params [~'K]} .cast))
+         `(~'values [coll#]
+           (-> ~(tagged-literal 'dart
+                  (with-meta (vec fields)
+                    {:fixed true}))
+             (.followedBy (.-values ~extmap-sym))
+             ^{:type-params [~'V]} .cast))
          `("[]" [coll# k#]
            (-lookup coll# k# nil))
          `("[]=" [coll# key# val#]
@@ -8367,7 +8412,8 @@ specified.
                           :copy (let [[arr from to] args
                                       to (or to `(alength ~arr))]
                                   `(- ~to ~from))
-                          :insert (count args))))
+                          :insert (count args)
+                          :pad (first args))))
            ~dest (.filled #/(List dynamic) size# nil)
            ~pos 0
            ~@(mapcat
@@ -8381,6 +8427,7 @@ specified.
                                        (aset ~dest i# (aget ~arr j#))
                                        (recur (inc i#) (inc j#)))
                                      i#))])
+                  :pad nil
                   :insert
                   (mapcat (fn [arg] `[~pos (do (aset ~dest ~pos ~arg) (inc ~pos))]) args)))
               specs)]
@@ -9487,3 +9534,22 @@ specified.
                  (-> ~sym ~dispose))))))
       `(do ~@body)
       triples)))
+
+(defn -mk-multimethod [mm-name dispatch table default]
+  (let [resolve
+        (fn [dv]
+          (or
+              (table dv)
+              (table default)
+              (throw (ArgumentError.
+                       (str "No method in multimethod `" mm-name "` for dispatch value: "
+                         (pr-str dv))))))]
+    (fn
+      ([] ((resolve (dispatch))))
+      ([a] ((resolve (dispatch a)) a))
+      ([a b] ((resolve (dispatch a b)) a b))
+      ([a b c] ((resolve (dispatch a b c)) a b c))
+      ([a b c d] ((resolve (dispatch a b c d)) a b c d))
+      ([a b c d & rest]
+       (apply (resolve (apply dispatch a b c d rest))
+         a b c d rest)))))
