@@ -17,6 +17,12 @@ How can you help?
 
 We have a [cheatsheet](doc/ClojureDart%20Cheatsheet.pdf) covering ClojureDart specifics on one side and Flutter programming on the other side.
 
+# Conj 2025 talk and repl demo
+
+[Our 2025 progress report](https://www.youtube.com/watch?v=ZLYnOTCRBbg) featuring the repl and maps improvements.
+
+[<img src="https://i.ytimg.com/vi/ZLYnOTCRBbg/maxresdefault.jpg" width="80%">](https://www.youtube.com/watch?v=ZLYnOTCRBbg "ClojureDart talk at Conj 2025")
+
 # Conj 2023 talk and demo
 
 Want to see what's the workflow like? Our talk at Clojure/Conj 2023 is mostly a live-coding session, starting from scratch and assuming no prior knowledge of Dart or Flutter! [Click here or on the image 👇](https://www.youtube.com/watch?v=wbUBb09bUnk)
@@ -27,9 +33,9 @@ Want to see what's the workflow like? Our talk at Clojure/Conj 2023 is mostly a 
 Stop by the [Clojurians #ClojureDart channel](https://clojurians.slack.com/app_redirect?channel=clojuredart) or open an issue.
 
 # Completeness Status
-The two missing big features are:
-- no REPL yet (WIP), but we have excellent hot-reload during UI work to get instant feedback
-- multi-method (WIP)
+
+- REPL: beta, clojure.repl (`doc`, `apropos`...) not ported.
+- multimethods: partial (no hierarchies or type system support).
 
 # Links dump
 
@@ -158,6 +164,29 @@ clj -M:cljd flutter -d D6707352-78D2-46BB-AB95-87355283FC82
 ```
 
 Enjoy! 🧃
+
+# REPL (beta)
+
+After running `clj -M:cljd flutter`, a line like
+
+```
+🤫 ClojureDart REPL listening on port 59268
+```
+
+will appear. Use this port to connect to a socket repl (not nrepl).
+
+You can use `nc localhost 59268` or, in `inferior-lisp` in Emacs by passing it a custom runner (`C-U M-x inferior-lisp`) then `nc localhost 59268`.
+
+In addition to `*1`, `*2`, `*3` and `*e`, there's a `*env` var, only bound after using `cljd.flutter.repl/pick!` (referred by default in `cljd.user`).
+
+`*env` gives you access to all lexical bindings for the selected widget and to its build context, try `(keys *env)` to get an overview.
+
+`cljd.flutter.repl/mount!` (also referred by default in `cljd.user`) replaces the selected widget by its argument and puts the replaced widget in `*1`.
+
+You can change namespaces using `ns` but if the namespace already exists all the requires will be ignored and the sole effect of the ns form will be to switch namespace.
+
+Since the REPL relies on the Dart hot reload mechanism, evaluation can be sometimes laggy. It depends mostly on the namespace you are in and its place in the dependency graph. We are working on improving that.
+
 
 # `cljd.flutter`
 `cljd.flutter` is an utility namespace to remove Flutter boilerplate and integrate more nicely with Clojure.
