@@ -16,4 +16,9 @@
     (is (= (edn/read-string "(+ 1 2)")
            (reader/read-string "(+ 1 2)")))
     (is (= (edn/read-string "{:a #{[1]}}")
-           (reader/read-string "{:a #{[1]}}")))))
+           (reader/read-string "{:a #{[1]}}"))))
+  (testing "Empty/nil returns nil"
+    (is (= (edn/read-string "")
+           nil))
+    (is (= (edn/read-string nil)
+           nil))))
