@@ -15,7 +15,6 @@
 
    Reads data in the edn format (subset of Clojure data):
    http://edn-format.org"
-  [s] 
-  (if (or (empty? s) (nil? s))
-      nil
-      (reader/read-string s)))
+  [s]
+  (when-not (empty? s)
+    (reader/read-string s)))
