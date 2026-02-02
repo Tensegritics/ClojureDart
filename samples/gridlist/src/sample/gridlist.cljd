@@ -4,16 +4,19 @@
    ["package:flutter/material.dart" :as m]
    [cljd.flutter :as f]))
 
+(def gridlist-widget
+  "Reusable grid list widget that can be embedded in any app."
+  (f/widget
+   (m/Scaffold .appBar (m/AppBar .title (m/Text "Grid List")))
+   .body
+   :get {{{:flds [headlineMedium]} .-textTheme} m/Theme}
+   (m/GridView.count .crossAxisCount 2)
+   .children
+   (for [i (range 100)]
+     (m/Center .child (m/Text (str "Item " i) .style headlineMedium)))))
+
 (defn main []
-  (let [title "Grid List"]
-    (m/runApp
-     (f/widget
-      (m/MaterialApp .title title)
-      .home
-      (m/Scaffold .appBar (m/AppBar .title (m/Text title)))
-      .body
-      :get {{{:flds [headline3]} .-textTheme} m/Theme}
-      (m/GridView.count .crossAxisCount 2)
-      .children
-      (for [i (range 100)]
-        (m/Center .child (m/Text (str "Item " i) .style headline3)))))))
+  (m/runApp
+   (f/widget
+    (m/MaterialApp .title "Grid List")
+    .home gridlist-widget)))

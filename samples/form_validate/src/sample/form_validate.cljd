@@ -1,0 +1,32 @@
+(ns sample.form-validate
+  "Faithful port of https://docs.flutter.dev/cookbook/forms/validation"
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]
+            [cljd.string :as str]))
+
+(defn form-validate-widget
+  "Reusable form validation widget that can be embedded in any app."
+  []
+  (let [form-key (#/(m/GlobalKey m/FormState))]
+    (f/widget
+     :get [m/ScaffoldMessenger]
+     (m/Scaffold .appBar (m/AppBar .title (m/Text "Form Validation")))
+     .body
+     (m/Form .key form-key)
+     (m/Padding .padding (m/EdgeInsets.all 16))
+     (m/Column .crossAxisAlignment m/CrossAxisAlignment.start)
+     .children
+     [(m/TextFormField
+       .decoration (m/InputDecoration .labelText "Enter some text")
+       .validator (fn [value] (when (str/blank? value) "Please enter some text")))
+      (m/SizedBox .height 16)
+      (m/ElevatedButton
+       .onPressed #(when (.validate (.-currentState form-key))
+                     (.showSnackBar scaffold-messenger (m/SnackBar .content (m/Text "Processing Data")))
+                     nil)
+       .child (m/Text "Submit"))])))
+
+(defn main []
+  (f/run
+   (m/MaterialApp .title "Form Validation Demo")
+   .home (form-validate-widget)))

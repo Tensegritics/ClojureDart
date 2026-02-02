@@ -1,0 +1,227 @@
+(ns sample.widgetbook
+  "Widgetbook catalog importing all ClojureDart sample widgets"
+  (:require
+    ["package:flutter/material.dart" :as m]
+    ["package:widgetbook/widgetbook.dart" :as wb]
+    [cljd.flutter :as f]
+    [sample.animated-container :as animated-container]
+    [sample.animated-string :as animated-string]
+    [sample.bottom-navigation-bar :as bottom-nav]
+    [sample.counter :as counter]
+    [sample.datatable :as datatable]
+    [sample.drawer :as drawer]
+    [sample.fab :as fab]
+    [sample.fade-widget :as fade-widget]
+    [sample.fetch-data :as fetch-data]
+    [sample.first-flutter-app-codelabs :as codelabs]
+    [sample.fizzbuzz :as fizzbuzz]
+    [sample.form-validate :as form-validate]
+    [sample.form-retrieve-input :as form-retrieve]
+    [sample.form-handle-change :as form-handle]
+    [sample.gesture-detector :as gesture]
+    [sample.gridlist :as gridlist]
+    [sample.hero-animations :as hero]
+    [sample.isolates :as isolates]
+    [sample.keep-alive :as keep-alive]
+    [sample.navigate-named-routes :as named-routes]
+    [sample.navigation :as navigation]
+    [sample.physics-sim :as physics]
+    [sample.scoped-watch :as scoped-watch]
+    [sample.shopper :as shopper]
+    [sample.snackbar :as snackbar]
+    [sample.tabs :as tabs]
+    [sample.two-counters :as two-counters]
+    [sample.video-player :as video-player]
+    [samples.widget :as widget-test]))
+
+;; ============================================================================
+;; Generic Widgetbook Component Helper
+;; ============================================================================
+
+(defn make-component
+  "Creates a WidgetbookComponent from a map with :name and :use-cases.
+   Each use-case is a map with :name and :widget (or :builder fn)."
+  [{:keys [name use-cases]}]
+  (wb/WidgetbookComponent
+    .name name
+    .useCases (mapv (fn [{uc-name :name widget :widget builder :builder}]
+                      (wb/WidgetbookUseCase
+                        .name uc-name
+                        .builder (or builder (fn [_] widget))))
+                    use-cases)))
+
+(defn make-category
+  "Creates a WidgetbookCategory from a map with :name and :components."
+  [{:keys [name components]}]
+  (wb/WidgetbookCategory
+    .name name
+    .children (mapv make-component components)))
+
+;; ============================================================================
+;; Component Definitions (Data-driven)
+;; ============================================================================
+
+(def widget-catalog
+  [{:name "Animations"
+    :components
+    [{:name      "AnimatedContainer"
+      :use-cases [{:name   "Default"
+                   :widget animated-container/animated-container}]}
+     {:name      "AnimatedString"
+      :use-cases [{:name   "Default"
+                   :widget animated-string/animated-text}]}
+     {:name      "FadeWidget"
+      :use-cases [{:name    "Default"
+                   :builder (fn [_] (fade-widget/my-home-page "Opacity Demo"))}]}
+     {:name      "PhysicsSimulation"
+      :use-cases [{:name   "DraggableCard"
+                   :widget physics/physics-card-demo}]}
+     {:name      "HeroAnimations"
+      :use-cases [{:name   "Default"
+                   :widget hero/main-screen}]}]}
+
+   {:name "Basic Widgets"
+    :components
+    [{:name      "Counter"
+      :use-cases [{:name    "Default"
+                   :builder (fn [_] (counter/counter-widget))}]}
+     {:name      "TwoCounters"
+      :use-cases [{:name    "Default"
+                   :builder (fn [_]
+                              (let [st {:left  0
+                                        :right 0}]
+                                (f/widget
+                                  :bind {:counters (atom st)}
+                                  two-counters/home)))}]}
+     {:name      "Snackbar"
+      :use-cases [{:name    "Default"
+                   :builder (fn [_]
+                              (m/Scaffold
+                                .appBar (m/AppBar
+                                          .title (m/Text "Snackbar Demo"))
+                                .body snackbar/snackbar-demo))}]}
+     {:name      "WidgetTest"
+      :use-cases [{:name    "Default"
+                   :builder (fn [_] (widget-test/my-widget "Widget Test" "Hello!"))}]}]}
+   {:name "Navigation"
+    :components
+    [{:name      "Tabs"
+      :use-cases [{:name   "Default"
+                   :widget tabs/tabs-widget}]}
+     {:name      "BottomNavigationBar"
+      :use-cases [{:name    "Default"
+                   :builder (fn [_]
+                              (bottom-nav/bottom-nav-widget))}]}
+     {:name      "Drawer"
+      :use-cases [{:name    "Default"
+                   :builder (fn [_]
+                              (drawer/my-home-page "Drawer Demo"))}]}
+     {:name      "BasicNavigation"
+      :use-cases [{:name   "Default"
+                   :widget navigation/first-route}]}
+     {:name      "NamedRoutes"
+      :use-cases [{:name    "FirstScreen"
+                   :builder (fn [ctx]
+                              (named-routes/first-screen ctx))}
+                  {:name    "SecondScreen"
+                   :builder (fn [ctx]
+                              (named-routes/second-screen ctx))}]}]}
+   {:name "Data Display"
+    :components
+    [{:name      "DataTable"
+      :use-cases [{:name "Default"
+                   :widget datatable/demo}]}
+     {:name      "GridList"
+      :use-cases [{:name "Default"
+                   :widget gridlist/gridlist-widget}]}
+     {:name      "FetchData"
+      :use-cases [{:name "Default"
+                   :widget fetch-data/fetch-data-widget}]}]}
+   {:name "Forms"
+    :components
+    [{:name      "FormValidation"
+      :use-cases [{:name "Default"
+                   :builder (fn [_]
+                              (form-validate/form-validate-widget))}]}
+     {:name      "FormRetrieveInput"
+      :use-cases [{:name "Default"
+                   :builder (fn [_]
+                              (form-retrieve/form-retrieve-input-widget))}]}
+     {:name      "FormHandleChange"
+      :use-cases [{:name "Default"
+                   :widget form-handle/form-handle-change-widget}]}]}
+
+   {:name "Gestures & Custom Paint"
+    :components
+    [{:name      "GestureDetector"
+      :use-cases [{:name    "Parallelogram"
+                   :builder (fn [_]
+                              (m/Scaffold
+                                .appBar (m/AppBar .title (m/Text "Gesture Detector"))
+                                .body gesture/gesture-parallelogram))}]}]}
+
+   {:name "State Management"
+    :components
+    [{:name      "ScopedWatch"
+      :use-cases [{:name "Default"
+                   :builder (fn [_]
+                              (scoped-watch/scoped-watch-widget))}]}
+     {:name      "KeepAlive"
+      :use-cases [{:name "Default"
+                   :widget keep-alive/keep-alive-widget}]}]}
+
+   {:name "Advanced Components"
+    :components
+    [{:name      "ExpandableFAB"
+      :use-cases [{:name "Default"
+                   :widget fab/example-expandable-fab}]}
+     {:name      "Shopper"
+      :use-cases [{:name "Catalog"
+                   :widget shopper/catalog}
+                  {:name "Cart"
+                   :widget shopper/my-cart}]}
+     {:name      "Isolates"
+      :use-cases [{:name    "Default"
+                   :builder (fn [_]
+                              (m/Scaffold
+                                .appBar (m/AppBar .title (m/Text "Isolates Demo"))
+                                .body isolates/isolate-ui))}]}]}
+
+   {:name "Streams"
+    :components
+    [{:name      "FizzBuzz"
+      :use-cases [{:name "Default"
+                   :widget fizzbuzz/fizzbuzz-widget}]}]}
+
+   {:name "Media"
+    :components
+    [{:name      "VideoPlayer"
+      :use-cases [{:name "Default"
+                   :widget video-player/video-player-widget}]}]}
+
+   {:name "Tutorial Apps"
+    :components
+    [{:name      "FirstFlutterApp"
+      :use-cases [{:name "GeneratorPage"
+                   :widget codelabs/generator-page}
+                  {:name "FavoritesPage"
+                   :widget codelabs/favorites-page}]}]}])
+
+;; ============================================================================
+;; Widgetbook Main
+;; ============================================================================
+(defn main []
+  (m/runApp
+    (wb/Widgetbook.material
+      .directories (mapv make-category widget-catalog)
+      .addons
+      [(wb/MaterialThemeAddon
+         .themes
+         [(#/(wb/WidgetbookTheme m/ThemeData) .name "Light" .data (m/ThemeData.light))
+          (#/(wb/WidgetbookTheme m/ThemeData) .name "Dark" .data (m/ThemeData.dark))
+          (#/(wb/WidgetbookTheme m/ThemeData) .name "Shopper" .data shopper/theme)])
+       (wb/DeviceFrameAddon
+         .devices
+         [wb/Devices.ios.iPhone13
+          wb/Devices.ios.iPad
+          wb/Devices.android.samsungGalaxyS20])])))

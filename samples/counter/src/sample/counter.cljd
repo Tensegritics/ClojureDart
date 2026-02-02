@@ -4,27 +4,32 @@
    ["package:flutter/material.dart" :as m]
    [cljd.flutter :as f]))
 
-(defn main []
+(defn counter-widget
+  "Reusable counter widget that can be embedded in any app."
+  []
   (let [counter (atom 0)]
-    (f/run
-      (m/MaterialApp
-        .title "Cljd Demo"
-        .theme (m/ThemeData .primarySwatch m/Colors.blue))
-      .home
-      (m/Scaffold
-        .appBar (m/AppBar .title (m/Text "ClojureDart Home Page"))
-        .floatingActionButton
-        (f/widget
-          (m/FloatingActionButton
-            .onPressed #(swap! counter inc)
-            .tooltip "Increment")
-          (m/Icon m/Icons.add)))
-      .body
-      m/Center
-      (m/Column .mainAxisAlignment m/MainAxisAlignment.center)
-      .children
-      [(m/Text "You have pushed the button this many times:")
-       (f/widget
-         :get {{{:flds [displayLarge]} .-textTheme} m/Theme}
-         :watch [N counter]
-         (m/Text (str N) .style displayLarge))])))
+    (f/widget
+     (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Counter Demo"))
+      .floatingActionButton
+      (f/widget
+       (m/FloatingActionButton
+        .onPressed #(swap! counter inc)
+        .tooltip "Increment")
+       (m/Icon m/Icons.add)))
+     .body
+     m/Center
+     (m/Column .mainAxisAlignment m/MainAxisAlignment.center)
+     .children
+     [(m/Text "You have pushed the button this many times:")
+      (f/widget
+       :get {{{:flds [displayLarge]} .-textTheme} m/Theme}
+       :watch [N counter]
+       (m/Text (str N) .style displayLarge))])))
+
+(defn main []
+  (f/run
+   (m/MaterialApp
+    .title "Cljd Demo"
+    .theme (m/ThemeData .primarySwatch m/Colors.blue))
+   .home (counter-widget)))

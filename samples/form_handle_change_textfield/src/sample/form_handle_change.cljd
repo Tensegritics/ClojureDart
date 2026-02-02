@@ -1,0 +1,28 @@
+(ns sample.form-handle-change
+  "Faithful port of https://docs.flutter.dev/cookbook/forms/text-field-changes"
+  (:require ["package:flutter/material.dart" :as m]
+            [cljd.flutter :as f]))
+
+(def form-handle-change-widget
+  "Reusable form handle change widget that can be embedded in any app."
+  (f/widget
+   (m/Scaffold .appBar (m/AppBar .title (m/Text "Handle Text Changes")))
+   .body
+   (m/Padding .padding (m/EdgeInsets.all 16.0))
+   :managed [text-controller (m/TextEditingController)]
+   :bg-watcher ([^m/TextEditingValue {second-input-text .-text} text-controller]
+                (dart:core/print (str "Second text field: " second-input-text)))
+   m/Column
+   .children
+   [(m/TextField
+     .decoration (m/InputDecoration .labelText "First field (onChanged)")
+     .onChanged (fn [text] (dart:core/print (str "First text field: " text))))
+    (m/SizedBox .height 16)
+    (m/TextField
+     .decoration (m/InputDecoration .labelText "Second field (controller)")
+     .controller text-controller)]))
+
+(defn main []
+  (f/run
+   (m/MaterialApp .title "Handle Text Changes")
+   .home form-handle-change-widget))

@@ -4,36 +4,37 @@
    ["package:flutter/material.dart" :as m]
    [cljd.flutter :as f]))
 
-(defn main []
+(defn scoped-watch-widget
+  "Reusable scoped watch demo widget that can be embedded in any app."
+  []
   (let [flip (atom false)]
-    (f/run
-      (m/MaterialApp
-        .title "Cljd Demo"
-        .theme (m/ThemeData .primarySwatch m/Colors.blue))
-      .home
-      (m/Scaffold
-        .appBar (m/AppBar .title (m/Text "ClojureDart Home Page"))
-        .floatingActionButton
-        (f/widget
-          (m/FloatingActionButton
-            .onPressed #(swap! flip not)
-            .tooltip "Flip color")
-          (m/Icon m/Icons.add)))
-      .body
-      m/Row
-      .children
-      [(f/widget
-         m/Expanded
-         :watch [is-flipped flip]
-         :color (if is-flipped m/Colors.blue m/Colors.green)
-         m/Center
-         :let [_ (prn 'flat)]
-         (m/Text "I shouldn't rebuild when flip changes"))
+    (f/widget
+     (m/Scaffold
+      .appBar (m/AppBar .title (m/Text "Scoped Watch Demo"))
+      .floatingActionButton
+      (f/widget
+       (m/FloatingActionButton .onPressed #(swap! flip not) .tooltip "Flip color")
+       (m/Icon m/Icons.swap_horiz)))
+     .body
+     m/Row
+     .children
+     [(f/widget
+       m/Expanded
+       :watch [is-flipped flip]
+       :color (if is-flipped m/Colors.blue m/Colors.green)
+       m/Center
+       (m/Text "Flat watch\n(rebuilds container)" .textAlign m/TextAlign.center))
+      (f/widget
+       m/Expanded
        (f/widget
-         m/Expanded
-         (f/widget
-           :watch [is-flipped flip]
-           :color (if is-flipped m/Colors.blue m/Colors.green))
-         m/Center
-         :let [_ (prn 'scoped)]
-         (m/Text "I shouldn't rebuild when flip changes"))])))
+        :watch [is-flipped flip]
+        :color (if is-flipped m/Colors.blue m/Colors.green))
+       m/Center
+       (m/Text "Scoped watch\n(only color rebuilds)" .textAlign m/TextAlign.center))])))
+
+(defn main []
+  (f/run
+   (m/MaterialApp
+    .title "Scoped Watch Demo"
+    .theme (m/ThemeData .primarySwatch m/Colors.blue))
+   .home (scoped-watch-widget)))
