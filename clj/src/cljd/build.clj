@@ -435,7 +435,7 @@
               ; - flush (end of line is not part of the ouput and the output must be flushed)
               ; - multiline (end of line is not part of the ouput and the output should not
               ;   be flushed)
-              (re-matches #".*?flutter.*?: \[([^ )]+) ([^)]*)\)(?:([>/ ])(.*))?_" line)]
+              (re-matches #".*?(?:flutter.*?: )?\[([^ )]+) ([^)]*)\)(?:([>/ ])(.*))?_" line)]
     {:repltag repltag :mode mode :cont (or cont " ") :text (or text "")}))
 
 (defn compile-cli
