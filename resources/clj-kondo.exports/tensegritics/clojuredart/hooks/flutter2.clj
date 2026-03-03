@@ -102,7 +102,9 @@
              :value v}
             (conj aggr
                   [k (let [node (api/list-node
-                                 (list (api/token-node 'deref) v))]
+                                 (list (if (nil? (api/sexpr v))
+                                         (api/token-node nil)
+                                         (api/token-node 'deref)) v))]
                        (with-meta node (meta v)))])))
          aggr)))))
 
