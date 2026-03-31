@@ -144,7 +144,7 @@
                  dir (.directory (io/file dir))))
         os-is-windows (.startsWith (System/getProperty "os.name") "Windows")
         path (if os-is-windows
-               (or (-> pb .environment (get "Path")) (-> pb .environment (get "PATH")))
+               (-> pb .environment (select-keys ["Path" "PATH" "path"]) vals first)
                (-> pb .environment (get "PATH")))
         bins (if os-is-windows [(str bin ".exe") (str bin ".bat")] [bin])
         full-bin
