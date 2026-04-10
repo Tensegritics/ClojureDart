@@ -1,0 +1,36 @@
+{:paths ["src"
+         ;; All sample sources
+         "../animated_container/src"
+         "../animated_string/src"
+         "../bottom_navigation_bar/src"
+         "../counter/src"
+         "../datatable/src"
+         "../drawer/src"
+         "../drawer_navigate_named/src"
+         "../fab/src"
+         "../fade_widget/src"
+         "../fetch-data/src"
+         "../first_flutter_app_codelabs/src"
+         "../fizzbuzz/src"
+         "../form_validate/src"
+         "../form_retrieve_input/src"
+         "../form_handle_change_textfield/src"
+         "../gesture_detector/src"
+         "../gridlist/src"
+         "../hero_animations/src"
+         "../isolates/src"
+         "../keep_alive/src"
+         "../navigate_named_routes/src"
+         "../navigation/src"
+         "../physics_simulation/src"
+         "../scoped_watch/src"
+         "../shopper/src"
+         "../snackbar/src"
+         "../tabs/src"
+         "../twocounters/src"
+         "../video_player/src"
+         "../widget_tests/src"]
+ :deps {tensegritics/clojuredart {:local/root "../../"}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :cljd/opts {:main sample.widgetbook
+             :kind :flutter}}

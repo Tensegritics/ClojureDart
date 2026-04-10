@@ -1279,7 +1279,7 @@
     :managed [*hud-enabled (atom nil) :dispose nil
               _ (println "[* RDY)_") :dispose nil]
     (widgets/Stack
-      .alignment widgets/AlignmentGeometry.topLeft
+      .alignment widgets/Alignment.topLeft
       .fit widgets/StackFit.expand
       .children
       [(widget

@@ -4,23 +4,26 @@
    ["package:flutter/material.dart" :as m]
    [cljd.flutter :as f]))
 
-(defn main
-  []
-  (let [title "Tabs Demo"]
-    (f/run
-      (m/MaterialApp .title title)
-      .home
-      (m/DefaultTabController .length 3)
-      (m/Scaffold
-        .appBar
-        (m/AppBar
-          .bottom
-          (m/TabBar
-            .tabs [(m/Tab .icon (m/Icon. m/Icons.directions_car)),
-                   (m/Tab .icon (m/Icon. m/Icons.directions_transit)),
-                   (m/Tab .icon (m/Icon. m/Icons.directions_bike))])))
-      .body
-      (m/TabBarView
-        .children [(m/Tab .icon (m/Icon. m/Icons.directions_car)),
-                   (m/Tab .icon (m/Icon. m/Icons.directions_transit)),
-                   (m/Tab .icon (m/Icon. m/Icons.directions_bike))]))))
+(def tabs-widget
+  "Reusable tabs widget that can be embedded in any app."
+  (f/widget
+   (m/DefaultTabController .length 3)
+   (m/Scaffold
+    .appBar
+    (m/AppBar
+     .title (m/Text "Tabs Demo")
+     .bottom
+     (m/TabBar
+      .tabs [(m/Tab .icon (m/Icon. m/Icons.directions_car))
+             (m/Tab .icon (m/Icon. m/Icons.directions_transit))
+             (m/Tab .icon (m/Icon. m/Icons.directions_bike))])))
+   .body
+   (m/TabBarView
+    .children [(m/Center .child (m/Icon m/Icons.directions_car .size 64))
+               (m/Center .child (m/Icon m/Icons.directions_transit .size 64))
+               (m/Center .child (m/Icon m/Icons.directions_bike .size 64))])))
+
+(defn main []
+  (f/run
+   (m/MaterialApp .title "Tabs Demo")
+   .home tabs-widget))
