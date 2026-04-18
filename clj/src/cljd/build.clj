@@ -255,14 +255,14 @@
                                                 [cljd.flutter.repl :refer [pick! mount!]]
                                                 [cljd.flutter :as f]
                                                 ["package:flutter/material.dart" :as m]))]
-            (locking *compiler-state
-              (let [p (promise)
-                    _ (swap! *repl-states assoc-in [repltag :ack!] #(deliver p %))
-                    _ (eval-to-repl repltag expr-or-throwable *compiler-state trigger-reload p)
-                    str-or-throwable @p]
-                (if (instance? Throwable str-or-throwable)
-                  (throw str-or-throwable)
-                  (set! compiler/*current-ns* (symbol str-or-throwable)))))
+            (let [p (promise)
+                  _ (locking *compiler-state
+                      (swap! *repl-states assoc-in [repltag :ack!] #(deliver p %))
+                      (eval-to-repl repltag expr-or-throwable *compiler-state trigger-reload p))
+                  str-or-throwable @p]
+              (if (instance? Throwable str-or-throwable)
+                (throw str-or-throwable)
+                (set! compiler/*current-ns* (symbol str-or-throwable))))
             (let [x (try
                       (compiler/read {:eof *in* :read-cond :allow :features #{:cljd}} *in*)
                       (catch Throwable t t))]
