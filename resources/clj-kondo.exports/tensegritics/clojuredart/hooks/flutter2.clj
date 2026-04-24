@@ -229,7 +229,7 @@
             nested-body
             (if (and (api/token-node? maybe-prop)
                      (simple-symbol? (sexpr maybe-prop))
-                     (.startsWith (name (sexpr maybe-prop)) "."))
+                     (str/starts-with? (name (sexpr maybe-prop)) "."))
               (list maybe-prop (nest-body followup))
               (list (api/token-node '.child)
                     (nest-body (list* maybe-prop followup))))]
