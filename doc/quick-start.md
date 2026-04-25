@@ -23,8 +23,7 @@ mkdir helloworld
 cd helloworld
 cat << EOF > deps.edn
 {:paths ["src"] ; where your cljd files will live
- :deps {org.clojure/clojure {:mvn/version "1.10.1"}
-        tensegritics/clojuredart
+ :deps {tensegritics/clojuredart
         {:git/url "git@github.com:tensegritics/ClojureDart.git"
          ; or  "https://github.com/tensegritics/ClojureDart.git"
          :sha "81b5c03a55cf52b21dc0be8ccfa4827b9889f488"}}
