@@ -1209,3 +1209,43 @@
       (is (true? @a))
       (reset! $ a))
     (is (false? @@$))))
+
+(deftest testing-hash-jvm-compat
+  ;; reference values from JVM Clojure 1.12.0 (matches CLJS)
+  (testing "keyword"
+    (is (= -2123407586 (hash :a)))
+    (is (=  1482224470 (hash :b)))
+    (is (= -2146297393 (hash :k)))
+    (is (= -1386151538 (hash :foo/bar)))
+    (is (=  1268894036 (hash :foo))))
+  (testing "symbol"
+    (is (=  -482876059 (hash 'a)))
+    (is (= -1172211299 (hash 'b)))
+    (is (= -1172211204 (hash 'a/b)))
+    (is (=   254379989 (hash 'foo/bar))))
+  (testing "non-ASCII names"
+    (is (= 1223535072 (hash :λ/Ω))))
+  (testing "long names exercise the polynomial loop past int32 wraparound"
+    (let [s (apply str (repeat 100 "x"))]
+      (is (= 1441689385 (hash (keyword s))))))
+  (testing "vector of ints unaffected (regression check)"
+    (is (= 736442005 (hash [1 2 3]))))
+  (testing "string hash unaffected (regression check)"
+    ;; (hash s) routes through hash-string which is hash-string* + cache;
+    ;; ensures the new sign-coercion in hash-combine didn't perturb that path.
+    (is (= 1715862179 (hash "hello")))
+    (is (=          0 (hash "")))))
+
+(deftest testing-hash-equality-contract
+  ;; = implies = hash. The defining contract; assert directly.
+  (testing "interning invariance"
+    (is (= (hash :a) (hash (keyword "a"))))
+    (is (= (hash :foo) (hash (keyword nil "foo"))))
+    (is (= (hash :foo/bar) (hash (keyword "foo" "bar"))))
+    (is (= (hash 'a) (hash (symbol "a"))))
+    (is (= (hash 'foo/bar) (hash (symbol "foo" "bar")))))
+  (testing "keyword vs same-name symbol hash distinctly"
+    (is (not= (hash :foo) (hash 'foo)))
+    (is (not= (hash :foo/bar) (hash 'foo/bar))))
+  (testing "keyword-keyed map (transitively asserts element parity)"
+    (is (= 161871944 (hash {:a 1 :b 2})))))

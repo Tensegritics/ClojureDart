@@ -1870,7 +1870,10 @@
                          (zero? idx) (keyword "" (.substring s 1))
                          :else (keyword (.substring s 0 idx) (.substring s (inc idx)))))))
   ([ns name]
-   (Keyword. ns name (hash-combine (if ns (hash-string* ns) 0) (hash-string* name)))))
+   (Keyword. ns name
+     (u32 (+ (hash-combine (m3-hash-unencoded-chars name)
+                            (if ns (string-hashcode* ns) 0))
+             0x9e3779b9)))))
 
 (defn ^bool keyword?
   [x]
@@ -3034,6 +3037,13 @@
    :inline-arities #{1}}
   [x] (.& 0xFFFFFFFF x))
 
+(defn ^int i32
+  ;; Reinterpret the low 32 bits as a signed int32 (in 64-bit Dart int).
+  ;; Inverse of u32. Use for JVM-compatible signed-int32 arithmetic shifts.
+  {:inline (fn [n] `(let [n# ~n] (if (.>= n# 0x80000000) (.- n# 0x100000000) n#)))
+   :inline-arities #{1}}
+  [^int n] (if (>= n 0x80000000) (- n 0x100000000) n))
+
 (defn ^int u32-add
   {:inline (fn [x y] `(u32 (.+ ~(hint-as x `int) ~(hint-as y `int))))
    :inline-arities #{2}}
@@ -3137,7 +3147,7 @@
   (u32 (bit-xor seed
          (+ hash 0x9e3779b9
            (u32-bit-shift-left seed 6)
-           (u32-bit-shift-right seed 2)))))
+           (bit-shift-right (i32 seed) 2)))))
 
 ;;http://hg.openjdk.java.net/jdk7u/jdk7u6/jdk/file/8c2c5d63a17e/src/share/classes/java/lang/String.java
 (defn- ^int hash-string* [^String s]
@@ -3149,10 +3159,20 @@
           (m3-hash-u32 hash)))
       0)))
 
+;; raw String.hashCode polynomial — matches Util/hash (no Murmur finalizer)
+(defn- ^int string-hashcode* [^String s]
+  (let [len (.-length s)]
+    (if (pos? len)
+      (loop [^int i 0 ^int h 0]
+        (if (< i len)
+          (recur (inc i) (u32 (+ (u32-mul 31 h) (.codeUnitAt s i))))
+          h))
+      0)))
+
 (defn- ^int hash-symbol [^Symbol sym]
   (hash-combine
     (m3-hash-unencoded-chars (.-name sym))
-    (hash-string* (or (.-ns sym) ""))))
+    (if-let [ns (.-ns sym)] (string-hashcode* ns) 0)))
 
 (deftype HashCache [^:mutable ^#/(Map dynamic int) young
                     ^:mutable ^#/(Map dynamic int) old]
