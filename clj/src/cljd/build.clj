@@ -439,11 +439,13 @@
     {:repltag repltag :mode mode :cont (or cont " ") :text (or text "")}))
 
 (defn compile-cli
-  [& {:keys [watch namespaces flutter] :or {watch false}}]
+  [& {:keys [watch namespaces flutter offline] :or {watch false}}]
   (let [*repl-states (atom {:cnt 0})
         user-dir (System/getProperty "user.dir")
         analyzer-dir (ensure-cljd-analyzer!)]
-    (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind name) "pub" "get")
+    (if offline
+      (println "Offline mode: No pub dependencies will be updated")
+      (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind name) "pub" "get"))
     (with-taps
       [(fn [x]
          (case (::compiler/msg-kind x)
@@ -823,12 +825,14 @@
                      #_{:short "-p" :long "--path"
                       :doc "Path to the flutter or dart install."}]
            :defaults {:target "flutter"}}
-   "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart."}
+   "compile" {:doc "Compile the specified namespaces (or the main one by default) to dart.\n    Use the --offline option to not fetch dependencies."
+              :options [help-spec {:long "--offline" :id :offline :value true}]}
    "clean" {:doc "When there's something wrong with compilation, erase all ClojureDart build artifacts.\nConsider running flutter clean too."}
    "help" {:doc (:doc help-spec)}
    "test" {:doc "Run specified test namespaces (or all by default)."}
    "upgrade" {:doc "Upgrade cljd to latest version."}
-   "watch" {:doc "Like compile but keep recompiling in response to file updates."}
+   "watch" {:doc "Like compile but keep recompiling in response to file updates.\n    Use the --offline option to not fetch dependencies."
+            :options [help-spec {:long "--offline" :id :offline :value true}]}
    "flutter" {:options false
               :doc "Like watch but hot reload the application in the simulator or device. All options are passed to flutter run."}})
 
@@ -936,6 +940,7 @@
           (do
             (ensure-no-existing!)
             (compile-cli
+             :offline (:offline cmd-opts)
              :namespaces (or (seq (map symbol args))
                            (some-> *deps* :cljd/opts :main list))
              :watch (= cmd "watch")))
