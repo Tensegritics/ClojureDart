@@ -1,89 +1,14 @@
-;   Copyright (c) Rich Hickey. All rights reserved.
-;   The use and distribution terms for this software are covered by the
-;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
-;   which can be found in the file epl-v10.html at the root of this distribution.
-;   By using this software in any fashion, you are agreeing to be bound by
-;   the terms of this license.
-;   You must not remove this notice, or any other, from this software.
-
-;;; ClojureDart port of clojure.spec.alpha (in progress).
-;;;
-;;; This namespace is the public API: it exposes the s/def, s/and, s/or
-;;; macros and re-exports the runtime functions defined in
-;;; cljd.spec.alpha.impl.
-;;;
-;;; The split is necessary because :refer-clojure :exclude [or and ...]
-;;; (needed so we can name our macros after clojure.core fns) collides
-;;; with cljd's defprotocol expansion, which emits unqualified `or`. The
-;;; runtime therefore lives in a sibling ns without the exclusion.
-;;;
-;;; Source of truth for the original implementation:
-;;;   https://github.com/clojure/clojurescript/blob/master/src/main/cljs/cljs/spec/alpha.cljs
-;;;   https://github.com/clojure/clojurescript/blob/master/src/main/cljs/cljs/spec/alpha.cljc
-
 (ns cljd.spec.alpha
-  (:refer-clojure :exclude [+ * and or cat def keys merge])
   (:require [cljd.spec.alpha.impl :as impl]))
 
-;; ---- Re-exports of runtime fns ----
+(defn valid? [spec x] (impl/valid? spec x))
 
-(def ^:dynamic *recursion-limit* impl/*recursion-limit*)
-(def ^:dynamic *coll-check-limit* impl/*coll-check-limit*)
-(def ^:dynamic *coll-error-limit* impl/*coll-error-limit*)
-
-(def spec?       impl/spec?)
-(def regex?      impl/regex?)
-(def invalid?    impl/invalid?)
-(def conform     impl/conform)
-(def unform      impl/unform)
-(def form        impl/form)
-(def abbrev      impl/abbrev)
-(def describe    impl/describe)
-(def with-gen    impl/with-gen)
-(def explain-data  impl/explain-data)
-(def explain-data* impl/explain-data*)
-(def explain     impl/explain)
-(def explain-out impl/explain-out)
-(def explain-str impl/explain-str)
-(def gen         impl/gen)
-(def valid?      impl/valid?)
-(def registry    impl/registry)
-(def get-spec    impl/get-spec)
-
-;; ---- Macros ----
-
-(defn- ^:macro-support res-form
-  "Best-effort resolution of a form to a printable representation.
-  Symbols pass through unchanged for now; TODO: integrate with
-  cljd.compiler/resolve-var to qualify pred names against &env."
-  [_env form]
-  form)
-
-(defmacro def
-  "Given a namespace-qualified keyword k, and a spec, predicate, or
-  registered spec name, makes an entry in the registry mapping k to the
-  spec. Use nil to remove an entry."
+(defmacro def-spec
+  "Registers a spec under k. Note: top-level (s/def-spec ...) calls do
+  not auto-initialize at module load on Dart — call from a function
+  body (e.g. main) until cljd grows eager top-level init for spec."
   [k spec-form]
-  (let [form (res-form &env spec-form)]
-    `(impl/def-impl '~k '~form ~spec-form)))
+  `(impl/def-impl '~k '~spec-form ~spec-form))
 
-(defmacro and
-  "Takes predicate/spec-forms and returns a spec that conforms x by
-  passing it through each predicate in turn."
-  [& pred-forms]
-  `(impl/and-spec-impl
-     '~(mapv #(res-form &env %) pred-forms)
-     ~(vec pred-forms)
-     nil))
-
-(defmacro or
-  "Takes key+pred pairs and returns a destructuring spec returning a
-  [tag conformed-value] tuple for the first matching pred."
-  [& key-pred-forms]
-  (let [pairs (partition 2 key-pred-forms)
-        ks    (mapv first pairs)
-        pred-forms (mapv second pairs)
-        pf    (mapv #(res-form &env %) pred-forms)]
-    (assert (clojure.core/and (even? (count key-pred-forms)) (every? keyword? ks))
-            "spec/or expects k1 p1 k2 p2..., where ks are keywords")
-    `(impl/or-spec-impl ~ks '~pf ~pred-forms nil)))
+(defmacro and-2 [a b]
+  `(impl/and-spec-impl ['~a '~b] [~a ~b] nil))

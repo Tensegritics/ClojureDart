@@ -1,6 +1,11 @@
 (ns sample.spec-alpha-demo
   (:require [cljd.spec.alpha :as s]))
 
+(defn register-specs! []
+  (s/def-spec ::even-int (s/and-2 int? even?)))
+
 (defn main []
-  (println "valid? int? 4 =>" (s/valid? int? 4))
-  (println "valid? int? :x =>" (s/valid? int? :x)))
+  (register-specs!)
+  (println "valid? ::even-int 4 =>" (s/valid? ::even-int 4))
+  (println "valid? ::even-int 5 =>" (s/valid? ::even-int 5))
+  (println "valid? ::even-int :x =>" (s/valid? ::even-int :x)))

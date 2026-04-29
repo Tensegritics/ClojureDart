@@ -70,7 +70,8 @@
   (cond
     (ident? spec) spec
     (regex? spec) (assoc spec :cljd.spec.alpha.impl/name nm)
-    (satisfies? IMeta spec) (with-meta spec (assoc (meta spec) :cljd.spec.alpha.impl/name nm))))
+    (satisfies? IMeta spec) (with-meta spec (assoc (meta spec) :cljd.spec.alpha.impl/name nm))
+    :else spec))
 
 (defn- spec-name [spec]
   (cond
@@ -239,30 +240,6 @@
       (explain* pred path (if-let [nm (spec-name pred)] (conj via nm) via) in v)
       [{:path path :pred form :val v :via via :in in}])))
 
-(defn ^:skip-wiki spec-impl
-  ([form pred gfn cpred?] (spec-impl form pred gfn cpred? nil))
-  ([form pred gfn cpred? unc]
-   (cond
-     (spec? pred) (cond-> pred gfn (with-gen gfn))
-     (regex? pred) (throw (Exception. "regex specs not yet ported in cljd"))
-     (ident? pred) (cond-> (the-spec pred) gfn (with-gen gfn))
-     :else
-     (reify :extends Object
-       Spec
-       (conform* [_ x]
-         (let [ret (pred x)]
-           (if cpred? ret (if ret x :cljd.spec.alpha.impl/invalid))))
-       (unform* [_ x]
-         (if cpred?
-           (if unc (unc x) (throw (Exception. "no unform fn for conformer")))
-           x))
-       (explain* [_ path via in x]
-         (when (invalid? (dt pred x form cpred?))
-           [{:path path :pred form :val x :via via :in in}]))
-       (gen* [_ _ _ _] (throw (Exception. "cljd.spec.alpha/gen: not yet ported")))
-       (with-gen* [_ gfn] (spec-impl form pred gfn cpred? unc))
-       (describe* [_] form)))))
-
 (defn- and-preds [x preds forms]
   (loop [ret x
          [pred & preds] preds
@@ -282,45 +259,76 @@
           (explain-1 form pred path via in ret)
           (recur nret forms preds))))))
 
-(defn ^:skip-wiki and-spec-impl [forms preds gfn]
-  (let [specs (delay (mapv specize preds forms))]
-    (reify :extends Object
-      Spec
-      (conform* [_ x] (and-preds x @specs forms))
-      (unform* [_ x] (reduce #(unform %2 %1) x (reverse @specs)))
-      (explain* [_ path via in x] (explain-pred-list forms @specs path via in x))
-      (gen* [_ _ _ _] (throw (Exception. "cljd.spec.alpha/gen: not yet ported")))
-      (with-gen* [_ gfn] (and-spec-impl forms preds gfn))
-      (describe* [_] (cons 'cljd.spec.alpha/and forms)))))
-
 (defn- tagged-ret [tag ret] [tag ret])
 
+(declare ->PredSpec ->AndSpec ->OrSpec)
+
+(deftype PredSpec [form pred gfn cpred? unc]
+  Spec
+  (conform* [_ x]
+    (let [ret (pred x)]
+      (if cpred? ret (if ret x :cljd.spec.alpha.impl/invalid))))
+  (unform* [_ x]
+    (if cpred?
+      (if unc (unc x) (throw (Exception. "no unform fn for conformer")))
+      x))
+  (explain* [_ path via in x]
+    (when (invalid? (dt pred x form cpred?))
+      [{:path path :pred form :val x :via via :in in}]))
+  (gen* [_ _ _ _] (throw (Exception. "cljd.spec.alpha/gen: not yet ported")))
+  (with-gen* [_ gfn] (->PredSpec form pred gfn cpred? unc))
+  (describe* [_] form))
+
+(defn ^:skip-wiki spec-impl
+  ([form pred gfn cpred?] (spec-impl form pred gfn cpred? nil))
+  ([form pred gfn cpred? unc]
+   (cond
+     (spec? pred) (cond-> pred gfn (with-gen gfn))
+     (regex? pred) (throw (Exception. "regex specs not yet ported in cljd"))
+     (ident? pred) (cond-> (the-spec pred) gfn (with-gen gfn))
+     :else (->PredSpec form pred gfn cpred? unc))))
+
+(deftype AndSpec [forms preds gfn specs-delay]
+  Spec
+  (conform* [_ x] (and-preds x @specs-delay forms))
+  (unform* [_ x] (reduce #(unform %2 %1) x (reverse @specs-delay)))
+  (explain* [_ path via in x] (explain-pred-list forms @specs-delay path via in x))
+  (gen* [_ _ _ _] (throw (Exception. "cljd.spec.alpha/gen: not yet ported")))
+  (with-gen* [_ gfn]
+    (->AndSpec forms preds gfn (delay (mapv specize preds forms))))
+  (describe* [_] (cons 'cljd.spec.alpha/and forms)))
+
+(defn ^:skip-wiki and-spec-impl [forms preds gfn]
+  (->AndSpec forms preds gfn (delay (mapv specize preds forms))))
+
+(deftype OrSpec [ks forms preds gfn specs-delay]
+  Spec
+  (conform* [_ x]
+    (loop [i 0]
+      (if (< i (count @specs-delay))
+        (let [spec (nth @specs-delay i)
+              ret  (conform* spec x)]
+          (if (invalid? ret)
+            (recur (inc i))
+            (tagged-ret (nth ks i) ret)))
+        :cljd.spec.alpha.impl/invalid)))
+  (unform* [_ [k x]]
+    (let [idx (.indexOf ^List ks k)]
+      (unform (nth preds idx) x)))
+  (explain* [this path via in x]
+    (when-not (valid? this x)
+      (apply concat
+             (map (fn [k form pred]
+                    (when-not (valid? (the-spec pred) x)
+                      (explain-1 form pred (conj path k) via in x)))
+                  ks forms preds))))
+  (gen* [_ _ _ _] (throw (Exception. "cljd.spec.alpha/gen: not yet ported")))
+  (with-gen* [_ gfn]
+    (->OrSpec ks forms preds gfn (delay (mapv specize preds forms))))
+  (describe* [_] (cons 'cljd.spec.alpha/or (mapcat vector ks forms))))
+
 (defn ^:skip-wiki or-spec-impl [ks forms preds gfn]
-  (let [kps   (zipmap ks preds)
-        specs (delay (mapv specize preds forms))
-        cform (fn [x]
-                (loop [i 0]
-                  (if (< i (count @specs))
-                    (let [spec (@specs i)
-                          ret  (conform* spec x)]
-                      (if (invalid? ret)
-                        (recur (inc i))
-                        (tagged-ret (ks i) ret)))
-                    :cljd.spec.alpha.impl/invalid)))]
-    (reify :extends Object
-      Spec
-      (conform* [_ x] (cform x))
-      (unform* [_ [k x]] (unform (kps k) x))
-      (explain* [this path via in x]
-        (when-not (valid? this x)
-          (apply concat
-                 (map (fn [k form pred]
-                        (when-not (valid? (the-spec pred) x)
-                          (explain-1 form pred (conj path k) via in x)))
-                      ks forms preds))))
-      (gen* [_ _ _ _] (throw (Exception. "cljd.spec.alpha/gen: not yet ported")))
-      (with-gen* [_ gfn] (or-spec-impl ks forms preds gfn))
-      (describe* [_] (cons 'cljd.spec.alpha/or (mapcat vector ks forms))))))
+  (->OrSpec ks forms preds gfn (delay (mapv specize preds forms))))
 
 ;; TODO: map-spec-impl (s/keys), tuple-impl, every-impl, multi-spec-impl,
 ;; merge-spec-impl, regex-spec-impl, cat-impl, alt-impl, rep-impl, rep+impl,
