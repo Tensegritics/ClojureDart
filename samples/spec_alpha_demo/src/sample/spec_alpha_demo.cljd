@@ -1,14 +1,6 @@
 (ns sample.spec-alpha-demo
   (:require [cljd.spec.alpha :as s]))
 
-(s/def ::even-int (s/and int? even?))
-(s/def ::small (s/or :pos pos-int? :tiny #(< % 10)))
-
 (defn main []
-  (println "valid? ::even-int 4 =>" (s/valid? ::even-int 4))
-  (println "valid? ::even-int 5 =>" (s/valid? ::even-int 5))
-  (println "conform ::even-int 4 =>" (s/conform ::even-int 4))
-  (println "conform ::even-int :foo =>" (s/conform ::even-int :foo))
-  (println "conform ::small 3 =>" (s/conform ::small 3))
-  (println "conform ::small 42 =>" (s/conform ::small 42))
-  (println "explain-data ::even-int 5 =>" (s/explain-data ::even-int 5)))
+  (println "valid? int? 4 =>" (s/valid? int? 4))
+  (println "valid? int? :x =>" (s/valid? int? :x)))
