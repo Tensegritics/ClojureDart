@@ -1,0 +1,6 @@
+name: spec_alpha_demo
+description: cljd.spec.alpha smoke test
+version: 1.0.0
+
+environment:
+  sdk: ^3.0.3

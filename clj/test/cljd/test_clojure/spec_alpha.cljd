@@ -1,0 +1,42 @@
+(ns cljd.test-clojure.spec-alpha
+  (:require [cljd.spec.alpha :as s])
+  (:use [clojure.test :only [deftest is testing]]))
+
+(s/def ::even-int (s/and int? even?))
+(s/def ::pos-or-tiny (s/or :pos pos-int? :tiny #(< % 10)))
+
+(deftest valid?-predicate
+  (is (true?  (s/valid? int? 1)))
+  (is (false? (s/valid? int? "x")))
+  (is (true?  (s/valid? ::even-int 4)))
+  (is (false? (s/valid? ::even-int 5)))
+  (is (false? (s/valid? ::even-int :foo))))
+
+(deftest conform-predicate
+  (is (= 4 (s/conform ::even-int 4)))
+  (is (s/invalid? (s/conform ::even-int 5)))
+  (is (s/invalid? (s/conform ::even-int :foo))))
+
+(deftest unform-and-roundtrip
+  (let [c (s/conform ::even-int 4)]
+    (is (= 4 (s/unform ::even-int c)))))
+
+(deftest or-tagged-conform
+  (is (= [:pos 3]  (s/conform ::pos-or-tiny 3)))
+  (is (= [:tiny -1] (s/conform ::pos-or-tiny -1)))
+  (is (s/invalid? (s/conform ::pos-or-tiny 100))))
+
+(deftest or-unform
+  (is (= 3  (s/unform ::pos-or-tiny [:pos 3])))
+  (is (= -1 (s/unform ::pos-or-tiny [:tiny -1]))))
+
+(deftest explain-data-shape
+  (let [ed (s/explain-data ::even-int 5)]
+    (is (some? ed))
+    (is (contains? ed :cljd.spec.alpha/problems))
+    (is (= 5 (:cljd.spec.alpha/value ed))))
+  (is (nil? (s/explain-data ::even-int 4))))
+
+(deftest registry-roundtrip
+  (is (some? (s/get-spec ::even-int)))
+  (is (contains? (s/registry) ::even-int)))
