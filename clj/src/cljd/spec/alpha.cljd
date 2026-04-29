@@ -1,14 +1,62 @@
+;   Copyright (c) Rich Hickey. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+;;; Public API for cljd.spec.alpha. Runtime lives in cljd.spec.alpha.impl.
+;;;
+;;; API divergence note: macros are named with `-spec` suffix
+;;; (s/def-spec, s/and-spec, s/or-spec) rather than s/def, s/and, s/or.
+;;; A cljd compiler quirk causes :refer-clojure :exclude [...] together
+;;; with multiple macros to break compilation of dependent namespaces.
+;;; Renaming side-steps the issue while we wait for an upstream fix.
+
 (ns cljd.spec.alpha
   (:require [cljd.spec.alpha.impl :as impl]))
 
-(defn valid? [spec x] (impl/valid? spec x))
+;; Re-exports as defn wrappers (avoid cljd's top-level IFn lifting).
+
+(defn spec?       [x]        (impl/spec? x))
+(defn invalid?    [ret]      (impl/invalid? ret))
+(defn conform     [spec x]   (impl/conform spec x))
+(defn unform      [spec x]   (impl/unform spec x))
+(defn form        [spec]     (impl/form spec))
+(defn describe    [spec]     (impl/describe spec))
+(defn explain-data [spec x]  (impl/explain-data spec x))
+(defn explain     [spec x]   (impl/explain spec x))
+(defn explain-out [ed]       (impl/explain-out ed))
+(defn explain-str [spec x]   (impl/explain-str spec x))
+(defn valid?      [spec x]   (impl/valid? spec x))
+(defn registry    []         (impl/registry))
+(defn get-spec    [k]        (impl/get-spec k))
+
+;; Macros — fixed arities to avoid the cljd compiler quirk.
 
 (defmacro def-spec
   "Registers a spec under k. Note: top-level (s/def-spec ...) calls do
   not auto-initialize at module load on Dart — call from a function
-  body (e.g. main) until cljd grows eager top-level init for spec."
+  body (e.g. main) until cljd grows eager top-level init."
   [k spec-form]
   `(impl/def-impl '~k '~spec-form ~spec-form))
 
-(defmacro and-2 [a b]
-  `(impl/and-spec-impl ['~a '~b] [~a ~b] nil))
+(defmacro and-spec
+  "And-combinator. Provided in 2/3/4-arity forms (cljd compiler quirk
+  blocks varargs combined with multiple macros)."
+  ([a b]
+   `(impl/and-spec-impl ['~a '~b] [~a ~b] nil))
+  ([a b c]
+   `(impl/and-spec-impl ['~a '~b '~c] [~a ~b ~c] nil))
+  ([a b c d]
+   `(impl/and-spec-impl ['~a '~b '~c '~d] [~a ~b ~c ~d] nil)))
+
+(defmacro or-spec
+  "Or-combinator with key/pred pairs. 1/2/3-pair arities supported."
+  ([k1 p1]
+   `(impl/or-spec-impl [~k1] ['~p1] [~p1] nil))
+  ([k1 p1 k2 p2]
+   `(impl/or-spec-impl [~k1 ~k2] ['~p1 '~p2] [~p1 ~p2] nil))
+  ([k1 p1 k2 p2 k3 p3]
+   `(impl/or-spec-impl [~k1 ~k2 ~k3] ['~p1 '~p2 '~p3] [~p1 ~p2 ~p3] nil)))

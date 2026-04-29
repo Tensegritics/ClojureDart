@@ -2,10 +2,15 @@
   (:require [cljd.spec.alpha :as s]))
 
 (defn register-specs! []
-  (s/def-spec ::even-int (s/and-2 int? even?)))
+  (s/def-spec ::even-int (s/and-spec int? even?))
+  (s/def-spec ::small (s/or-spec :pos pos-int? :tiny #(< % 10))))
 
 (defn main []
   (register-specs!)
-  (println "valid? ::even-int 4 =>" (s/valid? ::even-int 4))
-  (println "valid? ::even-int 5 =>" (s/valid? ::even-int 5))
-  (println "valid? ::even-int :x =>" (s/valid? ::even-int :x)))
+  (println "valid? ::even-int 4 =>"  (s/valid? ::even-int 4))
+  (println "valid? ::even-int 5 =>"  (s/valid? ::even-int 5))
+  (println "conform ::even-int 4 =>" (s/conform ::even-int 4))
+  (println "conform ::small 3 =>"    (s/conform ::small 3))
+  (println "conform ::small -1 =>"   (s/conform ::small -1))
+  (println "conform ::small 100 =>"  (s/conform ::small 100))
+  (println "explain-data ::even-int 5 =>" (s/explain-data ::even-int 5)))
