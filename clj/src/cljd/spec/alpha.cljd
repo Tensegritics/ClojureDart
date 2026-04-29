@@ -1,0 +1,442 @@
+;   Copyright (c) Rich Hickey. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+;;; ClojureDart port of clojure.spec.alpha (in progress).
+;;;
+;;; Source of truth for the original implementation:
+;;;   https://github.com/clojure/clojurescript/blob/master/src/main/cljs/cljs/spec/alpha.cljs
+;;;   https://github.com/clojure/clojurescript/blob/master/src/main/cljs/cljs/spec/alpha.cljc
+;;;
+;;; First slice ports: registry, Spec protocol, predicate spec-impl,
+;;; valid?, conform, unform, explain-data skeleton, def-impl,
+;;; and-spec-impl, or-spec-impl. Macros: def, and, or.
+;;;
+;;; Not yet ported (see TODOs):
+;;;   - s/keys (map-spec-impl)
+;;;   - regex ops: cat, alt, *, +, ?, &, keys*
+;;;   - tuple, every, coll-of, map-of
+;;;   - multi-spec, fspec, merge, conformer, nilable
+;;;   - exercise / generative testing (blocked on test.check for cljd)
+;;;   - assert / instrument
+
+(ns cljd.spec.alpha
+  (:refer-clojure :exclude [+ * and or cat def keys merge])
+  (:require [clojure.core :as c]
+            [cljd.walk :as walk]))
+
+(c/def ^:dynamic *recursion-limit* 4)
+(c/def ^:dynamic *coll-check-limit* 101)
+(c/def ^:dynamic *coll-error-limit* 20)
+
+(defprotocol Spec
+  (conform* [spec x])
+  (unform* [spec y])
+  (explain* [spec path via in x])
+  (gen* [spec overrides path rmap])
+  (with-gen* [spec gfn])
+  (describe* [spec]))
+
+(defonce ^:private registry-ref (atom {}))
+
+(defn- deep-resolve [reg k]
+  (loop [spec k]
+    (if (ident? spec)
+      (recur (get reg spec))
+      spec)))
+
+(defn- reg-resolve
+  "returns the spec/regex at end of alias chain starting with k, nil if not found, k if k not ident"
+  [k]
+  (if (ident? k)
+    (let [reg @registry-ref
+          spec (get reg k)]
+      (if-not (ident? spec)
+        spec
+        (deep-resolve reg spec)))
+    k))
+
+(defn- reg-resolve!
+  "returns the spec/regex at end of alias chain starting with k, throws if not found, k if k not ident"
+  [k]
+  (if (ident? k)
+    (c/or (reg-resolve k)
+          (throw (Exception. (str "Unable to resolve spec: " k))))
+    k))
+
+(defn spec?
+  "returns x if x is a spec object, else logical false"
+  [x]
+  (when (satisfies? Spec x)
+    x))
+
+(defn regex?
+  "returns x if x is a (cljd.spec.alpha) regex op, else logical false"
+  [x]
+  (c/and (::op x) x))
+
+(defn- with-name [spec nm]
+  (cond
+    (ident? spec) spec
+    (regex? spec) (assoc spec ::name nm)
+    (satisfies? IMeta spec) (with-meta spec (assoc (meta spec) ::name nm))))
+
+(defn- spec-name [spec]
+  (cond
+    (ident? spec) spec
+    (regex? spec) (::name spec)
+    (satisfies? IMeta spec) (-> (meta spec) ::name)))
+
+(declare spec-impl)
+
+(defn- maybe-spec
+  "spec-or-k must be a spec, regex or resolvable kw/sym, else returns nil."
+  [spec-or-k]
+  (let [s (c/or (c/and (ident? spec-or-k) (reg-resolve spec-or-k))
+                (spec? spec-or-k)
+                (regex? spec-or-k)
+                nil)]
+    s))
+
+(defn- the-spec
+  "spec-or-k must be a spec, regex or kw/sym, else returns nil. Throws if unresolvable kw/sym"
+  [spec-or-k]
+  (c/or (maybe-spec spec-or-k)
+        (when (ident? spec-or-k)
+          (throw (Exception. (str "Unable to resolve spec: " spec-or-k))))))
+
+(defprotocol Specize
+  (specize* [_] [_ form]))
+
+(extend-protocol Specize
+  Keyword
+  (specize* ([k] (specize* (reg-resolve! k)))
+            ([k _] (specize* (reg-resolve! k))))
+
+  Symbol
+  (specize* ([s] (specize* (reg-resolve! s)))
+            ([s _] (specize* (reg-resolve! s))))
+
+  ;; TODO: Set specs — cljd Set types differ from cljs.
+  ;; In cljs: PersistentHashSet, PersistentTreeSet, SetLite all dispatch to spec-impl.
+  ;; In cljd, sets are PersistentHashSet (and HashRankedWideTreapSet for sorted).
+
+  fallback
+  (specize*
+    ([o] (spec-impl ::unknown o nil nil))
+    ([o form] (spec-impl form o nil nil))))
+
+(defn- specize
+  ([s] (c/or (spec? s) (specize* s)))
+  ([s form] (c/or (spec? s) (specize* s form))))
+
+(defn invalid?
+  "tests the validity of a conform return value"
+  [ret]
+  (identical? ::invalid ret))
+
+(defn conform
+  "Given a spec and a value, returns :cljd.spec.alpha/invalid if value does
+  not match spec, else the (possibly destructured) value."
+  [spec x]
+  (conform* (specize spec) x))
+
+(defn unform
+  "Given a spec and a value created by or compliant with a call to
+  'conform' with the same spec, returns a value with all conform
+   destructuring undone."
+  [spec x]
+  (unform* (specize spec) x))
+
+(defn form
+  "returns the spec as data"
+  [spec]
+  (describe* (specize spec)))
+
+(defn abbrev [form]
+  (cond
+    (seq? form)
+    (walk/postwalk (fn [form]
+                     (cond
+                       (c/and (symbol? form) (namespace form))
+                       (-> form name symbol)
+
+                       (c/and (seq? form) (= 'fn (first form)) (= '[%] (second form)))
+                       (last form)
+
+                       :else form))
+                   form)
+
+    (c/and (symbol? form) (namespace form))
+    (-> form name symbol)
+
+    :else form))
+
+(defn describe
+  "returns an abbreviated description of the spec as data"
+  [spec]
+  (abbrev (form spec)))
+
+(defn with-gen
+  "Takes a spec and a no-arg, generator-returning fn and returns a version of that spec that uses that generator"
+  [spec gen-fn]
+  (let [spec (reg-resolve spec)]
+    (if (regex? spec)
+      (assoc spec ::gfn gen-fn)
+      (with-gen* (specize spec) gen-fn))))
+
+(defn explain-data* [spec path via in x]
+  (when-let [probs (explain* (specize spec) path via in x)]
+    (when-not (empty? probs)
+      {::problems probs
+       ::spec spec
+       ::value x})))
+
+(defn explain-data
+  "Given a spec and a value x which ought to conform, returns nil if x
+  conforms, else a map describing the problems."
+  [spec x]
+  (explain-data* spec [] (if-let [nm (spec-name spec)] [nm] []) [] x))
+
+(defn explain-out
+  "Default explain output. Prints a simple textual description."
+  [ed]
+  (if ed
+    (doseq [{:keys [path pred val via in] :as prob}
+            (->> (::problems ed)
+                 (sort-by #(- (count (:in %))))
+                 (sort-by #(- (count (:path %)))))]
+      (print val " - failed: " (abbrev pred))
+      (when-not (empty? in)
+        (print " in: " in))
+      (when-not (empty? path)
+        (print " at: " path))
+      (when-not (empty? via)
+        (print " spec: " (last via)))
+      (println))
+    (println "Success!")))
+
+(defn explain
+  "Given a spec and a value that fails to conform, prints an explanation to *out*."
+  [spec x]
+  (explain-out (explain-data spec x)))
+
+(defn explain-str
+  "Given a spec and a value that fails to conform, returns an explanation as a string."
+  [spec x]
+  (with-out-str (explain spec x)))
+
+;; Generation hooks — stubbed until a cljd test.check exists.
+(defn gen
+  "Given a spec, returns a test.check generator for it. Not yet supported in cljd."
+  ([_spec] (throw (Exception. "cljd.spec.alpha/gen: generative testing not yet ported")))
+  ([_spec _overrides] (throw (Exception. "cljd.spec.alpha/gen: generative testing not yet ported"))))
+
+(defn ^:skip-wiki def-impl
+  "Do not call this directly, use 'def'"
+  [k form spec]
+  (c/assert (c/and (ident? k) (namespace k)) "k must be namespaced keyword or resolvable symbol")
+  (let [spec (if (c/or (spec? spec) (regex? spec) (get @registry-ref spec))
+               spec
+               (spec-impl form spec nil nil))]
+    (swap! registry-ref assoc k (with-name spec k))
+    k))
+
+(defn registry
+  "returns the registry map, prefer 'get-spec' to lookup a spec by name"
+  []
+  @registry-ref)
+
+(defn get-spec
+  "Returns spec registered for keyword/symbol/var k, or nil."
+  [k]
+  (get (registry) (if (keyword? k) k k)))
+
+(defn- dt
+  ([pred x form] (dt pred x form nil))
+  ([pred x form cpred?]
+   (if pred
+     (if-let [spec (the-spec pred)]
+       (conform spec x)
+       (if (ifn? pred)
+         (if cpred?
+           (pred x)
+           (if (pred x) x ::invalid))
+         (throw (Exception. (str (pr-str form) " is not a fn, expected predicate fn")))))
+     x)))
+
+(defn valid?
+  "Helper function that returns true when x is valid for spec."
+  ([spec x]
+   (let [spec (specize spec)]
+     (not (invalid? (conform* spec x)))))
+  ([spec x form]
+   (let [spec (specize spec form)]
+     (not (invalid? (conform* spec x))))))
+
+(defn- explain-1 [form pred path via in v]
+  (let [pred (maybe-spec pred)]
+    (if (spec? pred)
+      (explain* pred path (if-let [nm (spec-name pred)] (conj via nm) via) in v)
+      [{:path path :pred form :val v :via via :in in}])))
+
+;; ---- Spec implementations ----
+
+(defn ^:skip-wiki spec-impl
+  "Do not call this directly, use 'spec'"
+  ([form pred gfn cpred?] (spec-impl form pred gfn cpred? nil))
+  ([form pred gfn cpred? unc]
+   (cond
+     (spec? pred) (cond-> pred gfn (with-gen gfn))
+     (regex? pred) (throw (Exception. "regex specs not yet ported in cljd"))
+     (ident? pred) (cond-> (the-spec pred) gfn (with-gen gfn))
+     :else
+     (reify
+       Spec
+       (conform* [_ x]
+         (let [ret (pred x)]
+           (if cpred?
+             ret
+             (if ret x ::invalid))))
+       (unform* [_ x]
+         (if cpred?
+           (if unc
+             (unc x)
+             (throw (Exception. "no unform fn for conformer")))
+           x))
+       (explain* [_ path via in x]
+         (when (invalid? (dt pred x form cpred?))
+           [{:path path :pred form :val x :via via :in in}]))
+       (gen* [_ _ _ _]
+         (throw (Exception. "cljd.spec.alpha/gen: not yet ported")))
+       (with-gen* [_ gfn] (spec-impl form pred gfn cpred? unc))
+       (describe* [_] form)))))
+
+(defn- and-preds [x preds forms]
+  (loop [ret x
+         [pred & preds] preds
+         [form & forms] forms]
+    (if pred
+      (let [nret (dt pred ret form)]
+        (if (invalid? nret)
+          ::invalid
+          (recur nret preds forms)))
+      ret)))
+
+(defn- explain-pred-list [forms preds path via in x]
+  (loop [ret x
+         [form & forms] forms
+         [pred & preds] preds]
+    (when pred
+      (let [nret (dt pred ret form)]
+        (if (invalid? nret)
+          (explain-1 form pred path via in ret)
+          (recur nret forms preds))))))
+
+(defn ^:skip-wiki and-spec-impl
+  "Do not call this directly, use 'and'"
+  [forms preds gfn]
+  (let [specs (delay (mapv specize preds forms))]
+    (reify
+      Spec
+      (conform* [_ x] (and-preds x @specs forms))
+      (unform* [_ x] (reduce #(unform %2 %1) x (reverse @specs)))
+      (explain* [_ path via in x] (explain-pred-list forms @specs path via in x))
+      (gen* [_ _ _ _] (throw (Exception. "cljd.spec.alpha/gen: not yet ported")))
+      (with-gen* [_ gfn] (and-spec-impl forms preds gfn))
+      (describe* [_] `(and ~@forms)))))
+
+(defn- tagged-ret [tag ret] [tag ret])
+
+(defn ^:skip-wiki or-spec-impl
+  "Do not call this directly, use 'or'"
+  [keys forms preds gfn]
+  (let [id (random-uuid)
+        kps (zipmap keys preds)
+        specs (delay (mapv specize preds forms))
+        cform (fn [x]
+                (loop [i 0]
+                  (if (< i (count @specs))
+                    (let [spec (@specs i)
+                          ret (conform* spec x)]
+                      (if (invalid? ret)
+                        (recur (inc i))
+                        (tagged-ret (keys i) ret)))
+                    ::invalid)))]
+    (reify
+      Spec
+      (conform* [_ x] (cform x))
+      (unform* [_ [k x]] (unform (kps k) x))
+      (explain* [this path via in x]
+        (when-not (valid? this x)
+          (apply concat
+                 (map (fn [k form pred]
+                        (when-not (valid? (the-spec pred) x)
+                          (explain-1 form pred (conj path k) via in x)))
+                      keys forms preds))))
+      (gen* [_ _ _ _] (throw (Exception. "cljd.spec.alpha/gen: not yet ported")))
+      (with-gen* [_ gfn] (or-spec-impl keys forms preds gfn))
+      (describe* [_] `(or ~@(mapcat vector keys forms))))))
+
+;; TODO: map-spec-impl (s/keys), tuple-impl, every-impl, multi-spec-impl,
+;; merge-spec-impl, regex-spec-impl, cat-impl, alt-impl, rep-impl, rep+impl,
+;; maybe-impl, amp-impl, fspec-impl, nilable-impl, conformer impl,
+;; exercise, assert*, instrument helpers.
+
+;; ---- Macros ----
+;;
+;; cljd `.cljd` files run macros at compile time on the JVM side, so the
+;; macros live alongside the runtime (same convention as cljd.test).
+;; TODO: integrate symbol resolution with cljd.compiler/resolve-var so
+;; (s/def my-fn ...) qualifies my-fn against the current ns. Today only
+;; the keyword form of s/def is fully supported.
+
+(defn- res-form
+  "Best-effort resolution of a form to a printable representation. Until
+  cljd analyzer integration lands, symbols pass through unchanged."
+  [_env form]
+  (cond
+    (keyword? form) form
+    (symbol? form)  form
+    (sequential? form)
+    (walk/postwalk
+     (fn [x]
+       (if (c/and (seq? x) (symbol? (first x)) (= "fn*" (name (first x))))
+         (let [[[s] & body] (rest x)]
+           (conj (walk/postwalk-replace {s '%} body) '[%] 'clojure.core/fn))
+         x))
+     form)
+    :else form))
+
+(defmacro def
+  "Given a namespace-qualified keyword k, and a spec, predicate, or
+  registered spec name, makes an entry in the registry mapping k to the
+  spec. Use nil to remove an entry."
+  [k spec-form]
+  (let [form (res-form &env spec-form)]
+    `(def-impl '~k '~form ~spec-form)))
+
+(defmacro and
+  "Takes predicate/spec-forms and returns a spec that conforms x by
+  passing it through each predicate in turn."
+  [& pred-forms]
+  `(and-spec-impl
+     '~(mapv #(res-form &env %) pred-forms)
+     ~(vec pred-forms)
+     nil))
+
+(defmacro or
+  "Takes key+pred pairs and returns a destructuring spec returning a
+  [tag conformed-value] pair for the first matching pred."
+  [& key-pred-forms]
+  (let [pairs (partition 2 key-pred-forms)
+        ks    (mapv first pairs)
+        pred-forms (mapv second pairs)
+        pf    (mapv #(res-form &env %) pred-forms)]
+    (c/assert (c/and (even? (count key-pred-forms)) (every? keyword? ks))
+              "spec/or expects k1 p1 k2 p2..., where ks are keywords")
+    `(or-spec-impl ~ks '~pf ~pred-forms nil)))
