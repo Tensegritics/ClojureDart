@@ -8,6 +8,457 @@
 
 (ns ^{:doc "ClojureDart port of clojure.spec.test.alpha."
       :author "Rich Hickey"}
-  cljd.spec.test.alpha)
+  cljd.spec.test.alpha
+  (:require [cljd.spec.alpha :as s]
+            [cljd.spec.alpha.impl :as impl]
+            [cljd.spec.gen.alpha :as gen]))
 
-;; TODO: port from clojurescript src/main/cljs/cljs/spec/test/alpha.cljs
+(def ^:private ^:dynamic *instrument-enabled*
+  "If false, instrumented fns call straight through."
+  true)
+
+(defonce ^:private instrumented-vars (atom {}))
+
+(defn distinct-by
+  ([f coll]
+   (letfn [(step [xs seen]
+             (lazy-seq
+              (when-let [s (seq xs)]
+                (let [x (first s)
+                      v (f x)]
+                  (if (contains? seen v)
+                    (step (rest s) seen)
+                    (cons x (step (rest s) (conj seen v))))))))]
+     (step coll #{}))))
+
+(defn- ^:macro-support collectionize [x]
+  (if (symbol? x) (list x) x))
+
+(defn- fn-spec?
+  "Fn-spec must include at least :args or :ret specs."
+  [m]
+  (or (:args m) (:ret m)))
+
+(defn- fn-spec-name? [x]
+  (symbol? x))
+
+(defn- explain-check [args spec v role]
+  (ex-info
+   "Specification-based check failed"
+   (when-not (s/valid? spec v)
+     (assoc (s/explain-data spec v)
+       :cljd.spec.alpha/args args
+       :cljd.spec.alpha/val v
+       :cljd.spec.alpha/failure :check-failed
+       :cljd.spec.test.alpha/role role))))
+
+(defn- no-fspec [sym spec]
+  (ex-info (str "Fn at " sym " is not spec'ed.")
+           {:var sym :spec spec :cljd.spec.alpha/failure :no-fspec}))
+
+(defn- conform! [sym spec data args]
+  (let [conformed (s/conform spec data)]
+    (if (s/invalid? conformed)
+      (throw
+       (ex-info (str "Call to " sym " did not conform to spec.")
+                (assoc (s/explain-data spec data)
+                  :cljd.spec.alpha/fn sym
+                  :cljd.spec.alpha/args args
+                  :cljd.spec.alpha/failure :instrument)))
+      conformed)))
+
+(defmacro with-instrument-disabled
+  "Disables instrument's checking of calls within body."
+  [& body]
+  `(binding [*instrument-enabled* nil]
+     ~@body))
+
+(defn- spec-checking-fn [sym f fn-spec]
+  (let [fn-spec (or fn-spec (throw (no-fspec sym fn-spec)))
+        args-spec (:args fn-spec)]
+    (if args-spec
+      (fn [& args]
+        (if *instrument-enabled*
+          (with-instrument-disabled
+            (conform! sym args-spec args args)
+            (binding [*instrument-enabled* true]
+              (apply f args)))
+          (apply f args)))
+      f)))
+
+(defn- instrument-choose-fn
+  [f spec sym {:keys [gen stub replace]}]
+  (cond
+    (contains? (set stub) sym)
+    (gen/generate (s/gen spec gen))
+
+    (contains? replace sym)
+    (get replace sym)
+
+    :else f))
+
+(defn- instrument-choose-spec
+  [spec sym {overrides :spec}]
+  (or (get overrides sym) spec))
+
+(defn ^:skip-wiki instrument-1*
+  "Runtime helper for the instrument macro."
+  [sym f opts]
+  (let [spec (s/get-spec sym)]
+    (when (or spec (get-in opts [:spec sym]))
+      (let [{:keys [raw wrapped]} (get @instrumented-vars sym)
+            to-wrap (or raw f)
+            ospec (or (instrument-choose-spec spec sym opts)
+                      (throw (no-fspec sym spec)))
+            ofn (instrument-choose-fn to-wrap ospec sym opts)
+            checked (spec-checking-fn sym ofn ospec)]
+        (swap! instrumented-vars assoc sym {:raw to-wrap :wrapped checked})
+        checked))))
+
+(defn ^:skip-wiki unstrument-1*
+  "Runtime helper for the unstrument macro."
+  [sym]
+  (when-let [{:keys [raw]} (get @instrumented-vars sym)]
+    (swap! instrumented-vars dissoc sym)
+    raw))
+
+(defn instrumentable-syms
+  "Given an opts map as per instrument, returns the set of syms that
+  can be instrumented."
+  ([] (instrumentable-syms nil))
+  ([opts]
+   (assert (every? ident? (keys (:gen opts))) "instrument :gen expects ident keys")
+   (reduce into #{}
+           [(filter fn-spec-name? (keys (s/registry)))
+            (keys (:spec opts))
+            (:stub opts)
+            (keys (:replace opts))])))
+
+(defn instrumentable-redef-syms
+  "Subset of instrumentable-syms whose ^:cljd.spec.alpha/redef
+  getter/setter pair has been registered. Only these are reachable by
+  the runtime instrument fn — typically because s/fdef ran for them in
+  some compilation unit."
+  ([] (instrumentable-redef-syms nil))
+  ([opts]
+   (let [syms (instrumentable-syms opts)]
+     (into #{} (filter #(impl/redef-registered? %)) syms))))
+
+(defn- collectionize-syms
+  "Normalizes input to a flat seq of syms. A namespace symbol (no
+  name part) expands at runtime to every redef-registered sym in that
+  namespace."
+  [sym-or-syms]
+  (cond
+    (nil? sym-or-syms) nil
+    (symbol? sym-or-syms)
+    (if (namespace sym-or-syms)
+      [sym-or-syms]
+      (let [nm (name sym-or-syms)]
+        (filter #(= nm (namespace %)) (impl/redef-registered-syms))))
+    :else
+    (mapcat collectionize-syms sym-or-syms)))
+
+(defn instrument-runtime
+  "Runtime variant of `instrument`. Accepts a qualified symbol, a
+  namespace symbol, or a collection thereof. Looks up each sym's
+  registered ^:cljd.spec.alpha/redef setter in
+  cljd.spec.alpha.impl/redef-setters-ref and installs a checking
+  wrapper. Symbols without a registered setter — i.e. no s/fdef has
+  expanded for them in any loaded compilation unit — are silently
+  skipped. Returns a vector of qualified symbols actually
+  instrumented."
+  ([] (instrument-runtime (instrumentable-redef-syms) nil))
+  ([sym-or-syms] (instrument-runtime sym-or-syms nil))
+  ([sym-or-syms opts]
+   (assert (every? ident? (keys (:gen opts))) "instrument :gen expects ident keys")
+   (vec (keep (fn [sym]
+                (when-let [getter (impl/redef-getter sym)]
+                  (let [setter (impl/redef-setter sym)
+                        f (getter)
+                        wrapper (instrument-1* sym f opts)]
+                    (when wrapper
+                      (setter wrapper)
+                      sym))))
+              (collectionize-syms sym-or-syms)))))
+
+(defn unstrument-runtime
+  "Runtime variant of `unstrument`. Accepts a qualified symbol, a
+  namespace symbol, or a collection thereof. Restores the original
+  value via the registered setter for each currently-instrumented sym
+  and returns a vector of qualified symbols whose instrumentation was
+  removed."
+  ([] (unstrument-runtime (set (keys @instrumented-vars))))
+  ([sym-or-syms]
+   (vec (keep (fn [sym]
+                (when-let [setter (impl/redef-setter sym)]
+                  (when-let [raw (unstrument-1* sym)]
+                    (setter raw)
+                    sym)))
+              (collectionize-syms sym-or-syms)))))
+
+(defn- ^:macro-support quoted-form [form]
+  (if (and (seq? form) (= 'quote (first form)))
+    (second form)
+    form))
+
+(defn- ^:macro-support qualify-symbol [env sym]
+  (if (namespace sym)
+    sym
+    (if-let [current-ns (get-in env [:nses :current-ns])]
+      (symbol (str current-ns) (name sym))
+      sym)))
+
+(defn- ^:macro-support namespace-sym? [env sym]
+  (and (symbol? sym)
+       (nil? (namespace sym))
+       (contains? (:nses env) sym)))
+
+(defn- ^:macro-support namespace-def-syms [env ns-sym]
+  (into []
+        (keep (fn [[name-sym info]]
+                (when (and (symbol? name-sym)
+                           (map? info)
+                           (= ns-sym (:ns info)))
+                  (symbol (name ns-sym) (name name-sym)))))
+        (get-in env [:nses ns-sym])))
+
+(defn- ^:macro-support enumerate-namespace* [env ns-sym-or-syms]
+  (into #{}
+        (mapcat #(namespace-def-syms env %))
+        (collectionize ns-sym-or-syms)))
+
+(defn- ^:macro-support speced-syms []
+  (set (map #(with-meta % nil) (s/speced-vars))))
+
+(defn- ^:macro-support accessible-sym? [env sym]
+  (let [sym-ns (some-> (namespace sym) symbol)
+        current-ns (get-in env [:nses :current-ns])
+        current-ns-map (get-in env [:nses current-ns])
+        sym-lib (get-in env [:nses sym-ns :lib])]
+    (or (= sym-ns current-ns)
+        (and sym-lib (contains? (:imports current-ns-map) sym-lib)))))
+
+(defn- ^:macro-support accessible-speced-syms [env]
+  (vec (sort-by str (filter #(accessible-sym? env %) (speced-syms)))))
+
+(defn- ^:macro-support expand-form-sym [env sym]
+  (if (namespace-sym? env sym)
+    (namespace-def-syms env sym)
+    [(qualify-symbol env sym)]))
+
+(defn- ^:macro-support resolve-def-info
+  "Looks up a (possibly qualified) symbol's def info in the analyzer
+  state attached to env. Returns the info map or nil."
+  [env sym]
+  (let [{:keys [libs] :as nses} (:nses env)
+        current-ns-sym (:current-ns nses)
+        {:keys [mappings] :as current-ns} (nses current-ns-sym)]
+    (when-not (env sym)
+      (or (current-ns sym)
+        (if-some [v (mappings sym)]
+          (recur env v)
+          (let [sym-ns (namespace sym)]
+            (some-> sym-ns symbol nses (get (symbol (name sym))))))))))
+
+(defn- ^:macro-support redef? [env sym]
+  (-> (resolve-def-info env sym) :cljd.spec.alpha/redef? boolean))
+
+(defn- ^:macro-support form-syms [env form]
+  (let [x (quoted-form form)
+        xs (if (symbol? x) [x] (vec x))]
+    (vec (distinct (mapcat #(expand-form-sym env %) xs)))))
+
+(defn- ^:macro-support explicit-syms
+  "Returns only the syms explicitly named at the call site — any
+  namespace-symbol entries in `form` are dropped. Used so that the
+  instrument/unstrument warning fires for explicit non-redef syms only,
+  not for namespace expansions where silent skipping is expected."
+  [env form]
+  (let [x (quoted-form form)
+        xs (if (symbol? x) [x] (vec x))]
+    (vec (distinct (keep (fn [sym]
+                           (when-not (namespace-sym? env sym)
+                             (qualify-symbol env sym)))
+                         xs)))))
+
+(defn- ^:macro-support check-form-syms [env form]
+  (let [x (quoted-form form)
+        xs (if (symbol? x) [x] (vec x))
+        speced (speced-syms)]
+    (vec
+     (distinct
+      (mapcat (fn [sym]
+                (if (namespace-sym? env sym)
+                  (filter #(contains? speced %) (namespace-def-syms env sym))
+                  [(qualify-symbol env sym)]))
+              xs)))))
+
+(defmacro instrument
+  "Instruments the redef-registered ^:cljd.spec.alpha/redef defs named
+  by sym-or-syms. Accepts a qualified symbol, a namespace symbol (no
+  name part) which expands to every redef-registered sym in that ns,
+  or a collection of those — including a runtime-bound one. A def is
+  reachable here once an s/fdef for it has expanded in some loaded
+  compilation unit. Returns a vector of qualified symbols
+  instrumented."
+  ([] `(instrument-runtime))
+  ([sym-or-syms] `(instrument-runtime ~sym-or-syms))
+  ([sym-or-syms opts] `(instrument-runtime ~sym-or-syms ~opts)))
+
+(defmacro unstrument
+  "Removes instrumentation from the named symbols. See instrument
+  for accepted shapes."
+  ([] `(unstrument-runtime))
+  ([sym-or-syms] `(unstrument-runtime ~sym-or-syms)))
+
+(defn- check-call
+  "Returns true if call passes specs, otherwise returns an exception
+  with explain-data."
+  [f specs args]
+  (let [cargs (when (:args specs) (s/conform (:args specs) args))]
+    (if (s/invalid? cargs)
+      (explain-check args (:args specs) args :args)
+      (try
+        (let [ret (apply f args)
+              cret (when (:ret specs) (s/conform (:ret specs) ret))]
+          (if (s/invalid? cret)
+            (explain-check args (:ret specs) ret :ret)
+            (if (and (:args specs) (:ret specs) (:fn specs))
+              (if (s/valid? (:fn specs) {:args cargs :ret cret})
+                true
+                (explain-check args (:fn specs) {:args cargs :ret cret} :fn))
+              true)))
+        (catch Exception e e)
+        (catch Error e e)))))
+
+(defn- quick-check
+  [f specs {overrides :gen opts :clojure.spec.test.check/opts old-opts :clojure.test.check/opts}]
+  (let [opts (or opts old-opts)
+        num-tests (or (:num-tests opts) 1000)
+        g (try (s/gen (:args specs) overrides)
+               (catch Exception e e)
+               (catch Error e e))]
+    (if (or (instance? Exception g) (instance? Error g))
+      {:result g}
+      (let [prop (gen/for-all* [g] #(check-call f specs %))]
+        (apply gen/quick-check num-tests prop (mapcat identity opts))))))
+
+(defn- make-check-result
+  [check-sym spec test-check-ret tc-ret-key]
+  (merge {:spec spec
+          tc-ret-key test-check-ret}
+         (when check-sym
+           {:sym check-sym})
+         (when-let [result (:result test-check-ret)]
+           (when-not (true? result)
+             {:failure result}))
+         (when-let [shrunk (:shrunk test-check-ret)]
+           {:failure (:result shrunk)})))
+
+(defn validate-check-opts [opts]
+  (assert (every? ident? (keys (:gen opts))) "check :gen expects ident keys"))
+
+(defn ^:skip-wiki check-1*
+  [sym f spec opts]
+  (let [spec (or spec (when sym (s/get-spec sym)))
+        f (or f (when sym (throw (ex-info "No fn expression supplied by check macro"
+                                          {:sym sym :cljd.spec.alpha/failure :no-fn}))))
+        old-key :clojure.test.check/opts
+        tc-ret-key (if (contains? opts old-key)
+                     :clojure.test.check/ret
+                     :clojure.spec.test.check/ret)]
+    (cond
+      (nil? f)
+      {:failure (ex-info "No fn to spec" {:cljd.spec.alpha/failure :no-fn})
+       :sym sym :spec spec}
+
+      (nil? spec)
+      {:failure (ex-info "No spec" {:cljd.spec.alpha/failure :no-fspec})
+       :sym sym :spec spec}
+
+      (:args spec)
+      (make-check-result sym spec (quick-check f spec opts) tc-ret-key)
+
+      :else
+      {:failure (ex-info "No :args spec" {:cljd.spec.alpha/failure :no-args-spec})
+       :sym sym :spec spec})))
+
+(defn checkable-syms
+  "Given an opts map as per check, returns the set of syms that can be
+  checked."
+  ([] (checkable-syms nil))
+  ([opts]
+   (validate-check-opts opts)
+   (reduce into #{}
+           [(filter fn-spec-name? (keys (s/registry)))
+            (keys (:spec opts))])))
+
+(defmacro check
+  "Run generative tests for spec conformance on explicit vars named by
+  sym-or-syms. No-arg check expands over s/fdef symbols known at
+  macro-expansion time."
+  ([]
+   `(check '~(accessible-speced-syms &env)))
+  ([sym-or-syms]
+   `(check ~sym-or-syms nil))
+  ([sym-or-syms opts]
+   (let [syms (check-form-syms &env sym-or-syms)
+         opts-sym (gensym "opts")]
+     `(let [~opts-sym ~opts]
+        (do
+          (validate-check-opts ~opts-sym)
+          [~@(map (fn [sym]
+                    `(check-1* '~sym ~sym nil ~opts-sym))
+                  syms)])))))
+
+(defn check-fn
+  "Runs generative tests for fn f using fspec and opts."
+  ([f fspec] (check-fn f fspec nil))
+  ([f fspec opts]
+   (validate-check-opts opts)
+   (check-1* nil f fspec opts)))
+
+(defmacro enumerate-namespace
+  "Given a symbol naming an ns, or a collection of such symbols,
+  returns the set of all symbols naming defs in those nses known to
+  the ClojureDart analyzer at macro-expansion time."
+  [ns-sym-or-syms]
+  `'~(enumerate-namespace* &env (quoted-form ns-sym-or-syms)))
+
+(defn- failure-type [x]
+  (:cljd.spec.alpha/failure (ex-data x)))
+
+(defn- unwrap-failure [x]
+  (if (failure-type x) (ex-data x) x))
+
+(defn- result-type [ret]
+  (let [failure (:failure ret)]
+    (cond
+      (nil? failure) :check-passed
+      (failure-type failure) (failure-type failure)
+      :else :check-threw)))
+
+(defn abbrev-result
+  "Given a check result, returns an abbreviated version suitable for
+  summary use."
+  [x]
+  (if (:failure x)
+    (-> (dissoc x :clojure.spec.test.check/ret)
+        (update :spec s/describe)
+        (update :failure unwrap-failure))
+    (dissoc x :spec :clojure.spec.test.check/opts)))
+
+(defn summarize-results
+  "Prints each summarized check result and returns counts by result
+  type."
+  ([check-results] (summarize-results check-results abbrev-result))
+  ([check-results summary-result]
+   (reduce
+    (fn [summary result]
+      (prn (summary-result result))
+      (-> summary
+          (update :total inc)
+          (update (result-type result) (fnil inc 0))))
+    {:total 0}
+    check-results)))

@@ -1,9 +1,72 @@
 (ns cljd.test-clojure.spec-alpha
-  (:require [cljd.spec.alpha :as s])
-  (:use [clojure.test :only [deftest is testing]]))
+  (:require [cljd.spec.alpha :as s]
+            [cljd.spec.gen.alpha :as gen]
+            [cljd.spec.test.alpha :as st])
+  (:use [clojure.test :only [deftest is testing use-fixtures]]))
 
-(s/def ::even-int (s/and int? even?))
-(s/def ::pos-or-tiny (s/or :pos pos-int? :tiny #(< % 10)))
+(defmulti shape-spec :shape)
+(defmethod shape-spec :circle [_] (s/keys :req-un [::shape ::radius]))
+(defmethod shape-spec :rect [_] (s/keys :req-un [::shape ::width ::height]))
+
+(defn add1 [x] (inc x))
+
+;; No ^:cljd.spec.alpha/redef marker — s/fdef must auto-redef this
+;; for instrument to work.
+(defn add1-instr [x] (inc x))
+
+(defn stub-target [] 1)
+(defn replace-target [x] (inc x))
+(def symbol-registered 0)
+(defn bad-ret [_] "bad")
+
+;; Explicit ^:cljd.spec.alpha/redef metadata — instrument should
+;; install a wrapper without relying on s/fdef's same-compilation-unit
+;; auto-promotion (the def already comes back with :cljd.spec.alpha/redef?
+;; set in the analyzer).
+(defn ^:cljd.spec.alpha/redef explicit-redef-fn [x] (inc x))
+
+(defn register-specs! []
+  (s/def ::even-int (s/and int? even?))
+  (s/def ::pos-or-tiny (s/or :pos pos-int? :tiny #(< % 10)))
+  (s/def ::shape keyword?)
+  (s/def ::radius number?)
+  (s/def ::width number?)
+  (s/def ::height number?)
+  (s/def ::score int?)
+  (s/def ::small-int (s/int-in 1 4))
+  (s/def ::shape-map (s/keys :req-un [::shape] :opt-un [::score]))
+  (s/def ::shape-kvs (s/keys* :req-un [::shape]))
+  (s/def ::shape-value (s/multi-spec shape-spec :shape))
+  (s/def ::plain-int int?)
+  (s/def ::form-and (s/and int? pos?))
+  (s/def ::form-or (s/or :i int? :s string?))
+  (s/def ::form-nilable (s/nilable int?))
+  (s/def ::form-every (s/every int?))
+  (s/def ::form-coll-of (s/coll-of int? :kind vector?))
+  (s/def ::form-every-kv (s/every-kv keyword? int?))
+  (s/def ::form-map-of (s/map-of keyword? int?))
+  (s/def ::maybe-then-int (s/cat :maybe (s/? int?) :value int?))
+  (s/def ::prefix-tail (s/cat :prefix (s/* any?) :tail any?))
+  (s/def symbol-registered int?)
+  (s/def ::wide-and (s/and int? pos? #(not= % 1) #(< % 10) #(not= % 7)))
+  (s/def ::wide-and-spec (s/and-spec int? pos? #(not= % 1) #(< % 10) #(not= % 7)))
+  (s/def ::wide-or (s/or :s string? :k keyword? :i int? :b boolean? :n nil?))
+  (s/def ::wide-or-spec (s/or-spec :s string? :k keyword? :i int? :b boolean? :n nil?))
+  (s/def ::wide-cat (s/cat :i int? :s string? :k keyword? :b boolean? :n nil?))
+  (s/def ::wide-alt (s/alt :s string? :k keyword? :i int? :b boolean? :n nil?))
+  (s/def ::wide-tuple (s/tuple int? string? keyword? boolean? nil?))
+  (s/def ::form-tuple (s/tuple int? string? keyword? boolean? nil?))
+  (s/fdef add1 :args (s/cat :x int?) :ret int?)
+  (s/fdef add1-instr :args (s/cat :x int?) :ret int?)
+  (s/fdef stub-target :args (s/cat) :ret #{42})
+  (s/fdef replace-target :args (s/cat :x int?) :ret int?)
+  (s/fdef explicit-redef-fn :args (s/cat :x int?) :ret int?))
+
+(defn spec-fixture
+  ([] (register-specs!))
+  ([_] nil))
+
+(use-fixtures :each spec-fixture)
 
 (deftest valid?-predicate
   (is (true?  (s/valid? int? 1)))
@@ -24,7 +87,8 @@
 (deftest or-tagged-conform
   (is (= [:pos 3]  (s/conform ::pos-or-tiny 3)))
   (is (= [:tiny -1] (s/conform ::pos-or-tiny -1)))
-  (is (s/invalid? (s/conform ::pos-or-tiny 100))))
+  (is (= [:pos 100] (s/conform ::pos-or-tiny 100)))
+  (is (s/invalid? (s/conform ::pos-or-tiny 10.5))))
 
 (deftest or-unform
   (is (= 3  (s/unform ::pos-or-tiny [:pos 3])))
@@ -35,8 +99,259 @@
     (is (some? ed))
     (is (contains? ed :cljd.spec.alpha/problems))
     (is (= 5 (:cljd.spec.alpha/value ed))))
+  (is (= 5 (:cljd.spec.alpha/value
+            (s/explain-data* ::even-int [] [] [] 5))))
   (is (nil? (s/explain-data ::even-int 4))))
+
+(deftest explain-out-is-rebindable
+  (let [ed (s/explain-data ::even-int 5)]
+    (is (= (with-out-str (s/explain-printer ed))
+           (s/explain-str ::even-int 5)))
+    (is (= "custom explain: 5\n"
+           (binding [s/*explain-out* (fn [ed]
+                                       (println "custom explain:"
+                                                (:cljd.spec.alpha/value ed)))]
+             (s/explain-str ::even-int 5))))))
 
 (deftest registry-roundtrip
   (is (some? (s/get-spec ::even-int)))
+  (is (some? (s/get-spec 'cljd.test-clojure.spec-alpha/symbol-registered)))
+  (is (some? (s/get-spec (var symbol-registered))))
   (is (contains? (s/registry) ::even-int)))
+
+(deftest cljs-style-constructors-preserve-forms
+  (is (= 'cljd.core/int? (s/form ::plain-int)))
+  (is (= '(cljd.spec.alpha/and cljd.core/int? cljd.core/pos?)
+         (s/form ::form-and)))
+  (is (= '(cljd.spec.alpha/or :i cljd.core/int? :s cljd.core/string?)
+         (s/form ::form-or)))
+  (is (= '(cljd.spec.alpha/nilable cljd.core/int?)
+         (s/form ::form-nilable)))
+  (is (= '(cljd.spec.alpha/tuple cljd.core/int? cljd.core/string?
+                                  cljd.core/keyword? cljd.core/boolean?
+                                  cljd.core/nil?)
+         (s/form ::form-tuple)))
+  (is (= '(cljd.spec.alpha/every cljd.core/int?)
+         (s/form ::form-every)))
+  (is (= '(cljd.spec.alpha/coll-of cljd.core/int? :kind cljd.core/vector?)
+         (s/form ::form-coll-of)))
+  (is (= '(cljd.spec.alpha/every-kv cljd.core/keyword? cljd.core/int?)
+         (s/form ::form-every-kv)))
+  (is (= '(cljd.spec.alpha/map-of cljd.core/keyword? cljd.core/int?)
+         (s/form ::form-map-of))))
+
+(deftest public-dynamic-vars-route-to-impl
+  (let [sampled (s/every int?)
+        fsp (s/fspec :args (s/cat :x int?) :ret int?)]
+    (is (false? (s/valid? sampled [1 "x"])))
+    (is (true? (binding [s/*coll-check-limit* 1]
+                 (s/valid? sampled [1 "x"]))))
+    (is (= 1
+           (count (:cljd.spec.alpha/problems
+                   (binding [s/*coll-error-limit* 1]
+                     (s/explain-data sampled ["x" "y" "z"]))))))
+    (is (true? (binding [s/*fspec-iterations* 0]
+                 (s/valid? fsp bad-ret))))
+    (is (false? (binding [s/*fspec-iterations* 1]
+                  (s/valid? fsp bad-ret))))))
+
+(deftest multi-spec-conform
+  (is (= {:shape :circle :radius 2}
+         (s/conform ::shape-value {:shape :circle :radius 2})))
+  (is (= {:shape :rect :width 3 :height 4}
+         (s/conform ::shape-value {:shape :rect :width 3 :height 4})))
+  (is (s/invalid? (s/conform ::shape-value {:shape :circle})))
+  (is (s/invalid? (s/conform ::shape-value {:shape :triangle :side 3}))))
+
+(deftest multi-spec-form-and-explain
+  (is (= '(cljd.spec.alpha/multi-spec cljd.test-clojure.spec-alpha/shape-spec :shape)
+         (s/form ::shape-value)))
+  (is (= "no method"
+         (-> (s/explain-data ::shape-value {:shape :triangle :side 3})
+             :cljd.spec.alpha/problems
+             first
+             :reason)))
+  (is (.contains ^String (s/explain-str ::shape-value {:shape :triangle :side 3})
+                 "no method")))
+
+(deftest regex-backtracking-and-empty-entries
+  (is (= {:value 1}
+         (s/conform ::maybe-then-int [1])))
+  (is (= {:tail 1}
+         (s/conform ::prefix-tail [1])))
+  (is (= {:prefix [1] :tail 2}
+         (s/conform ::prefix-tail [1 2]))))
+
+(deftest keys-star-conforms-key-value-seqs
+  (is (= {:shape :circle}
+         (s/conform ::shape-kvs [:shape :circle]))))
+
+(deftest variadic-combinators-exceed-old-caps
+  (testing "runtime and/or aliases accept more than the old fixed arities"
+    (is (true? (s/valid? ::wide-and 2)))
+    (is (false? (s/valid? ::wide-and 7)))
+    (is (= [:b true] (s/conform ::wide-or true)))
+    (is (= [:n nil] (s/conform ::wide-or nil))))
+  (testing "form-preserving and-spec/or-spec macros are variadic"
+    (is (true? (s/valid? ::wide-and-spec 2)))
+    (is (false? (s/valid? ::wide-and-spec 1)))
+    (is (= [:b false] (s/conform ::wide-or-spec false)))
+    (is (= [:n nil] (s/conform ::wide-or-spec nil))))
+  (testing "tuple and regex cat/alt handle more than four predicates"
+    (is (= [1 "x" :k true nil]
+           (s/conform ::wide-tuple [1 "x" :k true nil])))
+    (is (s/invalid? (s/conform ::wide-tuple [1 "x" :k true])))
+    (is (= {:i 1 :s "x" :k :k :b true :n nil}
+           (s/conform ::wide-cat [1 "x" :k true nil])))
+    (is (= [:b true] (s/conform ::wide-alt [true])))
+    (is (= [:n nil] (s/conform ::wide-alt [nil])))))
+
+(deftest fdef-qualifies-current-ns-symbol
+  (is (some? (s/get-spec 'cljd.test-clojure.spec-alpha/add1)))
+  (is (true? (s/valid? 'cljd.test-clojure.spec-alpha/add1 add1))))
+
+(deftest built-in-and-range-generators
+  (is (boolean? (gen/generate (s/gen boolean?))))
+  (doseq [[x conformed] (s/exercise ::small-int 10)]
+    (is (s/valid? ::small-int x))
+    (is (= x conformed))))
+
+(deftest composed-spec-generators
+  (doseq [[x conformed] (s/exercise ::shape-map 10)]
+    (is (s/valid? ::shape-map x))
+    (is (= x conformed)))
+  (doseq [[x conformed] (s/exercise ::prefix-tail 10)]
+    (is (s/valid? ::prefix-tail x))
+    (is (not (s/invalid? conformed)))))
+
+(deftest exercise-fn-uses-fdef-args
+  (doseq [[args ret] (s/exercise-fn add1 10)]
+    (is (= (inc (first args)) ret))))
+
+(deftest spec-test-check-explicit-fn
+  (let [ret (first (st/check `add1 {:clojure.spec.test.check/opts {:num-tests 5}}))]
+    (is (= 'cljd.test-clojure.spec-alpha/add1 (:sym ret)))
+    (is (nil? (:failure ret)))))
+
+(defn- instrument-failure
+  "Calls f, returning the :cljd.spec.alpha/failure value of any
+  ex-info raised, else nil."
+  [f]
+  (try (f) nil
+       (catch Object e (-> e ex-data :cljd.spec.alpha/failure))))
+
+(deftest analyzer-backed-spec-discovery
+  (let [add1-sym 'cljd.test-clojure.spec-alpha/add1
+        add1-instr-sym 'cljd.test-clojure.spec-alpha/add1-instr]
+    (testing "s/def and s/fdef record speced vars for macro-time and runtime discovery"
+      (is (contains? (s/speced-vars) add1-sym))
+      (is (contains? (s/speced-vars) add1-instr-sym))
+      (is (contains? (s/speced-vars)
+                     'cljd.test-clojure.spec-alpha/symbol-registered)))
+    (testing "enumerate-namespace uses analyzer defs"
+      (is (contains? (st/enumerate-namespace 'cljd.test-clojure.spec-alpha)
+                     add1-sym)))
+    (testing "no-arg check expands over discovered fdefs"
+      (let [checked (set (map :sym (st/check)))]
+        (is (contains? checked add1-sym))
+        (is (contains? checked add1-instr-sym))))
+    (testing "namespace-scope instrument expands over analyzer defs"
+      (try
+        (let [instrumented (set (st/instrument 'cljd.test-clojure.spec-alpha))]
+          (is (contains? instrumented add1-sym))
+          (is (contains? instrumented add1-instr-sym))
+          (is (= :instrument (instrument-failure #(add1-instr "no")))))
+        (finally
+          (st/unstrument 'cljd.test-clojure.spec-alpha))))))
+
+(deftest instrument-stub-and-replace-opts-route-through-auto-redef
+  (testing ":stub replaces the auto-redef call site with a generated fn"
+    (try
+      (is (= ['cljd.test-clojure.spec-alpha/stub-target]
+             (st/instrument `stub-target {:stub #{`stub-target}})))
+      (is (= 42 (stub-target)))
+      (finally
+        (st/unstrument `stub-target))))
+  (testing ":replace installs the replacement while retaining arg checks"
+    (try
+      (is (= ['cljd.test-clojure.spec-alpha/replace-target]
+             (st/instrument `replace-target
+                            {:replace {`replace-target (fn [x] (* x 10))}})))
+      (is (= 30 (replace-target 3)))
+      (is (= :instrument (instrument-failure #(replace-target "bad"))))
+      (finally
+        (st/unstrument `replace-target))))
+  (is (= 4 (replace-target 3))))
+
+(deftest instrument-redef-roundtrip
+  (testing "instrument returns the qualified sym for fdef'd defs"
+    (is (= ['cljd.test-clojure.spec-alpha/add1-instr]
+           (st/instrument `add1-instr))))
+  (testing "instrumented call passes spec when args conform"
+    (is (= 6 (add1-instr 5))))
+  (testing "instrumented call raises an :instrument failure for bad args"
+    (is (= :instrument (instrument-failure #(add1-instr "no")))))
+  (testing "unstrument restores original behavior"
+    (is (= ['cljd.test-clojure.spec-alpha/add1-instr]
+           (st/unstrument `add1-instr)))
+    (is (= 6 (add1-instr 5)))
+    ;; bad args now reach the body and trigger a Dart-level type error
+    ;; from inc; the spec wrapper is gone so failure is no longer
+    ;; tagged :instrument.
+    (is (nil? (instrument-failure #(add1-instr "no"))))))
+
+(defn unspec-fn [x] (inc x))
+
+(deftest instrument-skips-without-fdef
+  (testing "fns without s/fdef stay non-redef and are silently skipped"
+    (is (= [] (st/instrument `unspec-fn)))
+    (is (= 6 (unspec-fn 5)))))
+
+(deftest regex?-distinguishes-regex-and-spec-values
+  (testing "regex ops register as regex?"
+    (is (some? (s/regex? (s/get-spec ::maybe-then-int))))
+    (is (some? (s/regex? (s/get-spec ::wide-cat))))
+    (is (some? (s/regex? (s/get-spec ::wide-alt)))))
+  (testing "non-regex specs and predicates are not regex?"
+    (is (not (s/regex? (s/get-spec ::even-int))))
+    (is (not (s/regex? (s/get-spec ::form-or))))
+    (is (not (s/regex? int?)))
+    (is (not (s/regex? :a/keyword)))
+    (is (not (s/regex? nil)))))
+
+(deftest abbrev-strips-namespaces-and-fn-wrappers
+  (testing "qualified symbols collapse to their name"
+    (is (= 'int? (s/abbrev 'cljd.core/int?))))
+  (testing "(fn [%] body) collapses to body"
+    (is (= 'body (s/abbrev '(fn [%] body)))))
+  (testing "abbrev walks nested forms"
+    (is (= '(or :i int? :s string?)
+           (s/abbrev '(cljd.spec.alpha/or :i cljd.core/int? :s cljd.core/string?)))))
+  (testing "non-symbol non-seq values pass through unchanged"
+    (is (= 42 (s/abbrev 42)))
+    (is (= :keyword (s/abbrev :keyword)))))
+
+(deftest kvs->map-builds-map-from-tagged-pairs
+  (testing "explicit conversion of keys*'s inner regex output"
+    (is (= {:a 1 :b 2}
+           (s/kvs->map [{:cljd.spec.alpha/k :a :cljd.spec.alpha/v 1}
+                        {:cljd.spec.alpha/k :b :cljd.spec.alpha/v 2}]))))
+  (testing "empty input yields empty map"
+    (is (= {} (s/kvs->map []))))
+  (testing "form of a keys*-built spec references the registered fn"
+    (let [f (s/form ::shape-kvs)]
+      (is (some #{'cljd.spec.alpha/kvs->map} (tree-seq seqable? seq f))))))
+
+(deftest explicit-redef-metadata-instruments-without-auto-redef
+  (testing "explicit ^:cljd.spec.alpha/redef metadata is honored"
+    (try
+      (is (= ['cljd.test-clojure.spec-alpha/explicit-redef-fn]
+             (st/instrument `explicit-redef-fn)))
+      (testing "instrumented call passes spec when args conform"
+        (is (= 6 (explicit-redef-fn 5))))
+      (testing "instrumented call raises :instrument failure for bad args"
+        (is (= :instrument (instrument-failure #(explicit-redef-fn "no")))))
+      (finally
+        (st/unstrument `explicit-redef-fn))))
+  (testing "after unstrument, explicit redef def behaves like normal"
+    (is (= 6 (explicit-redef-fn 5)))))

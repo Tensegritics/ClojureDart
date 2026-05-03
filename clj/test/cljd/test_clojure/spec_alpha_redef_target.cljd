@@ -1,0 +1,14 @@
+(ns cljd.test-clojure.spec-alpha-redef-target
+  "Target namespace for cross-namespace instrument verification. The
+  consumer namespace `cljd.test-clojure.spec-alpha-cross-ns` requires
+  this one and instruments these defs from outside, exercising the
+  cross-namespace setter path emitted by ^:cljd.spec.alpha/redef.")
+
+;; Explicit redef metadata so the def is emitted with the
+;; getter/setter pair; no s/fdef in this namespace, so the auto-redef
+;; path doesn't fire (we want to test the explicit path).
+(defn ^:cljd.spec.alpha/redef target-add1 [x] (inc x))
+
+;; A second target so we can exercise multiple syms in one instrument
+;; call.
+(defn ^:cljd.spec.alpha/redef target-double [x] (* 2 x))

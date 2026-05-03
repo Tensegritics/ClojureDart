@@ -1404,6 +1404,7 @@
                        nil)]
         (cond
           (env f) form
+          (= 'def f) form
           (or (= 'cljd.core/defprotocol f) (= 'defprotocol f)) (apply expand-defprotocol args)
           (or (= 'cljd.core/extend-type f) (= 'extend-type f)) (apply expand-extend-type args)
 
@@ -2599,7 +2600,12 @@
         name (when (symbol? (first bodies)) (first bodies))
         bodies (cond-> bodies name next)
         [body & more-bodies :as bodies] (ensure-bodies bodies)
-        fn-type (if (or more-bodies (variadic? body)) :ifn :native)
+        ;; ^:cljd.spec.alpha/redef defs need an IFn body so the field
+        ;; can also hold an instrumented IFn wrapper without a type
+        ;; clash.
+        fn-type (if (or more-bodies (variadic? body)
+                        (:cljd.spec.alpha/redef (meta var-name)))
+                  :ifn :native)
         env (cond-> env
               name (assoc name (vary-meta (dart-local name env)
                                  #(assoc %
@@ -3157,7 +3163,7 @@
     (list (list 'dart/fn () :positional () false (list 'dart/let bindings dart-expr)))
     dart-expr))
 
-(declare write-top-dartfn write-top-field write-dynamic-var-top-field write-annotations)
+(declare write-top-dartfn write-top-field write-dynamic-var-top-field write-redef-top-field write-annotations)
 
 (defn dart-qualify [dartname]
   (with-meta (symbol (str (dart-alias-for-ns *current-ns*) "." dartname))
@@ -3372,10 +3378,17 @@
           (throw (ex-info "Too many arguments to def" {})))
         sym (vary-meta sym assoc :doc doc-string)
         expr (macroexpand env expr)
-        kind (case (:dart/fn-type (dart-meta sym env))
-               :native :dart
-               :ifn :clj
-               (fn-kind expr))
+        kind (cond
+               ;; ^:cljd.spec.alpha/redef defs are stored as IFn-typed
+               ;; cells so that instrument can swap a wrapper (also an
+               ;; IFn) into the field. Forcing :clj here ensures both
+               ;; the original body and the wrapper share the IFn
+               ;; calling convention.
+               (:cljd.spec.alpha/redef (meta sym)) :clj
+               :else (case (:dart/fn-type (dart-meta sym env))
+                       :native :dart
+                       :ifn :clj
+                       (fn-kind expr)))
         sym (cond-> sym
               kind (vary-meta assoc kind true)
               (:macro (meta sym)) (vary-meta assoc :macro-host-fn expr)
@@ -3401,6 +3414,7 @@
                  expr))
         sub-type (cond
                    (:dynamic (meta sym)) :dynamic ; dynamic as in dynamic var, not dc.dynamic
+                   (:cljd.spec.alpha/redef (meta sym)) :cljd.spec.alpha/redef
                    (:no-reload (meta sym)) :defonce
                    dart-type :fn
                    :else :field)
@@ -3413,10 +3427,16 @@
           ; predecl so that the def is visible in recursive defs
           (when-not (:cljd/contrib (meta sym))
             ; don't predecl if the def is a contribution, since it must have been created first
-            (swap! nses do-def sym {:dart/qname dartqname
-                                    :dart/name dartname
-                                    :type :field
-                                    :dart/type dart-type}))
+            (swap! nses do-def sym (cond-> {:dart/qname dartqname
+                                            :dart/name dartname
+                                            :type :field
+                                            :dart/type dart-type}
+                                     (= sub-type :cljd.spec.alpha/redef)
+                                     (assoc :cljd.spec.alpha/redef? true)
+                                     ;; Cache the macroexpanded body so a later
+                                     ;; macro (e.g. s/fdef) can re-emit this def
+                                     ;; with different metadata.
+                                     (some? expr) (assoc :source-expr expr))))
           (emit expr env))
         dart-annotations
         (when-not *host-eval* (into [] (map #(emit % env)) (-> form meta :annotations)))
@@ -3428,6 +3448,8 @@
               (:dynamic (meta sym))
               (let [k (symbol (name *current-ns*) (name sym))]
                 (write-dynamic-var-top-field k dartname dart-fn))
+              (:cljd.spec.alpha/redef (meta sym))
+              (write-redef-top-field dartname dart-fn)
               (and (seq? expr) (= 'fn* (first expr)) (not (symbol? (second expr))))
               (write-top-dartfn dartname
                 (or
@@ -4047,6 +4069,29 @@
     (dart-print "(dc.dynamic v) => ")
     (write (emit `(cljd.core/set-dynamic-binding! '~k ~'v) '{v v}) expr-locus {})
     (dart-print ";\n")))
+
+(defn write-redef-top-field
+  "Emits a mutable backing field plus a getter and setter for
+  ^:cljd.spec.alpha/redef defs. Unlike ^:dynamic, no Zone-binding
+  indirection is involved: the setter writes the backing field
+  directly so callers see the new value persistently and from any
+  namespace."
+  [dart-sym x]
+  (let [root-sym (symbol (str dart-sym "$root"))
+        type (-> dart-sym meta :dart/type (or dc-dynamic))]
+    (write-top-field root-sym x)
+    (write-type type)
+    (dart-print " get ")
+    (dart-print dart-sym)
+    (dart-print " => ")
+    (dart-print (str root-sym))
+    (dart-print ";\nset ")
+    (dart-print dart-sym)
+    (dart-print "(")
+    (write-type type)
+    (dart-print " v) => ")
+    (dart-print (str root-sym))
+    (dart-print " = v;\n")))
 
 (defn- write-args [args aliases]
   (let [[positionals nameds] (split-with (complement keyword?) args)]

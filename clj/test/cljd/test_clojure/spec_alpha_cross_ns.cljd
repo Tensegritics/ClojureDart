@@ -1,0 +1,86 @@
+(ns cljd.test-clojure.spec-alpha-cross-ns
+  "Verifies that `cljd.spec.test.alpha/instrument` can install a
+  spec-checking wrapper on a ^:cljd.spec.alpha/redef def that lives in
+  a different namespace, via the top-level setter pair the compiler
+  emits. This exercises the only cross-namespace mechanism we have
+  without a runtime ns-interns table."
+  (:require [cljd.spec.alpha :as s]
+            [cljd.spec.test.alpha :as st]
+            [cljd.test-clojure.spec-alpha-redef-target :as t])
+  (:use [clojure.test :only [deftest is testing use-fixtures]]))
+
+(defn- register-target-specs! []
+  (s/fdef cljd.test-clojure.spec-alpha-redef-target/target-add1
+    :args (s/cat :x int?) :ret int?)
+  (s/fdef cljd.test-clojure.spec-alpha-redef-target/target-double
+    :args (s/cat :x int?) :ret int?))
+
+(use-fixtures :each (fn
+                      ([] (register-target-specs!))
+                      ([_] nil)))
+
+(defn- instrument-failure [f]
+  (try (f) nil
+       (catch Object e (-> e ex-data :cljd.spec.alpha/failure))))
+
+(deftest cross-ns-instrument-installs-wrapper
+  (try
+    (testing "instrument from a different namespace returns the qualified sym"
+      (is (= ['cljd.test-clojure.spec-alpha-redef-target/target-add1]
+             (st/instrument
+              'cljd.test-clojure.spec-alpha-redef-target/target-add1))))
+    (testing "wrapper is observed when calling through the import alias"
+      (is (= 6 (t/target-add1 5)))
+      (is (= :instrument (instrument-failure #(t/target-add1 "no")))))
+    (finally
+      (st/unstrument
+       'cljd.test-clojure.spec-alpha-redef-target/target-add1))))
+
+(deftest cross-ns-instrument-handles-multiple-syms
+  ;; Literal quoted vector — passes through to the runtime fn which
+  ;; looks up each sym's setter in the redef-setter registry.
+  (try
+    (is (= #{'cljd.test-clojure.spec-alpha-redef-target/target-add1
+             'cljd.test-clojure.spec-alpha-redef-target/target-double}
+           (set (st/instrument
+                 '[cljd.test-clojure.spec-alpha-redef-target/target-add1
+                   cljd.test-clojure.spec-alpha-redef-target/target-double]))))
+    (is (= :instrument (instrument-failure #(t/target-add1 "no"))))
+    (is (= :instrument (instrument-failure #(t/target-double "no"))))
+    (finally
+      (st/unstrument
+       '[cljd.test-clojure.spec-alpha-redef-target/target-add1
+         cljd.test-clojure.spec-alpha-redef-target/target-double]))))
+
+(deftest cross-ns-instrument-accepts-runtime-bound-collection
+  ;; This is what the redef-setter registry buys us: a let-bound
+  ;; vector of qualified syms that the macro cannot introspect, but
+  ;; the runtime fn can dispatch on.
+  (let [syms ['cljd.test-clojure.spec-alpha-redef-target/target-add1
+              'cljd.test-clojure.spec-alpha-redef-target/target-double]]
+    (try
+      (is (= (set syms) (set (st/instrument syms))))
+      (is (= :instrument (instrument-failure #(t/target-add1 "no"))))
+      (is (= :instrument (instrument-failure #(t/target-double "no"))))
+      (finally
+        (st/unstrument syms)))))
+
+(deftest cross-ns-instrument-accepts-namespace-symbol
+  ;; A namespace-only symbol (no name part) expands at runtime to
+  ;; every redef-registered sym in that ns.
+  (try
+    (is (= #{'cljd.test-clojure.spec-alpha-redef-target/target-add1
+             'cljd.test-clojure.spec-alpha-redef-target/target-double}
+           (set (st/instrument 'cljd.test-clojure.spec-alpha-redef-target))))
+    (is (= :instrument (instrument-failure #(t/target-add1 "no"))))
+    (is (= :instrument (instrument-failure #(t/target-double "no"))))
+    (finally
+      (st/unstrument 'cljd.test-clojure.spec-alpha-redef-target))))
+
+(deftest cross-ns-unstrument-restores-original
+  (try
+    (st/instrument 'cljd.test-clojure.spec-alpha-redef-target/target-add1)
+    (finally
+      (st/unstrument 'cljd.test-clojure.spec-alpha-redef-target/target-add1)))
+  (is (= 6 (t/target-add1 5)))
+  (is (nil? (instrument-failure #(t/target-add1 "no")))))

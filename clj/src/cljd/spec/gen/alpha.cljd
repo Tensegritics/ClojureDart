@@ -13,4 +13,458 @@
                             long map not-empty set string symbol vector
                             list shuffle]))
 
-;; TODO: port from clojurescript src/main/cljs/cljs/spec/gen/alpha.cljs
+(defn- generator [f] f)
+
+(defn generator?
+  "Returns true when x is a ClojureDart spec generator."
+  [x]
+  (ifn? x))
+
+(defn generate
+  "Generate a single value using generator."
+  [g]
+  (g))
+
+(defn return
+  "Returns a generator that always yields x."
+  [x]
+  (generator (fn [] x)))
+
+(defn fmap
+  "Returns a generator whose generated value is (f x), where x is
+  generated from g."
+  [f g]
+  (generator (fn [] (f (generate g)))))
+
+(defn bind
+  "Returns a generator produced by passing generated values from g to f."
+  [g f]
+  (generator (fn [] (generate (f (generate g))))))
+
+(defn delay-impl
+  "Returns a generator that derefs gfnd at generation time."
+  [gfnd]
+  (generator (fn [] (generate @gfnd))))
+
+(defmacro delay
+  "Delays construction of a generator until generation time."
+  [expr]
+  `(delay-impl (clojure.core/delay ~expr)))
+
+(defn choose
+  "Returns a generator for integers in the inclusive range [min max]."
+  [min max]
+  (generator
+   (fn []
+     (let [min (clojure.core/int min)
+           max (clojure.core/int max)
+           span (inc (- max min))]
+       (if (pos? span)
+         (+ min (rand-int span))
+         min)))))
+
+(defn elements
+  "Returns a generator that chooses one value from coll."
+  [coll]
+  (let [xs (vec coll)]
+    (when (empty? xs)
+      (throw (Exception. "elements requires a non-empty collection")))
+    (generator (fn [] (rand-nth xs)))))
+
+(defn one-of
+  "Returns a generator that chooses one of the supplied generators."
+  [gens]
+  (let [gs (vec gens)]
+    (when (empty? gs)
+      (throw (Exception. "one-of requires a non-empty collection of generators")))
+    (generator (fn [] (generate (rand-nth gs))))))
+
+(defn frequency
+  "Returns a generator choosing among [weight generator] pairs."
+  [pairs]
+  (let [pairs (vec pairs)
+        total (reduce + (clojure.core/map first pairs))]
+    (when (or (empty? pairs) (not (pos? total)))
+      (throw (Exception. "frequency requires positive weights")))
+    (generator
+     (fn []
+       (let [target (rand-int total)]
+         (loop [n target
+                [[weight g] & more] pairs]
+           (if (< n weight)
+             (generate g)
+             (recur (- n weight) more))))))))
+
+(defn tuple
+  "Returns a generator producing a vector with one value from each
+  supplied generator."
+  [& gens]
+  (let [gs (vec gens)]
+    (generator
+     (fn []
+       (vec (clojure.core/map generate gs))))))
+
+(defn cat
+  "Returns a generator of a sequence concatenated from results of gens,
+  each of which should generate something sequential."
+  [& gens]
+  (fmap #(apply concat %) (apply tuple gens)))
+
+(defn sample
+  "Returns n generated values. Defaults to 10."
+  ([g] (sample g 10))
+  ([g n]
+   (take n (repeatedly #(generate g)))))
+
+(defn such-that
+  "Returns a generator that retries g until pred holds, up to max-tries."
+  ([pred g] (such-that pred g 100))
+  ([pred g max-tries]
+   (generator
+    (fn []
+      (loop [i 0
+             last-value nil]
+        (if (< i max-tries)
+          (let [x (generate g)]
+            (if (pred x)
+              x
+              (recur (inc i) x)))
+          (throw (Exception. (str "Couldn't satisfy such-that predicate after "
+                                  max-tries " tries. Last generated value: "
+                                  (pr-str last-value))))))))))
+
+(defn- sized-count
+  ([]
+   (rand-int 4))
+  ([n]
+   n)
+  ([min max]
+   (+ min (rand-int (inc (- max min))))))
+
+(defn vector
+  "Returns a generator of vectors generated from g."
+  ([g]
+   (generator
+    (fn []
+      (vec (sample g (sized-count))))))
+  ([g n]
+   (generator
+    (fn []
+      (vec (sample g (sized-count n))))))
+  ([g min max]
+   (generator
+    (fn []
+      (vec (sample g (sized-count min max)))))))
+
+(defn list
+  "Returns a generator of lists generated from g."
+  ([g]
+   (fmap #(apply clojure.core/list %) (vector g)))
+  ([g n]
+   (fmap #(apply clojure.core/list %) (vector g n)))
+  ([g min max]
+   (fmap #(apply clojure.core/list %) (vector g min max))))
+
+(defn set
+  "Returns a generator of sets generated from g."
+  ([g]
+   (fmap #(into #{} %) (vector g)))
+  ([g n]
+   (fmap #(into #{} %) (vector g n)))
+  ([g min max]
+   (fmap #(into #{} %) (vector g min max))))
+
+(defn map
+  "Returns a generator of maps generated from key and value generators."
+  ([kg vg]
+   (generator
+    (fn []
+      (into {}
+            (clojure.core/map (fn [_] [(generate kg) (generate vg)])
+                              (range (sized-count)))))))
+  ([kg vg n]
+   (generator
+    (fn []
+      (into {}
+            (clojure.core/map (fn [_] [(generate kg) (generate vg)])
+                              (range (sized-count n)))))))
+  ([kg vg min max]
+   (generator
+    (fn []
+      (into {}
+            (clojure.core/map (fn [_] [(generate kg) (generate vg)])
+                              (range (sized-count min max))))))))
+
+(defn hash-map
+  "Returns a generator of maps from alternating key/value generators."
+  [& key-val-gens]
+  (let [pairs (partition 2 key-val-gens)]
+    (generator
+     (fn []
+       (into {}
+             (clojure.core/map (fn [[kg vg]]
+                                 [(generate kg) (generate vg)])
+                               pairs))))))
+
+(defn vector-distinct
+  "Returns a vector generator whose elements are distinct."
+  ([g] (vector-distinct g nil))
+  ([g opts]
+   (let [num-elements (:num-elements opts)
+         min-elements (or (:min-elements opts) 0)
+         max-elements (or (:max-elements opts)
+                          (or num-elements (max 3 min-elements)))
+         max-tries    (or (:max-tries opts) 100)]
+     (generator
+      (fn []
+        (let [target (or num-elements (sized-count min-elements max-elements))]
+          (loop [ret []
+                 seen #{}
+                 tries 0]
+            (cond
+              (= (count ret) target) ret
+              (= tries max-tries) ret
+              :else
+              (let [x (generate g)]
+                (if (contains? seen x)
+                  (recur ret seen (inc tries))
+                  (recur (conj ret x) (conj seen x) tries)))))))))))
+
+(defn not-empty
+  "Returns a generator whose generated collection is non-empty."
+  [g]
+  (such-that clojure.core/not-empty g))
+
+(defn shuffle
+  "Returns a generator of shuffled coll."
+  [coll]
+  (generator (fn [] (clojure.core/shuffle coll))))
+
+(defn large-integer*
+  "Returns a generator of integers constrained by optional :min/:max."
+  [opts]
+  (let [min (if (contains? opts :min) (:min opts) -100000)
+        max (if (contains? opts :max) (:max opts) 100000)
+        min (clojure.core/int min)
+        max (clojure.core/int max)]
+    (choose min max)))
+
+(defn large-integer
+  "Returns a generator of integers."
+  []
+  (large-integer* {}))
+
+(defn int
+  "Returns a generator of integers."
+  []
+  (large-integer))
+
+(defn double*
+  "Returns a generator of doubles constrained by optional :min/:max and
+  :NaN?/:infinite?. Infinite and NaN values are only emitted when
+  explicitly allowed AND when :min/:max would not exclude them: NaN is
+  excluded when either :min or :max is given (NaN compares unordered),
+  +Inf is excluded when :max is finite, -Inf is excluded when :min is
+  finite."
+  [opts]
+  (let [min-given? (contains? opts :min)
+        max-given? (contains? opts :max)
+        min (if min-given? (:min opts) -1000.0)
+        max (if max-given? (:max opts) 1000.0)
+        allow-NaN? (and (clojure.core/boolean (:NaN? opts))
+                        (not min-given?) (not max-given?))
+        allow-infinite? (clojure.core/boolean (:infinite? opts))
+        allow-pos-inf? (and allow-infinite? (not max-given?))
+        allow-neg-inf? (and allow-infinite? (not min-given?))]
+    (frequency
+     (cond-> [[96 (fmap clojure.core/double
+                        (generator (fn [] (+ min (* (rand) (- max min))))))]]
+       allow-NaN? (conj [1 (return ##NaN)])
+       allow-pos-inf? (conj [1 (return ##Inf)])
+       allow-neg-inf? (conj [1 (return ##-Inf)])))))
+
+(defn double
+  "Returns a generator of finite doubles."
+  []
+  (double* {:NaN? false :infinite? false}))
+
+(defn boolean
+  "Returns a generator of booleans."
+  []
+  (elements [true false]))
+
+(defn char
+  "Returns a generator of printable ASCII characters."
+  []
+  (fmap #(String/fromCharCode %) (choose 32 126)))
+
+(defn char-ascii [] (char))
+(defn char-alpha [] (fmap #(String/fromCharCode %) (one-of [(choose 65 90) (choose 97 122)])))
+(defn char-alphanumeric [] (fmap #(String/fromCharCode %) (one-of [(choose 48 57) (choose 65 90) (choose 97 122)])))
+
+(defn- string-from-char-gen [g]
+  (fmap #(apply str %) (vector g 0 12)))
+
+(defn string
+  "Returns a generator of printable strings."
+  []
+  (string-from-char-gen (char)))
+
+(defn string-ascii [] (string-from-char-gen (char-ascii)))
+(defn string-alphanumeric [] (string-from-char-gen (char-alphanumeric)))
+
+(defn- ident-name []
+  (let [s (generate (string-alphanumeric))]
+    (if (empty? s)
+      "x"
+      s)))
+
+(defn keyword
+  "Returns a generator of simple keywords."
+  []
+  (generator (fn [] (clojure.core/keyword (ident-name)))))
+
+(defn keyword-ns
+  "Returns a generator of namespace-qualified keywords."
+  []
+  (generator (fn [] (clojure.core/keyword (str "gen" (rand-int 16)) (ident-name)))))
+
+(defn symbol
+  "Returns a generator of simple symbols."
+  []
+  (generator (fn [] (clojure.core/symbol (ident-name)))))
+
+(defn symbol-ns
+  "Returns a generator of namespace-qualified symbols."
+  []
+  (generator (fn [] (clojure.core/symbol (str "gen" (rand-int 16)) (ident-name)))))
+
+(defn uuid
+  "Returns a generator of UUIDs."
+  []
+  (generator (fn [] (random-uuid))))
+
+(defn ratio
+  "Returns a generator of ratios, represented as ClojureDart numbers."
+  []
+  (fmap #(/ % (inc (rand-int 99))) (large-integer)))
+
+(defn simple-type-printable
+  "Returns a generator of simple printable values."
+  []
+  (one-of [(return nil)
+           (boolean)
+           (large-integer)
+           (double)
+           (string-alphanumeric)
+           (keyword)
+           (symbol)
+           (char)]))
+
+(defn simple-type
+  "Returns a generator of simple values."
+  []
+  (simple-type-printable))
+
+(defn- any-value
+  [depth printable?]
+  (if (zero? depth)
+    (generate (if printable? (simple-type-printable) (simple-type)))
+    (generate
+     (one-of [(if printable? (simple-type-printable) (simple-type))
+              (fmap vec (vector (generator #(any-value (dec depth) printable?)) 0 4))
+              (fmap #(apply clojure.core/list %) (vector (generator #(any-value (dec depth) printable?)) 0 4))
+              (fmap #(into #{} %) (vector (generator #(any-value (dec depth) printable?)) 0 4))
+              (map (generator #(any-value (dec depth) printable?))
+                   (generator #(any-value (dec depth) printable?))
+                   0 4)]))))
+
+(defn any
+  "Returns a generator of arbitrary values."
+  []
+  (generator (fn [] (any-value 2 false))))
+
+(defn any-printable
+  "Returns a generator of arbitrary printable values."
+  []
+  (generator (fn [] (any-value 2 true))))
+
+(defn quick-check
+  "Runs prop num-tests times and returns a test.check-shaped result map."
+  [num-tests prop & _opts]
+  (loop [i 0]
+    (if (= i num-tests)
+      {:result true :num-tests num-tests}
+      (let [ret (prop)]
+        (if (true? ret)
+          (recur (inc i))
+          {:result ret :num-tests (inc i)})))))
+
+(defn for-all*
+  "Returns a property function that generates arguments from gens and
+  applies pred to them."
+  [gens pred]
+  (fn []
+    (apply pred (clojure.core/map generate gens))))
+
+(defn- qualified? [ident]
+  (not (nil? (namespace ident))))
+
+(def ^:private gen-builtins
+  (clojure.core/delay
+    (let [simple (simple-type-printable)]
+      {any? (one-of [(return nil) (any-printable)])
+       some? (such-that some? (any-printable))
+       number? (one-of [(large-integer) (double)])
+       integer? (large-integer)
+       int? (large-integer)
+       pos-int? (large-integer* {:min 1})
+       neg-int? (large-integer* {:max -1})
+       nat-int? (large-integer* {:min 0})
+       float? (double)
+       double? (double)
+       string? (string-alphanumeric)
+       ident? (one-of [(keyword-ns) (symbol-ns)])
+       simple-ident? (one-of [(keyword) (symbol)])
+       qualified-ident? (such-that qualified? (one-of [(keyword-ns) (symbol-ns)]))
+       keyword? (keyword-ns)
+       simple-keyword? (keyword)
+       qualified-keyword? (such-that qualified? (keyword-ns))
+       symbol? (symbol-ns)
+       simple-symbol? (symbol)
+       qualified-symbol? (such-that qualified? (symbol-ns))
+       uuid? (uuid)
+       uri? (fmap #(Uri/parse (str "http://" % ".example")) (string-alphanumeric))
+       inst? (fmap #(DateTime/fromMillisecondsSinceEpoch %) (large-integer))
+       seqable? (one-of [(return nil)
+                         (list simple)
+                         (vector simple)
+                         (map simple simple)
+                         (set simple)
+                         (string-alphanumeric)])
+       indexed? (vector simple)
+       map? (map simple simple)
+       vector? (vector simple)
+       list? (list simple)
+       seq? (list simple)
+       char? (char)
+       set? (set simple)
+       nil? (return nil)
+       false? (return false)
+       true? (return true)
+       boolean? (boolean)
+       zero? (return 0)
+       coll? (one-of [(map simple simple)
+                      (list simple)
+                      (vector simple)
+                      (set simple)])
+       empty? (elements [nil '() [] {} #{}])
+       associative? (one-of [(map simple simple) (vector simple)])
+       sequential? (one-of [(list simple) (vector simple)])})))
+
+(defn gen-for-pred
+  "Given a predicate, returns a built-in generator if one exists."
+  [pred]
+  (if (clojure.core/set? pred)
+    (elements pred)
+    (get @gen-builtins pred)))
