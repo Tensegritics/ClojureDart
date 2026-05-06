@@ -11,7 +11,8 @@
   cljd.spec.test.alpha
   (:require [cljd.spec.alpha :as s]
             [cljd.spec.alpha.impl :as impl]
-            [cljd.spec.gen.alpha :as gen]))
+            [cljd.spec.gen.alpha :as gen]
+            [cljd.spec.gen.alpha.test-check :as gen-tc]))
 
 (def ^:private ^:dynamic *instrument-enabled*
   "If false, instrumented fns call straight through."
@@ -102,7 +103,10 @@
   (or (get overrides sym) spec))
 
 (defn ^:skip-wiki instrument-1*
-  "Runtime helper for the instrument macro."
+  "Runtime helper for the instrument macro. Builds the checking
+  wrapper and stores it in `instrumented-vars` keyed by sym, then
+  returns sym (matching CLJS). Callers that need the wrapper read it
+  back via `(:wrapped (get @instrumented-vars sym))`."
   [sym f opts]
   (let [spec (s/get-spec sym)]
     (when (or spec (get-in opts [:spec sym]))
@@ -113,7 +117,7 @@
             ofn (instrument-choose-fn to-wrap ospec sym opts)
             checked (spec-checking-fn sym ofn ospec)]
         (swap! instrumented-vars assoc sym {:raw to-wrap :wrapped checked})
-        checked))))
+        sym))))
 
 (defn ^:skip-wiki unstrument-1*
   "Runtime helper for the unstrument macro."
@@ -159,6 +163,13 @@
     :else
     (mapcat collectionize-syms sym-or-syms)))
 
+(defn- instrument-target-syms [sym-or-syms opts]
+  (let [explicit (collectionize-syms sym-or-syms)
+        opt-syms (concat (:stub opts) (keys (:replace opts)))]
+    (if (nil? sym-or-syms)
+      (instrumentable-redef-syms opts)
+      (distinct (concat explicit opt-syms)))))
+
 (defn instrument-runtime
   "Runtime variant of `instrument`. Accepts a qualified symbol, a
   namespace symbol, or a collection thereof. Looks up each sym's
@@ -176,11 +187,11 @@
                 (when-let [getter (impl/redef-getter sym)]
                   (let [setter (impl/redef-setter sym)
                         f (getter)
-                        wrapper (instrument-1* sym f opts)]
-                    (when wrapper
-                      (setter wrapper)
-                      sym))))
-              (collectionize-syms sym-or-syms)))))
+                        result (instrument-1* sym f opts)]
+                    (when result
+                      (setter (:wrapped (get @instrumented-vars sym)))
+                      result))))
+              (instrument-target-syms sym-or-syms opts)))))
 
 (defn unstrument-runtime
   "Runtime variant of `unstrument`. Accepts a qualified symbol, a
@@ -333,16 +344,26 @@
         (catch Error e e)))))
 
 (defn- quick-check
+  "Drives cljd.spec.gen.alpha.test-check/quick-check using the spec's :args
+  generator. Reproducible when :seed is supplied via
+  :clojure.spec.test.check/opts. With per-Spec gen* impls returning tc
+  Generators (or wrapped via gen/ensure-generator), shrinking
+  propagates automatically when the underlying generator carries
+  shrink data."
   [f specs {overrides :gen opts :clojure.spec.test.check/opts old-opts :clojure.test.check/opts}]
   (let [opts (or opts old-opts)
         num-tests (or (:num-tests opts) 1000)
+        tc-opts (cond-> {}
+                  (contains? opts :seed)        (assoc :seed (:seed opts))
+                  (contains? opts :max-size)    (assoc :max-size (:max-size opts))
+                  (contains? opts :reporter-fn) (assoc :reporter-fn (:reporter-fn opts)))
         g (try (s/gen (:args specs) overrides)
                (catch Exception e e)
                (catch Error e e))]
     (if (or (instance? Exception g) (instance? Error g))
       {:result g}
-      (let [prop (gen/for-all* [g] #(check-call f specs %))]
-        (apply gen/quick-check num-tests prop (mapcat identity opts))))))
+      (let [prop (gen-tc/for-all* [g] #(check-call f specs %))]
+        (gen-tc/quick-check num-tests prop tc-opts)))))
 
 (defn- make-check-result
   [check-sym spec test-check-ret tc-ret-key]
@@ -425,6 +446,17 @@
   the ClojureDart analyzer at macro-expansion time."
   [ns-sym-or-syms]
   `'~(enumerate-namespace* &env (quoted-form ns-sym-or-syms)))
+
+(defn enumerate-namespace-runtime
+  "Runtime variant of enumerate-namespace backed by the redef registry.
+  Returns loaded symbols in the given namespace(s) that can be reached
+  by runtime instrumentation."
+  [ns-sym-or-syms]
+  (let [nses (set (collectionize ns-sym-or-syms))]
+    (into #{}
+          (filter #(when-let [ns-name (namespace %)]
+                     (contains? nses (symbol ns-name))))
+          (impl/redef-registered-syms))))
 
 (defn- failure-type [x]
   (:cljd.spec.alpha/failure (ex-data x)))

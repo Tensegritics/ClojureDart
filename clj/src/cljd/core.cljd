@@ -902,6 +902,12 @@
     (int? n)
     (dart/is? n BigInt)))
 
+(defn rational?
+  "Return true if n is a rational number. ClojureDart has no ratio
+  type, so this is currently the same as integer?."
+  [n]
+  (integer? n))
+
 (defn ^int int
   "Coerce to int"
   [x]
@@ -9539,6 +9545,17 @@ specified.
       `(do ~@body)
       triples)))
 
+(defonce ^:private -multimethods (atom {}))
+
+(defn methods
+  "Returns the dispatch-value to method map for a ClojureDart
+  multimethod, or nil when unavailable."
+  [mm]
+  (or (some-> @-multimethods (get mm) :table)
+      (some (fn [[_ {:keys [table] f :fn}]]
+              (when (identical? f mm) table))
+            @-multimethods)))
+
 (defn -mk-multimethod [mm-name dispatch table default]
   (let [resolve
         (fn [dv]
@@ -9548,12 +9565,14 @@ specified.
               (throw (ArgumentError.
                        (str "No method in multimethod `" mm-name "` for dispatch value: "
                          (pr-str dv))))))]
-    (fn
-      ([] ((resolve (dispatch))))
-      ([a] ((resolve (dispatch a)) a))
-      ([a b] ((resolve (dispatch a b)) a b))
-      ([a b c] ((resolve (dispatch a b c)) a b c))
-      ([a b c d] ((resolve (dispatch a b c d)) a b c d))
-      ([a b c d & rest]
-       (apply (resolve (apply dispatch a b c d rest))
-         a b c d rest)))))
+    (let [f (fn
+              ([] ((resolve (dispatch))))
+              ([a] ((resolve (dispatch a)) a))
+              ([a b] ((resolve (dispatch a b)) a b))
+              ([a b c] ((resolve (dispatch a b c)) a b c))
+              ([a b c d] ((resolve (dispatch a b c d)) a b c d))
+              ([a b c d & rest]
+               (apply (resolve (apply dispatch a b c d rest))
+                      a b c d rest)))]
+      (swap! -multimethods assoc mm-name {:fn f :table table :default default})
+      f)))

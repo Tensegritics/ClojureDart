@@ -34,6 +34,7 @@ clojure -M -m cljd.build compile \
   cljd.test-clojure.spec-alpha \
   cljd.test-clojure.spec-alpha-redef-target \
   cljd.test-clojure.spec-alpha-cross-ns \
+  cljd.test-clojure.spec-gen-tc \
   cljd.test-clojure.primitives-test \
   cljd.test-clojure.string \
   cljd.test-clojure.test-test \

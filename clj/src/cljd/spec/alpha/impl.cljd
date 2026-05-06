@@ -16,6 +16,7 @@
 
 (ns cljd.spec.alpha.impl
   (:require [cljd.spec.gen.alpha :as gen]
+            [cljd.spec.gen.alpha.test-check :as gen-tc]
             [cljd.walk :as walk]))
 
 (def ^:dynamic *recursion-limit* 4)
@@ -121,6 +122,14 @@
     (ident? spec) spec
     (regex? spec) (:cljd.spec.alpha.impl/name spec)
     (satisfies? IMeta spec) (-> (meta spec) :cljd.spec.alpha.impl/name)))
+
+(defn- recursion-depth [rmap nm]
+  (get-in rmap [:cljd.spec.alpha/recursion-depth nm] 0))
+
+(defn- enter-recursion [rmap nm]
+  (if nm
+    (update-in rmap [:cljd.spec.alpha/recursion-depth nm] (fnil inc 0))
+    rmap))
 
 (declare spec-impl regex-spec-impl)
 
@@ -259,15 +268,37 @@
 
 (defn- gensub
   [spec overrides path rmap form]
-  (let [spec (specize spec)
-        g (or (when-let [gfn (or (get overrides (or (spec-name spec) spec))
-                                 (get overrides path))]
-                (gfn))
-              (gen* spec overrides path rmap))]
+  (let [nm (when (ident? spec) spec)
+        spec (specize spec)
+        nm (or nm (spec-name spec))
+        limit (:cljd.spec.alpha/recursion-limit rmap)
+        depth (recursion-depth rmap nm)
+        _ (when (and nm limit (> depth limit))
+            (throw (Exception. (str "Recursion limit reached for: " nm))))
+        rmap (enter-recursion rmap nm)
+        g (gen/ensure-generator
+            ;; Override lookup precedence: kw/sym name preserved across
+            ;; specize, then the post-specize spec-name (set on regex
+            ;; ops via with-name), then the spec object itself, then
+            ;; the current path. Without `nm` here, kw-keyed overrides
+            ;; never match for registered deftype-backed specs because
+            ;; they don't carry IMeta.
+            (or (when-let [gfn (or (get overrides nm)
+                                   (get overrides (or (spec-name spec) spec))
+                                   (get overrides path))]
+                  (gfn))
+                (gen* spec overrides path rmap)))]
     (if g
       (gen/such-that #(valid? spec %) g 100)
       (throw (Exception. (str "Unable to construct gen at: "
                               path " for: " (abbrev form)))))))
+
+(defn- try-gensub
+  [spec overrides path rmap form]
+  (try
+    (gensub spec overrides path rmap form)
+    (catch Exception _ nil)
+    (catch Error _ nil)))
 
 (defn gen
   "Given a spec, returns the generator for it, or throws if none can
@@ -403,6 +434,11 @@
     (keyword? retag) nil
     :else :cljd.spec.alpha/dispatch))
 
+(defn- multi-spec-retag [retag dispatch-val x]
+  (if (and (keyword? retag) (map? x))
+    (assoc x retag dispatch-val)
+    x))
+
 (defn- selected-multi-spec [mm x]
   (try
     (mm x)
@@ -425,7 +461,22 @@
       (if-let [pred (selected-multi-spec mm x)]
         (explain-1 form pred path via in x)
         [{:path path :pred form :val x :reason "no method" :via via :in in}])))
-  (gen* [_ _ _ _] (when gfn (gfn)))
+  (gen* [_ overrides path rmap]
+    (if gfn
+      (gfn)
+      (let [gs (keep (fn [[dispatch-val method-fn]]
+                       (try
+                         (gen/fmap #(multi-spec-retag retag dispatch-val %)
+                                   (gensub (method-fn dispatch-val)
+                                           overrides
+                                           (conj path dispatch-val)
+                                           rmap
+                                           form))
+                         (catch Exception _ nil)
+                         (catch Error _ nil)))
+                     (methods mm))]
+        (when-not (empty? gs)
+          (gen/one-of (vec gs))))))
   (with-gen* [_ gfn] (->MultiSpec form mm retag retag-form gfn))
   (describe* [_] (list 'cljd.spec.alpha/multi-spec form retag-form)))
 
@@ -477,8 +528,7 @@
       (gfn)
       (let [gs (remove nil?
                        (map (fn [k pred form]
-                              (gen/delay
-                                (gensub pred overrides (conj path k) rmap form)))
+                              (try-gensub pred overrides (conj path k) rmap form))
                             ks preds forms))]
         (when-not (empty? gs)
           (gen/one-of gs)))))
@@ -526,6 +576,56 @@
     (seq? expr) (mapcat key-expr-keywords (rest expr))
     :else []))
 
+(declare key-expr-gen)
+
+(defn- subsets [xs]
+  (if (empty? xs)
+    [[]]
+    (let [x (first xs)
+          more (subsets (rest xs))]
+      (concat more (map #(cons x %) more)))))
+
+(defn- concat-entry-gens [gs]
+  (if (empty? gs)
+    (gen/return [])
+    (gen/fmap #(apply concat %) (apply gen/tuple gs))))
+
+(defn- try-key-expr-gen [expr key-fn overrides path rmap]
+  (try
+    (key-expr-gen expr key-fn overrides path rmap)
+    (catch Exception _ nil)
+    (catch Error _ nil)))
+
+(defn- key-expr-gen [expr key-fn overrides path rmap]
+  (cond
+    (keyword? expr)
+    (let [k (key-fn expr)]
+      (gen/fmap (fn [v] [[k v]])
+                (gensub expr overrides (conj path k) rmap expr)))
+
+    (seq? expr)
+    (let [op (first expr)
+          exprs (vec (rest expr))]
+      (cond
+        (key-op? op "or")
+        (let [gs (keep #(try-key-expr-gen % key-fn overrides path rmap) exprs)]
+          (when-not (empty? gs)
+            (gen/one-of (vec (map concat-entry-gens
+                                  (remove empty? (subsets gs)))))))
+
+        (key-op? op "and")
+        (let [gs (mapv #(key-expr-gen % key-fn overrides path rmap) exprs)]
+          (concat-entry-gens gs))
+
+        :else nil))
+
+    :else nil))
+
+(defn- opt-key-expr-gen [expr key-fn overrides path rmap]
+  (if-let [g (try-key-expr-gen expr key-fn overrides path rmap)]
+    (gen/one-of [(gen/return []) g])
+    (gen/return [])))
+
 (defn ^:skip-wiki keys-args [opts gfn]
   (let [m (apply hash-map opts)
         req (:req m)
@@ -534,8 +634,8 @@
         opt-un (:opt-un m)
         req-keys (vec (mapcat key-expr-keywords req))
         req-un-specs (vec (mapcat key-expr-keywords req-un))
-        opt-keys (vec opt)
-        opt-un-specs (vec opt-un)]
+        opt-keys (vec (mapcat key-expr-keywords opt))
+        opt-un-specs (vec (mapcat key-expr-keywords opt-un))]
     (assert (every? #(and (keyword? %) (namespace %))
                     (concat req-keys req-un-specs opt-keys opt-un-specs))
             "all keys must be namespace-qualified keywords")
@@ -609,19 +709,18 @@
   (gen* [_ overrides path rmap]
     (if-let [gfn (:gfn argm)]
       (gfn)
-      (let [{:keys [req-keys req-specs opt-keys opt-specs]} argm
-            req-gens (mapv (fn [k s]
-                             [k (gensub s overrides (conj path k) rmap s)])
-                           req-keys req-specs)
-            opt-gens (mapv (fn [k s]
-                             [k (gensub s overrides (conj path k) rmap s)])
-                           opt-keys opt-specs)]
-        (fn []
-          (let [opts (filter (fn [_] (zero? (rand-int 2))) opt-gens)]
-            (into {}
-                  (map (fn [[k g]]
-                         [k (gen/generate g)])
-                       (concat req-gens opts))))))))
+      (let [{:keys [req req-un opt opt-un]} argm
+            req-gen (apply gen/tuple
+                           (concat
+                            (mapv #(key-expr-gen % identity overrides path rmap) req)
+                            (mapv #(key-expr-gen % unqual-key overrides path rmap) req-un)))
+            opt-gen (apply gen/tuple
+                           (concat
+                            (mapv #(opt-key-expr-gen % identity overrides path rmap) opt)
+                            (mapv #(opt-key-expr-gen % unqual-key overrides path rmap) opt-un)))]
+        (gen/fmap (fn [[req-entries opt-entries]]
+                    (into {} (apply concat (concat req-entries opt-entries))))
+                  (gen/tuple req-gen opt-gen)))))
   (with-gen* [_ gfn] (->MapSpec (assoc argm :gfn gfn)))
   (describe* [_]
     (let [{:keys [req opt req-un opt-un]} argm]
@@ -654,8 +753,7 @@
       (let [gs (mapv (fn [pred form]
                        (gensub pred overrides path rmap form))
                      preds forms)]
-        (fn []
-          (apply merge (map #(gen/generate %) gs))))))
+        (gen/fmap #(apply merge %) (apply gen/tuple gs)))))
   (with-gen* [_ gfn] (->MergeSpec forms preds gfn))
   (describe* [_] (cons 'cljd.spec.alpha/merge forms)))
 
@@ -840,15 +938,23 @@
   (every? #(and (sequential? %) (= 2 (count %))) xs))
 
 (defn- generated-coll [opts xs]
-  (let [{:keys [kind count min-count max-count distinct]} opts
-        map-candidate (when (pair-seq? xs) (into {} xs))
-        candidates (cond-> [(vec xs) (into #{} xs) (apply list xs)]
-                     map-candidate (conj map-candidate))]
-    (or (first (filter #(not (coll-problems % kind (:kind-form opts)
-                                            count min-count max-count distinct
-                                            [] [] []))
-                       candidates))
-        (vec xs))))
+  (cond
+    (contains? opts :into)
+    (into (:into opts) xs)
+
+    (contains? opts :gen-into)
+    (into (:gen-into opts) xs)
+
+    :else
+    (let [{:keys [kind count min-count max-count distinct]} opts
+          map-candidate (when (pair-seq? xs) (into {} xs))
+          candidates (cond-> [(vec xs) (into #{} xs) (apply list xs)]
+                       map-candidate (conj map-candidate))]
+      (or (first (filter #(not (coll-problems % kind (:kind-form opts)
+                                              count min-count max-count distinct
+                                              [] [] []))
+                         candidates))
+          (vec xs)))))
 
 (deftype EverySpec [form pred opts gfn spec-delay]
   Spec
@@ -900,20 +1006,31 @@
   (gen* [_ overrides path rmap]
     (if gfn
       (gfn)
-      (let [{:keys [count min-count max-count distinct]} opts
-            pgen (gensub pred overrides path rmap form)]
-        (fn []
-          (let [n (gen-coll-count opts)
-                xs (if distinct
-                     (gen/generate
-                      (gen/vector-distinct pgen
-                                           (if count
-                                             {:num-elements count :max-tries 100}
-                                             {:min-elements (or min-count 0)
-                                              :max-elements (or max-count n)
-                                              :max-tries 100})))
-                     (gen/generate (gen/vector pgen n)))]
-            (generated-coll opts xs))))))
+      (let [{:keys [count min-count max-count distinct gen-max]} opts
+            pgen (gensub pred overrides path rmap form)
+            ;; Element count: prefer explicit :count, then a bounded
+            ;; range, else 0..gen-max (default 20).
+            n-gen (cond
+                    count (gen/return count)
+                    (or min-count max-count)
+                    (gen/choose (or min-count 0)
+                                (or max-count
+                                    (max (or gen-max 20)
+                                         (* 2 (or min-count 0)))))
+                    :else (gen/choose 0 (or gen-max 20)))
+            ;; Collection-of-elements gen with rose-tree shrinks.
+            vec-gen (if distinct
+                      (gen/vector-distinct
+                       pgen
+                       (cond
+                         count {:num-elements count :max-tries 100}
+                         :else {:min-elements (or min-count 0)
+                                :max-elements (or max-count
+                                                  (max (or gen-max 20)
+                                                       (* 2 (or min-count 0))))
+                                :max-tries 100}))
+                      (gen/bind n-gen (fn [n] (gen/vector pgen n))))]
+        (gen/fmap #(generated-coll opts %) vec-gen))))
   (with-gen* [_ gfn] (->EverySpec form pred opts gfn spec-delay))
   (describe* [_] (or (:describe opts)
                      (cons 'cljd.spec.alpha/every (cons form (:opts opts))))))
@@ -935,9 +1052,11 @@
   (gen* [_ overrides path rmap]
     (if gfn
       (gfn)
-      (gen/frequency
-       [[1 (gen/return nil)]
-        [9 (gen/delay (gensub pred overrides (conj path :cljd.spec.alpha/pred) rmap form))]])))
+      (if-let [g (try-gensub pred overrides (conj path :cljd.spec.alpha/pred) rmap form)]
+        (gen/frequency
+         [[1 (gen/return nil)]
+          [9 g]])
+        (gen/return nil))))
   (with-gen* [_ gfn] (->NilableSpec form pred gfn spec-delay))
   (describe* [_] (list 'cljd.spec.alpha/nilable form)))
 
@@ -1108,7 +1227,13 @@
       (apply concat (map #(op-unform pred %) x))
 
       :cljd.spec.alpha.impl/maybe
-      (op-unform pred x)
+      ;; nil/no-ret denote "matched nothing" (paired with the same
+      ;; rewrite at the top of RegexSpec.conform*). If a (s/? nil?)
+      ;; conformed to nil, we collapse it to [] too — same asymmetry as
+      ;; upstream clojure.spec.alpha.
+      (if (or (no-ret? x) (nil? x))
+        []
+        (op-unform pred x))
 
       :cljd.spec.alpha.impl/amp
       (let [px (reduce #(unform %2 %1) x (reverse preds))]
@@ -1174,25 +1299,45 @@
           :cljd.spec.alpha.impl/alt
           (let [gs (remove nil?
                            (map (fn [k pred form]
-                                  (op-gen pred overrides (conj path k) rmap form))
+                                  (try
+                                    (op-gen pred overrides (conj path k) rmap form)
+                                    (catch Exception _ nil)
+                                    (catch Error _ nil)))
                                 ks preds forms))]
             (when-not (empty? gs)
               (gen/one-of gs)))
 
           :cljd.spec.alpha.impl/rep
-          (when-let [g (op-gen pred overrides path rmap (:form r))]
-            (gen/fmap #(apply concat %) (gen/vector g 0 4)))
+          (if-let [g (try
+                       (op-gen pred overrides path rmap (:form r))
+                       (catch Exception _ nil)
+                       (catch Error _ nil))]
+            (gen/fmap #(apply concat %) (gen/vector g 0 4))
+            (gen/return []))
 
           :cljd.spec.alpha.impl/rep+
-          (when-let [g (op-gen pred overrides path rmap (:form r))]
+          (when-let [g (try
+                         (op-gen pred overrides path rmap (:form r))
+                         (catch Exception _ nil)
+                         (catch Error _ nil))]
             (gen/fmap #(apply concat %) (gen/vector g 1 4)))
 
           :cljd.spec.alpha.impl/maybe
-          (when-let [g (op-gen pred overrides path rmap (:form r))]
-            (gen/one-of [(gen/return []) g]))
+          (if-let [g (try
+                       (op-gen pred overrides path rmap (:form r))
+                       (catch Exception _ nil)
+                       (catch Error _ nil))]
+            (gen/one-of [(gen/return []) g])
+            (gen/return []))
 
           :cljd.spec.alpha.impl/amp
-          (op-gen inner-re overrides path rmap re-form)
+          ;; Inner regex must satisfy the amp's predicates after the
+          ;; conform; filter generated values via such-that against
+          ;; the same and-pred path conform* uses.
+          (when-let [g (op-gen inner-re overrides path rmap re-form)]
+            (gen/such-that #(not (invalid? (and-preds % preds forms)))
+                           g
+                           100))
 
           nil
           (atomic-op-gen re overrides path rmap form)))))
@@ -1204,7 +1349,12 @@
       (if-let [{ret :ret input :input}
                (first (filter #(empty? (:input %))
                               (match-regex-results re (seq x))))]
-        (if (empty? input) ret :cljd.spec.alpha/invalid)
+        (if (empty? input)
+          ;; An empty maybe yields the internal no-ret sentinel; expose
+          ;; it as nil at the user-facing boundary so callers can pattern
+          ;; on a stable value. op-unform handles nil symmetrically.
+          (if (no-ret? ret) nil ret)
+          :cljd.spec.alpha/invalid)
         :cljd.spec.alpha/invalid)
       :cljd.spec.alpha/invalid))
   (unform* [_ x] (vec (op-unform re x)))
@@ -1247,6 +1397,85 @@
     (catch Exception _ false)
     (catch Error _ false)))
 
+(defn- assoc-fn-failure-context [probs args role]
+  (map #(assoc %
+          :cljd.spec.alpha/args args
+          :cljd.spec.alpha/role role)
+       probs))
+
+(defn- call-problems
+  [f specs args path via in]
+  (let [argspec (:args specs)
+        retspec (:ret specs)
+        fnspec (:fn specs)
+        cargs (when argspec (conform argspec args))]
+    (if (invalid? cargs)
+      (assoc-fn-failure-context
+       (explain* argspec (conj path :args) via in args)
+       args
+       :args)
+      (try
+        (let [retv (apply f args)
+              cret (when retspec (conform retspec retv))]
+          (cond
+            (invalid? cret)
+            (assoc-fn-failure-context
+             (explain* retspec (conj path :ret) via in retv)
+             args
+             :ret)
+
+            (and argspec retspec fnspec
+                 (not (valid? fnspec {:args cargs :ret cret})))
+            (assoc-fn-failure-context
+             (explain* fnspec (conj path :fn) via in {:args cargs :ret cret})
+             args
+             :fn)))
+        (catch Exception e
+          [{:path path
+            :pred 'cljd.core/ifn?
+            :val f
+            :reason "exception thrown during generative check"
+            :via via
+            :in in
+            :cljd.spec.alpha/args args
+            :cljd.spec.alpha/failure e}])
+        (catch Error e
+          [{:path path
+            :pred 'cljd.core/ifn?
+            :val f
+            :reason "error thrown during generative check"
+            :via via
+            :in in
+            :cljd.spec.alpha/args args
+            :cljd.spec.alpha/failure e}])))))
+
+(defn- fn-problems
+  "Walks up to `iters` argument samples looking for the first set of
+  call-problems. When found, descends into that sample's rose tree to
+  find a strictly smaller still-failing input via depth-first walk —
+  the resulting problems describe a minimized counterexample, not the
+  raw first failure."
+  [f specs iters path via in]
+  (if-let [argspec (:args specs)]
+    (let [g (gen argspec)
+          rng (gen-tc/make-rng nil)
+          fails? (fn [args] (seq (call-problems f specs args path via in)))
+          first-rose (loop [i 0]
+                       (when (< i iters)
+                         (let [size (clojure.core/min 200 i)
+                               rose (gen-tc/run-gen g rng size)]
+                           (if (fails? (gen-tc/rose-val rose))
+                             rose
+                             (recur (inc i))))))]
+      (when first-rose
+        (let [shrunk (loop [r first-rose]
+                       (let [child (some (fn [c]
+                                           (when (fails? (gen-tc/rose-val c)) c))
+                                         (gen-tc/rose-children r))]
+                         (if child (recur child) r)))]
+          (call-problems f specs (gen-tc/rose-val shrunk) path via in))))
+    (throw (Exception. "No :args spec found, can't generate"))))
+
 (defn- validate-fn?
   [f specs iters]
   (if-let [argspec (:args specs)]
@@ -1256,7 +1485,7 @@
           (= i iters) true
           (call-valid? f specs (gen/generate g)) (recur (inc i))
           :else false)))
-    true))
+    (throw (Exception. "No :args spec found, can't generate"))))
 
 (deftype FSpec [argspec aform retspec rform fnspec fform gfn specs]
   cljd.core/ILookup
@@ -1275,8 +1504,12 @@
       (not (ifn? f))
       [{:path path :pred 'cljd.core/ifn? :val f :via via :in in}]
 
-      (not (validate-fn? f specs 100))
-      [{:path path :pred (describe* this) :val f :reason "function failed generative check" :via via :in in}]))
+      :else
+      (when-let [probs (seq (fn-problems f specs 100 path via in))]
+        (map #(cond-> %
+                (nil? (:reason %))
+                (assoc :reason "function failed generative check"))
+             probs))))
   (gen* [_ overrides _ _]
     (if gfn
       (gfn)
@@ -1313,7 +1546,13 @@
   "Exercises f by applying it to generated samples from fspec's :args spec."
   ([f fspec] (exercise-fn f 10 fspec))
   ([f n fspec]
-   (if-let [arg-spec (:args fspec)]
-     (map (fn [args] [args (apply f args)])
-          (gen/sample (gen arg-spec) n))
-     (throw (Exception. "No :args spec found, can't generate")))))
+   (let [fspec (or fspec (when (symbol? f) (get-spec f)))
+         f (if (symbol? f)
+             (if-let [getter (redef-getter f)]
+               (getter)
+               (throw (Exception. (str "No fn registered for symbol: " f))))
+             f)]
+     (if-let [arg-spec (:args fspec)]
+       (map (fn [args] [args (apply f args)])
+            (gen/sample (gen arg-spec) n))
+       (throw (Exception. "No :args spec found, can't generate"))))))

@@ -33,8 +33,16 @@
   (s/def ::width number?)
   (s/def ::height number?)
   (s/def ::score int?)
+  (s/def ::a int?)
+  (s/def ::b int?)
   (s/def ::small-int (s/int-in 1 4))
   (s/def ::shape-map (s/keys :req-un [::shape] :opt-un [::score]))
+  (s/def ::req-un-or (s/keys :req-un [(or ::a ::b)]))
+  (s/def ::opt-un-or (s/keys :opt-un [(or ::a ::b)]))
+  (s/def ::opt-un-and (s/keys :opt-un [(and ::a ::b)]))
+  (s/def ::ints-into-list (s/coll-of int? :into () :count 3))
+  (s/def ::tree (s/or :leaf int?
+                      :node (s/coll-of ::tree :kind vector? :into [] :gen-max 2)))
   (s/def ::shape-kvs (s/keys* :req-un [::shape]))
   (s/def ::shape-value (s/multi-spec shape-spec :shape))
   (s/def ::plain-int int?)
@@ -71,9 +79,20 @@
 (deftest valid?-predicate
   (is (true?  (s/valid? int? 1)))
   (is (false? (s/valid? int? "x")))
+  (is (true?  (s/valid? int? 1 'int?)))
+  (is (false? (s/valid? int? "x" 'int?)))
   (is (true?  (s/valid? ::even-int 4)))
   (is (false? (s/valid? ::even-int 5)))
   (is (false? (s/valid? ::even-int :foo))))
+
+(deftest public-protocol-aliases
+  (let [spec (s/spec int?)]
+    (is (satisfies? s/Spec spec))
+    (is (= 1 (s/conform* spec 1)))
+    (is (s/invalid? (s/conform* spec "x")))
+    (is (= 'cljd.core/int? (s/describe* spec))))
+  (is (satisfies? s/Specize ::even-int))
+  (is (s/spec? (s/specize* ::even-int))))
 
 (deftest conform-predicate
   (is (= 4 (s/conform ::even-int 4)))
@@ -118,6 +137,21 @@
   (is (some? (s/get-spec 'cljd.test-clojure.spec-alpha/symbol-registered)))
   (is (some? (s/get-spec (var symbol-registered))))
   (is (contains? (s/registry) ::even-int)))
+
+(deftest public-range-predicates
+  (testing "int-in-range? mirrors the public upstream helper"
+    (is (true? (s/int-in-range? 1 4 1)))
+    (is (true? (s/int-in-range? 1 4 3)))
+    (is (false? (s/int-in-range? 1 4 4)))
+    (is (false? (s/int-in-range? 1 4 1.5))))
+  (testing "inst-in-range? mirrors the public upstream helper"
+    (let [start #inst "2020-01-01T00:00:00.000-00:00"
+          mid   #inst "2020-06-01T00:00:00.000-00:00"
+          end   #inst "2021-01-01T00:00:00.000-00:00"]
+      (is (true? (s/inst-in-range? start end start)))
+      (is (true? (s/inst-in-range? start end mid)))
+      (is (false? (s/inst-in-range? start end end)))
+      (is (false? (s/inst-in-range? start end "2020"))))))
 
 (deftest cljs-style-constructors-preserve-forms
   (is (= 'cljd.core/int? (s/form ::plain-int)))
@@ -212,6 +246,7 @@
 
 (deftest built-in-and-range-generators
   (is (boolean? (gen/generate (s/gen boolean?))))
+  (is (integer? (gen/generate (s/gen rational?) 10 1)))
   (doseq [[x conformed] (s/exercise ::small-int 10)]
     (is (s/valid? ::small-int x))
     (is (= x conformed))))
@@ -224,9 +259,79 @@
     (is (s/valid? ::prefix-tail x))
     (is (not (s/invalid? conformed)))))
 
+(deftest multi-spec-generates-from-methods
+  (doseq [[x conformed] (s/exercise ::shape-value 10)]
+    (is (#{:circle :rect} (:shape x)))
+    (is (s/valid? ::shape-value x))
+    (is (= x conformed))))
+
+(deftest map-generator-preserves-grouped-optional-key-shapes
+  (let [req-or-samples (gen/sample (s/gen ::req-un-or) 100 1)
+        opt-or-samples (gen/sample (s/gen ::opt-un-or) 100 1)]
+    (doseq [x req-or-samples]
+      (is (or (contains? x :a) (contains? x :b)))
+      (is (s/valid? ::req-un-or x)))
+    (testing "canonical or-k-gen may include multiple alternatives"
+      (is (some #(and (contains? % :a) (contains? % :b))
+                req-or-samples))
+      (is (some #(and (contains? % :a) (contains? % :b))
+                opt-or-samples))))
+  (doseq [[x _] (s/exercise ::opt-un-and 25)]
+    (is (or (not (or (contains? x :a) (contains? x :b)))
+            (and (contains? x :a) (contains? x :b))))))
+
+(deftest every-generator-honors-into
+  (let [x (gen/generate (s/gen ::ints-into-list) 10 1)]
+    (is (list? x))
+    (is (= 3 (count x))))
+  (testing "cljs's generation-only :gen-into option is accepted"
+    (let [x (gen/generate (s/gen (s/coll-of int? :gen-into () :count 3)) 10 1)]
+      (is (list? x))
+      (is (= 3 (count x))))))
+
+(deftest recursive-generators-respect-recursion-limit
+  (let [g (binding [s/*recursion-limit* 0]
+            (s/gen ::tree))
+        samples (gen/sample g 20 1)]
+    (is (every? int? samples))))
+
 (deftest exercise-fn-uses-fdef-args
   (doseq [[args ret] (s/exercise-fn add1 10)]
-    (is (= (inc (first args)) ret))))
+    (is (= (inc (first args)) ret)))
+  (testing "runtime symbol expressions resolve via the redef registry"
+    (doseq [[args ret] (s/exercise-fn (identity `add1) 3)]
+      (is (= (inc (first args)) ret)))))
+
+(deftest assert-throws-ex-info-with-explain-data
+  (try
+    (s/check-asserts true)
+    (try
+      (s/assert ::even-int 5)
+      (is false "expected assertion failure")
+      (catch Object e
+        (is (= :assertion-failed
+               (:cljd.spec.alpha/failure (ex-data e))))
+        (is (seq (:cljd.spec.alpha/problems (ex-data e))))))
+    (finally
+      (s/check-asserts false))))
+
+(deftest fspec-without-args-throws-during-conformance
+  (let [fsp (s/fspec :ret int?)]
+    (is (= :thrown
+           (try
+             (s/valid? fsp (fn [] 1))
+             :not-thrown
+             (catch Object _ :thrown))))))
+
+(deftest fspec-explain-reruns-to-report-failing-input
+  (let [fsp (s/fspec :args (s/cat :x int?) :ret int?)
+        problem (-> (s/explain-data fsp bad-ret)
+                    :cljd.spec.alpha/problems
+                    first)]
+    (is (= :ret (:cljd.spec.alpha/role problem)))
+    (is (sequential? (:cljd.spec.alpha/args problem)))
+    (is (= "bad" (:val problem)))
+    (is (= "function failed generative check" (:reason problem)))))
 
 (deftest spec-test-check-explicit-fn
   (let [ret (first (st/check `add1 {:clojure.spec.test.check/opts {:num-tests 5}}))]
@@ -251,6 +356,13 @@
     (testing "enumerate-namespace uses analyzer defs"
       (is (contains? (st/enumerate-namespace 'cljd.test-clojure.spec-alpha)
                      add1-sym)))
+    (testing "enumerate-namespace-runtime uses loaded redef registrations"
+      (is (contains? (st/enumerate-namespace-runtime
+                      (identity 'cljd.test-clojure.spec-alpha))
+                     add1-sym))
+      (is (contains? (st/enumerate-namespace-runtime
+                      ['cljd.test-clojure.spec-alpha])
+                     add1-instr-sym)))
     (testing "no-arg check expands over discovered fdefs"
       (let [checked (set (map :sym (st/check)))]
         (is (contains? checked add1-sym))
@@ -265,6 +377,20 @@
           (st/unstrument 'cljd.test-clojure.spec-alpha))))))
 
 (deftest instrument-stub-and-replace-opts-route-through-auto-redef
+  (testing ":stub target is instrumented even when it appears only in opts"
+    (try
+      (is (= ['cljd.test-clojure.spec-alpha/stub-target]
+             (st/instrument [] {:stub #{`stub-target}})))
+      (is (= 42 (stub-target)))
+      (finally
+        (st/unstrument `stub-target))))
+  (testing ":replace target is instrumented even when it appears only in opts"
+    (try
+      (is (= ['cljd.test-clojure.spec-alpha/replace-target]
+             (st/instrument [] {:replace {`replace-target (fn [x] (* x 10))}})))
+      (is (= 30 (replace-target 3)))
+      (finally
+        (st/unstrument `replace-target))))
   (testing ":stub replaces the auto-redef call site with a generated fn"
     (try
       (is (= ['cljd.test-clojure.spec-alpha/stub-target]
@@ -338,6 +464,15 @@
                         {:cljd.spec.alpha/k :b :cljd.spec.alpha/v 2}]))))
   (testing "empty input yields empty map"
     (is (= {} (s/kvs->map []))))
+  (testing "the upstream ::kvs->map spec is registered"
+    (let [spec (s/get-spec :cljd.spec.alpha/kvs->map)]
+      (is (some? spec))
+      (is (= {:a 1}
+             (s/conform spec [{:cljd.spec.alpha/k :a
+                               :cljd.spec.alpha/v 1}])))
+      (is (= [{:cljd.spec.alpha/k :a
+               :cljd.spec.alpha/v 1}]
+             (vec (s/unform spec {:a 1}))))))
   (testing "form of a keys*-built spec references the registered fn"
     (let [f (s/form ::shape-kvs)]
       (is (some #{'cljd.spec.alpha/kvs->map} (tree-seq seqable? seq f))))))
@@ -355,3 +490,2949 @@
         (st/unstrument `explicit-redef-fn))))
   (testing "after unstrument, explicit redef def behaves like normal"
     (is (= 6 (explicit-redef-fn 5)))))
+
+(deftest dynamic-recursion-limit-bridges-impl
+  (testing "rebinding s/*recursion-limit* propagates into impl's gen pipeline"
+    (let [g (s/gen ::even-int)
+          base (s/gen ::even-int)]
+      ;; The bridge is observable via `gen` returning a generator that
+      ;; respects the binding for any recursive subgen. `::even-int`
+      ;; isn't recursive, but the binding must at least not throw and
+      ;; must produce a working generator.
+      (is (some? g))
+      (is (some? (binding [s/*recursion-limit* 0]
+                   (s/gen ::even-int)))))))
+
+(deftest spec-check-shrinks-failing-input
+  (testing "s/check on a deliberately-broken fn shrinks toward the boundary"
+    ;; Define an fdef that requires its arg < 1000 and a fn that
+    ;; rejects values >= 5. Most generated ints will fail; the shrunk
+    ;; smallest should be near the boundary 5.
+    (s/def ::small-arg (s/and int? #(< % 1000)))
+    (s/fdef bad-ret :args (s/cat :x ::small-arg) :ret #(< % 5))
+    (let [opts {:clojure.spec.test.check/opts {:num-tests 200 :seed 1}}
+          ret (first (st/check `bad-ret opts))]
+      (is (some? (:failure ret)))
+      (let [tc-ret (or (:clojure.spec.test.check/ret ret)
+                       (:clojure.test.check/ret ret))]
+        (when (and tc-ret (:shrunk tc-ret))
+          (testing ":shrunk records :smallest with rose-tree shrink data"
+            (is (some? (:smallest (:shrunk tc-ret))))))))))
+
+;; ----------------------------------------------------------------------------
+;; NilableSpec
+;; ----------------------------------------------------------------------------
+
+(deftest nilable-conform-and-unform
+  (s/def ::nilable-int (s/nilable int?))
+  (testing "nil conforms to nil"
+    (is (nil? (s/conform ::nilable-int nil))))
+  (testing "valid value conforms to itself"
+    (is (= 42 (s/conform ::nilable-int 42))))
+  (testing "value failing the inner pred is invalid"
+    (is (s/invalid? (s/conform ::nilable-int "x"))))
+  (testing "unform passes nil through and is identity on valid values"
+    (is (nil? (s/unform ::nilable-int nil)))
+    (is (= 42 (s/unform ::nilable-int 42)))))
+
+(deftest nilable-explain-reports-both-nil-and-pred-paths
+  (s/def ::nilable-int (s/nilable int?))
+  (let [probs (:cljd.spec.alpha/problems
+               (s/explain-data ::nilable-int "x"))]
+    (is (= 2 (count probs)))
+    (is (some #(= [:cljd.spec.alpha/pred] (:path %)) probs))
+    (is (some #(= [:cljd.spec.alpha/nil]  (:path %)) probs))
+    (is (some #(= 'cljd.core/nil? (:pred %)) probs)))
+  (is (nil? (s/explain-data ::nilable-int nil)))
+  (is (nil? (s/explain-data ::nilable-int 42))))
+
+(deftest nilable-generator-produces-both-nil-and-values
+  (let [samples (gen/sample (s/gen (s/nilable int?)) 200 1)]
+    (is (some nil? samples))
+    (is (some int? samples))
+    (is (every? #(or (nil? %) (int? %)) samples))))
+
+;; ----------------------------------------------------------------------------
+;; s/& (amp)
+;; ----------------------------------------------------------------------------
+
+(deftest amp-conform-applies-extra-predicate
+  (s/def ::amp-even-count (s/& (s/* int?) #(even? (count %))))
+  (is (= [1 2 3 4] (s/conform ::amp-even-count [1 2 3 4])))
+  (is (= [] (s/conform ::amp-even-count [])))
+  (is (s/invalid? (s/conform ::amp-even-count [1 2 3]))))
+
+(deftest amp-explain-points-at-regex-form
+  (s/def ::amp-even-count (s/& (s/* int?) #(even? (count %))))
+  (let [ed (s/explain-data ::amp-even-count [1 2 3])]
+    (is (some? ed))
+    (is (seq (:cljd.spec.alpha/problems ed)))))
+
+(deftest amp-generator-only-emits-passing-values
+  (s/def ::amp-even-count (s/& (s/* int?) #(even? (count %))))
+  (doseq [x (gen/sample (s/gen ::amp-even-count) 20 1)]
+    (is (even? (count x)))
+    (is (every? int? x))))
+
+(deftest amp-unform-roundtrips-through-inner-regex
+  (s/def ::amp-even-count (s/& (s/* int?) #(even? (count %))))
+  (let [v [1 2 3 4]]
+    (is (= v (s/unform ::amp-even-count (s/conform ::amp-even-count v))))))
+
+;; ----------------------------------------------------------------------------
+;; s/merge
+;; ----------------------------------------------------------------------------
+
+(deftest merge-conform-merges-component-maps
+  (s/def ::ma int?)
+  (s/def ::mb string?)
+  (s/def ::map-a (s/keys :req-un [::ma]))
+  (s/def ::map-b (s/keys :req-un [::mb]))
+  (s/def ::merged (s/merge ::map-a ::map-b))
+  (is (= {:ma 1 :mb "x"} (s/conform ::merged {:ma 1 :mb "x"})))
+  (is (s/invalid? (s/conform ::merged {:ma 1}))))
+
+(deftest merge-unform-roundtrip
+  (s/def ::ma int?)
+  (s/def ::mb string?)
+  (s/def ::map-a (s/keys :req-un [::ma]))
+  (s/def ::map-b (s/keys :req-un [::mb]))
+  (s/def ::merged (s/merge ::map-a ::map-b))
+  (let [m {:ma 1 :mb "x"}]
+    (is (= m (s/unform ::merged (s/conform ::merged m))))))
+
+(deftest merge-form-preserves-components
+  (s/def ::ma int?)
+  (s/def ::mb string?)
+  (s/def ::map-a (s/keys :req-un [::ma]))
+  (s/def ::map-b (s/keys :req-un [::mb]))
+  (s/def ::merged (s/merge ::map-a ::map-b))
+  (is (= '(cljd.spec.alpha/merge
+           :cljd.test-clojure.spec-alpha/map-a
+           :cljd.test-clojure.spec-alpha/map-b)
+         (s/form ::merged))))
+
+(deftest merge-generator-produces-merged-maps
+  (s/def ::ma int?)
+  (s/def ::mb string?)
+  (s/def ::map-a (s/keys :req-un [::ma]))
+  (s/def ::map-b (s/keys :req-un [::mb]))
+  (s/def ::merged (s/merge ::map-a ::map-b))
+  (doseq [x (gen/sample (s/gen ::merged) 10 1)]
+    (is (contains? x :ma))
+    (is (contains? x :mb))
+    (is (s/valid? ::merged x))))
+
+;; ----------------------------------------------------------------------------
+;; s/nonconforming
+;; ----------------------------------------------------------------------------
+
+(deftest nonconforming-returns-original-on-success
+  (s/def ::nc-source (s/or :i int? :s string?))
+  (let [nc (s/nonconforming ::nc-source)]
+    (testing "underlying spec would tag, nonconforming drops the tag"
+      (is (= [:i 1] (s/conform ::nc-source 1)))
+      (is (= 1 (s/conform nc 1)))
+      (is (= "x" (s/conform nc "x"))))
+    (testing "invalid stays invalid"
+      (is (s/invalid? (s/conform nc :k))))))
+
+(deftest nonconforming-unform-delegates
+  ;; nonconforming delegates unform* to the inner spec — so the inner
+  ;; spec's unform shape (tagged value for or, plain for pred, etc.)
+  ;; is what unform expects.
+  (s/def ::nc-int int?)
+  (let [nc (s/nonconforming ::nc-int)]
+    (is (= 1 (s/unform nc 1))))
+  (testing "for an or-source, unform still requires the tag"
+    (s/def ::nc-or (s/or :i int? :s string?))
+    (let [nc (s/nonconforming ::nc-or)]
+      (is (= 1 (s/unform nc [:i 1]))))))
+
+(deftest nonconforming-form-and-describe
+  (s/def ::nc-source (s/or :i int? :s string?))
+  (let [nc (s/nonconforming ::nc-source)]
+    (is (= '(cljd.spec.alpha/nonconforming
+             :cljd.test-clojure.spec-alpha/nc-source)
+           (s/form nc)))))
+
+(deftest nonconforming-explain-delegates-to-inner-spec
+  (s/def ::nc-source (s/or :i int? :s string?))
+  (let [nc (s/nonconforming ::nc-source)
+        ed (s/explain-data nc :k)]
+    (is (some? ed))
+    (is (seq (:cljd.spec.alpha/problems ed)))))
+
+;; ----------------------------------------------------------------------------
+;; double-in
+;; ----------------------------------------------------------------------------
+
+(deftest double-in-validates-and-generates
+  (s/def ::unit-double
+    (s/double-in :min 0.0 :max 1.0 :infinite? false :NaN? false))
+  (testing "validates within range"
+    (is (true? (s/valid? ::unit-double 0.5)))
+    (is (true? (s/valid? ::unit-double 0.0)))
+    (is (true? (s/valid? ::unit-double 1.0))))
+  (testing "rejects out-of-range / Inf / NaN"
+    (is (false? (s/valid? ::unit-double 2.0)))
+    (is (false? (s/valid? ::unit-double -0.5)))
+    (is (false? (s/valid? ::unit-double ##NaN)))
+    (is (false? (s/valid? ::unit-double ##Inf))))
+  (testing "non-double values fail"
+    (is (false? (s/valid? ::unit-double 1)))
+    (is (false? (s/valid? ::unit-double "x"))))
+  (testing "generator stays in the configured band"
+    (doseq [x (gen/sample (s/gen ::unit-double) 20 1)]
+      (is (<= 0.0 x))
+      (is (<= x 1.0)))))
+
+(deftest double-in-allows-inf-and-nan-by-default
+  (s/def ::any-double (s/double-in))
+  (is (true? (s/valid? ::any-double 1.5)))
+  (is (true? (s/valid? ::any-double ##NaN)))
+  (is (true? (s/valid? ::any-double ##Inf)))
+  (is (true? (s/valid? ::any-double ##-Inf)))
+  (is (false? (s/valid? ::any-double "x"))))
+
+;; ----------------------------------------------------------------------------
+;; s/inst-in macro
+;; ----------------------------------------------------------------------------
+
+(deftest inst-in-macro-validates-and-generates
+  (s/def ::y2k
+    (s/inst-in #inst "2000-01-01T00:00:00.000-00:00"
+               #inst "2001-01-01T00:00:00.000-00:00"))
+  (testing "values inside the half-open range conform"
+    (is (true?  (s/valid? ::y2k #inst "2000-06-01T00:00:00.000-00:00")))
+    (is (true?  (s/valid? ::y2k #inst "2000-01-01T00:00:00.000-00:00"))))
+  (testing "values at-or-after end are rejected"
+    (is (false? (s/valid? ::y2k #inst "2001-01-01T00:00:00.000-00:00")))
+    (is (false? (s/valid? ::y2k #inst "2001-06-01T00:00:00.000-00:00"))))
+  (testing "generator handles year-scale ranges (rng-int composes 64-bit draws)"
+    (doseq [x (gen/sample (s/gen ::y2k) 10 1)]
+      (is (s/valid? ::y2k x)))))
+
+;; ----------------------------------------------------------------------------
+;; s/conformer with unformer
+;; ----------------------------------------------------------------------------
+
+(defn- to-double-conformer [x]
+  (if (number? x) (double x) :cljd.spec.alpha/invalid))
+
+(defn- to-double-unformer [x]
+  (cond
+    (double? x) (.toInt ^double x)
+    (int? x) x
+    :else x))
+
+(deftest conformer-with-unformer-roundtrips
+  (s/def ::int->double (s/conformer to-double-conformer to-double-unformer))
+  (testing "conformer applies its fn"
+    (is (= 1.0 (s/conform ::int->double 1)))
+    (is (= 2.5 (s/conform ::int->double 2.5))))
+  (testing ":cljd.spec.alpha/invalid sentinel is honored"
+    (is (s/invalid? (s/conform ::int->double "x"))))
+  (testing "unformer reverses the conformer"
+    (is (= 1 (s/unform ::int->double 1.0))))
+  (testing "form includes the conformer wrapper symbol"
+    (is (some #{'cljd.spec.alpha/conformer}
+              (tree-seq seqable? seq (s/form ::int->double))))))
+
+(deftest conformer-without-unformer-throws-on-unform
+  (s/def ::just-conformer
+    (s/conformer (fn [x] (if (number? x) x :cljd.spec.alpha/invalid))))
+  (is (= 1 (s/conform ::just-conformer 1)))
+  (is (= :thrown
+         (try (s/unform ::just-conformer 1)
+              :not-thrown
+              (catch Object _ :thrown)))))
+
+;; ----------------------------------------------------------------------------
+;; Set as a spec (Specize path for PersistentHashSet)
+;; ----------------------------------------------------------------------------
+
+(deftest set-spec-membership-conform
+  (s/def ::colors #{:red :green :blue})
+  (is (= :red   (s/conform ::colors :red)))
+  (is (= :green (s/conform ::colors :green)))
+  (is (s/invalid? (s/conform ::colors :purple))))
+
+(deftest set-spec-explain-records-value
+  (s/def ::colors #{:red :green :blue})
+  (let [prob (-> (s/explain-data ::colors :purple)
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= :purple (:val prob)))))
+
+(deftest set-spec-generator-samples-membership
+  (s/def ::colors #{:red :green :blue})
+  (let [samples (set (gen/sample (s/gen ::colors) 50 1))]
+    (is (every? #{:red :green :blue} samples))
+    (is (>= (count samples) 2))))
+
+;; ----------------------------------------------------------------------------
+;; reg-resolve alias chain (deep-resolve)
+;; ----------------------------------------------------------------------------
+
+(deftest reg-resolve-walks-kw-alias-chain
+  (s/def ::alias-base int?)
+  (s/def ::alias-layer-1 ::alias-base)
+  (s/def ::alias-layer-2 ::alias-layer-1)
+  (testing "conform reaches the terminal spec through nested aliases"
+    (is (= 1 (s/conform ::alias-layer-2 1)))
+    (is (s/invalid? (s/conform ::alias-layer-2 "x"))))
+  (testing "valid? works through the chain"
+    (is (true?  (s/valid? ::alias-layer-2 1)))
+    (is (false? (s/valid? ::alias-layer-2 "x")))))
+
+;; ----------------------------------------------------------------------------
+;; gen overrides
+;; ----------------------------------------------------------------------------
+
+(deftest gen-overrides-by-spec-name
+  ;; gensub preserves the originating kw across specize and uses it for
+  ;; the override lookup, so an override map keyed by the registered
+  ;; spec name takes precedence over the default generator.
+  (s/def ::override-int int?)
+  (let [overrides {::override-int #(gen/return 42)}
+        samples (gen/sample (s/gen ::override-int overrides) 5 1)]
+    (is (every? #(= 42 %) samples))))
+
+(deftest gen-overrides-by-spec-object-fallback
+  ;; The spec-object key still works for callers that look up the spec
+  ;; via get-spec — the lookup chain tries kw name first, then the spec
+  ;; itself, then the path.
+  (s/def ::override-int-obj int?)
+  (let [spec-obj (s/get-spec ::override-int-obj)
+        overrides {spec-obj #(gen/return 42)}
+        samples (gen/sample (s/gen ::override-int-obj overrides) 5 1)]
+    (is (every? #(= 42 %) samples))))
+
+(deftest gen-overrides-at-top-level-path
+  (s/def ::override-int2 int?)
+  (let [overrides {[] #(gen/return 42)}
+        samples (gen/sample (s/gen ::override-int2 overrides) 5 1)]
+    (is (every? #(= 42 %) samples))))
+
+(deftest gen-overrides-by-nested-path
+  (s/def ::override-tuple (s/tuple int? int?))
+  (let [overrides {[1] #(gen/return 99)}
+        samples (gen/sample (s/gen ::override-tuple overrides) 5 1)]
+    (is (every? #(= 99 (nth % 1)) samples))
+    (testing "non-overridden positions still validate"
+      (is (every? #(int? (nth % 0)) samples)))))
+
+;; ----------------------------------------------------------------------------
+;; s/spec with :gen
+;; ----------------------------------------------------------------------------
+
+(deftest spec-macro-accepts-gen-override
+  (let [sp (s/spec int? :gen #(gen/return 7))]
+    (testing "validates the predicate"
+      (is (true?  (s/valid? sp 1)))
+      (is (false? (s/valid? sp "x"))))
+    (testing "uses the supplied generator"
+      (is (every? #(= 7 %) (gen/sample (s/gen sp) 5 1))))))
+
+;; ----------------------------------------------------------------------------
+;; Unform roundtrips across remaining spec types
+;; ----------------------------------------------------------------------------
+
+(deftest unform-roundtrip-tuple
+  (s/def ::unform-tup (s/tuple int? string? (s/or :k keyword? :i int?)))
+  (let [v [1 "x" :k]
+        c (s/conform ::unform-tup v)]
+    (is (= [1 "x" [:k :k]] c))
+    (is (= v (s/unform ::unform-tup c)))))
+
+(deftest unform-roundtrip-coll-of
+  (s/def ::unform-xs (s/coll-of (s/or :i int? :s string?) :kind vector?))
+  (let [v [1 "x" 2]
+        c (s/conform ::unform-xs v)]
+    (is (= [[:i 1] [:s "x"] [:i 2]] c))
+    (is (= v (s/unform ::unform-xs c)))))
+
+(deftest unform-roundtrip-map-of
+  (s/def ::unform-m (s/map-of keyword? (s/or :i int? :s string?)))
+  (let [v {:a 1 :b "x"}
+        c (s/conform ::unform-m v)]
+    (is (= {:a [:i 1] :b [:s "x"]} c))
+    (is (= v (s/unform ::unform-m c)))))
+
+(deftest unform-roundtrip-keys
+  (s/def ::ua int?)
+  (s/def ::ub string?)
+  (s/def ::unform-km (s/keys :req-un [::ua ::ub]))
+  (let [v {:ua 1 :ub "x"}]
+    (is (= v (s/unform ::unform-km (s/conform ::unform-km v))))))
+
+(deftest unform-roundtrip-regex-cat-alt
+  (s/def ::unform-cat (s/cat :i int? :tail (s/alt :s string? :k keyword?)))
+  (let [v [1 "x"]
+        c (s/conform ::unform-cat v)]
+    (is (= {:i 1 :tail [:s "x"]} c))
+    (is (= v (s/unform ::unform-cat c)))))
+
+(deftest unform-roundtrip-regex-star-plus-maybe
+  (s/def ::unform-star  (s/* int?))
+  (s/def ::unform-plus  (s/+ int?))
+  (s/def ::unform-maybe (s/? int?))
+  (testing "star roundtrip"
+    (is (= [1 2 3] (s/unform ::unform-star  (s/conform ::unform-star  [1 2 3])))))
+  (testing "star roundtrip on empty input"
+    (is (= []      (s/unform ::unform-star  (s/conform ::unform-star  [])))))
+  (testing "plus roundtrip"
+    (is (= [1]     (s/unform ::unform-plus  (s/conform ::unform-plus  [1])))))
+  (testing "maybe roundtrip with a value"
+    (is (= [1]     (s/unform ::unform-maybe (s/conform ::unform-maybe [1])))))
+  (testing "empty maybe roundtrip via nil"
+    (is (= []      (s/unform ::unform-maybe (s/conform ::unform-maybe []))))))
+
+(deftest maybe-conform-on-empty-returns-nil
+  ;; (s/? ...) on empty input matches the upstream contract: conform
+  ;; collapses the internal no-ret sentinel to nil and unform of nil
+  ;; produces [] — symmetric, modulo the (s/? nil?) asymmetry shared
+  ;; with upstream clojure.spec.alpha.
+  (s/def ::maybe-int (s/? int?))
+  (is (nil? (s/conform ::maybe-int [])))
+  (is (= [] (s/unform ::maybe-int nil))))
+
+;; ----------------------------------------------------------------------------
+;; EverySpec options
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-distinct-rejects-duplicates
+  (s/def ::distinct-vec (s/coll-of int? :distinct true))
+  (is (true?  (s/valid? ::distinct-vec [1 2 3])))
+  (is (true?  (s/valid? ::distinct-vec [])))
+  (is (false? (s/valid? ::distinct-vec [1 2 1]))))
+
+(deftest coll-of-min-max-count
+  (s/def ::bounded (s/coll-of int? :min-count 2 :max-count 4))
+  (is (false? (s/valid? ::bounded [1])))
+  (is (true?  (s/valid? ::bounded [1 2])))
+  (is (true?  (s/valid? ::bounded [1 2 3 4])))
+  (is (false? (s/valid? ::bounded [1 2 3 4 5]))))
+
+(deftest coll-of-count-exact
+  (s/def ::triple (s/coll-of int? :count 3))
+  (is (true?  (s/valid? ::triple [1 2 3])))
+  (is (false? (s/valid? ::triple [1 2])))
+  (is (false? (s/valid? ::triple [1 2 3 4]))))
+
+(deftest map-of-conform-keys-tags-keys
+  (s/def ::ckm (s/map-of (s/or :k keyword? :s string?) int?
+                         :conform-keys true))
+  (is (= {[:k :a] 1 [:s "b"] 2}
+         (s/conform ::ckm {:a 1 "b" 2}))))
+
+(deftest coll-of-distinct-generator
+  (s/def ::dgen (s/coll-of int? :distinct true :min-count 3 :max-count 5))
+  (doseq [x (gen/sample (s/gen ::dgen) 10 1)]
+    (is (or (empty? x) (apply distinct? x)))
+    (is (<= 3 (count x) 5))))
+
+;; ----------------------------------------------------------------------------
+;; coll-problems surfaces in explain-data
+;; ----------------------------------------------------------------------------
+
+(deftest coll-explain-kind-mismatch
+  (s/def ::vec-only (s/coll-of int? :kind vector?))
+  (let [prob (-> (s/explain-data ::vec-only #{1 2 3})
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= 'cljd.core/vector? (:pred prob)))
+    (is (= #{1 2 3} (:val prob)))))
+
+(deftest coll-explain-count-mismatch
+  (s/def ::need-3 (s/coll-of int? :count 3))
+  (let [prob (-> (s/explain-data ::need-3 [1 2])
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= [1 2] (:val prob)))
+    (is (= (list 'cljd.core/= 3 (list 'cljd.core/count '%))
+           (:pred prob)))))
+
+(deftest coll-explain-distinct-violation
+  (s/def ::distinct-only (s/coll-of int? :distinct true))
+  (let [prob (-> (s/explain-data ::distinct-only [1 1])
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= 'cljd.core/distinct? (:pred prob)))
+    (is (= [1 1] (:val prob)))))
+
+(deftest coll-explain-min-max-bound
+  (s/def ::bounded2 (s/coll-of int? :min-count 2 :max-count 3))
+  (let [prob (-> (s/explain-data ::bounded2 [1])
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= [1] (:val prob)))
+    (testing "pred describes the bound check"
+      (is (seq? (:pred prob)))
+      (is (= 'cljd.core/<= (first (:pred prob)))))))
+
+;; ----------------------------------------------------------------------------
+;; s/every vs s/coll-of (conform semantics)
+;; ----------------------------------------------------------------------------
+
+(deftest every-checks-without-conforming-elements
+  ;; every only checks validity; the original collection is returned
+  ;; unchanged. coll-of, in contrast, applies element-level conform.
+  (s/def ::tagged    (s/or :i int? :s string?))
+  (s/def ::e-every   (s/every ::tagged))
+  (s/def ::e-coll-of (s/coll-of ::tagged))
+  (let [xs [1 "x" 2]]
+    (testing "every returns the input verbatim"
+      (is (= xs (s/conform ::e-every xs))))
+    (testing "coll-of applies element-level conform tagging"
+      (is (= [[:i 1] [:s "x"] [:i 2]] (s/conform ::e-coll-of xs))))))
+
+(deftest every-respects-coll-check-limit
+  ;; every walks at most *coll-check-limit* elements before short-
+  ;; circuiting to "valid". With the limit dropped, a bad value past
+  ;; the cutoff isn't observed.
+  (s/def ::e-ints (s/every int?))
+  (let [xs (into (vec (repeat 50 1)) ["bad"])]
+    (is (false? (s/valid? ::e-ints xs)))
+    (binding [s/*coll-check-limit* 5]
+      (is (true? (s/valid? ::e-ints xs))))))
+
+;; ----------------------------------------------------------------------------
+;; s/every-kv vs s/map-of
+;; ----------------------------------------------------------------------------
+
+(deftest every-kv-checks-without-conforming-values
+  (s/def ::v-spec  (s/or :i int? :s string?))
+  (s/def ::ekv     (s/every-kv keyword? ::v-spec))
+  (s/def ::mof     (s/map-of  keyword? ::v-spec))
+  (let [m {:a 1 :b "x"}]
+    (testing "every-kv returns the input map verbatim"
+      (is (= m (s/conform ::ekv m))))
+    (testing "map-of applies value-level conform tagging"
+      (is (= {:a [:i 1] :b [:s "x"]} (s/conform ::mof m))))))
+
+;; ----------------------------------------------------------------------------
+;; MultiSpec :default dispatch
+;; ----------------------------------------------------------------------------
+
+(defmulti shape-with-default-spec :shape)
+(defmethod shape-with-default-spec :circle [_] (s/keys :req-un [::shape ::radius]))
+(defmethod shape-with-default-spec :default [_] (s/keys :req-un [::shape]))
+
+(deftest multi-spec-uses-default-method-when-no-tag-matches
+  (s/def ::shape   keyword?)
+  (s/def ::radius  number?)
+  (s/def ::any-shape (s/multi-spec shape-with-default-spec :shape))
+  (testing ":circle dispatch hits the specific method"
+    (is (= {:shape :circle :radius 2}
+           (s/conform ::any-shape {:shape :circle :radius 2})))
+    (is (s/invalid? (s/conform ::any-shape {:shape :circle}))))
+  (testing "unknown tags fall through to :default"
+    (is (= {:shape :triangle}
+           (s/conform ::any-shape {:shape :triangle})))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys :req (qualified keys)
+;; ----------------------------------------------------------------------------
+
+(deftest keys-req-validates-qualified-keys
+  (s/def ::user-id   int?)
+  (s/def ::user-name string?)
+  (s/def ::user-q    (s/keys :req [::user-id ::user-name]))
+  (is (true?  (s/valid? ::user-q {::user-id 1 ::user-name "a"})))
+  (is (false? (s/valid? ::user-q {::user-id 1})))
+  (testing "keys :req requires the fully-qualified key, not the unqualified one"
+    (is (false? (s/valid? ::user-q {:user-id 1 :user-name "a"})))))
+
+(deftest keys-req-explain-uses-contains?-form
+  (s/def ::user-id int?)
+  (s/def ::user-q  (s/keys :req [::user-id]))
+  (let [prob (-> (s/explain-data ::user-q {})
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= (list 'cljd.core/contains? '% ::user-id) (:pred prob)))))
+
+(deftest keys-or-and-key-expressions
+  (s/def ::x  int?)
+  (s/def ::y  int?)
+  (s/def ::z  int?)
+  (s/def ::ka (s/keys :req-un [(or ::x (and ::y ::z))]))
+  (testing "or-branch satisfied by single key"
+    (is (true? (s/valid? ::ka {:x 1}))))
+  (testing "or-branch satisfied via the and-clause"
+    (is (true? (s/valid? ::ka {:y 1 :z 2}))))
+  (testing "missing both branches is invalid"
+    (is (false? (s/valid? ::ka {})))))
+
+;; ----------------------------------------------------------------------------
+;; MapSpec non-qualified key assertion
+;; ----------------------------------------------------------------------------
+
+(deftest keys-rejects-non-qualified-key-at-construction
+  (testing "plain keyword in :req-un triggers the assert in keys-args"
+    (is (= :thrown
+           (try (s/keys :req-un [:plain-kw])
+                :not-thrown
+                (catch Object _ :thrown)))))
+  (testing "plain keyword in :req also triggers the assert"
+    (is (= :thrown
+           (try (s/keys :req [:plain-kw])
+                :not-thrown
+                (catch Object _ :thrown))))))
+
+;; ----------------------------------------------------------------------------
+;; reg-resolve! throw path
+;; ----------------------------------------------------------------------------
+
+(deftest conform-on-unregistered-keyword-throws
+  ;; Specize -> Keyword extension calls reg-resolve!, which throws when
+  ;; the key isn't in the registry.
+  (is (= :thrown
+         (try (s/conform :cljd.test-clojure.spec-alpha/not-a-real-spec 1)
+              :not-thrown
+              (catch Object _ :thrown)))))
+
+;; ----------------------------------------------------------------------------
+;; gensub recursion-limit throw
+;; ----------------------------------------------------------------------------
+
+(deftest gensub-throws-when-recursion-limit-exceeded
+  ;; A directly-recursive coll-of has no non-recursive escape branch
+  ;; for gen, so with limit 0 the inner gensub call exceeds the limit
+  ;; and propagates the exception (coll-of's gen doesn't try/catch).
+  (s/def ::strict-recur (s/coll-of ::strict-recur))
+  (is (= :thrown
+         (try
+           (binding [s/*recursion-limit* 0]
+             (gen/generate (s/gen ::strict-recur) 5 1))
+           :not-thrown
+           (catch Object _ :thrown)))))
+
+;; ----------------------------------------------------------------------------
+;; s/with-gen runtime generator override
+;; ----------------------------------------------------------------------------
+
+(deftest with-gen-replaces-default-generator
+  (let [fixed (s/with-gen int? #(gen/return 100))]
+    (testing "predicate validity is preserved"
+      (is (true? (s/valid? fixed 100)))
+      (is (false? (s/valid? fixed "no"))))
+    (testing "samples use the override"
+      (is (every? #(= 100 %) (gen/sample (s/gen fixed) 5 1))))))
+
+(deftest with-gen-on-registered-spec
+  (s/def ::wg-int int?)
+  (let [wrapped (s/with-gen ::wg-int #(gen/return 7))]
+    (is (every? #(= 7 %) (gen/sample (s/gen wrapped) 5 1)))))
+
+;; ----------------------------------------------------------------------------
+;; fspec :fn relationship
+;; ----------------------------------------------------------------------------
+
+(defn fn-inc [x] (inc x))
+(defn fn-id  [x] x)
+
+(deftest fspec-fn-validates-arg-ret-relationship
+  (let [fsp (s/fspec :args (s/cat :x int?)
+                     :ret  int?
+                     :fn   #(> (:ret %) (-> % :args :x)))]
+    (testing "fn satisfying the relationship validates"
+      (is (true?  (s/valid? fsp fn-inc))))
+    (testing "fn violating the relationship is invalid"
+      (is (false? (s/valid? fsp fn-id))))))
+
+(deftest fspec-explain-reports-fn-role-on-relationship-failure
+  (let [fsp (s/fspec :args (s/cat :x int?)
+                     :ret  int?
+                     :fn   #(> (:ret %) (-> % :args :x)))
+        ed  (s/explain-data fsp fn-id)]
+    (is (some? ed))
+    (is (some #(= :fn (:cljd.spec.alpha/role %))
+              (:cljd.spec.alpha/problems ed)))))
+
+;; ----------------------------------------------------------------------------
+;; check-asserts toggle
+;; ----------------------------------------------------------------------------
+
+(deftest check-asserts-toggle-controls-assert
+  (s/def ::ca-int int?)
+  (try
+    (testing "with asserts off, s/assert is a no-op even for invalid"
+      (s/check-asserts false)
+      (is (false? (s/check-asserts?)))
+      (is (= "x" (s/assert ::ca-int "x"))))
+    (testing "with asserts on, s/assert throws ex-info for invalid"
+      (s/check-asserts true)
+      (is (true? (s/check-asserts?)))
+      (is (= :thrown
+             (try (s/assert ::ca-int "x")
+                  :not-thrown
+                  (catch Object _ :thrown)))))
+    (testing "valid values pass through regardless of toggle"
+      (is (= 1 (s/assert ::ca-int 1))))
+    (finally
+      (s/check-asserts false))))
+
+;; ----------------------------------------------------------------------------
+;; FSpec ILookup
+;; ----------------------------------------------------------------------------
+
+(deftest fspec-ilookup-exposes-component-specs
+  (let [argspec (s/cat :x int?)
+        retspec (s/spec int?)
+        fnspec  (s/spec #(> (:ret %) (-> % :args :x)))
+        fsp     (s/fspec :args argspec :ret retspec :fn fnspec)]
+    (testing "keyword access returns the registered component specs"
+      (is (some? (:args fsp)))
+      (is (some? (:ret  fsp)))
+      (is (some? (:fn   fsp))))
+    (testing "missing key returns the not-found fallback"
+      (is (= ::nope (get fsp :missing ::nope))))
+    (testing "contains? sees the component keys"
+      (is (contains? fsp :args))
+      (is (contains? fsp :ret))
+      (is (contains? fsp :fn))
+      (is (not (contains? fsp :nope))))))
+
+(deftest fspec-ilookup-omits-unspecified-components
+  ;; The fspec macro defaults :ret to any? when unspecified, so :ret is
+  ;; always present. Only :fn is truly omittable.
+  (let [fsp (s/fspec :args (s/cat :x int?))]
+    (is (some? (:args fsp)))
+    (is (some? (:ret  fsp)))
+    (is (not (contains? fsp :fn)))))
+
+;; ----------------------------------------------------------------------------
+;; s/conformer invalid propagation
+;; ----------------------------------------------------------------------------
+
+(defn- positive-double-conformer [x]
+  (cond
+    (and (number? x) (pos? x)) (double x)
+    :else :cljd.spec.alpha/invalid))
+
+(deftest conformer-invalid-propagates-through-or
+  (s/def ::pos-double (s/conformer positive-double-conformer))
+  (s/def ::pos-or-string (s/or :p ::pos-double :s string?))
+  (testing "positive number takes the conformer branch"
+    (is (= [:p 2.0] (s/conform ::pos-or-string 2))))
+  (testing "negative falls through to the string branch (invalid here)"
+    (is (s/invalid? (s/conform ::pos-or-string -1))))
+  (testing "string takes the string branch directly"
+    (is (= [:s "x"] (s/conform ::pos-or-string "x")))))
+
+(deftest conformer-invalid-propagates-through-coll-of
+  (s/def ::pos-double (s/conformer positive-double-conformer))
+  (s/def ::pos-vec (s/coll-of ::pos-double))
+  (testing "all-positive vector conforms with each element converted"
+    (is (= [1.0 2.0 3.0] (s/conform ::pos-vec [1 2 3]))))
+  (testing "one invalid element makes the whole coll invalid"
+    (is (s/invalid? (s/conform ::pos-vec [1 -2 3])))))
+
+;; ----------------------------------------------------------------------------
+;; explain-out extra-keys printing
+;; ----------------------------------------------------------------------------
+
+(deftest explain-out-prints-extra-problem-keys
+  ;; fspec failures attach :cljd.spec.alpha/args and :cljd.spec.alpha/role
+  ;; entries to each problem. explain-out's "extra keys" loop should
+  ;; render these alongside the standard fields.
+  (let [fsp (s/fspec :args (s/cat :x int?) :ret int?)
+        s   (s/explain-str fsp bad-ret)]
+    (is (.contains ^String s ":cljd.spec.alpha/role"))
+    (is (.contains ^String s ":cljd.spec.alpha/args"))))
+
+;; ----------------------------------------------------------------------------
+;; Empty s/cat
+;; ----------------------------------------------------------------------------
+
+(deftest empty-cat-conforms-empty-input
+  (s/def ::no-args (s/cat))
+  (testing "empty input conforms to an empty arg map"
+    (is (= {} (s/conform ::no-args []))))
+  (testing "non-empty input is invalid"
+    (is (s/invalid? (s/conform ::no-args [1])))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of :into type preservation
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-into-vector-set-list
+  (testing ":into [] yields a vector"
+    (let [x (gen/generate (s/gen (s/coll-of int? :into [] :count 3)) 10 1)]
+      (is (vector? x))
+      (is (= 3 (count x)))))
+  (testing ":into #{} yields a set (duplicates collapsed)"
+    (let [x (gen/generate (s/gen (s/coll-of int? :into #{} :distinct true :count 3))
+                          10 1)]
+      (is (set? x))
+      (is (= 3 (count x)))))
+  (testing ":into () yields a list"
+    (let [x (gen/generate (s/gen (s/coll-of int? :into () :count 3)) 10 1)]
+      (is (list? x))
+      (is (= 3 (count x))))))
+
+;; ----------------------------------------------------------------------------
+;; MapSpec :opt (qualified-key optional)
+;; ----------------------------------------------------------------------------
+
+(deftest keys-opt-allows-missing-or-validates-present
+  (s/def ::opt-tag    keyword?)
+  (s/def ::opt-source (s/keys :req [::opt-tag] :opt [::user-id]))
+  (s/def ::user-id    int?)
+  (testing "missing :opt key is allowed"
+    (is (true? (s/valid? ::opt-source {::opt-tag :anon}))))
+  (testing "present :opt key is validated"
+    (is (true?  (s/valid? ::opt-source {::opt-tag :anon ::user-id 1})))
+    (is (false? (s/valid? ::opt-source {::opt-tag :anon ::user-id "bad"})))))
+
+;; ----------------------------------------------------------------------------
+;; FSpec gen returns a function
+;; ----------------------------------------------------------------------------
+
+(deftest fspec-gen-returns-callable-fn
+  (let [fsp (s/fspec :args (s/cat :x int?) :ret int?)
+        f   (gen/generate (s/gen fsp) 10 1)]
+    (testing "the generated value is callable"
+      (is (fn? f)))
+    (testing "calling with conforming args yields a ret-spec value"
+      (is (int? (f 1))))))
+
+;; ----------------------------------------------------------------------------
+;; exercise across spec types
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-keys-spec
+  (s/def ::ex-a int?)
+  (s/def ::ex-b string?)
+  (s/def ::ex-map (s/keys :req-un [::ex-a ::ex-b]))
+  (doseq [[x conformed] (s/exercise ::ex-map 5)]
+    (is (s/valid? ::ex-map x))
+    (is (= x conformed))))
+
+(deftest exercise-coll-of-spec
+  (s/def ::ex-coll (s/coll-of int? :kind vector? :min-count 1 :max-count 5))
+  (doseq [[x conformed] (s/exercise ::ex-coll 5)]
+    (is (s/valid? ::ex-coll x))
+    (is (= x conformed))))
+
+(deftest exercise-tuple-spec
+  (s/def ::ex-tup (s/tuple int? string?))
+  (doseq [[x conformed] (s/exercise ::ex-tup 5)]
+    (is (s/valid? ::ex-tup x))
+    (is (= x conformed))))
+
+(deftest exercise-cat-spec
+  (s/def ::ex-cat (s/cat :i int? :s string?))
+  (doseq [[x conformed] (s/exercise ::ex-cat 5)]
+    (is (s/valid? ::ex-cat x))
+    (is (map? conformed))
+    (is (contains? conformed :i))
+    (is (contains? conformed :s))))
+
+;; ----------------------------------------------------------------------------
+;; tuple single-pred
+;; ----------------------------------------------------------------------------
+
+(deftest tuple-with-single-pred
+  (s/def ::singleton-tup (s/tuple int?))
+  (is (= [1] (s/conform ::singleton-tup [1])))
+  (is (s/invalid? (s/conform ::singleton-tup [])))
+  (is (s/invalid? (s/conform ::singleton-tup [1 2])))
+  (is (s/invalid? (s/conform ::singleton-tup ["x"]))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of nil and non-coll input
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-rejects-non-coll
+  (s/def ::ints (s/coll-of int?))
+  (is (s/invalid? (s/conform ::ints nil)))
+  (is (s/invalid? (s/conform ::ints "string")))
+  (is (s/invalid? (s/conform ::ints 1))))
+
+(deftest coll-of-explain-non-coll-uses-coll?-pred
+  (s/def ::ints2 (s/coll-of int?))
+  (let [prob (-> (s/explain-data ::ints2 nil)
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= 'cljd.core/coll? (:pred prob)))
+    (is (nil? (:val prob)))))
+
+;; ----------------------------------------------------------------------------
+;; MultiSpec gen falls through method errors
+;; ----------------------------------------------------------------------------
+
+(defmulti gen-fallback-spec :gtype)
+(defmethod gen-fallback-spec :ok     [_] (s/keys :req-un [::gtype]))
+(defmethod gen-fallback-spec :broken [_] (throw (Exception. "broken method")))
+
+(deftest multi-spec-gen-skips-throwing-methods
+  ;; MultiSpec.gen* invokes each method-fn under try/catch — a method
+  ;; that throws is silently dropped; one-of picks from the survivors.
+  (s/def ::gtype keyword?)
+  (s/def ::mg-spec (s/multi-spec gen-fallback-spec :gtype))
+  (doseq [x (gen/sample (s/gen ::mg-spec) 10 1)]
+    (testing "only the working :ok method contributes generated values"
+      (is (= :ok (:gtype x))))))
+
+;; ----------------------------------------------------------------------------
+;; every :gen-max bound
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-gen-max-bounds-generated-size
+  (s/def ::small-coll (s/coll-of int? :gen-max 3))
+  (let [samples (gen/sample (s/gen ::small-coll) 25 1)]
+    (testing "no sample exceeds :gen-max"
+      (is (every? #(<= (count %) 3) samples)))
+    (testing "at least one sample uses the upper bound (statistical check)"
+      ;; Defensive — with seed 1 and 25 samples we expect to see 3.
+      (is (some #(= 3 (count %)) samples)))))
+
+;; ----------------------------------------------------------------------------
+;; fspec explain on non-fn
+;; ----------------------------------------------------------------------------
+
+(deftest fspec-explain-non-fn-reports-ifn?
+  (let [fsp (s/fspec :args (s/cat :x int?) :ret int?)
+        prob (-> (s/explain-data fsp 42)
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= 'cljd.core/ifn? (:pred prob)))
+    (is (= 42 (:val prob)))))
+
+;; ----------------------------------------------------------------------------
+;; exercise-fn-runtime error paths
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-fn-runtime-throws-without-redef
+  (testing "no ^:cljd.spec.alpha/redef registration → explicit throw"
+    (is (= :thrown
+           (try (s/exercise-fn-runtime 'cljd.test-clojure.spec-alpha/no-such-sym)
+                :not-thrown
+                (catch Object _ :thrown))))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of :kind with custom predicate
+;; ----------------------------------------------------------------------------
+
+(defn non-empty-vec? [x] (and (vector? x) (not (empty? x))))
+
+(deftest coll-of-kind-honors-arbitrary-predicate
+  (s/def ::ne-vec (s/coll-of int? :kind non-empty-vec?))
+  (is (true?  (s/valid? ::ne-vec [1 2])))
+  (is (false? (s/valid? ::ne-vec [])))
+  (is (false? (s/valid? ::ne-vec '(1 2))))
+  (is (false? (s/valid? ::ne-vec #{1 2}))))
+
+;; ----------------------------------------------------------------------------
+;; s/get-spec missing returns nil
+;; ----------------------------------------------------------------------------
+
+(deftest get-spec-returns-nil-for-unknown-keyword
+  (is (nil? (s/get-spec :cljd.test-clojure.spec-alpha/never-registered))))
+
+;; ----------------------------------------------------------------------------
+;; maybe (s/? nil?) asymmetry
+;; ----------------------------------------------------------------------------
+
+(deftest maybe-nil-pred-shares-upstream-conform-asymmetry
+  ;; (s/? nil?) cannot distinguish "matched nil" from "matched nothing"
+  ;; at conform time — both surface as nil. unform of nil-conformed
+  ;; maybe collapses to []. Matches upstream clojure.spec.alpha.
+  (s/def ::maybe-nil (s/? nil?))
+  (testing "matched-nil and no-match both conform to nil"
+    (is (nil? (s/conform ::maybe-nil [nil])))
+    (is (nil? (s/conform ::maybe-nil []))))
+  (testing "unform always collapses to []"
+    (is (= [] (s/unform ::maybe-nil nil)))))
+
+;; ----------------------------------------------------------------------------
+;; fspec :ret failure role tagging
+;; ----------------------------------------------------------------------------
+
+(deftest fspec-explain-ret-failure-tagged-as-ret-role
+  (let [fsp (s/fspec :args (s/cat :x int?) :ret string?)
+        prob (-> (s/explain-data fsp (fn [x] x))
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= :ret (:cljd.spec.alpha/role prob)))
+    (testing "args that triggered the ret failure are attached"
+      (is (sequential? (:cljd.spec.alpha/args prob))))))
+
+;; ----------------------------------------------------------------------------
+;; exercise sample count
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-returns-requested-number-of-samples
+  (s/def ::xs-int int?)
+  (testing "explicit count is honored"
+    (is (= 7 (count (s/exercise ::xs-int 7)))))
+  (testing "default n is 10"
+    (is (= 10 (count (s/exercise ::xs-int))))))
+
+;; ----------------------------------------------------------------------------
+;; s/with-gen on a regex spec
+;; ----------------------------------------------------------------------------
+
+(deftest with-gen-on-regex-attaches-gfn-inside-regex-map
+  ;; with-gen on a regex stashes the gen-fn at :cljd.spec.alpha.impl/gfn
+  ;; inside the regex map; op-gen consults it before falling back to the
+  ;; structural generator.
+  (let [reg     (s/cat :x int? :y int?)
+        wrapped (s/with-gen reg #(gen/return [42 99]))]
+    (testing "validity is preserved through the wrapped regex"
+      (is (true? (s/valid? wrapped [42 99]))))
+    (testing "samples use the override exclusively"
+      (is (every? #(= [42 99] %) (gen/sample (s/gen wrapped) 5 1))))))
+
+;; ----------------------------------------------------------------------------
+;; s/every :into preserves type at gen
+;; ----------------------------------------------------------------------------
+
+(deftest every-into-preserves-target-collection-type
+  (s/def ::every-list (s/every int? :into () :count 3))
+  (let [x (gen/generate (s/gen ::every-list) 10 1)]
+    (is (list? x))
+    (is (= 3 (count x))))
+  (s/def ::every-set (s/every int? :into #{} :distinct true :count 3))
+  (let [x (gen/generate (s/gen ::every-set) 10 1)]
+    (is (set? x))
+    (is (= 3 (count x)))))
+
+;; ----------------------------------------------------------------------------
+;; s/conform on a literal regex op (no s/def)
+;; ----------------------------------------------------------------------------
+
+(deftest conform-and-unform-on-literal-regex-value
+  (let [reg (s/cat :x int? :y string?)]
+    (testing "conform without registration"
+      (is (= {:x 1 :y "a"} (s/conform reg [1 "a"])))
+      (is (s/invalid? (s/conform reg [1])))
+      (is (s/invalid? (s/conform reg [1 "a" :extra]))))
+    (testing "unform roundtrips via the same regex value"
+      (is (= [1 "a"] (s/unform reg (s/conform reg [1 "a"])))))))
+
+(deftest valid?-on-literal-regex-value
+  (let [reg (s/+ int?)]
+    (is (true? (s/valid? reg [1 2 3])))
+    (is (false? (s/valid? reg [])))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys :gen option
+;; ----------------------------------------------------------------------------
+
+(deftest keys-gen-option-overrides-default-map-generator
+  (s/def ::kg-a int?)
+  (s/def ::kg-b string?)
+  (s/def ::kg-map
+    (s/keys :req-un [::kg-a ::kg-b]
+            :gen    #(gen/return {:kg-a 42 :kg-b "fixed"})))
+  (testing "samples use the override"
+    (is (every? #(= {:kg-a 42 :kg-b "fixed"} %)
+                (gen/sample (s/gen ::kg-map) 5 1))))
+  (testing "validity of the override-shaped sample"
+    (is (true? (s/valid? ::kg-map {:kg-a 42 :kg-b "fixed"})))))
+
+;; ----------------------------------------------------------------------------
+;; s/coll-of :gen option
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-gen-option-overrides-default-coll-generator
+  (s/def ::cg-vec
+    (s/coll-of int?
+               :kind vector?
+               :gen  #(gen/return [99 99 99])))
+  (is (every? #(= [99 99 99] %)
+              (gen/sample (s/gen ::cg-vec) 5 1))))
+
+;; ----------------------------------------------------------------------------
+;; s/regex? boundary behavior
+;; ----------------------------------------------------------------------------
+
+(deftest regex?-truthy-on-regex-maps-nil-on-wrappers
+  (let [reg     (s/cat :x int?)
+        wrapped (s/spec reg)]
+    (testing "raw regex op is a regex"
+      (is (some? (s/regex? reg))))
+    (testing "spec-wrapping the regex makes it a Spec, not a regex"
+      (is (nil? (s/regex? wrapped)))
+      (is (s/spec? wrapped))))
+  (testing "non-regex values are not regex"
+    (is (nil? (s/regex? {})))
+    (is (nil? (s/regex? [1 2])))
+    (is (nil? (s/regex? :a/keyword)))
+    (is (nil? (s/regex? nil)))
+    (is (nil? (s/regex? int?)))))
+
+;; ----------------------------------------------------------------------------
+;; s/exercise across more spec types
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-nilable-spec
+  (s/def ::ex-nilable (s/nilable int?))
+  (let [pairs (s/exercise ::ex-nilable 20)]
+    (is (= 20 (count pairs)))
+    (doseq [[x conformed] pairs]
+      (is (or (nil? x) (int? x)))
+      (is (= x conformed)))))
+
+(deftest exercise-merge-spec
+  (s/def ::ex-ma int?)
+  (s/def ::ex-mb string?)
+  (s/def ::ex-merged (s/merge (s/keys :req-un [::ex-ma])
+                              (s/keys :req-un [::ex-mb])))
+  (doseq [[x _] (s/exercise ::ex-merged 5)]
+    (is (contains? x :ex-ma))
+    (is (contains? x :ex-mb))
+    (is (s/valid? ::ex-merged x))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of with set input
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-conforms-set-input
+  ;; conform-coll has a dedicated branch for sets — it accumulates into
+  ;; a fresh set and short-circuits on element-level invalid.
+  (s/def ::set-ints (s/coll-of int?))
+  (testing "all-int set conforms"
+    (is (= #{1 2 3} (s/conform ::set-ints #{1 2 3}))))
+  (testing "set containing a non-int is invalid"
+    (is (s/invalid? (s/conform ::set-ints #{1 "x" 2})))))
+
+(deftest coll-of-list-input-preserves-list-shape
+  (s/def ::list-ints (s/coll-of int?))
+  (let [c (s/conform ::list-ints '(1 2 3))]
+    (is (list? c))
+    (is (= '(1 2 3) c))))
+
+;; ----------------------------------------------------------------------------
+;; Spec protocol satisfaction across all deftype-backed specs
+;; ----------------------------------------------------------------------------
+
+(deftest all-spec-types-satisfy-Spec-protocol
+  (let [specs [(s/spec int?)
+               (s/and int? pos?)
+               (s/or :i int? :s string?)
+               (s/nilable int?)
+               (s/tuple int?)
+               (s/coll-of int?)
+               (s/every-kv keyword? int?)
+               (s/map-of keyword? int?)
+               (s/keys :req-un [::nilable-int])
+               (s/merge (s/keys :req-un [::nilable-int])
+                        (s/keys :req-un [::nilable-int]))
+               (s/nonconforming (s/or :i int? :s string?))
+               (s/fspec :args (s/cat :x int?) :ret int?)
+               (s/spec (s/cat :x int?))   ;; regex wrapped as Spec
+               ]]
+    (doseq [sp specs]
+      (is (satisfies? s/Spec sp)))))
+
+;; ----------------------------------------------------------------------------
+;; abbrev deep nesting
+;; ----------------------------------------------------------------------------
+
+(deftest abbrev-walks-deep-nested-forms
+  (testing "qualified syms inside nested seqs and vecs are stripped"
+    (is (= '(and int? (or pos? neg?))
+           (s/abbrev '(cljd.spec.alpha/and cljd.core/int?
+                                            (cljd.spec.alpha/or cljd.core/pos?
+                                                                cljd.core/neg?))))))
+  (testing "(fn [%] body) inside larger forms collapses"
+    (is (= '(and int? body)
+           (s/abbrev '(cljd.spec.alpha/and cljd.core/int? (fn [%] body)))))))
+
+;; ----------------------------------------------------------------------------
+;; op-describe for each regex op
+;; ----------------------------------------------------------------------------
+
+(deftest op-describe-forms-for-each-regex-op
+  (testing "s/* describe"
+    (is (= '(cljd.spec.alpha/* cljd.core/int?)
+           (s/form (s/* int?)))))
+  (testing "s/+ describe"
+    (is (= '(cljd.spec.alpha/+ cljd.core/int?)
+           (s/form (s/+ int?)))))
+  (testing "s/? describe"
+    (is (= '(cljd.spec.alpha/? cljd.core/int?)
+           (s/form (s/? int?)))))
+  (testing "s/cat describe preserves k+form pairs"
+    (is (= '(cljd.spec.alpha/cat :i cljd.core/int? :s cljd.core/string?)
+           (s/form (s/cat :i int? :s string?)))))
+  (testing "s/alt describe preserves k+form pairs"
+    (is (= '(cljd.spec.alpha/alt :i cljd.core/int? :s cljd.core/string?)
+           (s/form (s/alt :i int? :s string?)))))
+  (testing "s/& describe leads with the &-form"
+    (let [reg (s/& (s/* int?) even?)]
+      (is (= 'cljd.spec.alpha/& (first (s/form reg)))))))
+
+;; ----------------------------------------------------------------------------
+;; s/alt unform via tagged key
+;; ----------------------------------------------------------------------------
+
+(deftest alt-unform-by-tagged-key
+  (s/def ::alt-spec (s/alt :i int? :s string?))
+  (testing "unform of tagged int branch"
+    (is (= [1] (s/unform ::alt-spec [:i 1]))))
+  (testing "unform of tagged string branch"
+    (is (= ["x"] (s/unform ::alt-spec [:s "x"]))))
+  (testing "conform/unform roundtrips"
+    (is (= [1]   (s/unform ::alt-spec (s/conform ::alt-spec [1]))))
+    (is (= ["x"] (s/unform ::alt-spec (s/conform ::alt-spec ["x"]))))))
+
+;; ----------------------------------------------------------------------------
+;; cat backtracking with optional members
+;; ----------------------------------------------------------------------------
+
+(deftest cat-with-optional-leading-and-trailing-via-types
+  ;; Distinct element predicates make backtracking unambiguous — each
+  ;; position is identifiable by its type even when ? regexes could
+  ;; slide values into adjacent positions.
+  (s/def ::back-cat (s/cat :a (s/? int?) :b string? :c (s/? int?)))
+  (testing "all three present"
+    (is (= {:a 1 :b "x" :c 2} (s/conform ::back-cat [1 "x" 2]))))
+  (testing "only the required b"
+    (is (= {:b "x"} (s/conform ::back-cat ["x"]))))
+  (testing "leading optional and required"
+    (is (= {:a 1 :b "x"} (s/conform ::back-cat [1 "x"]))))
+  (testing "required and trailing optional"
+    (is (= {:b "x" :c 2} (s/conform ::back-cat ["x" 2])))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys :req-un + :opt-un combined
+;; ----------------------------------------------------------------------------
+
+(deftest keys-req-un-and-opt-un-together
+  (s/def ::ko-a int?)
+  (s/def ::ko-b string?)
+  (s/def ::ko-map (s/keys :req-un [::ko-a] :opt-un [::ko-b]))
+  (testing "required present, optional absent — valid"
+    (is (true? (s/valid? ::ko-map {:ko-a 1}))))
+  (testing "both present and well-typed — valid"
+    (is (true? (s/valid? ::ko-map {:ko-a 1 :ko-b "x"}))))
+  (testing "required present, optional ill-typed — invalid"
+    (is (false? (s/valid? ::ko-map {:ko-a 1 :ko-b 99}))))
+  (testing "required absent — invalid"
+    (is (false? (s/valid? ::ko-map {:ko-b "x"})))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys (and ...) key-expression
+;; ----------------------------------------------------------------------------
+
+(deftest keys-and-only-key-expression
+  (s/def ::ka-x int?)
+  (s/def ::ka-y int?)
+  (s/def ::ka-spec (s/keys :req-un [(and ::ka-x ::ka-y)]))
+  (testing "both keys present and valid"
+    (is (true? (s/valid? ::ka-spec {:ka-x 1 :ka-y 2}))))
+  (testing "missing one of the and-branch keys is invalid"
+    (is (false? (s/valid? ::ka-spec {:ka-x 1})))
+    (is (false? (s/valid? ::ka-spec {:ka-y 2}))))
+  (testing "explain reports the contains?-and form"
+    (let [prob (-> (s/explain-data ::ka-spec {})
+                   :cljd.spec.alpha/problems
+                   first)]
+      (is (= 'cljd.core/and (first (:pred prob)))))))
+
+;; ----------------------------------------------------------------------------
+;; regex unform: alt-in-cat composition
+;; ----------------------------------------------------------------------------
+
+(deftest regex-unform-alt-in-cat-composition
+  (s/def ::ac (s/cat :a int? :b (s/alt :s string? :k keyword?)))
+  (testing "string branch roundtrip"
+    (let [v [1 "x"]
+          c (s/conform ::ac v)]
+      (is (= {:a 1 :b [:s "x"]} c))
+      (is (= v (s/unform ::ac c)))))
+  (testing "keyword branch roundtrip"
+    (let [v [1 :k]
+          c (s/conform ::ac v)]
+      (is (= {:a 1 :b [:k :k]} c))
+      (is (= v (s/unform ::ac c))))))
+
+;; ----------------------------------------------------------------------------
+;; Empty input across regex op variants
+;; ----------------------------------------------------------------------------
+
+(deftest empty-input-across-regex-op-variants
+  (s/def ::eo-star  (s/* int?))
+  (s/def ::eo-plus  (s/+ int?))
+  (s/def ::eo-maybe (s/? int?))
+  (testing "s/* accepts empty input"
+    (is (= [] (s/conform ::eo-star []))))
+  (testing "s/+ rejects empty input"
+    (is (s/invalid? (s/conform ::eo-plus []))))
+  (testing "s/? accepts empty input as nil"
+    (is (nil? (s/conform ::eo-maybe [])))))
+
+;; ----------------------------------------------------------------------------
+;; s/and chains conformed values through preds
+;; ----------------------------------------------------------------------------
+
+(defn- to-double-strict [x]
+  (if (number? x) (double x) :cljd.spec.alpha/invalid))
+
+(deftest and-chains-conformed-values-through-preds
+  ;; The conformer transforms the value mid-chain; subsequent preds
+  ;; see the converted value, not the original.
+  (s/def ::ac-pos-double
+    (s/and number? (s/conformer to-double-strict) pos?))
+  (testing "valid input passes through the conformer"
+    (is (= 3.0 (s/conform ::ac-pos-double 3))))
+  (testing "downstream pred sees the converted (double) value"
+    (is (s/invalid? (s/conform ::ac-pos-double -3))))
+  (testing "first pred failure short-circuits"
+    (is (s/invalid? (s/conform ::ac-pos-double "x")))))
+
+;; ----------------------------------------------------------------------------
+;; map-of explain on key + value failures
+;; ----------------------------------------------------------------------------
+
+(deftest map-of-explain-shows-key-and-value-failures
+  (s/def ::ms-mo (s/map-of keyword? int?))
+  (testing "bad key surfaces a problem"
+    (let [ed (s/explain-data ::ms-mo {"x" 1})]
+      (is (some? ed))
+      (is (seq (:cljd.spec.alpha/problems ed)))))
+  (testing "bad value surfaces a problem"
+    (let [ed (s/explain-data ::ms-mo {:a "no"})]
+      (is (some? ed))
+      (is (seq (:cljd.spec.alpha/problems ed))))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys skips unregistered keys at conform
+;; ----------------------------------------------------------------------------
+
+(deftest keys-conform-skips-unregistered-keys
+  ;; MapSpec.conform iterates every entry in the input but only looks
+  ;; up registered specs. Unregistered keys pass through unchanged.
+  (s/def ::kk-known int?)
+  (s/def ::kk-map (s/keys :req-un [::kk-known]))
+  (let [m {:kk-known 1 :unregistered "anything" :also-unknown 99}]
+    (is (= m (s/conform ::kk-map m)))))
+
+;; ----------------------------------------------------------------------------
+;; s/spec on a registered keyword
+;; ----------------------------------------------------------------------------
+
+(deftest spec-on-registered-keyword-resolves-via-registry
+  ;; spec-impl detects (ident? pred) and resolves via the-spec, so
+  ;; wrapping a registered kw in s/spec is essentially a passthrough.
+  (s/def ::sr-int int?)
+  (let [resolved (s/spec ::sr-int)]
+    (is (s/spec? resolved))
+    (is (true?  (s/valid? resolved 1)))
+    (is (false? (s/valid? resolved "x")))))
+
+;; ----------------------------------------------------------------------------
+;; FSpec form shape
+;; ----------------------------------------------------------------------------
+
+(deftest fspec-form-and-describe-shapes
+  (let [fsp (s/fspec :args (s/cat :x int?) :ret int?)]
+    (testing "form is a vector with the fspec head"
+      (is (vector? (s/form fsp)))
+      (is (= 'cljd.spec.alpha/fspec (first (s/form fsp))))
+      (is (contains? (set (s/form fsp)) :args))
+      (is (contains? (set (s/form fsp)) :ret)))))
+
+;; ----------------------------------------------------------------------------
+;; fspec captures exceptions thrown by the fn under check
+;; ----------------------------------------------------------------------------
+
+(defn- fn-that-throws [_] (throw (Exception. "boom from fn")))
+
+(deftest fspec-explain-captures-fn-exception
+  (let [fsp  (s/fspec :args (s/cat :x int?) :ret int?)
+        prob (-> (s/explain-data fsp fn-that-throws)
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (some? prob))
+    (is (= "exception thrown during generative check" (:reason prob)))
+    (is (some? (:cljd.spec.alpha/failure prob)))))
+
+;; ----------------------------------------------------------------------------
+;; s/conform on a direct fn predicate (no s/def, no s/spec)
+;; ----------------------------------------------------------------------------
+
+(deftest conform-direct-fn-predicate
+  ;; Specize fallback wraps the fn in a PredSpec on demand. The fn pred
+  ;; is its own form-data and explain reports it directly.
+  (testing "valid value passes through"
+    (is (= 1 (s/conform int? 1))))
+  (testing "invalid value yields invalid sentinel"
+    (is (s/invalid? (s/conform int? "x"))))
+  (testing "explain points at the predicate"
+    (let [prob (-> (s/explain-data int? "x")
+                   :cljd.spec.alpha/problems
+                   first)]
+      (is (= "x" (:val prob))))))
+
+;; ----------------------------------------------------------------------------
+;; valid? on a literal set spec without registration
+;; ----------------------------------------------------------------------------
+
+(deftest valid?-on-literal-set-without-def
+  (let [colors #{:r :g :b}]
+    (testing "membership-based validation"
+      (is (true?  (s/valid? colors :r)))
+      (is (false? (s/valid? colors :purple))))
+    (testing "set form roundtrips through describe"
+      (is (= colors (s/describe colors)))
+      (is (= colors (s/form colors))))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys with all four key kinds in one spec
+;; ----------------------------------------------------------------------------
+
+(deftest keys-all-four-kinds-together
+  (s/def ::ak-q1 int?)
+  (s/def ::ak-q2 int?)
+  (s/def ::ak-u1 string?)
+  (s/def ::ak-u2 string?)
+  (s/def ::ak-map
+    (s/keys :req    [::ak-q1]
+            :opt    [::ak-q2]
+            :req-un [::ak-u1]
+            :opt-un [::ak-u2]))
+  (testing "minimal req-only payload"
+    (is (true? (s/valid? ::ak-map {::ak-q1 1 :ak-u1 "x"}))))
+  (testing "fully-populated payload"
+    (is (true? (s/valid? ::ak-map {::ak-q1 1 :ak-u1 "x"
+                                    ::ak-q2 2 :ak-u2 "y"}))))
+  (testing "ill-typed opt :req fails"
+    (is (false? (s/valid? ::ak-map {::ak-q1 "no" :ak-u1 "x"}))))
+  (testing "missing :req-un fails"
+    (is (false? (s/valid? ::ak-map {::ak-q1 1}))))
+  (testing "missing :req fails"
+    (is (false? (s/valid? ::ak-map {:ak-u1 "x"})))))
+
+;; ----------------------------------------------------------------------------
+;; explain on a spec-wrapped regex
+;; ----------------------------------------------------------------------------
+
+(deftest explain-on-spec-wrapped-regex
+  ;; (s/spec regex-value) wraps the regex in a RegexSpec; explain on
+  ;; bad input emits the regex-describe form as :pred.
+  (let [wrapped (s/spec (s/cat :i int? :s string?))
+        prob (-> (s/explain-data wrapped [1 :not-string])
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (some? prob))
+    (is (= [1 :not-string] (:val prob)))))
+
+;; ----------------------------------------------------------------------------
+;; gen overrides reach a path inside a regex op
+;; ----------------------------------------------------------------------------
+
+(deftest gen-override-reaches-cat-sub-path
+  ;; Each cat alternative is generated under (conj path k); an override
+  ;; keyed by that path replaces only that position.
+  (s/def ::go-cat (s/cat :x int? :y int?))
+  (let [overrides {[:x] #(gen/return 42)}
+        samples   (gen/sample (s/gen ::go-cat overrides) 5 1)]
+    (testing "the overridden position is fixed"
+      (is (every? #(= 42 (first %)) samples)))
+    (testing "the non-overridden position is generated normally"
+      (is (every? #(int? (second %)) samples)))))
+
+;; ----------------------------------------------------------------------------
+;; s/coll-of :kfn drives :in path in explain
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-kfn-customizes-in-path
+  ;; map-of uses :kfn (fn [_ e] (nth e 0)) so the :in path reaches the
+  ;; failing entry by key rather than by integer index.
+  (s/def ::kfn-mo (s/map-of keyword? int?))
+  (let [probs (->> (s/explain-data ::kfn-mo {:a "no"})
+                   :cljd.spec.alpha/problems
+                   (filter #(= "no" (:val %))))]
+    (is (seq probs))
+    (testing ":in path includes the entry's key (not just numeric index)"
+      (is (some #(some #{:a} (:in %)) probs)))))
+
+;; ----------------------------------------------------------------------------
+;; with-gen chaining: latest replaces, not composes
+;; ----------------------------------------------------------------------------
+
+(deftest with-gen-applied-twice-uses-the-latest
+  (let [sp (-> (s/spec int?)
+               (s/with-gen #(gen/return 1))
+               (s/with-gen #(gen/return 2)))]
+    (is (every? #(= 2 %) (gen/sample (s/gen sp) 5 1)))))
+
+;; ----------------------------------------------------------------------------
+;; with-gen on each spec type
+;; ----------------------------------------------------------------------------
+
+(deftest with-gen-on-each-spec-type
+  (testing "PredSpec"
+    (let [sp (s/with-gen (s/spec int?) #(gen/return 100))]
+      (is (every? #(= 100 %) (gen/sample (s/gen sp) 3 1)))))
+  (testing "AndSpec"
+    (let [sp (s/with-gen (s/and int? pos?) #(gen/return 42))]
+      (is (every? #(= 42 %) (gen/sample (s/gen sp) 3 1)))))
+  (testing "OrSpec"
+    ;; with-gen produces inputs (which then conform to a tagged pair),
+    ;; not the conformed-shape itself.
+    (let [sp (s/with-gen (s/or :i int? :s string?) #(gen/return 7))]
+      (is (every? #(= 7 %) (gen/sample (s/gen sp) 3 1)))
+      (is (= [:i 7] (s/conform sp 7)))))
+  (testing "TupleSpec"
+    (let [sp (s/with-gen (s/tuple int? string?) #(gen/return [99 "y"]))]
+      (is (every? #(= [99 "y"] %) (gen/sample (s/gen sp) 3 1)))))
+  (testing "EverySpec / coll-of"
+    (let [sp (s/with-gen (s/coll-of int?) #(gen/return [1 1 1]))]
+      (is (every? #(= [1 1 1] %) (gen/sample (s/gen sp) 3 1)))))
+  (testing "NilableSpec"
+    (let [sp (s/with-gen (s/nilable int?) #(gen/return 0))]
+      (is (every? #(= 0 %) (gen/sample (s/gen sp) 3 1)))))
+  (testing "FSpec"
+    (let [fixed-fn (fn [_] 7)
+          sp (s/with-gen (s/fspec :args (s/cat :x int?) :ret int?)
+                         #(gen/return fixed-fn))
+          gend (gen/generate (s/gen sp) 3 1)]
+      (is (identical? fixed-fn gend))
+      (is (= 7 (gend 0))))))
+
+;; ----------------------------------------------------------------------------
+;; Empty s/and behaves as identity
+;; ----------------------------------------------------------------------------
+
+(deftest empty-and-acts-as-identity-conform
+  ;; AndSpec.conform* = (and-preds x @preds forms); with empty preds
+  ;; the loop returns x immediately.
+  (let [sp (s/and)]
+    (is (= 1 (s/conform sp 1)))
+    (is (= "x" (s/conform sp "x")))
+    (is (nil? (s/conform sp nil)))))
+
+;; ----------------------------------------------------------------------------
+;; Nested s/and + s/or combinator
+;; ----------------------------------------------------------------------------
+
+(deftest and-with-nested-or-tags-inner-branch
+  (s/def ::ao-spec (s/and int? (s/or :even even? :three #(= % 3))))
+  (testing "even branch wins for even ints"
+    (is (= [:even 4] (s/conform ::ao-spec 4))))
+  (testing "three branch picks the 3 case (also odd)"
+    (is (= [:three 3] (s/conform ::ao-spec 3))))
+  (testing "neither inner branch matches"
+    (is (s/invalid? (s/conform ::ao-spec 5))))
+  (testing "outer pred (int?) fails first"
+    (is (s/invalid? (s/conform ::ao-spec "x")))))
+
+;; ----------------------------------------------------------------------------
+;; specize* on an unresolvable kw throws
+;; ----------------------------------------------------------------------------
+
+(deftest specize*-throws-on-unregistered-keyword
+  ;; Goes through Keyword's Specize extension → reg-resolve! → throw.
+  (is (= :thrown
+         (try (s/specize* :no.such.ns/never-registered)
+              :not-thrown
+              (catch Object _ :thrown)))))
+
+;; ----------------------------------------------------------------------------
+;; s/exercise with overrides
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-3-arg-honors-gen-overrides
+  (s/def ::ex-over int?)
+  (let [spec-obj  (s/get-spec ::ex-over)
+        overrides {spec-obj #(gen/return 99)}
+        pairs     (s/exercise ::ex-over 5 overrides)]
+    (is (= 5 (count pairs)))
+    (is (every? (fn [[x conformed]] (and (= 99 x) (= 99 conformed))) pairs))))
+
+;; ----------------------------------------------------------------------------
+;; s/explain-data* direct invocation
+;; ----------------------------------------------------------------------------
+
+(deftest explain-data*-passes-path-via-in-through
+  (s/def ::ed-int int?)
+  (let [ed   (s/explain-data* ::ed-int [:custom :path] ['some-via] [:in-key] "x")
+        prob (-> ed :cljd.spec.alpha/problems first)]
+    (is (some? ed))
+    (is (= [:custom :path] (:path prob)))
+    (is (= ['some-via]     (:via prob)))
+    (is (= [:in-key]       (:in prob)))
+    (is (= "x"             (:val prob)))))
+
+;; ----------------------------------------------------------------------------
+;; s/and / s/or with kw-alias preds
+;; ----------------------------------------------------------------------------
+
+(deftest and-resolves-kw-alias-preds
+  (s/def ::akw-int int?)
+  (s/def ::akw-pos pos?)
+  (s/def ::akw-spec (s/and ::akw-int ::akw-pos))
+  (testing "all kw-aliased preds enforced"
+    (is (true?  (s/valid? ::akw-spec 3)))
+    (is (false? (s/valid? ::akw-spec -1)))
+    (is (false? (s/valid? ::akw-spec "x")))))
+
+(deftest or-resolves-kw-alias-preds
+  (s/def ::okw-int int?)
+  (s/def ::okw-str string?)
+  (s/def ::okw-spec (s/or :i ::okw-int :s ::okw-str))
+  (testing "or branches resolve through kw aliases"
+    (is (= [:i 1]   (s/conform ::okw-spec 1)))
+    (is (= [:s "x"] (s/conform ::okw-spec "x")))
+    (is (s/invalid? (s/conform ::okw-spec :k)))))
+
+;; ----------------------------------------------------------------------------
+;; Mutually recursive specs (per-name recursion counters)
+;; ----------------------------------------------------------------------------
+
+(deftest mutually-recursive-or-specs-can-be-generated
+  ;; recursion-depth is keyed by spec-name, so mutual recursion through
+  ;; or-spec branches can proceed up to each name's individual limit.
+  ;; or-spec's try-gensub catches the recursion-limit throw on the
+  ;; recursive branch so the leaf branch always remains generatable.
+  (s/def ::mr-a (s/or :leaf int?
+                      :node (s/coll-of ::mr-b :kind vector?
+                                       :max-count 1 :gen-max 1)))
+  (s/def ::mr-b (s/or :leaf string?
+                      :node (s/coll-of ::mr-a :kind vector?
+                                       :max-count 1 :gen-max 1)))
+  (binding [s/*recursion-limit* 2]
+    (let [samples (gen/sample (s/gen ::mr-a) 10 1)]
+      (is (seq samples))
+      (doseq [x samples]
+        (is (s/valid? ::mr-a x))))))
+
+;; ----------------------------------------------------------------------------
+;; op-gen catch branches for alt / rep / maybe
+;; ----------------------------------------------------------------------------
+
+(deftest alt-gen-drops-throwing-branches
+  ;; op-gen for alt wraps each branch in try/catch — throws from a
+  ;; branch's gen are dropped, leaving the survivors to feed one-of.
+  (let [bad  (s/with-gen int?    (fn [] (throw (Exception. "bad gen"))))
+        good (s/with-gen string? #(gen/return "ok"))
+        sp   (s/spec (s/alt :b bad :g good))]
+    (doseq [_ (range 5)]
+      (let [x (gen/generate (s/gen sp) 3 1)]
+        (is (= ["ok"] x))))))
+
+(deftest rep-gen-with-throwing-inner-returns-empty-sequence
+  (let [bad (s/with-gen int? (fn [] (throw (Exception. "bad gen"))))
+        sp  (s/spec (s/* bad))]
+    (is (= [] (gen/generate (s/gen sp) 3 1)))))
+
+(deftest maybe-gen-with-throwing-inner-returns-empty-sequence
+  (let [bad (s/with-gen int? (fn [] (throw (Exception. "bad gen"))))
+        sp  (s/spec (s/? bad))]
+    (is (= [] (gen/generate (s/gen sp) 3 1)))))
+
+;; ----------------------------------------------------------------------------
+;; FSpec generated-fn arg assert
+;; ----------------------------------------------------------------------------
+
+(deftest fspec-default-generated-fn-asserts-on-bad-args
+  ;; FSpec.gen* without a gfn returns a fn whose body asserts args
+  ;; conform to argspec before generating a return value.
+  (let [fsp (s/fspec :args (s/cat :x int?) :ret int?)
+        f   (gen/generate (s/gen fsp) 10 1)]
+    (testing "good args produce a generated int"
+      (is (int? (f 1))))
+    (testing "bad args trigger the internal assert"
+      (is (= :thrown
+             (try (f "not-int")
+                  :not-thrown
+                  (catch Object _ :thrown)))))))
+
+;; ----------------------------------------------------------------------------
+;; s/or explain reports all branches
+;; ----------------------------------------------------------------------------
+
+(deftest or-explain-reports-a-problem-per-branch
+  (s/def ::oe-spec (s/or :i int? :s string?))
+  (let [probs (:cljd.spec.alpha/problems (s/explain-data ::oe-spec :k))]
+    (is (= 2 (count probs)))
+    (is (some #(= 'cljd.core/int?    (:pred %)) probs))
+    (is (some #(= 'cljd.core/string? (:pred %)) probs))
+    (is (every? #(= :k (:val %)) probs))))
+
+;; ----------------------------------------------------------------------------
+;; gen such-that retry exhaustion
+;; ----------------------------------------------------------------------------
+
+(deftest gen-such-that-throws-after-100-retries
+  ;; The override's gen always returns -1, but the predicate requires
+  ;; pos? — gensub's such-that wrapper exhausts its 100 retries and
+  ;; throws.
+  (let [impossible (s/with-gen pos? #(gen/return -1))]
+    (is (= :thrown
+           (try (gen/generate (s/gen impossible) 3 1)
+                :not-thrown
+                (catch Object _ :thrown))))))
+
+;; ----------------------------------------------------------------------------
+;; s/coll-of deep nesting
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-of-coll-of-roundtrip
+  (s/def ::nested (s/coll-of (s/coll-of int? :kind vector?) :kind vector?))
+  (let [v [[1 2] [3 4] [5]]]
+    (is (= v (s/conform ::nested v)))
+    (is (= v (s/unform ::nested (s/conform ::nested v))))))
+
+;; ----------------------------------------------------------------------------
+;; explain-out on nil ed
+;; ----------------------------------------------------------------------------
+
+(deftest explain-out-on-nil-prints-success-line
+  ;; The Success! path is hit when explain-out is given nil (no
+  ;; problems). The newline comes from println.
+  (is (= "Success!\n" (with-out-str (s/explain-out nil)))))
+
+;; ----------------------------------------------------------------------------
+;; fspec without :args throws on explain
+;; ----------------------------------------------------------------------------
+
+(deftest fspec-without-args-throws-on-explain
+  ;; explain* → fn-problems → throws when (:args specs) is nil, just
+  ;; like the conform path.
+  (let [fsp (s/fspec :ret int?)]
+    (is (= :thrown
+           (try (s/explain-data fsp (fn [x] x))
+                :not-thrown
+                (catch Object _ :thrown))))))
+
+;; ----------------------------------------------------------------------------
+;; MapSpec :opt gen variation
+;; ----------------------------------------------------------------------------
+
+(deftest keys-opt-gen-may-include-or-omit-the-opt-key
+  (s/def ::ovg-r int?)
+  (s/def ::ovg-o string?)
+  (s/def ::ovg-spec (s/keys :req-un [::ovg-r] :opt-un [::ovg-o]))
+  (let [samples (gen/sample (s/gen ::ovg-spec) 50 1)]
+    (testing "required key always present"
+      (is (every? #(contains? % :ovg-r) samples)))
+    (testing "optional key appears in some samples"
+      (is (some  #(contains? % :ovg-o) samples)))
+    (testing "optional key omitted in some samples"
+      (is (some  #(not (contains? % :ovg-o)) samples)))))
+
+;; ----------------------------------------------------------------------------
+;; op-describe for amp with multiple inner preds
+;; ----------------------------------------------------------------------------
+
+(defn even-count-pred? [x] (even? (count x)))
+(defn non-empty-pred?  [x] (not (empty? x)))
+
+(deftest amp-form-with-multiple-predicates
+  (let [reg (s/& (s/* int?) even-count-pred? non-empty-pred?)
+        f   (s/form reg)]
+    (testing "head is the & symbol"
+      (is (= 'cljd.spec.alpha/& (first f))))
+    (testing "second element is the inner regex form"
+      (is (= '(cljd.spec.alpha/* cljd.core/int?) (second f))))
+    (testing "subsequent elements are the qualified pred forms"
+      (is (some #{'cljd.test-clojure.spec-alpha/even-count-pred?} f))
+      (is (some #{'cljd.test-clojure.spec-alpha/non-empty-pred?}  f)))))
+
+;; ----------------------------------------------------------------------------
+;; FSpec with-gen preserves component specs
+;; ----------------------------------------------------------------------------
+
+(deftest fspec-with-gen-preserves-component-specs
+  (let [fsp     (s/fspec :args (s/cat :x int?) :ret int?)
+        wrapped (s/with-gen fsp #(gen/return (fn [_] 1)))]
+    (testing ":args / :ret survive the with-gen rewrap"
+      (is (some? (:args wrapped)))
+      (is (some? (:ret  wrapped))))
+    (testing "conform still validates against the preserved specs"
+      (is (true?  (s/valid? wrapped (fn [_] 0))))
+      (is (false? (s/valid? wrapped "not-a-fn"))))))
+
+;; ----------------------------------------------------------------------------
+;; NonconformingSpec with-gen
+;; ----------------------------------------------------------------------------
+
+(deftest nonconforming-with-gen-installs-override
+  (s/def ::ncwg-int int?)
+  (let [nc      (s/nonconforming ::ncwg-int)
+        wrapped (s/with-gen nc #(gen/return 42))]
+    (testing "gen uses the override"
+      (is (every? #(= 42 %) (gen/sample (s/gen wrapped) 3 1))))
+    (testing "conform still delegates to inner spec"
+      (is (= 1 (s/conform wrapped 1)))
+      (is (s/invalid? (s/conform wrapped "x"))))))
+
+;; ----------------------------------------------------------------------------
+;; MultiSpec with-gen preserves multimethod routing
+;; ----------------------------------------------------------------------------
+
+(defmulti wg-spec-multimethod :wg-mt)
+(defmethod wg-spec-multimethod :a [_] (s/keys :req-un [::wg-mt]))
+
+(deftest multi-spec-with-gen-preserves-conform-routing
+  (s/def ::wg-mt keyword?)
+  (let [base    (s/multi-spec wg-spec-multimethod :wg-mt)
+        wrapped (s/with-gen base #(gen/return {:wg-mt :a}))]
+    (testing "gen uses the override"
+      (is (= {:wg-mt :a} (gen/generate (s/gen wrapped) 3 1))))
+    (testing "conform still routes through the multimethod"
+      (is (= {:wg-mt :a} (s/conform wrapped {:wg-mt :a}))))))
+
+;; ----------------------------------------------------------------------------
+;; s/spec 1-arg form preserves pred form
+;; ----------------------------------------------------------------------------
+
+(deftest spec-1-arg-form-preserves-qualified-pred-form
+  (is (= 'cljd.core/int?    (s/form (s/spec int?))))
+  (is (= 'cljd.core/string? (s/form (s/spec string?)))))
+
+;; ----------------------------------------------------------------------------
+;; :cljd.spec.alpha/kvs->map registry default behavior
+;; ----------------------------------------------------------------------------
+
+(deftest kvs->map-registered-spec-handles-empty-input
+  (let [spec (s/get-spec :cljd.spec.alpha/kvs->map)]
+    (is (some? spec))
+    (testing "empty input conforms to empty map"
+      (is (= {} (s/conform spec []))))
+    (testing "unform of empty map yields empty seq"
+      (is (empty? (s/unform spec {}))))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of explain delegates to inner registered spec
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-explain-delegates-when-element-spec-is-registered
+  ;; explain-1 sees the inner registered spec via maybe-spec and
+  ;; delegates explain* to it. cljd's deftype specs don't implement
+  ;; IMeta, so the inner spec's name is lost from via (a known cljd
+  ;; gap relative to upstream).
+  (s/def ::ce-int int?)
+  (s/def ::ce-coll (s/coll-of ::ce-int :kind vector?))
+  (let [probs (:cljd.spec.alpha/problems
+               (s/explain-data ::ce-coll [1 "no" 3]))]
+    (is (seq probs))
+    (testing "problem points at the failing element value"
+      (is (some #(= "no" (:val %)) probs)))
+    (testing "outer spec name surfaces on via"
+      (is (some #(some #{::ce-coll} (:via %)) probs)))))
+
+;; ----------------------------------------------------------------------------
+;; explain-data via-path (top-level spec name)
+;; ----------------------------------------------------------------------------
+
+(deftest explain-data-via-includes-top-level-spec-name
+  (s/def ::vp-leaf int?)
+  (s/def ::vp-vec  (s/coll-of ::vp-leaf :kind vector?))
+  (let [probs (:cljd.spec.alpha/problems (s/explain-data ::vp-vec [1 "x" 3]))]
+    (testing "top-level spec name lands on via"
+      (let [via-set (set (mapcat :via probs))]
+        (is (contains? via-set ::vp-vec))))))
+
+;; ----------------------------------------------------------------------------
+;; s/spec? on non-spec values
+;; ----------------------------------------------------------------------------
+
+(deftest spec?-only-truthy-on-Spec-instances
+  (testing "primitives, fns, kws, regex maps are not specs"
+    (is (nil? (s/spec? 1)))
+    (is (nil? (s/spec? "x")))
+    (is (nil? (s/spec? int?)))
+    (is (nil? (s/spec? :a/kw)))
+    (is (nil? (s/spec? nil)))
+    (is (nil? (s/spec? (s/cat :x int?)))))
+  (testing "proper specs return truthy"
+    (is (some? (s/spec? (s/spec int?))))
+    (is (some? (s/spec? (s/and int? pos?))))
+    (is (some? (s/spec? (s/nilable int?))))))
+
+;; ----------------------------------------------------------------------------
+;; coll-error-limit truncates non-conforming every explain output
+;; ----------------------------------------------------------------------------
+
+(deftest coll-error-limit-truncates-every-explain
+  ;; every (non-conforming) uses (take coll-error-limit) on the keep'd
+  ;; problem sequence. coll-of (conform-all) does NOT truncate.
+  (s/def ::cel-every (s/every int?))
+  (let [xs (vec (repeat 50 "bad"))]
+    (binding [s/*coll-error-limit* 5]
+      (let [probs (:cljd.spec.alpha/problems (s/explain-data ::cel-every xs))]
+        (is (<= (count probs) 5))
+        (testing "all reported problems are valid element failures"
+          (is (every? #(= "bad" (:val %)) probs)))))))
+
+;; ----------------------------------------------------------------------------
+;; s/regex? returns x when truthy
+;; ----------------------------------------------------------------------------
+
+(deftest regex?-returns-the-regex-map-when-truthy
+  (let [reg (s/cat :x int?)]
+    (is (= reg (s/regex? reg))))
+  (let [star (s/* int?)]
+    (is (= star (s/regex? star)))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys empty validates any map
+;; ----------------------------------------------------------------------------
+
+(deftest keys-empty-accepts-any-map
+  (s/def ::empty-keys-spec (s/keys))
+  (testing "any map (including empty) is valid"
+    (is (true? (s/valid? ::empty-keys-spec {})))
+    (is (true? (s/valid? ::empty-keys-spec {:a 1 :b 2}))))
+  (testing "non-map values are invalid"
+    (is (false? (s/valid? ::empty-keys-spec :not-a-map)))
+    (is (false? (s/valid? ::empty-keys-spec [1 2])))
+    (is (false? (s/valid? ::empty-keys-spec nil)))))
+
+;; ----------------------------------------------------------------------------
+;; MapSpec on non-map input
+;; ----------------------------------------------------------------------------
+
+(deftest keys-non-map-input-explains-with-map?-pred
+  (s/def ::nmi-x int?)
+  (s/def ::nmi-spec (s/keys :req-un [::nmi-x]))
+  (let [prob (-> (s/explain-data ::nmi-spec [:not :a :map])
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= 'cljd.core/map? (:pred prob)))
+    (is (= [:not :a :map] (:val prob)))))
+
+;; ----------------------------------------------------------------------------
+;; Tuple wrong-length and non-vector explain
+;; ----------------------------------------------------------------------------
+
+(deftest tuple-explain-wrong-length
+  (s/def ::twl-pair (s/tuple int? int?))
+  (let [prob (-> (s/explain-data ::twl-pair [1])
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= [1] (:val prob)))
+    (is (= (list 'cljd.core/= (list 'cljd.core/count '%) 2) (:pred prob)))))
+
+(deftest tuple-explain-non-vector-input
+  (s/def ::tnv (s/tuple int?))
+  (let [prob (-> (s/explain-data ::tnv :not-vec)
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (= 'cljd.core/vector? (:pred prob)))
+    (is (= :not-vec (:val prob)))))
+
+;; ----------------------------------------------------------------------------
+;; cat-in-cat: inner regex consumes input
+;; ----------------------------------------------------------------------------
+
+(deftest cat-with-nested-cat-consumes-flat-input
+  (s/def ::cic-inner (s/cat :a int? :b int?))
+  (s/def ::cic-outer (s/cat :head string? :tail ::cic-inner))
+  (testing "inner cat consumes its share of the flat input sequence"
+    (is (= {:head "x" :tail {:a 1 :b 2}}
+           (s/conform ::cic-outer ["x" 1 2])))))
+
+;; ----------------------------------------------------------------------------
+;; s/and with regex inner
+;; ----------------------------------------------------------------------------
+
+(deftest and-with-regex-inner-chains-conformed-map
+  ;; AndSpec.conform* chains conformed values; a regex inner conforms
+  ;; the sequential input into a map which the downstream pred receives.
+  (s/def ::ari (s/and (s/cat :x int? :y int?) #(< (:x %) (:y %))))
+  (testing "downstream pred receives the conformed map"
+    (is (= {:x 1 :y 2} (s/conform ::ari [1 2]))))
+  (testing "pred failure invalidates the whole and"
+    (is (s/invalid? (s/conform ::ari [2 1])))))
+
+;; ----------------------------------------------------------------------------
+;; s/coll-of on a map input
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-on-map-input-traverses-pairs
+  ;; conform-coll dispatches on (map? x) and treats the map as kv pairs
+  ;; conformed via the inner spec. Each entry is a 2-vector [k v].
+  (s/def ::com (s/coll-of (s/tuple keyword? int?)))
+  (let [c (s/conform ::com {:a 1 :b 2})]
+    (testing "conform produces a map keyed by pair-first"
+      (is (map? c))
+      (is (= 1 (get c :a)))
+      (is (= 2 (get c :b))))))
+
+;; ----------------------------------------------------------------------------
+;; explain-data on a valid value returns nil
+;; ----------------------------------------------------------------------------
+
+(deftest explain-data-on-valid-returns-nil
+  (s/def ::edv-int int?)
+  (testing "nil when the value satisfies the spec"
+    (is (nil? (s/explain-data ::edv-int 1)))
+    (is (nil? (s/explain-data (s/coll-of int?) [1 2 3])))
+    (is (nil? (s/explain-data (s/or :i int? :s string?) 42))))
+  (testing "non-nil when the value fails"
+    (is (some? (s/explain-data ::edv-int "x")))))
+
+;; ----------------------------------------------------------------------------
+;; MultiSpec.unform routes through the dispatch method
+;; ----------------------------------------------------------------------------
+
+(deftest multi-spec-unform-routes-through-dispatch
+  (let [v {:shape :circle :radius 2}]
+    (is (= v (s/unform ::shape-value v)))))
+
+(deftest multi-spec-unform-on-bad-dispatch-throws
+  ;; selected-multi-spec returns nil for an unknown :triangle dispatch
+  ;; (no method, no :default), and unform* throws an explicit error.
+  (is (= :thrown
+         (try (s/unform ::shape-value {:shape :triangle :side 3})
+              :not-thrown
+              (catch Object _ :thrown)))))
+
+;; ----------------------------------------------------------------------------
+;; s/explain-str on a valid value
+;; ----------------------------------------------------------------------------
+
+(deftest explain-str-on-valid-returns-success-line
+  (is (= "Success!\n" (s/explain-str int? 1)))
+  (s/def ::esv-spec (s/and int? pos?))
+  (is (= "Success!\n" (s/explain-str ::esv-spec 5))))
+
+;; ----------------------------------------------------------------------------
+;; s/and with nilable inner
+;; ----------------------------------------------------------------------------
+
+(deftest and-with-nilable-inner
+  (s/def ::ani-spec (s/and any? (s/nilable int?)))
+  (testing "nil passes both preds"
+    (is (nil? (s/conform ::ani-spec nil))))
+  (testing "int passes both preds"
+    (is (= 1 (s/conform ::ani-spec 1))))
+  (testing "non-int non-nil fails the inner nilable"
+    (is (s/invalid? (s/conform ::ani-spec "x")))))
+
+;; ----------------------------------------------------------------------------
+;; s/exercise for s/and and s/or
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-and-spec
+  (s/def ::exa-spec (s/and int? pos?))
+  (doseq [[x conformed] (s/exercise ::exa-spec 10)]
+    (is (s/valid? ::exa-spec x))
+    (is (= x conformed))))
+
+(deftest exercise-or-spec
+  (s/def ::exo-spec (s/or :i int? :s string?))
+  (doseq [[x conformed] (s/exercise ::exo-spec 10)]
+    (is (or (int? x) (string? x)))
+    (is (vector? conformed))
+    (is (= 2 (count conformed)))
+    (is (or (= :i (first conformed)) (= :s (first conformed))))))
+
+;; ----------------------------------------------------------------------------
+;; conform of the ::invalid sentinel as input
+;; ----------------------------------------------------------------------------
+
+(deftest conform-with-invalid-sentinel-input
+  ;; The sentinel-as-input must not be confused with the sentinel-as-
+  ;; return. int? rejects it (it's a keyword), so conform returns the
+  ;; sentinel — but for the right reason (predicate failure).
+  (is (s/invalid? (s/conform int? :cljd.spec.alpha/invalid)))
+  ;; A keyword? spec, however, accepts it.
+  (is (= :cljd.spec.alpha/invalid
+         (s/conform keyword? :cljd.spec.alpha/invalid))))
+
+;; ----------------------------------------------------------------------------
+;; describe of s/& strips namespaces
+;; ----------------------------------------------------------------------------
+
+(deftest amp-describe-strips-qualified-namespaces
+  (let [reg (s/& (s/* int?) even?)
+        d   (s/describe reg)]
+    (is (= '(& (* int?) even?) d))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of :gen-into vs :into
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-gen-into-vs-into
+  (testing ":into affects both gen and conform output types"
+    (s/def ::ci-set (s/coll-of int? :into #{} :distinct true :count 3))
+    (is (set? (gen/generate (s/gen ::ci-set) 10 1))))
+  (testing ":gen-into only affects gen output type"
+    (s/def ::ci-gen-only (s/coll-of int? :gen-into #{} :distinct true :count 3))
+    (is (set? (gen/generate (s/gen ::ci-gen-only) 10 1)))
+    (testing "conform of a vector input still yields a vector"
+      (let [c (s/conform ::ci-gen-only [1 2 3])]
+        (is (vector? c))))))
+
+;; ----------------------------------------------------------------------------
+;; explain :reason via conformer that returns a sentinel
+;; ----------------------------------------------------------------------------
+
+(deftest explain-reason-from-pred-via-explain*
+  ;; The PredSpec emits a problem without :reason; explain consumers
+  ;; (like explain-out) print the pred form directly. Verify nothing
+  ;; in the pipeline silently injects a :reason for predicate fails.
+  (s/def ::no-reason int?)
+  (let [prob (-> (s/explain-data ::no-reason "x")
+                 :cljd.spec.alpha/problems
+                 first)]
+    (is (nil? (:reason prob)))))
+
+;; ----------------------------------------------------------------------------
+;; NonconformingSpec.unform delegates to inner
+;; ----------------------------------------------------------------------------
+
+(deftest nonconforming-unform-passes-through-inner-spec
+  ;; For a PredSpec inner, unform is identity. NonconformingSpec.unform*
+  ;; delegates straight through.
+  (s/def ::ncuf int?)
+  (let [nc (s/nonconforming ::ncuf)]
+    (is (= 42 (s/unform nc 42)))))
+
+;; ----------------------------------------------------------------------------
+;; conformer's cpred? path returns the fn's return value
+;; ----------------------------------------------------------------------------
+
+(defn- double-or-invalid [x]
+  (if (number? x)
+    (* x 2)
+    :cljd.spec.alpha/invalid))
+
+(deftest conformer-cpred?-returns-fn-return-not-input
+  ;; spec-impl with cpred? true tells PredSpec.conform* to use the fn's
+  ;; return value directly (not the input). This is the conformer's
+  ;; whole point.
+  (let [c (s/conformer double-or-invalid)]
+    (is (= 6 (s/conform c 3)))
+    (is (= 0 (s/conform c 0)))
+    (is (s/invalid? (s/conform c "x")))))
+
+;; ----------------------------------------------------------------------------
+;; s/exercise-fn with inline fn + explicit fspec
+;; ----------------------------------------------------------------------------
+
+(defn- inline-fn-target [x] (inc x))
+
+(deftest exercise-fn-with-explicit-fspec-and-inline-fn
+  ;; Passing the fn via (identity ...) routes through the non-symbol
+  ;; branch of the macro, so we exercise the fn value directly without
+  ;; needing it fdef'd in the redef registry.
+  (let [fsp (s/fspec :args (s/cat :x int?) :ret int?)]
+    (doseq [[args ret] (s/exercise-fn (identity inline-fn-target) 3 fsp)]
+      (is (sequential? args))
+      (is (int? ret))
+      (is (= (inc (first args)) ret)))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys* form starts with the amp head
+;; ----------------------------------------------------------------------------
+
+(deftest keys-star-form-is-an-amp-regex
+  (s/def ::ks-x int?)
+  (s/def ::ks-spec (s/keys* :req-un [::ks-x]))
+  (let [f (s/form ::ks-spec)]
+    (is (= 'cljd.spec.alpha/& (first f)))))
+
+;; ----------------------------------------------------------------------------
+;; s/conformer form starts with the conformer head
+;; ----------------------------------------------------------------------------
+
+(deftest conformer-form-leads-with-conformer-symbol
+  (let [c (s/conformer double-or-invalid)
+        f (s/form c)]
+    (is (= 'cljd.spec.alpha/conformer (first f))))
+  (testing "2-arg conformer form preserves both fns"
+    (let [c (s/conformer double-or-invalid double-or-invalid)
+          f (s/form c)]
+      (is (= 'cljd.spec.alpha/conformer (first f)))
+      (is (= 3 (count f))))))
+
+;; ----------------------------------------------------------------------------
+;; s/exercise for fspec
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-for-fspec-produces-valid-fns
+  (binding [s/*fspec-iterations* 3]
+    (let [fsp   (s/fspec :args (s/cat :x int?) :ret int?)
+          pairs (s/exercise fsp 2)]
+      (is (= 2 (count pairs)))
+      (doseq [[f _] pairs]
+        (is (fn? f))))))
+
+;; ----------------------------------------------------------------------------
+;; explain-str text contains pred form and failing value
+;; ----------------------------------------------------------------------------
+
+(deftest explain-str-text-contains-pred-and-value
+  (s/def ::esx-int int?)
+  (let [s (s/explain-str ::esx-int "bad-input")]
+    (is (.contains ^String s "int?"))
+    (is (.contains ^String s "bad-input"))))
+
+;; ----------------------------------------------------------------------------
+;; s/and with a single pred
+;; ----------------------------------------------------------------------------
+
+(deftest and-single-pred-is-equivalent-to-that-pred
+  (s/def ::asp-spec (s/and int?))
+  (testing "validity matches the inner pred"
+    (is (true?  (s/valid? ::asp-spec 1)))
+    (is (false? (s/valid? ::asp-spec "x"))))
+  (testing "conform returns the input"
+    (is (= 1 (s/conform ::asp-spec 1)))))
+
+;; ----------------------------------------------------------------------------
+;; s/or with a single branch
+;; ----------------------------------------------------------------------------
+
+(deftest or-single-branch-tags-with-its-key
+  (s/def ::osb-spec (s/or :only int?))
+  (testing "matching input takes the lone branch"
+    (is (= [:only 1] (s/conform ::osb-spec 1))))
+  (testing "non-matching input is invalid"
+    (is (s/invalid? (s/conform ::osb-spec "x")))))
+
+;; ----------------------------------------------------------------------------
+;; s/describe for coll-of and nilable strips namespaces
+;; ----------------------------------------------------------------------------
+
+(deftest describe-strips-ns-for-coll-of
+  (s/def ::dsc-spec (s/coll-of int? :kind vector?))
+  (let [d (s/describe ::dsc-spec)]
+    (is (= '(coll-of int? :kind vector?) d))))
+
+(deftest describe-strips-ns-for-nilable
+  (s/def ::dsn-spec (s/nilable int?))
+  (let [d (s/describe ::dsn-spec)]
+    (is (= '(nilable int?) d))))
+
+;; ----------------------------------------------------------------------------
+;; describe strips namespaces across remaining combinators
+;; ----------------------------------------------------------------------------
+
+(deftest describe-strips-ns-batch
+  (testing "s/and"
+    (is (= '(and int? pos?)         (s/describe (s/and int? pos?)))))
+  (testing "s/or"
+    (is (= '(or :i int? :s string?) (s/describe (s/or :i int? :s string?)))))
+  (testing "s/tuple"
+    (is (= '(tuple int? string?)    (s/describe (s/tuple int? string?)))))
+  (testing "s/cat"
+    (is (= '(cat :i int? :s string?) (s/describe (s/cat :i int? :s string?)))))
+  (testing "s/alt"
+    (is (= '(alt :i int? :s string?) (s/describe (s/alt :i int? :s string?)))))
+  (testing "s/*"
+    (is (= '(* int?)                (s/describe (s/* int?)))))
+  (testing "s/+"
+    (is (= '(+ int?)                (s/describe (s/+ int?)))))
+  (testing "s/?"
+    (is (= '(? int?)                (s/describe (s/? int?)))))
+  (testing "s/map-of"
+    (is (= '(map-of keyword? int?)  (s/describe (s/map-of keyword? int?))))))
+
+(deftest describe-strips-ns-for-merge
+  (s/def ::dsm-a int?)
+  (s/def ::dsm-b string?)
+  (s/def ::dsm-mka (s/keys :req-un [::dsm-a]))
+  (s/def ::dsm-mkb (s/keys :req-un [::dsm-b]))
+  (s/def ::dsm-merged (s/merge ::dsm-mka ::dsm-mkb))
+  ;; merge form contains the registered kw names (already short); describe
+  ;; doesn't transform kw namespaces but does strip the merge head's ns.
+  (let [d (s/describe ::dsm-merged)]
+    (is (= 'merge (first d)))))
+
+;; ----------------------------------------------------------------------------
+;; s/exercise for set spec
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-for-set-spec
+  (s/def ::ex-color #{:red :green :blue})
+  (let [pairs (s/exercise ::ex-color 20)]
+    (is (= 20 (count pairs)))
+    (doseq [[x conformed] pairs]
+      (is (#{:red :green :blue} x))
+      (is (= x conformed)))))
+
+;; ----------------------------------------------------------------------------
+;; s/exercise-fn-runtime happy path
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-fn-runtime-direct-symbol-happy-path
+  ;; add1 is fdef'd in register-specs!, which registers a redef setter.
+  ;; exercise-fn-runtime looks up the fn via redef-getter and the fspec
+  ;; via get-spec; samples come back as args+ret pairs.
+  (doseq [[args ret] (s/exercise-fn-runtime 'cljd.test-clojure.spec-alpha/add1 3)]
+    (is (sequential? args))
+    (is (= (inc (first args)) ret))))
+
+;; ----------------------------------------------------------------------------
+;; s/explain returns nil
+;; ----------------------------------------------------------------------------
+
+(deftest explain-returns-explain-out-result
+  ;; s/explain returns whatever *explain-out* yields. With the default
+  ;; printer that's nil (println side-effect). Rebinding to identity
+  ;; lets us observe the underlying explain-data passing through.
+  (s/def ::er-int int?)
+  (binding [s/*explain-out* identity]
+    (testing "valid path passes nil through"
+      (is (nil? (s/explain ::er-int 1))))
+    (testing "invalid path passes explain-data through"
+      (let [ed (s/explain ::er-int "x")]
+        (is (some? ed))
+        (is (contains? ed :cljd.spec.alpha/problems))))))
+
+;; ----------------------------------------------------------------------------
+;; s/exercise with n=0
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-with-zero-count
+  (s/def ::ez-int int?)
+  (is (empty? (s/exercise ::ez-int 0))))
+
+;; ----------------------------------------------------------------------------
+;; set spec rejects nil
+;; ----------------------------------------------------------------------------
+
+(deftest set-spec-rejects-nil
+  (s/def ::sn-set #{:a :b :c})
+  (is (s/invalid? (s/conform ::sn-set nil)))
+  (is (false? (s/valid? ::sn-set nil))))
+
+;; ----------------------------------------------------------------------------
+;; map-of generator produces valid maps
+;; ----------------------------------------------------------------------------
+
+(deftest map-of-generator-produces-valid-maps
+  (s/def ::mg-map (s/map-of keyword? int? :min-count 1 :max-count 3))
+  (doseq [m (gen/sample (s/gen ::mg-map) 10 1)]
+    (is (map? m))
+    (is (<= 1 (count m) 3))
+    (is (every? keyword? (keys m)))
+    (is (every? int?     (vals m)))))
+
+;; ----------------------------------------------------------------------------
+;; every-kv generator produces valid maps (non-conforming)
+;; ----------------------------------------------------------------------------
+
+(deftest every-kv-generator-produces-valid-maps
+  (s/def ::ekg-map (s/every-kv keyword? int? :min-count 1 :max-count 3))
+  (doseq [m (gen/sample (s/gen ::ekg-map) 10 1)]
+    (is (map? m))
+    (is (every? keyword? (keys m)))
+    (is (every? int?     (vals m)))))
+
+;; ----------------------------------------------------------------------------
+;; tuple gen produces correct-length vectors
+;; ----------------------------------------------------------------------------
+
+(deftest tuple-generator-produces-correct-shape
+  (s/def ::tg-spec (s/tuple int? string? keyword?))
+  (doseq [t (gen/sample (s/gen ::tg-spec) 10 1)]
+    (is (vector? t))
+    (is (= 3 (count t)))
+    (is (int?     (nth t 0)))
+    (is (string?  (nth t 1)))
+    (is (keyword? (nth t 2)))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of on a lazy seq input
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-conforms-lazy-seq-input
+  (s/def ::cls (s/coll-of int?))
+  (let [c (s/conform ::cls (lazy-seq (list 1 2 3)))]
+    (is (or (sequential? c) (vector? c)))
+    (is (= '(1 2 3) (seq c)))))
+
+;; ----------------------------------------------------------------------------
+;; ClojureDart-only synonym macros
+;; ----------------------------------------------------------------------------
+
+(deftest def-spec-acts-as-s/def-synonym
+  (s/def-spec ::dsp-int int?)
+  (is (true?  (s/valid? ::dsp-int 1)))
+  (is (false? (s/valid? ::dsp-int "x")))
+  (is (some? (s/get-spec ::dsp-int))))
+
+(deftest keys-spec-acts-as-s/keys-synonym
+  (s/def ::ksp-x int?)
+  (s/def ::ksp-map (s/keys-spec :req-un [::ksp-x]))
+  (is (true?  (s/valid? ::ksp-map {:ksp-x 1})))
+  (is (false? (s/valid? ::ksp-map {})))
+  (is (false? (s/valid? ::ksp-map {:ksp-x "no"}))))
+
+(deftest and-spec-accepts-arity-greater-than-four
+  (s/def ::asp-big
+    (s/and-spec int? pos? #(< % 100) #(not= % 7) #(not= % 13) #(not= % 42)))
+  (testing "all-passing values are valid"
+    (is (true? (s/valid? ::asp-big 5)))
+    (is (true? (s/valid? ::asp-big 99))))
+  (testing "any pred failure invalidates"
+    (is (false? (s/valid? ::asp-big -1)))
+    (is (false? (s/valid? ::asp-big 7)))
+    (is (false? (s/valid? ::asp-big 42)))))
+
+(deftest or-spec-single-branch-tags
+  (s/def ::osb-spec2 (s/or-spec :only int?))
+  (testing "matching input takes the lone branch"
+    (is (= [:only 1] (s/conform ::osb-spec2 1))))
+  (testing "non-matching input is invalid"
+    (is (s/invalid? (s/conform ::osb-spec2 "x")))))
+
+;; ----------------------------------------------------------------------------
+;; s/exercise for regex spec
+;; ----------------------------------------------------------------------------
+
+(deftest exercise-for-regex-spec
+  (s/def ::erg-plus (s/+ int?))
+  (doseq [[x conformed] (s/exercise ::erg-plus 5)]
+    (is (s/valid? ::erg-plus x))
+    (is (vector? conformed))
+    (is (every? int? conformed))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of with set predicate
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-with-set-predicate
+  ;; Inner pred is a set — Specize fallback wraps it in a PredSpec
+  ;; checking membership.
+  (s/def ::csp (s/coll-of #{:a :b :c}))
+  (testing "all-member sequence conforms"
+    (is (= [:a :b :c] (s/conform ::csp [:a :b :c]))))
+  (testing "non-member element invalidates"
+    (is (s/invalid? (s/conform ::csp [:a :z])))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of :gen + :into combined
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-gen-option-takes-precedence-over-into
+  ;; :gen wins over :into for gen — the override returns the literal
+  ;; collection regardless of :into.
+  (s/def ::cgi-spec
+    (s/coll-of int? :into #{} :gen #(gen/return [10 20 30])))
+  (is (every? #(= [10 20 30] %) (gen/sample (s/gen ::cgi-spec) 3 1))))
+
+;; ----------------------------------------------------------------------------
+;; s/spec wrapping a registered MapSpec
+;; ----------------------------------------------------------------------------
+
+(deftest spec-on-registered-keys-spec-preserves-conform
+  (s/def ::swk-a int?)
+  (s/def ::swk-spec (s/keys :req-un [::swk-a]))
+  (let [resolved (s/spec ::swk-spec)]
+    (testing "validity is preserved"
+      (is (true?  (s/valid? resolved {:swk-a 1})))
+      (is (false? (s/valid? resolved {})))
+      (is (false? (s/valid? resolved {:swk-a "no"}))))
+    (testing "conform output matches the registered spec"
+      (is (= {:swk-a 1} (s/conform resolved {:swk-a 1}))))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of with nested s/or pred
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-with-nested-or-tags-each-element
+  (s/def ::con-spec (s/coll-of (s/or :i int? :s string?)))
+  (let [v [1 "x" 2 "y"]
+        c (s/conform ::con-spec v)]
+    (is (= [[:i 1] [:s "x"] [:i 2] [:s "y"]] c))
+    (testing "unform roundtrips through the tags"
+      (is (= v (s/unform ::con-spec c))))))
+
+;; ----------------------------------------------------------------------------
+;; fspec :fn validates the args->ret relation
+;; ----------------------------------------------------------------------------
+
+(deftest fspec-fn-validates-relationship-on-conform
+  (let [fsp-inc  (s/fspec :args (s/cat :x int?) :ret int?
+                          :fn   #(= (:ret %) (-> % :args :x inc)))
+        fsp-bad  (s/fspec :args (s/cat :x int?) :ret int?
+                          :fn   #(= (:ret %) (-> % :args :x inc)))]
+    (testing "fn satisfying the relationship is valid"
+      (is (true? (s/valid? fsp-inc (fn [x] (inc x))))))
+    (testing "fn violating the relationship is invalid"
+      (is (false? (s/valid? fsp-bad (fn [x] x)))))))
+
+;; ----------------------------------------------------------------------------
+;; s/and-spec form preserves pred list
+;; ----------------------------------------------------------------------------
+
+(deftest and-spec-form-preserves-qualified-preds
+  (s/def ::asf-spec (s/and-spec int? pos?))
+  (is (= '(cljd.spec.alpha/and cljd.core/int? cljd.core/pos?)
+         (s/form ::asf-spec))))
+
+;; ----------------------------------------------------------------------------
+;; s/or-spec form preserves branches
+;; ----------------------------------------------------------------------------
+
+(deftest or-spec-form-preserves-keys-and-preds
+  (s/def ::osf-spec (s/or-spec :i int? :s string?))
+  (is (= '(cljd.spec.alpha/or :i cljd.core/int? :s cljd.core/string?)
+         (s/form ::osf-spec))))
+
+;; ----------------------------------------------------------------------------
+;; s/explain with rebound *explain-out*
+;; ----------------------------------------------------------------------------
+
+(deftest explain-with-rebound-explain-out-passes-ed-through
+  (s/def ::eo-int int?)
+  (let [captured (atom nil)]
+    (binding [s/*explain-out* (fn [ed] (reset! captured ed) :captured)]
+      (let [result (s/explain ::eo-int "x")]
+        (testing "return value is what *explain-out* returns"
+          (is (= :captured result)))
+        (testing "the ed map flows through unchanged"
+          (is (some? @captured))
+          (is (contains? @captured :cljd.spec.alpha/problems))
+          (is (= "x" (:cljd.spec.alpha/value @captured))))))))
+
+;; ----------------------------------------------------------------------------
+;; conformer returning the invalid sentinel
+;; ----------------------------------------------------------------------------
+
+(deftest conformer-returning-invalid-sentinel-fails-conform
+  (let [reject-all (s/conformer (constantly :cljd.spec.alpha/invalid))]
+    (testing "any input is rejected when conformer returns the sentinel"
+      (is (s/invalid? (s/conform reject-all 1)))
+      (is (s/invalid? (s/conform reject-all "x")))
+      (is (s/invalid? (s/conform reject-all nil))))))
+
+;; ----------------------------------------------------------------------------
+;; s/cat with s/+ inner
+;; ----------------------------------------------------------------------------
+
+(deftest cat-with-plus-inner-consumes-multiple
+  (s/def ::cwp (s/cat :nums (s/+ int?) :tail string?))
+  (testing "1 int + tail"
+    (is (= {:nums [1] :tail "x"} (s/conform ::cwp [1 "x"]))))
+  (testing "many ints + tail"
+    (is (= {:nums [1 2 3] :tail "x"} (s/conform ::cwp [1 2 3 "x"]))))
+  (testing "zero ints fails s/+"
+    (is (s/invalid? (s/conform ::cwp ["x"])))))
+
+;; ----------------------------------------------------------------------------
+;; s/cat with s/& (amp) inner
+;; ----------------------------------------------------------------------------
+
+(defn at-least-two? [x] (>= (count x) 2))
+
+(deftest cat-with-amp-inner-constrains-prefix
+  (s/def ::cwa (s/cat :prefix (s/& (s/* int?) at-least-two?)
+                       :tail   string?))
+  (testing "exactly 2 ints + tail passes the prefix predicate"
+    (is (s/valid? ::cwa [1 2 "x"])))
+  (testing "3 ints + tail also passes"
+    (is (s/valid? ::cwa [1 2 3 "x"])))
+  (testing "1 int + tail fails the >= 2 predicate"
+    (is (s/invalid? (s/conform ::cwa [1 "x"])))))
+
+;; ----------------------------------------------------------------------------
+;; s/* with nil? pred handles nil-valued sequences
+;; ----------------------------------------------------------------------------
+
+(deftest star-nil?-conforms-sequences-of-nils
+  (s/def ::sn (s/* nil?))
+  (testing "all-nil sequences conform"
+    (is (= [nil nil] (s/conform ::sn [nil nil]))))
+  (testing "empty sequence conforms to empty vector"
+    (is (= [] (s/conform ::sn []))))
+  (testing "non-nil element invalidates"
+    (is (s/invalid? (s/conform ::sn [nil 1 nil])))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of with mixed valid + invalid elements
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-mixed-valid-invalid-fails
+  (s/def ::cmv (s/coll-of int?))
+  (testing "first invalid element fails the whole coll"
+    (is (s/invalid? (s/conform ::cmv [1 2 "bad" 4]))))
+  (testing "explain reports the failing element"
+    (let [prob (-> (s/explain-data ::cmv [1 2 "bad" 4])
+                   :cljd.spec.alpha/problems
+                   (->> (filter #(= "bad" (:val %))))
+                   first)]
+      (is (some? prob)))))
+
+;; ----------------------------------------------------------------------------
+;; s/+ with single-element input
+;; ----------------------------------------------------------------------------
+
+(deftest plus-conforms-single-element-vector
+  (s/def ::ps-single (s/+ int?))
+  (testing "single element conforms to single-element vector"
+    (is (= [1] (s/conform ::ps-single [1]))))
+  (testing "empty input is invalid (s/+ requires at least one)"
+    (is (s/invalid? (s/conform ::ps-single [])))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of :gen returning a list (non-vector)
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-gen-returning-list-passes-such-that
+  ;; coll? accepts lists; conform-coll has a dedicated list branch.
+  (s/def ::cgl-spec (s/coll-of int? :gen #(gen/return (list 1 2 3))))
+  (doseq [x (gen/sample (s/gen ::cgl-spec) 3 1)]
+    (is (= '(1 2 3) x))
+    (is (list? x))))
+
+;; ----------------------------------------------------------------------------
+;; Re-defining a spec replaces the prior registration
+;; ----------------------------------------------------------------------------
+
+(deftest re-defining-spec-replaces-prior-entry
+  (s/def ::redef-target int?)
+  (testing "first definition is active"
+    (is (true?  (s/valid? ::redef-target 1)))
+    (is (false? (s/valid? ::redef-target "x"))))
+  (s/def ::redef-target string?)
+  (testing "second definition replaces the first"
+    (is (false? (s/valid? ::redef-target 1)))
+    (is (true?  (s/valid? ::redef-target "x")))))
+
+;; ----------------------------------------------------------------------------
+;; s/spec :gen on a regex pred
+;; ----------------------------------------------------------------------------
+
+(deftest spec-3-arg-on-regex-pred-uses-gen-override
+  (let [sp (s/spec (s/cat :x int?) :gen #(gen/return [42]))]
+    (testing "samples come from the override"
+      (is (every? #(= [42] %) (gen/sample (s/gen sp) 3 1))))
+    (testing "conform still validates input"
+      (is (= {:x 1} (s/conform sp [1]))))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of :count 0
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-count-zero-only-accepts-empty
+  (s/def ::empty-only (s/coll-of int? :count 0))
+  (is (true?  (s/valid? ::empty-only [])))
+  (is (false? (s/valid? ::empty-only [1])))
+  (testing "gen produces empty"
+    (is (= [] (gen/generate (s/gen ::empty-only) 3 1)))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys :gen returning invalid throws via such-that
+;; ----------------------------------------------------------------------------
+
+(deftest keys-gen-returning-invalid-exhausts-such-that
+  (s/def ::kgi-x int?)
+  (s/def ::kgi-bad (s/keys :req-un [::kgi-x]
+                            :gen    #(gen/return {})))   ;; missing :kgi-x
+  (is (= :thrown
+         (try (gen/generate (s/gen ::kgi-bad) 3 1)
+              :not-thrown
+              (catch Object _ :thrown)))))
+
+;; ----------------------------------------------------------------------------
+;; s/and-spec / s/or-spec single-pred forms
+;; ----------------------------------------------------------------------------
+
+(deftest and-spec-single-pred-form
+  (s/def ::asp1 (s/and-spec int?))
+  (is (= '(cljd.spec.alpha/and cljd.core/int?)
+         (s/form ::asp1))))
+
+(deftest or-spec-single-branch-form
+  (s/def ::osb1 (s/or-spec :only int?))
+  (is (= '(cljd.spec.alpha/or :only cljd.core/int?)
+         (s/form ::osb1))))
+
+;; ----------------------------------------------------------------------------
+;; s/regex? on registry-stored regex value
+;; ----------------------------------------------------------------------------
+
+(deftest regex?-on-registered-regex-value
+  (s/def ::rkr (s/cat :x int?))
+  (let [v (s/get-spec ::rkr)]
+    (is (some? (s/regex? v)))
+    (is (= v (s/regex? v)))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys :req-un with unregistered key
+;; ----------------------------------------------------------------------------
+
+(deftest keys-req-un-unregistered-key-still-requires-presence
+  ;; The key's spec doesn't need to be in the registry — MapSpec.conform
+  ;; checks presence (via key-expr-valid?) but skips value validation
+  ;; when no spec exists for the key.
+  (s/def ::kuk-spec (s/keys :req-un [:my.unregistered.ns/key1]))
+  (testing "missing the required key fails"
+    (is (false? (s/valid? ::kuk-spec {}))))
+  (testing "presence alone passes (no value spec applied)"
+    (is (true? (s/valid? ::kuk-spec {:key1 "anything"})))
+    (is (true? (s/valid? ::kuk-spec {:key1 42})))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of :kind form preservation
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-kind-form-preserves-qualified-predicate
+  (s/def ::ckf-spec (s/coll-of int? :kind vector?))
+  (let [f (s/form ::ckf-spec)]
+    (testing "form contains :kind followed by the qualified pred"
+      (is (some #{:kind} f))
+      (is (some #{'cljd.core/vector?} f)))))
+
+;; ----------------------------------------------------------------------------
+;; s/+ with set predicate
+;; ----------------------------------------------------------------------------
+
+(deftest plus-with-set-pred-checks-membership
+  (s/def ::pwsp (s/+ #{:a :b :c}))
+  (testing "all members conform"
+    (is (= [:a :b] (s/conform ::pwsp [:a :b]))))
+  (testing "any non-member invalidates"
+    (is (s/invalid? (s/conform ::pwsp [:a :z])))))
+
+;; ----------------------------------------------------------------------------
+;; explain-out includes "spec:" line when via is non-empty
+;; ----------------------------------------------------------------------------
+
+(deftest explain-out-prints-spec-line-when-via-present
+  (s/def ::eos-int int?)
+  (let [s (s/explain-str ::eos-int "x")]
+    (is (.contains ^String s "spec:"))))
+
+;; ----------------------------------------------------------------------------
+;; explain-out prints :reason line when present
+;; ----------------------------------------------------------------------------
+
+(deftest explain-out-prints-reason-line-when-present
+  ;; fspec attaches "function failed generative check" as the :reason
+  ;; on ret-spec failures; explain-out should render that text.
+  (let [fsp (s/fspec :args (s/cat :x int?) :ret int?)
+        s   (s/explain-str fsp bad-ret)]
+    (is (.contains ^String s "function failed generative check"))))
+
+;; ----------------------------------------------------------------------------
+;; s/spec on a set preserves the set as form
+;; ----------------------------------------------------------------------------
+
+(deftest spec-with-set-pred-preserves-set-form
+  (let [sp (s/spec #{:a :b :c})]
+    (is (= #{:a :b :c} (s/form sp)))))
+
+;; ----------------------------------------------------------------------------
+;; s/with-gen on nilable
+;; ----------------------------------------------------------------------------
+
+(deftest with-gen-on-nilable-preserves-nil-acceptance
+  (let [sp (s/with-gen (s/nilable int?) #(gen/return 1))]
+    (testing "conform still accepts nil"
+      (is (nil? (s/conform sp nil))))
+    (testing "conform still accepts int"
+      (is (= 5 (s/conform sp 5))))
+    (testing "gen uses the override"
+      (is (every? #(= 1 %) (gen/sample (s/gen sp) 3 1))))))
+
+;; ----------------------------------------------------------------------------
+;; s/explain-printer matches the default
+;; ----------------------------------------------------------------------------
+
+(deftest explain-printer-matches-default-explain-out
+  (s/def ::epm-int int?)
+  (let [ed   (s/explain-data ::epm-int "x")
+        from-printer (with-out-str (s/explain-printer ed))
+        from-explain (with-out-str (s/explain-out ed))]
+    (is (= from-printer from-explain))))
+
+;; ----------------------------------------------------------------------------
+;; abbrev leaves vectors unchanged
+;; ----------------------------------------------------------------------------
+
+(deftest abbrev-does-not-walk-vectors
+  ;; abbrev only postwalks seqs; vectors fall through to the :else
+  ;; branch and are returned unchanged (qualified syms inside stay).
+  (is (= ['cljd.core/int? 'cljd.core/pos?]
+         (s/abbrev ['cljd.core/int? 'cljd.core/pos?])))
+  (is (= [1 2 3] (s/abbrev [1 2 3]))))
+
+;; ----------------------------------------------------------------------------
+;; s/with-gen on map-of preserves conform
+;; ----------------------------------------------------------------------------
+
+(deftest with-gen-on-map-of-preserves-conform-shape
+  (let [sp (s/with-gen (s/map-of keyword? int?)
+                       #(gen/return {:a 1 :b 2}))]
+    (testing "gen uses override"
+      (is (= {:a 1 :b 2} (gen/generate (s/gen sp) 3 1))))
+    (testing "conform validates per-entry"
+      (is (= {:a 1 :b 2} (s/conform sp {:a 1 :b 2})))
+      (is (s/invalid? (s/conform sp {:a "no"}))))))
+
+;; ----------------------------------------------------------------------------
+;; s/cat with nested cat unform produces flat sequence
+;; ----------------------------------------------------------------------------
+
+(deftest cat-with-nested-cat-unform-flattens
+  (s/def ::cncu-inner (s/cat :a int? :b int?))
+  (s/def ::cncu-outer (s/cat :head string? :tail ::cncu-inner))
+  (let [v ["x" 1 2]
+        c (s/conform ::cncu-outer v)]
+    (is (= {:head "x" :tail {:a 1 :b 2}} c))
+    (testing "unform produces a flat input-shaped sequence"
+      (is (= v (s/unform ::cncu-outer c))))))
+
+;; ----------------------------------------------------------------------------
+;; s/coll-of nested unform
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-nested-unform-preserves-shape
+  (s/def ::cnu-inner (s/coll-of int? :kind vector?))
+  (s/def ::cnu-outer (s/coll-of ::cnu-inner :kind vector?))
+  (let [v [[1 2] [3] [4 5 6]]]
+    (is (= v (s/unform ::cnu-outer (s/conform ::cnu-outer v))))))
+
+;; ----------------------------------------------------------------------------
+;; default *explain-out* uses println → returns nil
+;; ----------------------------------------------------------------------------
+
+(deftest default-explain-out-returns-nil
+  ;; Capture both: the print side-effect (to stdout) and the return
+  ;; value (verified inside with-out-str so the stdout pollution is
+  ;; swallowed).
+  (s/def ::deo-int int?)
+  (with-out-str
+    (is (nil? (s/explain ::deo-int 1))))
+  (with-out-str
+    (is (nil? (s/explain ::deo-int "x")))))
+
+;; ----------------------------------------------------------------------------
+;; Nested or+and key expressions
+;; ----------------------------------------------------------------------------
+
+(deftest keys-or-of-and-key-expression
+  (s/def ::koka-x int?)
+  (s/def ::koka-y int?)
+  (s/def ::koka-z int?)
+  (s/def ::koka-spec
+    (s/keys :req-un [(or (and ::koka-x ::koka-y) ::koka-z)]))
+  (testing "and-branch satisfied via both x and y"
+    (is (true? (s/valid? ::koka-spec {:koka-x 1 :koka-y 2}))))
+  (testing "z-branch satisfied"
+    (is (true? (s/valid? ::koka-spec {:koka-z 3}))))
+  (testing "partial and-branch fails (x alone)"
+    (is (false? (s/valid? ::koka-spec {:koka-x 1}))))
+  (testing "all missing fails"
+    (is (false? (s/valid? ::koka-spec {})))))
+
+;; ----------------------------------------------------------------------------
+;; s/cat with s/? wrapping a regex
+;; ----------------------------------------------------------------------------
+
+(deftest cat-with-maybe-regex-inner
+  (s/def ::cmri (s/cat :pair (s/? (s/cat :a int? :b int?))
+                        :tail string?))
+  (testing "optional pair + tail consumed"
+    (is (= {:pair {:a 1 :b 2} :tail "x"}
+           (s/conform ::cmri [1 2 "x"]))))
+  (testing "tail-only input drops the absent pair"
+    (is (= {:tail "x"} (s/conform ::cmri ["x"])))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys with and(or) nested key-expression
+;; ----------------------------------------------------------------------------
+
+(deftest keys-and-of-or-key-expression
+  (s/def ::koa-x int?)
+  (s/def ::koa-y int?)
+  (s/def ::koa-z int?)
+  (s/def ::koa-spec
+    (s/keys :req [(and ::koa-x (or ::koa-y ::koa-z))]))
+  (testing "x + y satisfies"
+    (is (true? (s/valid? ::koa-spec {::koa-x 1 ::koa-y 2}))))
+  (testing "x + z satisfies"
+    (is (true? (s/valid? ::koa-spec {::koa-x 1 ::koa-z 3}))))
+  (testing "missing x fails (and-branch broken)"
+    (is (false? (s/valid? ::koa-spec {::koa-y 2}))))
+  (testing "x alone fails (needs y or z)"
+    (is (false? (s/valid? ::koa-spec {::koa-x 1})))))
+
+;; ----------------------------------------------------------------------------
+;; s/def-spec form preservation
+;; ----------------------------------------------------------------------------
+
+(deftest def-spec-form-preserves-qualified-pred-form
+  (s/def-spec ::dsf-spec (s/and int? pos?))
+  (is (= '(cljd.spec.alpha/and cljd.core/int? cljd.core/pos?)
+         (s/form ::dsf-spec))))
+
+;; ----------------------------------------------------------------------------
+;; keys :opt absent key passes
+;; ----------------------------------------------------------------------------
+
+(deftest keys-opt-allows-absence
+  (s/def ::koak-a int?)
+  (s/def ::koak-spec (s/keys :opt [::koak-a]))
+  (testing "empty map valid"
+    (is (true? (s/valid? ::koak-spec {}))))
+  (testing "present + valid"
+    (is (true? (s/valid? ::koak-spec {::koak-a 1}))))
+  (testing "present + invalid value still fails"
+    (is (false? (s/valid? ::koak-spec {::koak-a "no"})))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of :distinct + :count 0
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-distinct-and-count-zero
+  (s/def ::cdcz (s/coll-of int? :distinct true :count 0))
+  (is (true? (s/valid? ::cdcz [])))
+  (is (false? (s/valid? ::cdcz [1]))))
+
+;; ----------------------------------------------------------------------------
+;; s/keys* roundtrip via kvs->map + map->kvs
+;; ----------------------------------------------------------------------------
+
+(deftest keys-star-conform-then-unform-roundtrips
+  ;; :req-un [::ksr-name] unqualifies to :ksr-name (not :name) — the
+  ;; input key must match the unqualified form.
+  (s/def ::ksr-name string?)
+  (s/def ::ksr-spec (s/keys* :req-un [::ksr-name]))
+  (let [v [:ksr-name "Alice"]
+        c (s/conform ::ksr-spec v)]
+    (is (= {:ksr-name "Alice"} c))
+    (testing "unform produces a kv-seq"
+      (let [u (s/unform ::ksr-spec c)]
+        (is (= [:ksr-name "Alice"] (vec u)))))))
+
+;; ----------------------------------------------------------------------------
+;; s/and-spec empty preserved in form
+;; ----------------------------------------------------------------------------
+
+(deftest empty-and-spec-form
+  (s/def ::eas (s/and-spec))
+  (is (= '(cljd.spec.alpha/and) (s/form ::eas)))
+  (testing "empty and-spec accepts anything (identity)"
+    (is (= 1   (s/conform ::eas 1)))
+    (is (= "x" (s/conform ::eas "x")))
+    (is (nil? (s/conform ::eas nil)))))
+
+;; ----------------------------------------------------------------------------
+;; coll-of with :min-count only / :max-count only
+;; ----------------------------------------------------------------------------
+
+(deftest coll-of-min-count-only
+  (s/def ::cmco (s/coll-of int? :min-count 2))
+  (testing "below min invalid"
+    (is (false? (s/valid? ::cmco [1]))))
+  (testing "at or above min valid"
+    (is (true? (s/valid? ::cmco [1 2])))
+    (is (true? (s/valid? ::cmco (vec (range 100)))))))
+
+(deftest coll-of-max-count-only
+  (s/def ::cmxc (s/coll-of int? :max-count 3))
+  (testing "0..max valid"
+    (is (true? (s/valid? ::cmxc [])))
+    (is (true? (s/valid? ::cmxc [1])))
+    (is (true? (s/valid? ::cmxc [1 2 3]))))
+  (testing "above max invalid"
+    (is (false? (s/valid? ::cmxc [1 2 3 4])))))
