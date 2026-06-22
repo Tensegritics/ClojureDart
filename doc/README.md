@@ -426,7 +426,7 @@ Dynamic binding but along the widgets tree, not the call tree. Inherited binding
 ### `:get` directive
 `:get [:k1 :k2]` retrieves values bound to `:k1` and `:k2` via `:bind` and binds these values to `k1` and `k2` in the lexical scope (the following forms).
 
-    `:get [m/Navigator]` retrieves instance returned by `(m/Navigator.of context)` and lexically binds it to `navigator` -- implicit kebab-casing of teh Dart name.
+`:get [m/Navigator]` retrieves instance returned by `(m/Navigator.of context)` and lexically binds it to `navigator` -- implicit kebab-casing of the Dart name.
 
 ### `:context` directive — when Flutter lacks context
 `:context ctx` binds ctx to a `BuildContext` instance.
