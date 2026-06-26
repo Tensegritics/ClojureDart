@@ -1,6 +1,6 @@
 (ns cljd.test-clojure.parse
   (:require
-   [clojure.test :refer [deftest is are]]))
+   [clojure.test :refer [deftest is are testing]]))
 
 (def max-int-32 0x7fffffff) ;; 2147483647
 (def max-int-64 0x7fffffffffffffff) ;; 9223372036854775807
@@ -87,6 +87,38 @@
                     (range 100000))]
 
     (is true res)))
+
+(deftest test-parse-uuid
+  (are [x] (uuid? (parse-uuid x))
+    "e2c6efed-dabf-4f55-90bd-58f2c22863be"
+    "1f43838a-80fc-4a8a-be89-306a343ac867")
+
+  (testing "lower and upper case"
+    (let [uuid-lower (parse-uuid "cb048ac2-5e0b-439e-a59f-dfdf11651be0")
+          uuid-upper (parse-uuid "CB048AC2-5E0B-439E-A59F-DFDF11651BE0")]
+      (is (= uuid-lower uuid-upper))
+      (is (uuid? uuid-lower))
+      (is (uuid? uuid-upper))))
+
+  (testing "invalid format"
+    (are [x] (nil? (parse-uuid x))
+      ""
+      "0"
+      "abc123"
+      "000000000-0000-0000-0000-000000000000"   ;; extra leading
+      "00000000-0000-0000-0000-0000000000000")) ;; extra trailing
+
+  (testing "bad input"
+    (are [x] (thrown? ArgumentError (parse-uuid x))
+      nil
+      0
+      0.0
+      :foo
+      'foo
+      []
+      '()
+      {}
+      #{})))
 
 (deftest test-parse-boolean
   (is (identical? true (parse-boolean "true")))
