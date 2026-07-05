@@ -860,6 +860,45 @@
                     (recur))))))))
       paths)))
 
+(defn dep-source-dir
+  "On-disk root of a resolved dep coordinate (git checkout, :local/root, or a
+  directory on the classpath), or nil for jar-only deps."
+  [{:keys [:deps/root paths]}]
+  (or root (some #(when (.isDirectory (java.io.File. ^String %)) %) paths)))
+
+(defn copy-flutter-assets!
+  "ClojureDart mirrors each Flutter dep into .clojuredart/deps/<sha>/ as a bare
+  pubspec.yaml stub. Flutter's asset bundler reads that stub's `flutter:` section
+  and expects the declared assets/shaders/fonts to sit next to it, but ClojureDart
+  never copies them — so a package's shaders/assets silently go missing from the
+  bundle. This copies them from the dep's source checkout into the stub. No-op
+  when the source dir is unknown (jar deps) or the dep declares no bundle."
+  [^java.io.File src-dir ^java.io.File dst-dir flutter]
+  (when (and src-dir flutter)
+    (let [asset->rel (fn [a] (cond (string? a) a
+                                   (instance? java.util.Map a) (get a "path")))
+          font-assets (for [font (get flutter "fonts")
+                            f (get font "fonts")
+                            :let [a (get f "asset")] :when a] a)
+          rel-paths (->> (concat (get flutter "shaders")
+                                 (map asset->rel (get flutter "assets"))
+                                 font-assets)
+                      (filter string?))]
+      (doseq [rel rel-paths
+              :let [src (java.io.File. src-dir ^String rel)]
+              :when (.exists src)]
+        (if (.isDirectory src)
+          ;; a trailing-slash asset entry declares a whole directory of files
+          (doseq [file (file-seq src)
+                  :when (.isFile file)
+                  :let [child-rel (subs (.getPath file) (inc (count (.getPath src-dir))))
+                        dst (java.io.File. dst-dir ^String child-rel)]]
+            (io/make-parents dst)
+            (io/copy file dst))
+          (let [dst (java.io.File. dst-dir ^String rel)]
+            (io/make-parents dst)
+            (io/copy src dst)))))))
+
 (defn sync-pubspec! []
   (let [parser (org.yaml.snakeyaml.Yaml.)
         existing-deps (into {}
@@ -868,10 +907,14 @@
                               :when sha]
                           [[name sha] (-> path java.io.File. .exists)]))
         declared-deps (into {}
-                        (for [pubspec (keep find-pubspec (vals (deps/resolve-deps *deps* {})))
-                              :let [{:strs [name]} (.load parser pubspec)
+                        (for [coord (vals (deps/resolve-deps *deps* {}))
+                              :let [pubspec (find-pubspec coord)]
+                              :when pubspec
+                              :let [{:strs [name flutter]} (.load parser pubspec)
                                     sha (sha256 pubspec)]]
-                          [[name sha] pubspec]))
+                          [[name sha] {:pubspec pubspec
+                                       :src-dir (dep-source-dir coord)
+                                       :flutter flutter}]))
         ; the (filter existing-deps) is to remove "bridge" deps which don't exist on disk
         ; typically when getting an updated pubspec.yaml from scm (git)
         deps-to-remove (keys (transduce (filter existing-deps) dissoc existing-deps (keys declared-deps)))
@@ -884,10 +927,11 @@
 
     (when-some [coords (seq (for [[name sha] (keys deps-to-add)]
                               (str name ":{\"path\":\".clojuredart/deps/" sha "\"}")))]
-      (doseq [[[name sha] pubspec] deps-to-add
+      (doseq [[[name sha] {:keys [pubspec src-dir flutter]}] deps-to-add
               :let [f (java.io.File. ".clojuredart/deps" sha)]]
         (.mkdirs f)
-        (spit (java.io.File. f "pubspec.yaml") pubspec))
+        (spit (java.io.File. f "pubspec.yaml") pubspec)
+        (copy-flutter-assets! (some-> src-dir java.io.File.) f flutter))
       (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--directory=."
         coords))))
 
