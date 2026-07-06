@@ -3433,7 +3433,7 @@
   [& xs]
   ;; TODO : like to-array, find a more efficient way to not rebuild an intermediate array
   (let [^List arr (reduce (fn [^List acc item] (.add acc item) acc) #dart[] xs)]
-    (loop [^int i (.-length arr) r ^PersistentList ()]
+    (loop [^int i (.-length arr) ^PersistentList r -EMPTY-LIST]
       (if (< 0 i)
         (recur (dec i) (-conj ^PersistentList r (. arr "[]" (dec i))))
         r))))
