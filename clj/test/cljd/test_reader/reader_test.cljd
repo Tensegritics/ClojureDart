@@ -534,3 +534,22 @@
 (deftest read-stream
   (let [lines ["(hello " "world)" ":ok"]]
     (is (= '[(hello world) :ok] (-> lines stream r/read-stream .toList await)))))
+
+(deftest test-deprecated-special-form?
+  (testing "Deprecation Warning"
+    (let [out (with-out-str (r/special-form? 'blah))]
+      (is (= "DEPRECATED, use cljd.core/special-symbol? instead of cljd.reader/special-form?\n" out))))
+  
+  (with-out-str
+    (are [x] (not (r/special-form? x))
+      1
+      "dart/is?"
+      :dart/await
+      'prn
+      'dart/blah))
+
+  (with-out-str
+    (are [x] (r/special-form? x)
+      '. 'set! 'dart/is? 'dart/await 'dart/async-barrier 'dart/run-zoned 'dart/assert 'dart/type-like
+      'throw 'new 'ns 'try 'case* 'quote 'do 'var 'let* 'loop* 'recur 'if 'fn* 'letfn 'def 'reify* 'deftype*
+      'defprotocol* 'defmethod* 'defmulti* 'extend-type-protocol*)))
