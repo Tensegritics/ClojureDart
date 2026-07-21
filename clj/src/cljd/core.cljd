@@ -1979,8 +1979,8 @@
   "Returns true if x names a special form"
   [x]
   (contains? '#{. & set! dart/is? dart/await dart/async-barrier dart/run-zoned dart/assert dart/type-like
-                throw new ns try catch finally case* quote do var let* loop* recur if fn* letfn def
-                reify* deftype* defprotocol* defmethod* defmulti* extend-type-protocol*} x))
+                throw new ns try catch finally case* quote do var let* loop* recur if fn* letfn def reify*
+                deftype* defprotocol* defmethod* defmulti* extend-type-protocol* defcontrib* contribute*} x))
 
 (defn symbol
   "Returns a Symbol with the given namespace and name. Arity-1 works

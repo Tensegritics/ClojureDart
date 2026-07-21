@@ -236,4 +236,5 @@
   (are [x] (special-symbol? x)
     '. '& 'set! 'if 'def 'throw 'new 'ns 'try 'catch 'finally 'do 'var 'letfn 'quote 'recur
     'dart/is? 'dart/await 'dart/async-barrier 'dart/run-zoned 'dart/assert 'dart/type-like
-    'case* 'let* 'loop* 'fn* 'reify* 'deftype* 'defprotocol* 'defmethod* 'defmulti* 'extend-type-protocol*))
+    'case* 'let* 'loop* 'fn* 'reify* 'deftype* 'defprotocol* 'defmethod* 'defmulti* 'extend-type-protocol*
+    'defcontrib* 'contribute*))
