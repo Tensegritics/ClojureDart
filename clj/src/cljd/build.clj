@@ -87,33 +87,77 @@
     s))
 
 (defn success []
-  (rand-nth
-    [(str (green "  All clear! ") "👌")
-     (str (green "  You rock! ") "🤘")
-     (str (green "  Bravissimo! ") "👏")
-     (str (green "  Easy peasy! ") "😎")
-     (str (green "  I like when a plan comes together! ") "👨‍🦳")]))
+  (str (green "Compilation succeeded") " - "
+    (rand-nth
+      ["All clear! 👌"
+       "You rock! 🤘"
+       "Bravissimo! 👏"
+       "Easy peasy! 😎"
+       "I like when a plan comes together! 👨‍🦳"])))
+
+(defn compilation-error-heading []
+  (str (red "Compilation error") " - "
+    (rand-nth
+      ["Oh noes! 😵"
+       "Something horrible happened! 😱"
+       "$expletives 💩"
+       "Keep calm and fix bugs! 👑"
+       "What doesn’t kill you, makes you stronger. 🤔"
+       "You’re gonna need a bigger boat! 🦈"])))
+
+(defn- exception-chain [e]
+  (take-while some? (iterate ex-cause e)))
+
+(defn- bounded-str [s]
+  (let [max-chars 2000]
+    (if (<= (count s) max-chars)
+      s
+      (str (subs s 0 (- max-chars 3)) "..."))))
+
+(defn- bounded-pr-str [form]
+  (bounded-str
+    (binding [*print-length* 20
+              *print-level* 6]
+      (pr-str form))))
+
+(defn- emit-exception [chain]
+  (some #(when (contains? (ex-data %) ::compiler/emit-stack) %) chain))
 
 (defn print-exception [e]
-  (println (rand-nth
-            [(str (red "Oh noes! ") "😵")
-             (str (red "Something horrible happened! ") "😱")
-             (str (red "$expletives ") "💩")
-             (str (red "Keep calm and fix bugs! ") "👑")
-             (str (red "What doesn’t kill you, makes you stronger. ") "🤔")
-             (str (red "You’re gonna need a bigger boat! ") "🦈")]))
-  (if-some [[form & parents] (seq (::compiler/emit-stack (ex-data e)))]
-    (let [toplevel (last (take-while #(not (and (seq? %) (= 'ns (first %)))) parents))]
-      (println (ex-message e))
-      (println "⛔️" (title (ex-message (ex-cause e))))
-      (if toplevel
-        (do
-          (println (title "Faulty subform and/or expansion") (pr-str form))
-          (println (title "While compiling") (pr-str toplevel)))
-        (println (title "Faulty form") (pr-str form))))
-    (do
-      (println "⛔️" (title (ex-message e)))
-      (st/print-stack-trace e))))
+  (let [chain (vec (exception-chain e))
+        emit-error (emit-exception chain)
+        root-error (peek chain)
+        context (when-not (identical? e emit-error) (ex-message e))]
+    (println (compilation-error-heading))
+    (when context
+      (println (bounded-str context)))
+    (if emit-error
+      (let [[form & parents] (::compiler/emit-stack (ex-data emit-error))
+            cause-message (or (some-> emit-error ex-cause ex-message)
+                            (ex-message emit-error))
+            toplevel (last (take-while #(not (and (seq? %) (= 'ns (first %)))) parents))]
+        (when cause-message
+          (println (title (bounded-str cause-message))))
+        (when form
+          (if toplevel
+            (do
+              (println (title "Faulty subform and/or expansion"))
+              (println " " (bounded-pr-str form))
+              (println (title "While compiling"))
+              (println " " (bounded-pr-str toplevel)))
+            (do
+              (println (title "Faulty form"))
+              (println " " (bounded-pr-str form))))))
+      (let [root-message (some-> root-error ex-message)
+            {:clojure.error/keys [line column]}
+            (some #(when (or (:clojure.error/line (ex-data %))
+                           (:clojure.error/column (ex-data %)))
+                     (ex-data %))
+              chain)]
+        (when (and root-message (not= root-message context))
+          (println (title (bounded-str root-message))))
+        (when line
+          (println (str "at line " line (when column (str ", column " column)))))))))
 
 (defn timestamp []
   (.format (java.text.SimpleDateFormat. "@HH:mm:ss" (java.util.Locale/getDefault)) (java.util.Date.)))
@@ -488,8 +532,7 @@
                       true
                       (catch Exception e
                         (vreset! dirty-nses nses)
-                        (println e)
-                        #_(print-exception e)
+                        (print-exception e)
                         false)))))
               compilation-success (compile-nses namespaces)]
           (if (or watch flutter)

@@ -13,5 +13,27 @@ test/cljd-out/*
 !.github
 tmp/
 
+# Generated Flutter platform projects in examples
+samples/**/android/
+samples/**/ios/
+samples/**/linux/
+samples/**/macos/
+samples/**/web/
+samples/**/windows/
+repro/**/android/
+repro/**/ios/
+repro/**/linux/
+repro/**/macos/
+repro/**/web/
+repro/**/windows/
+
+# Generated ClojureDart outputs in examples
+samples/**/lib/cljd-out/
+repro/**/lib/cljd-out/
+
+# Flutter build outputs in examples
+samples/**/build/
+repro/**/build/
+
 # FVM Version Cache
 .fvm/
