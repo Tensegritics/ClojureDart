@@ -1,5 +1,6 @@
 (ns cljd.build-test
   (:require [cljd.build :as build]
+            [clojure.edn :as edn]
             [clojure.test :refer [deftest is run-tests]]))
 
 (def ^:private old-sha (apply str (repeat 40 "a")))
@@ -33,8 +34,11 @@
         result (build/upgrade-deps-text text {:git/sha old-sha}
                  {:tag "0.9.20260822a" :sha new-sha})]
     (is (:changed? result))
-    (is (.contains (:text result) (str ":sha \"" new-sha "\" #_\"" old-sha "\"")))
-    (is (not (.contains (:text result) ":tag")))))
+    (is (.contains (:text result) (str ":sha \"" new-sha "\"")))
+    (is (.contains (:text result) (str "#_\"" old-sha "\"")))
+    (is (= "0.9.20260822a"
+          (get-in (edn/read-string (:text result))
+            [:deps 'tensegritics/clojuredart :tag])))))
 
 (deftest upgrade-tagged-coordinate
   (let [text (str "{:deps {tensegritics/clojuredart "
@@ -47,12 +51,43 @@
     (is (.contains (:text result) ":tag \"0.9.20260822a\" #_\"0.9.20260822\""))
     (is (.contains (:text result) (str ":sha \"" new-sha "\" #_\"" old-sha "\"")))))
 
-(deftest already-current
+(deftest missing-tag-is-added-to-current-sha
   (let [text (str "{:deps {tensegritics/clojuredart {:sha \"" new-sha "\"}}}")
         result (build/upgrade-deps-text text {:sha new-sha}
                  {:tag "0.9.20260822a" :sha new-sha})]
+    (is (:changed? result))
+    (is (= {:sha new-sha :tag "0.9.20260822a"}
+          (get-in (edn/read-string (:text result))
+            [:deps 'tensegritics/clojuredart])))))
+
+(deftest already-current-with-tag
+  (let [text (str "{:deps {tensegritics/clojuredart "
+               "{:tag \"0.9.20260822a\" :sha \"" new-sha "\"}}}")
+        result (build/upgrade-deps-text text
+                 {:tag "0.9.20260822a" :sha new-sha}
+                 {:tag "0.9.20260822a" :sha new-sha})]
     (is (false? (:changed? result)))
     (is (= text (:text result)))))
+
+(deftest stale-tag-is-updated-for-current-sha
+  (let [text (str "{:deps {tensegritics/clojuredart "
+               "{:tag \"0.9.20260822\" :sha \"" new-sha "\"}}}")
+        result (build/upgrade-deps-text text
+                 {:tag "0.9.20260822" :sha new-sha}
+                 {:tag "0.9.20260822a" :sha new-sha})]
+    (is (:changed? result))
+    (is (= {:tag "0.9.20260822a" :sha new-sha}
+          (get-in (edn/read-string (:text result))
+            [:deps 'tensegritics/clojuredart])))
+    (is (.contains (:text result) "#_\"0.9.20260822\""))))
+
+(deftest namespaced-git-tag-is-added
+  (let [text (str "{:deps {tensegritics/clojuredart {:git/sha \"" old-sha "\"}}}")
+        result (build/upgrade-deps-text text {:git/sha old-sha}
+                 {:tag "0.9.20260822a" :sha new-sha})]
+    (is (= {:git/sha new-sha :git/tag "0.9.20260822a"}
+          (get-in (edn/read-string (:text result))
+            [:deps 'tensegritics/clojuredart])))))
 
 (deftest ambiguous-coordinate-is-not-rewritten
   (let [text (str "{:deps {tensegritics/clojuredart {:sha \"" old-sha "\"} "
@@ -107,7 +142,8 @@
                 build/*latest-deps-reader* #(asset "0.9.20260822a" new-sha)]
         (is (.contains (with-out-str (build/upgrade-cljd file))
               "ClojureDart upgraded to 0.9.20260822a")))
-      (is (.contains (slurp file) (str ":sha \"" new-sha "\" #_\"" old-sha "\"")))
+      (is (.contains (slurp file) (str ":sha \"" new-sha "\"")))
+      (is (.contains (slurp file) (str "#_\"" old-sha "\"")))
       (when posix-view
         (is (= expected-permissions
               (java.nio.file.Files/getPosixFilePermissions (.toPath file)

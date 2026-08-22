@@ -68,9 +68,9 @@ printed by the error message before retrying.
 ## Legacy upgrade bridge
 
 Old ClojureDart versions discover releases through `.hashes`. During migration,
-the SHA of the first commit containing the release-based upgrader must be
-appended once to `.hashes`. Keep that file afterward so old clients can reach
-the bridge version, but do not append future release SHAs.
+its last entry must be the SHA of the final bridge commit containing the
+release-based upgrader. Keep that file afterward so old clients can reach the
+bridge version, but do not append ordinary release SHAs.
 
 Users upgrading from a version older than the bridge may exceptionally need to
 run the command twice:

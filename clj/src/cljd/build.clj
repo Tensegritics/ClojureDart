@@ -917,7 +917,7 @@
   (re-pattern
     (str "(?<!#_)\"" (java.util.regex.Pattern/quote value) "\"")))
 
-(defn- replace-active-value [text old-value new-value label]
+(defn- replace-active-value-with [text old-value replacement label]
   (let [pattern (active-value-pattern old-value)
         matches (count (re-seq pattern text))]
     (case matches
@@ -926,13 +926,16 @@
             (str "The active ClojureDart " label " was not found in deps.edn: " old-value)
             "The dependency may be defined in another deps.edn file, alias, or command-line override."
             "The local deps.edn was not modified; update the coordinate manually."))
-      1 (str/replace text pattern
-          (str \" new-value \" " #_" \" old-value \"))
+      1 (str/replace text pattern replacement)
       (throw
         (upgrade-failure
           (str "The active ClojureDart " label " occurs " matches " times in deps.edn.")
           "Automatic replacement would be ambiguous, so the local deps.edn was not modified."
           "Keep one active ClojureDart coordinate or update the occurrences manually.")))))
+
+(defn- replace-active-value [text old-value new-value label]
+  (replace-active-value-with text old-value
+    (str \" new-value \" " #_" \" old-value \") label))
 
 (defn- project-cljd-coordinate [text]
   (try
@@ -980,23 +983,35 @@
           (str "Refusing to downgrade ClojureDart from " current-tag " to " tag ".")
           "Check which GitHub Release is marked latest before changing deps.edn."
           "The local deps.edn was not modified.")))
-    (if (= current-sha sha)
-      {:text text :changed? false :tag tag :sha sha}
-      (let [text (replace-active-value text current-sha sha "SHA")
-            text (if (and project-tag (not= project-tag tag))
+    (let [sha-changed? (not= current-sha sha)
+          tag-changed? (not= project-tag tag)
+          text (if sha-changed?
+                 (replace-active-value text current-sha sha "SHA")
+                 text)
+          text (cond
+                 project-tag
+                 (if tag-changed?
                    (replace-active-value text project-tag tag "tag")
                    text)
-            updated-coordinate (project-cljd-coordinate text)
-            updated-sha (or (:git/sha updated-coordinate) (:sha updated-coordinate))
-            updated-tag (or (:git/tag updated-coordinate) (:tag updated-coordinate))]
-        (when-not (and (= sha updated-sha)
-                    (or (nil? project-tag) (= tag updated-tag)))
-          (throw
-            (upgrade-failure
-              "The edited deps.edn did not update the top-level ClojureDart coordinate as expected."
-              (str "Resulting coordinate: " (pr-str updated-coordinate))
-              "The local deps.edn was not modified.")))
-        {:text text :changed? true :tag tag :sha sha}))))
+
+                 :else
+                 (let [tag-key (if (contains? project-coordinate :git/sha)
+                                 ":git/tag"
+                                 ":tag")]
+                   (replace-active-value-with text sha
+                     (str \" sha \" " " tag-key " " \" tag \") "SHA")))]
+      (if-not (or sha-changed? tag-changed?)
+        {:text text :changed? false :tag tag :sha sha}
+        (let [updated-coordinate (project-cljd-coordinate text)
+              updated-sha (or (:git/sha updated-coordinate) (:sha updated-coordinate))
+              updated-tag (or (:git/tag updated-coordinate) (:tag updated-coordinate))]
+          (when-not (and (= sha updated-sha) (= tag updated-tag))
+            (throw
+              (upgrade-failure
+                "The edited deps.edn did not update the top-level ClojureDart coordinate as expected."
+                (str "Resulting coordinate: " (pr-str updated-coordinate))
+                "The local deps.edn was not modified.")))
+          {:text text :changed? true :tag tag :sha sha})))))
 
 (defn- preserve-file-security-attributes! [source target]
   (let [options (make-array java.nio.file.LinkOption 0)
