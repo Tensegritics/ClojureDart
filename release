@@ -1,0 +1,9 @@
+#!/usr/bin/env bb
+
+(require '[clojure.java.io :as io])
+
+(let [script (some-> (System/getProperty "babashka.file") io/file .getCanonicalFile)
+      root (some-> script .getParentFile)]
+  (load-file (str (io/file root "script/release.clj")))
+  ((ns-resolve 'release 'set-script-root!) (.getPath root))
+  (apply (ns-resolve 'release '-main) *command-line-args*))

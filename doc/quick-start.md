@@ -16,21 +16,25 @@ If you already have the `clj` command installed make sure to upgrade to at least
 
 ## 3. Create a new project
 
-First, create a Clojure project, you need to specify it's a pure Dart (not Flutter) project and where is the `main` function (here `quickstart.helloworld`):
+First, create a project from the `deps.edn` template pinned to the latest stable release:
 
 ```shell
 mkdir helloworld
 cd helloworld
-cat << EOF > deps.edn
-{:paths ["src"] ; where your cljd files will live
- :deps {tensegritics/clojuredart
-        {:git/url "git@github.com:tensegritics/ClojureDart.git"
-         ; or  "https://github.com/tensegritics/ClojureDart.git"
-         :sha "81b5c03a55cf52b21dc0be8ccfa4827b9889f488"}}
- :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
- :cljd/opts {:kind :dart
-             :main quickstart.helloworld}}
-EOF
+curl --fail --location https://github.com/Tensegritics/ClojureDart/releases/latest/download/deps.latest.edn --output deps.edn.tmp &&
+mv deps.edn.tmp deps.edn &&
+sed -i.bak \
+  -e 's/:kind :flutter/:kind :dart/' \
+  -e 's/change\.me/quickstart.helloworld/' deps.edn &&
+rm deps.edn.bak &&
+cat deps.edn
+```
+
+The template comments identify the values intended for customization. The `sed` command above selects pure Dart and replaces `change.me` with this example's main namespace:
+
+```clojure
+:cljd/opts {:kind :dart
+            :main quickstart.helloworld}
 ```
 
 Then, you need to prepare this project to also be a Dart project:

@@ -4,6 +4,28 @@ on: [push]
 
 jobs:
 
+  release-tool-tests:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Prepare Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '11'
+
+      - name: Install Clojure and Babashka
+        uses: DeLaGuardo/setup-clojure@13.4
+        with:
+          cli: latest
+          bb: latest
+
+      - name: Test release and upgrade tooling
+        run: ./release --test
+
   testing-on-dart-stable:
 
     strategy:

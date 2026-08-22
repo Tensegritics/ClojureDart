@@ -63,22 +63,28 @@ Don't forget to subscribe to [Curiosities -- our newsletter on ClojureDart and m
 
 Prerequisites: Clojure and Flutter installed and on your path.
 
-Create a project directory with its `deps.edn`
+Create a project directory and download the `deps.edn` template from the latest stable release:
 ``` shell
 mkdir hello
 cd hello
-cat << EOF > deps.edn
-{:paths ["src"] ; where your cljd files are
- :deps {tensegritics/clojuredart
-        {:git/url "https://github.com/tensegritics/ClojureDart.git"
-         :sha "81b5c03a55cf52b21dc0be8ccfa4827b9889f488"}}
- :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
- :cljd/opts {:kind :flutter
-             :main acme.main}}
-EOF
+curl --fail --location https://github.com/Tensegritics/ClojureDart/releases/latest/download/deps.latest.edn --output deps.edn.tmp &&
+mv deps.edn.tmp deps.edn &&
+sed -i.bak -e 's/change\.me/acme.main/' deps.edn &&
+rm deps.edn.bak &&
+cat deps.edn
 ```
 
-(To update an existing project to the latest ClojureDart, just do `clj -M:cljd upgrade`)
+The downloaded dependency is pinned to the immutable tag and Git SHA of the latest release.
+The template uses the visible placeholder `change.me`. The `sed` command above replaces it with the main namespace used in this example:
+
+```clojure
+:cljd/opts {:kind :flutter
+            :main acme.main}
+```
+
+Replace `acme.main` in the `sed` command and in the source path below if you want to use another namespace. The comments in `deps.edn` also indicate which values are intended to be changed.
+
+(To update an existing project to the latest ClojureDart, just do `clj -M:cljd upgrade`.)
 
 Initialize project:
 

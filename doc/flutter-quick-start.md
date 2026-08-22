@@ -16,25 +16,28 @@ If you already have the `clj` command installed make sure to upgrade to at least
 
 ## 3. Create your first ClojureDart/Flutter project
 
-Creates a directory for the project with the following deps.edn:
+Create a directory and download the `deps.edn` template pinned to the latest stable release:
 
 ``` shell
 mkdir hello
 cd hello
-cat << EOF > deps.edn
-{:paths ["src"] ; where your cljd files are
- :deps {tensegritics/clojuredart
-        {:git/url "https://github.com/tensegritics/ClojureDart.git"
-         :sha "81b5c03a55cf52b21dc0be8ccfa4827b9889f488"}}
- :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
- :cljd/opts {:kind :flutter
-             :main acme.main}}
-EOF
+curl --fail --location https://github.com/Tensegritics/ClojureDart/releases/latest/download/deps.latest.edn --output deps.edn.tmp &&
+mv deps.edn.tmp deps.edn &&
+sed -i.bak -e 's/change\.me/acme.main/' deps.edn &&
+rm deps.edn.bak &&
+cat deps.edn
 ```
 
-`acme.main` is the root namespace of the project where the `main` function is defined.
+The template uses the visible placeholder `change.me`. The `sed` command above replaces it with the main namespace used in this example:
 
-(To update an existing project to the latest ClojureDart, just do `clj -M:cljd upgrade`)
+```clojure
+:cljd/opts {:kind :flutter
+            :main acme.main}
+```
+
+Replace `acme.main` in the `sed` command and in the source path below if you want to use another namespace. It is the root namespace where the `main` function is defined. The comments in `deps.edn` also indicate which values are intended to be changed.
+
+(To update an existing project to the latest ClojureDart, just do `clj -M:cljd upgrade`.)
 
 ## 4. Initialize the project
 
