@@ -121,6 +121,23 @@
               :sha sha}
             (refresh-release! {:version "0.9.20260822" :sha sha}))))))
 
+(deftest checked-release-is-passed-to-publisher
+  (let [run-release! (ns-resolve 'release 'run-release!)
+        preflight! (ns-resolve 'release 'preflight!)
+        print-plan (ns-resolve 'release 'print-plan)
+        publish! (ns-resolve 'release 'publish!)
+        checked-release {:version "0.9.20260822"
+                         :sha (apply str (repeat 40 "a"))
+                         :tag-exists? false
+                         :release-state :missing}
+        calls (atom [])]
+    (with-redefs-fn
+      {preflight! (fn [] checked-release)
+       print-plan (fn [release] (swap! calls conj [:print release]))
+       publish! (fn [release] (swap! calls conj [:publish release]))}
+      run-release!)
+    (is (= [[:print checked-release] [:publish checked-release]] @calls))))
+
 (deftest already-released-commit-is-rejected-before-tagging
   (let [ensure-new-commits! (ns-resolve 'release 'ensure-new-commits!)
         sha (apply str (repeat 40 "a"))

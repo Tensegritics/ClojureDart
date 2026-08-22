@@ -583,10 +583,15 @@
         (println)
         (println "If the problem persists, report it with the complete output above.")))))
 
+(defn- run-release! []
+  (let [release (preflight!)]
+    (print-plan release)
+    (publish! release)))
+
 (defn -main [& args]
   (try
     (case (vec args)
-      [] (-> (preflight!) print-plan publish!)
+      [] (run-release!)
       ["--check"] (print-plan (preflight!))
       ["--test"] (run-tests!)
       (["--help"] ["-h"]) (print-help)
