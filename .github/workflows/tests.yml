@@ -29,6 +29,7 @@ jobs:
   testing-on-dart-stable:
 
     strategy:
+      fail-fast: false
       matrix:
         # os: [ubuntu-latest, macOS-latest, windows-latest]
         os: [ubuntu-latest, macOS-latest]
@@ -37,16 +38,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Prepare java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v5
         with:
-          distribution: 'adopt'
+          distribution: 'temurin'
           java-version: '11'
 
       - name: Install clojure tools
-        uses: DeLaGuardo/setup-clojure@5.0
+        uses: DeLaGuardo/setup-clojure@13.4
         with:
           # Install just one or all simultaneously
           # The value must indicate a particular version of the tool, or use 'latest'
@@ -69,6 +70,7 @@ jobs:
 
   testing-on-dart2:
     strategy:
+      fail-fast: false
       matrix:
         # os: [ubuntu-latest, macOS-latest, windows-latest]
         os: [ubuntu-latest, macOS-latest]
@@ -77,16 +79,16 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Prepare java
-        uses: actions/setup-java@v3
+        uses: actions/setup-java@v5
         with:
-          distribution: 'adopt'
+          distribution: 'temurin'
           java-version: '11'
 
       - name: Install clojure tools
-        uses: DeLaGuardo/setup-clojure@5.0
+        uses: DeLaGuardo/setup-clojure@13.4
         with:
           # Install just one or all simultaneously
           # The value must indicate a particular version of the tool, or use 'latest'
