@@ -4944,7 +4944,8 @@
     (into nses (keep (fn [[ns ns-map]]
                        (when (symbol? ns)
                          (let [{:keys [clj-aliases imports lib contribs]} ns-map
-                               imports (-> imports (dissoc from) (assoc to (imports from)))
+                               imports (let [v (imports from)]
+                                         (cond-> (dissoc imports from) v (assoc to v)))
                                clj-aliases (into {}
                                              (map (fn [[alias lib]]
                                                     [alias (if (= lib from) to lib)]))
