@@ -1,0 +1,159 @@
+(ns sample.stream-download-percentage
+  "Example for using drawer with named routes navigation."
+  (:require ["package:flutter/material.dart" :as m]
+            ["package:path_provider/path_provider.dart" :as path-provider]
+            ["dart:core" :as dc]
+            ["dart:io" :as dio]
+            ["package:http/http.dart" :as http]
+            ["package:validators/validators.dart" :as validators]
+            [cljd.flutter :as f]
+            [clojure.string :as str]))
+
+(defn calculate-percentage
+  [{::keys [total
+            completion]}]
+  (if (= 0 total)
+    0
+    (-> (- total
+           completion)
+        (/ total)
+        (* 100)
+        (- 100)
+        (* -1))))
+
+
+(defn delete-local-file!
+  [file-name]
+  (let [old-file (-> file-name
+                     dio/File)]
+    (when (await (.exists old-file))
+      (-> old-file
+          .delete))))
+
+
+(defn parse-uri
+  [tc]
+  (let [form-text (-> tc
+                      .-text)]
+    (when (validators/isURL form-text)
+      (-> form-text
+          Uri/parse))))
+
+
+(defn start-download-button-handler
+  [download-st
+   {::keys [file-name request-uri]}]
+  (delete-local-file! file-name)
+  (let [streamed-response (some->> request-uri
+                                   (http/Request "get")
+                                   .send
+                                   await)
+        local-file-open (dio/File file-name)
+        opened-file (.openWrite local-file-open)
+        _dc (dc/print (.-contentLength streamed-response))
+        _total-bytes-add (swap! download-st
+                                update
+                                ::total
+                                #(+ % (.-contentLength streamed-response)))]
+    (some-> streamed-response
+            .-stream
+            (.forEach (fn [event]
+                        (swap! download-st
+                               update
+                               ::completion
+                               #(+ % (.-length event)))
+                        (.add opened-file event))))))
+
+(defn show-image-ui
+  [{::keys [file-image]}]
+  (f/widget
+    :watch [file-exists? (some-> file-image
+                                 .exists)]
+    m/Center
+    (if file-exists?
+      (-> file-image
+          .readAsBytesSync
+          (m/Image.memory
+            .errorBuilder (fn [_ _ _]
+                            (m/Text "Try to download a valid image file"))))
+      (m/Text "Add a link to download an image to show here"))))
+
+
+(defn show-image-download-button-ui
+  [{::keys [file-name
+            path-str]}]
+  (f/widget
+    :managed [tc (m/TextEditingController)]
+    :let [initial-download-st {::completion 0
+                               ::total      0
+                               ::file-image (dio/File. file-name)}]
+    :watch [download (atom initial-download-st) :as download-st]
+    m/Column
+    .children
+    [(m/Spacer)
+     (show-image-ui download)
+     (m/Spacer)
+     (f/widget
+       (m/TextField
+         .decoration (m/InputDecoration
+                       .border (m/OutlineInputBorder)
+                       .hintText "Add a valid link to an image file to download")
+         .controller tc))
+     (f/widget
+       (m/Row .mainAxisAlignment m/MainAxisAlignment.center)
+       .children
+       [(m/Spacer)
+        (m/ElevatedButton
+          .style (m/ButtonStyle
+                   .backgroundColor (m/MaterialStatePropertyAll
+                                      m/Colors.red))
+          .onPressed (fn []
+                       (start-download-button-handler download-st
+                                                      {::file-name   file-name
+                                                       ::request-uri (parse-uri tc)}))
+          .child (m/Text "Start"))
+        (m/Spacer)
+        (f/widget
+          (m/Flexible .flex 3)
+          (m/Row .mainAxisAlignment m/MainAxisAlignment.spaceBetween)
+          .children [(m/Spacer)
+                     (m/Card
+                       .child (-> download
+                                  calculate-percentage
+                                  (.toStringAsFixed 2)
+                                  (str "%")
+                                  m/Text))
+                     (m/Spacer)])])
+     (m/Text "The file will be downloaded in this path below:")
+     (f/widget
+       (m/Card
+         .color m/Colors.green
+         .child
+         (m/Text path-str)))
+     (m/Spacer)]))
+
+
+(def initialization-widget
+  (f/widget
+    :watch [path (path-provider/getApplicationDocumentsDirectory)]
+    (if path
+      (show-image-download-button-ui {::path-str  (-> path
+                                                      str
+                                                      (str/split #"Directory: ")
+                                                      second)
+                                      ::file-name (-> ^dio/Directory path
+                                                      .-path
+                                                      (str "/example.jpg"))})
+      (m/Text "Loading..."))))
+
+
+(defn main []
+  (-> (m/MaterialApp
+        .title "My first material app"
+        .theme (m/ThemeData
+                 .useMaterial3 true)
+        .initialRoute "/"
+        .home (m/Scaffold
+                .body initialization-widget))
+      f/widget
+      f/run))
