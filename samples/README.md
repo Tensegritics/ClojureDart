@@ -38,6 +38,10 @@ A native application will be created. If you want to test it on mobile, please f
     - SingleChildScrollView
     - DataTable
 
+### [Delayed update](./delayed_update)
+- state with `:watch`
+
+- Updating state from a Future
 
 ### [Drawer](./drawer)
 - stateless
