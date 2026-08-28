@@ -1,0 +1,640 @@
+;   Copyright (c) Rich Hickey, Reid Draper. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+(ns ^{:doc "Minimal port of clojure.test.check.generators for cljd.spec.alpha.
+
+  Provides shrink-aware property-based generators backed by:
+   - a rose tree for shrink representation
+   - a seedable PRNG (dart:math.Random with an integer seed)
+   - a Generator type wrapping (fn [rng size] -> Rose)
+
+  Pragmatic simplifications relative to test.check:
+   - The PRNG is not splittable; child generators reseed from the
+     parent's next int.
+   - Sized recursion uses a single int `size` parameter; there is no
+     full Size machinery.
+   - bind shrinking does not coordinate the bound value with the
+     inner generator's shrinks (we shrink the inner first, then walk
+     outer shrinks)."
+      :author "Rich Hickey, Reid Draper"}
+  cljd.spec.gen.alpha.test-check
+  (:refer-clojure :exclude [boolean cat char double int keyword list map
+                            not-empty set string symbol vector])
+  (:require ["dart:math" :as math]))
+
+;; ---------------------------------------------------------------------------
+;; Rose tree
+;;
+;; A Rose<a> is { :val a :children (Seq Rose<a>) }. The children
+;; represent strictly smaller candidate values reachable by shrinking
+;; the current value.
+
+(deftype Rose [val children]
+  Object
+  (^String toString [_] (str "#Rose<" val ">")))
+
+(defn rose
+  "Build a rose tree from a value and a (possibly lazy) seq of children
+  rose trees representing shrink candidates."
+  [val children]
+  (->Rose val children))
+
+(defn pure
+  "A rose tree with no shrinks."
+  [v]
+  (rose v ()))
+
+(defn rose-val
+  "Returns the value at the root of a rose."
+  [^Rose r]
+  (.-val r))
+
+(defn rose-children
+  "Returns the children seq of a rose."
+  [^Rose r]
+  (.-children r))
+
+(defn rose-fmap
+  "Maps f across the value at every node of the rose tree."
+  [f r]
+  (rose (f (rose-val r))
+        (clojure.core/map #(rose-fmap f %) (rose-children r))))
+
+(defn rose-filter
+  "Returns a rose with `pred` applied recursively, dropping any
+  subtrees whose root value fails pred. Returns nil if the root fails."
+  [pred r]
+  (when (pred (rose-val r))
+    (rose (rose-val r)
+          (keep #(rose-filter pred %) (rose-children r)))))
+
+(defn rose-join
+  "Flattens a Rose<Rose<a>> into a Rose<a> by splicing the inner
+  rose's children together with the outer rose's shrinks."
+  [r]
+  (let [inner (rose-val r)
+        outer-shrinks (clojure.core/map rose-join (rose-children r))]
+    (rose (rose-val inner)
+          (concat (rose-children inner) outer-shrinks))))
+
+;; ---------------------------------------------------------------------------
+;; Sized seedable PRNG
+
+(deftype Rng [r]
+  Object
+  (^String toString [_] "#Rng"))
+
+(defn make-rng
+  "Returns a new Rng. With no arg or nil, seeds non-deterministically;
+  with an int, seeds reproducibly."
+  ([] (->Rng (math/Random.)))
+  ([seed]
+   (->Rng (if (nil? seed)
+            (math/Random.)
+            (math/Random. seed)))))
+
+(defn rng?
+  "Returns x if x is an Rng instance, else nil."
+  [x]
+  (when (instance? Rng x) x))
+
+(defn rng-int
+  "Returns a uniformly random int in [0, max). Dart's Random.nextInt
+  is capped at 2^32; for larger spans we compose two 32-bit draws and
+  take modulo, accepting a small bias acceptable for generator use."
+  [^Rng rng max]
+  (if (<= max 4294967296)
+    (.nextInt (.-r rng) max)
+    (let [hi (.nextInt (.-r rng) 2147483648)  ; 2^31 — keeps 64-bit result positive
+          lo (.nextInt (.-r rng) 4294967296)  ; 2^32
+          v  (+ (* hi 4294967296) lo)]
+      (mod v max))))
+
+(defn rng-double
+  "Returns a uniformly random double in [0.0, 1.0)."
+  [^Rng rng]
+  (.nextDouble (.-r rng)))
+
+(defn split-rng
+  "Returns a fresh Rng seeded from rng's next int. Used to give
+  child generators an independent stream while remaining reproducible
+  given the parent seed."
+  [rng]
+  (make-rng (rng-int rng 2147483647)))
+
+;; ---------------------------------------------------------------------------
+;; Generator type
+
+(deftype Generator [run-fn]
+  Object
+  (^String toString [_] "#Gen"))
+
+(defn generator?
+  "Returns x if x is a Generator, else nil."
+  [x]
+  (when (instance? Generator x) x))
+
+(defn generator
+  "Wraps a (fn [rng size] -> Rose) into a Generator."
+  [f]
+  (->Generator f))
+
+(defn run-gen
+  "Evaluates a Generator and returns the resulting rose tree."
+  [g ^Rng rng size]
+  ((.-run-fn ^Generator g) rng size))
+
+(defn generate
+  "Generates a single value using `g`. Optional `size` (default 30)
+  and `seed` (an int for reproducibility, or nil)."
+  ([g] (generate g 30 nil))
+  ([g size] (generate g size nil))
+  ([g size seed]
+   (rose-val (run-gen g (make-rng seed) size))))
+
+(defn sample-rose
+  "Generates n rose trees from g; size grows with index."
+  ([g] (sample-rose g 10 nil))
+  ([g n] (sample-rose g n nil))
+  ([g n seed]
+   (let [rng (make-rng seed)]
+     (mapv #(run-gen g rng %) (range n)))))
+
+(defn sample
+  "Generates n values from g; size grows with index."
+  ([g] (sample g 10 nil))
+  ([g n] (sample g n nil))
+  ([g n seed]
+   (mapv rose-val (sample-rose g n seed))))
+
+;; ---------------------------------------------------------------------------
+;; Integer shrinking helpers
+
+(defn- halves
+  "Returns a seq halving x toward 0: x, x/2, x/4, ..., 1 (or -1)."
+  [x]
+  (->> (iterate #(quot % 2) x)
+       (take-while #(not= 0 %))))
+
+(defn- shrink-int-toward
+  "Returns a seq of ints that shrink src toward dest. Always begins
+  with dest and excludes src itself."
+  [dest src]
+  (let [delta (- src dest)]
+    (cond
+      (= dest src) ()
+      :else
+      (->> (clojure.core/cons dest
+             (clojure.core/map #(- src %) (halves delta)))
+           distinct
+           (filter #(not= % src))))))
+
+(declare int-rose)
+
+(defn- int-rose
+  "Builds a rose tree for an int that shrinks toward 0."
+  [v]
+  (rose v (clojure.core/map int-rose (shrink-int-toward 0 v))))
+
+;; ---------------------------------------------------------------------------
+;; Core combinators
+
+(defn return
+  "Returns a generator that always produces v with no shrinks."
+  [v]
+  (generator (fn [_ _] (pure v))))
+
+(defn fmap
+  "Returns a generator whose values are (f x) where x comes from g.
+  Shrinks of x are mapped through f."
+  [f g]
+  (generator (fn [rng size] (rose-fmap f (run-gen g rng size)))))
+
+(defn bind
+  "Threads a generated value of g through f to obtain a new generator,
+  whose result becomes the bind's output. Shrinks try the bound value's
+  shrinks first, re-running f with a stable inner seed, then try the
+  inner generator's own shrinks."
+  [g f]
+  (generator (fn [rng size]
+               (let [r (run-gen g rng size)
+                     inner-seed (rng-int rng 2147483647)]
+                 (letfn [(bind-rose [outer]
+                           (let [inner (run-gen (f (rose-val outer))
+                                                (make-rng inner-seed)
+                                                size)]
+                             (rose (rose-val inner)
+                                   (concat
+                                     (clojure.core/map bind-rose
+                                                       (rose-children outer))
+                                     (rose-children inner)))))]
+                   (bind-rose r))))))
+
+(defn sized
+  "Calls f with the current generation size and runs the returned
+  generator at that same size."
+  [f]
+  (generator (fn [rng size]
+               (run-gen (f size) rng size))))
+
+(defn resize
+  "Runs generator g with size fixed to n, ignoring the ambient size."
+  [n g]
+  (generator (fn [rng _]
+               (run-gen g rng n))))
+
+(defn choose
+  "Returns a generator for ints in [lo hi] inclusive, shrinking toward lo."
+  [lo hi]
+  (let [lo (clojure.core/int lo)
+        hi (clojure.core/int hi)
+        span (inc (- hi lo))]
+    (generator (fn [rng _]
+                 (let [v (if (pos? span) (+ lo (rng-int rng span)) lo)]
+                   (rose v
+                         (clojure.core/map int-rose
+                                           (shrink-int-toward lo v))))))))
+
+(defn elements
+  "Returns a generator that picks an element from coll uniformly,
+  shrinking toward the first element."
+  [coll]
+  (when (empty? coll)
+    (throw (Exception. "elements requires a non-empty collection")))
+  (let [xs (vec coll)]
+    (fmap #(nth xs %) (choose 0 (dec (count xs))))))
+
+(defn one-of
+  "Returns a generator that picks one of `gens` and runs it. Shrinks
+  via the chosen generator's shrinks plus alternative-generator
+  shrinks."
+  [gens]
+  (let [gs (vec gens)]
+    (when (empty? gs)
+      (throw (Exception. "one-of requires a non-empty collection of generators")))
+    (bind (choose 0 (dec (count gs)))
+          #(nth gs %))))
+
+(defn frequency
+  "Returns a generator choosing among [weight gen] pairs, weighted by
+  the integer weights. Shrinks via the chosen generator."
+  [pairs]
+  (let [pairs (vec pairs)
+        total (reduce + (clojure.core/map first pairs))]
+    (when (or (empty? pairs) (not (pos? total)))
+      (throw (Exception. "frequency requires positive weights")))
+    (bind (choose 0 (dec total))
+          (fn [n]
+            (loop [n n
+                   [[w g] & more] pairs]
+              (if (< n w) g (recur (- n w) more)))))))
+
+(defn such-that
+  "Returns a generator that retries g until pred holds, up to
+  max-tries. Shrinks are filtered to only those satisfying pred."
+  ([pred g] (such-that pred g 100))
+  ([pred g max-tries]
+   (generator (fn [rng size]
+                (loop [i 0
+                       last-r nil]
+                  (if (< i max-tries)
+                    (let [r (run-gen g rng size)]
+                      (if (pred (rose-val r))
+                        (or (rose-filter pred r) r)
+                        (recur (inc i) r)))
+                    (throw (Exception.
+                             (str "Couldn't satisfy such-that predicate after "
+                                  max-tries " tries. Last generated value: "
+                                  (pr-str (some-> last-r rose-val)))))))))))
+
+;; ---------------------------------------------------------------------------
+;; Tuple
+
+(declare tuple-rose)
+
+(defn- tuple-rose
+  "Given a vec of roses, returns a rose-of-vec whose shrinks are
+  vecs with one component shrunk."
+  [roses]
+  (let [n (count roses)
+        vs (mapv rose-val roses)
+        children (mapcat (fn [i]
+                           (clojure.core/map (fn [child]
+                                               (tuple-rose (assoc roses i child)))
+                                             (rose-children (nth roses i))))
+                         (range n))]
+    (rose vs children)))
+
+(defn tuple
+  "Returns a generator producing vectors of values, one from each
+  argument generator. Shrinks each component independently."
+  [& gens]
+  (let [gs (vec gens)]
+    (generator (fn [rng size]
+                 (tuple-rose (mapv #(run-gen % rng size) gs))))))
+
+;; ---------------------------------------------------------------------------
+;; Sized collections
+
+(declare vec-rose)
+
+(defn- vec-rose
+  "Given a vec of roses, builds a rose-of-vec whose shrinks include:
+   - drop one element (at each position)
+   - shrink one element (at each position)"
+  [roses]
+  (let [roses (vec roses)
+        n (count roses)
+        drop-shrinks (clojure.core/map (fn [i]
+                                         (vec-rose
+                                           (into (subvec roses 0 i)
+                                                 (subvec roses (inc i)))))
+                                       (range n))
+        elem-shrinks (mapcat (fn [i]
+                               (clojure.core/map
+                                 (fn [child] (vec-rose (assoc roses i child)))
+                                 (rose-children (nth roses i))))
+                             (range n))]
+    (rose (mapv rose-val roses)
+          (concat drop-shrinks elem-shrinks))))
+
+(defn- bounded-int [rng lo hi]
+  (let [lo (clojure.core/int lo)
+        hi (clojure.core/int hi)]
+    (if (> lo hi)
+      lo
+      (+ lo (rng-int rng (inc (- hi lo)))))))
+
+(defn vector
+  "Returns a generator of vectors of values from g. Sizes default to
+  [0..size]; alternatively a fixed n or [min..max] is allowed."
+  ([g]
+   (generator (fn [rng size]
+                (let [n (if (zero? size) 0 (rng-int rng (inc size)))
+                      roses (vec (for [_ (range n)] (run-gen g rng size)))]
+                  (vec-rose roses)))))
+  ([g n]
+   (generator (fn [rng size]
+                (let [roses (vec (for [_ (range n)] (run-gen g rng size)))]
+                  (vec-rose roses)))))
+  ([g min-n max-n]
+   (generator (fn [rng size]
+                (let [n (bounded-int rng min-n max-n)
+                      roses (vec (for [_ (range n)] (run-gen g rng size)))]
+                  (vec-rose roses))))))
+
+(defn list
+  "Returns a generator of lists from g (vector + reverse-into-list)."
+  ([g] (fmap #(apply clojure.core/list %) (vector g)))
+  ([g n] (fmap #(apply clojure.core/list %) (vector g n)))
+  ([g min-n max-n] (fmap #(apply clojure.core/list %) (vector g min-n max-n))))
+
+(defn set
+  "Returns a generator of sets from g."
+  ([g] (fmap clojure.core/set (vector g)))
+  ([g n] (fmap clojure.core/set (vector g n)))
+  ([g min-n max-n] (fmap clojure.core/set (vector g min-n max-n))))
+
+(defn vector-distinct
+  "Returns a generator of vectors with distinct elements. Accepts
+  optional opts: :num-elements, :min-elements, :max-elements,
+  :max-tries."
+  ([g] (vector-distinct g nil))
+  ([g {:keys [num-elements min-elements max-elements max-tries]
+       :or {min-elements 0 max-tries 100}}]
+   (generator
+     (fn [rng size]
+       (let [target (cond
+                      num-elements num-elements
+                      max-elements (bounded-int rng min-elements max-elements)
+                      :else (rng-int rng (inc (max 3 min-elements))))]
+         (loop [seen #{}
+                roses []
+                tries 0]
+           (cond
+             (= (count roses) target)
+             (vec-rose roses)
+
+             (= tries max-tries)
+             (vec-rose roses)
+
+             :else
+             (let [r (run-gen g rng size)
+                   v (rose-val r)]
+               (if (contains? seen v)
+                 (recur seen roses (inc tries))
+                 (recur (conj seen v) (conj roses r) tries))))))))))
+
+(defn map
+  "Returns a generator of maps from key/value generators. Sizes follow
+  the same conventions as `vector`."
+  ([kg vg]
+   (fmap (fn [pairs] (into {} pairs)) (vector (tuple kg vg))))
+  ([kg vg n]
+   (fmap (fn [pairs] (into {} pairs)) (vector (tuple kg vg) n)))
+  ([kg vg min-n max-n]
+   (fmap (fn [pairs] (into {} pairs)) (vector (tuple kg vg) min-n max-n))))
+
+(defn hash-map
+  "Returns a generator of maps from alternating key/value generators."
+  [& kvs]
+  (let [pairs (partition 2 kvs)]
+    (fmap (fn [vs] (into {} (clojure.core/map vector
+                                              (clojure.core/map first pairs)
+                                              vs)))
+          (apply tuple (clojure.core/map second pairs)))))
+
+(defn not-empty
+  "Returns a generator producing a non-empty collection from g."
+  [g]
+  (such-that clojure.core/not-empty g))
+
+;; ---------------------------------------------------------------------------
+;; Numeric / character / string generators
+
+(defn large-integer*
+  "Returns a generator of ints constrained by optional :min/:max.
+  Shrinks toward zero (clamped into [min,max])."
+  [{:keys [min max]}]
+  (let [lo (clojure.core/or min -2147483648)
+        hi (clojure.core/or max 2147483647)
+        target (cond
+                 (and min (pos? min)) min
+                 (and max (neg? max)) max
+                 :else 0)]
+    (generator
+      (fn [rng _]
+        (let [v (bounded-int rng lo hi)]
+          (rose v
+                (clojure.core/map int-rose
+                                  (shrink-int-toward target v))))))))
+
+(defn large-integer []
+  (large-integer* {}))
+
+(defn int []
+  (large-integer* {}))
+
+(defn double*
+  "Returns a generator of doubles constrained by :min/:max and optional
+  :NaN?/:infinite?. Shrinks toward 0 by halving the integer part."
+  [{:keys [min max NaN? infinite?]}]
+  (let [min-given? (some? min)
+        max-given? (some? max)
+        lo (clojure.core/or min -1000.0)
+        hi (clojure.core/or max 1000.0)
+        allow-NaN? (and NaN? (not min-given?) (not max-given?))
+        allow-pos-inf? (and infinite? (not max-given?))
+        allow-neg-inf? (and infinite? (not min-given?))]
+    (generator
+      (fn [rng _]
+        (let [pick (rng-int rng 100)]
+          (cond
+            (and allow-NaN? (= pick 0))     (pure ##NaN)
+            (and allow-pos-inf? (= pick 1)) (pure ##Inf)
+            (and allow-neg-inf? (= pick 2)) (pure ##-Inf)
+            :else
+            (let [d (+ lo (* (rng-double rng) (- hi lo)))
+                  iv (.toInt d)]
+              (rose d
+                    (clojure.core/map (fn [shrunk] (pure (.toDouble shrunk)))
+                                      (shrink-int-toward 0 iv))))))))))
+
+(defn double []
+  (double* {}))
+
+(defn boolean []
+  (elements [false true]))
+
+(defn char
+  "Returns a generator of printable ASCII characters."
+  []
+  (fmap #(String/fromCharCode %) (choose 32 126)))
+
+(defn char-ascii [] (char))
+(defn char-alpha []
+  (fmap #(String/fromCharCode %) (one-of [(choose 65 90) (choose 97 122)])))
+(defn char-alphanumeric []
+  (fmap #(String/fromCharCode %)
+        (one-of [(choose 48 57) (choose 65 90) (choose 97 122)])))
+
+(defn- string-from-char-gen [g]
+  (fmap #(apply str %) (vector g 0 12)))
+
+(defn string [] (string-from-char-gen (char)))
+(defn string-ascii [] (string-from-char-gen (char-ascii)))
+(defn string-alphanumeric [] (string-from-char-gen (char-alphanumeric)))
+
+(defn from-no-arg-gen
+  "Adapts a cljd.spec.gen.alpha-style generator (a no-arg fn) into a
+  tc Generator that produces values with no shrinks. Use to bridge
+  spec.alpha's existing per-Spec gen* implementations into tc-style
+  property runs — you keep reproducible seeds and the result-map
+  shape, but you do not get input shrinking."
+  [old-g]
+  (generator (fn [_ _] (pure (old-g)))))
+
+;; ---------------------------------------------------------------------------
+;; Property runner
+
+(defn- run-pred
+  "Calls (apply pred args), catching exceptions/errors and returning
+  them in place of true/false."
+  [pred args]
+  (try (apply pred args)
+       (catch Exception e e)
+       (catch Error e e)))
+
+(defn for-all*
+  "Bundles a vector of generators and a predicate into a Property
+  map: {:gen <gen-of-args> :pred <fn>}. Pass to `quick-check`. The
+  predicate is called with the generated args spread (apply pred
+  args). The property is satisfied when `pred` returns truthy."
+  [gens pred]
+  {:gen (apply tuple gens)
+   :pred pred})
+
+(defn- shrink-loop
+  "Given a rose-of-args that is currently failing pred, walks the
+  rose tree depth-first looking for a strictly smaller still-failing
+  args. Stops when no child fails. Returns the test.check-shaped
+  shrink result map."
+  [pred rose]
+  (loop [r rose
+         depth 0
+         total 0]
+    (let [children (rose-children r)
+          failing
+          (reduce (fn [_ child]
+                    (let [args (rose-val child)
+                          result (run-pred pred args)]
+                      (if (true? result)
+                        nil
+                        (reduced {:rose child :result result}))))
+                  nil
+                  children)]
+      (if failing
+        (recur (:rose failing) (inc depth) (inc total))
+        {:total-nodes-visited (+ total (count children))
+         :depth depth
+         :pass? false
+         :result (run-pred pred (rose-val r))
+         :smallest (rose-val r)}))))
+
+(defn quick-check
+  "Runs `prop` (built by `for-all*`) up to `num-tests` times. Size
+  grows from 0 up to `:max-size` (default 200). Reproducible when
+  `:seed` is supplied. On failure, walks the rose tree to find the
+  smallest counterexample.
+
+  Returns a result map matching test.check's shape:
+
+   - `:result` true on success, otherwise the failure value (boolean
+     false, an exception, or whatever `pred` returned)
+   - `:num-tests` how many tests were run before stopping
+   - `:seed` the seed used (echoed for reproducibility)
+   - `:pass?` true on success
+   - on failure: `:failing-args` (the first failing input) and
+     `:shrunk` `{:smallest :result :pass? :total-nodes-visited :depth}`."
+  ([num-tests prop] (quick-check num-tests prop nil))
+  ([num-tests prop {:keys [seed max-size reporter-fn]
+                    :or {max-size 200}}]
+   (let [{gen :gen pred :pred} prop
+         seed (if (some? seed)
+                seed
+                (.nextInt (math/Random.) 2147483647))
+         rng (make-rng seed)
+         report! (when reporter-fn
+                   (fn [m] (try (reporter-fn m) (catch Exception _ nil))))]
+     (loop [i 0]
+       (if (= i num-tests)
+         (let [r {:result true :num-tests i :seed seed :pass? true}]
+           (when report! (report! (assoc r :type :complete)))
+           r)
+         (let [size (clojure.core/min max-size i)
+               rose (run-gen gen rng size)
+               args (rose-val rose)
+               result (run-pred pred args)]
+           (if (true? result)
+             (do
+               (when report!
+                 (report! {:type :trial
+                           :so-far (inc i)
+                           :num-tests num-tests
+                           :args args}))
+               (recur (inc i)))
+             (let [shrunk (shrink-loop pred rose)
+                   r {:result result
+                      :seed seed
+                      :num-tests (inc i)
+                      :pass? false
+                      :failing-args args
+                      :shrunk shrunk}]
+               (when report!
+                 (report! (assoc r :type :failure)))
+               r))))))))

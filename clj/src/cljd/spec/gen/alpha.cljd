@@ -1,0 +1,375 @@
+;   Copyright (c) Rich Hickey. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+(ns ^{:doc "ClojureDart port of clojure.spec.gen.alpha. Public API
+  matches clojure.spec.gen.alpha; internally everything delegates to
+  cljd.spec.gen.alpha.test-check so generators carry rose-tree shrink data
+  through to s/check.
+
+  The legacy `(generator no-arg-fn)` shape from earlier ClojureDart
+  releases is still accepted: `generator` adapts a 0-arity fn into a
+  tc Generator with no shrinks. New code should prefer building
+  generators with the combinators here (return, fmap, bind, etc.) so
+  shrinks compose."
+      :author "Rich Hickey"}
+  cljd.spec.gen.alpha
+  (:refer-clojure :exclude [boolean bytes cat char double int keyword
+                            long map not-empty set string symbol vector
+                            list shuffle])
+  (:require [cljd.spec.gen.alpha.test-check :as tc]))
+
+;; ---------------------------------------------------------------------------
+;; Adapter: tc Generator coercion
+
+(defn ensure-generator
+  "Coerces g into a cljd.spec.gen.alpha.test-check Generator. Returns
+  g unchanged if it's already one; wraps a no-arg fn as a no-shrink
+  Generator; passes nil through. The single entry point for adapting
+  legacy `(fn [] x)`-shaped generators (the pre-test_check ClojureDart
+  convention) into shrink-aware ones — used at the spec.alpha gensub
+  boundary and as the public `generator` constructor."
+  [g]
+  (cond
+    (nil? g) nil
+    (tc/generator? g) g
+    (clojure.core/ifn? g) (tc/generator (fn [_ _] (tc/pure (g))))
+    :else g))
+
+(defn generator
+  "Coerces its argument into a tc Generator (alias of `ensure-generator`).
+  Existing call sites that passed `(fn [] ...)` continue to work; the
+  resulting generator produces values with no shrinks. New code should
+  prefer the named combinators below so shrinks compose."
+  [f-or-g]
+  (ensure-generator f-or-g))
+
+(defn generator?
+  "Returns x if x is a tc Generator, else nil."
+  [x]
+  (tc/generator? x))
+
+(defn generate
+  "Generate a single value from generator g."
+  ([g] (tc/generate g))
+  ([g size] (tc/generate g size))
+  ([g size seed] (tc/generate g size seed)))
+
+(defn sample
+  "Returns n generated values from g (default 10)."
+  ([g] (tc/sample g))
+  ([g n] (tc/sample g n))
+  ([g n seed] (tc/sample g n seed)))
+
+;; ---------------------------------------------------------------------------
+;; Core combinators
+
+(defn return [x] (tc/return x))
+(defn fmap [f g] (tc/fmap f g))
+(defn bind [g f] (tc/bind g f))
+(defn sized [f] (tc/sized f))
+(defn resize [n g] (tc/resize n g))
+
+(defn delay-impl
+  "Returns a generator that derefs gfnd at generation time. Used by
+  the `delay` macro."
+  [gfnd]
+  (tc/generator (fn [rng size] (tc/run-gen @gfnd rng size))))
+
+(defmacro delay
+  "Delays construction of a generator until generation time. Useful
+  for self-referential / mutually recursive specs."
+  [expr]
+  `(delay-impl (clojure.core/delay ~expr)))
+
+(defn choose [lo hi] (tc/choose lo hi))
+(defn elements [coll] (tc/elements coll))
+(defn one-of [gens] (tc/one-of gens))
+(defn frequency [pairs] (tc/frequency pairs))
+
+(defn tuple [& gens] (apply tc/tuple gens))
+
+(defn cat
+  "Concatenates the sequential values produced by `gens` into a
+  single seq, preserving order."
+  [& gens]
+  (tc/fmap #(apply concat %) (apply tc/tuple gens)))
+
+(defn such-that
+  "Returns a generator that retries g until pred holds, up to
+  max-tries (default 100)."
+  ([pred g] (tc/such-that pred g))
+  ([pred g max-tries] (tc/such-that pred g max-tries)))
+
+(defn vector
+  "Returns a generator of vectors of values from g."
+  ([g] (tc/vector g))
+  ([g n] (tc/vector g n))
+  ([g min max] (tc/vector g min max)))
+
+(defn bytes
+  "Returns a generator of byte vectors represented as immutable
+  List<int> values with entries in [0,255]."
+  []
+  (fmap int-array (vector (choose 0 255))))
+
+(defn list
+  "Returns a generator of lists of values from g."
+  ([g] (tc/list g))
+  ([g n] (tc/list g n))
+  ([g min max] (tc/list g min max)))
+
+(defn set
+  "Returns a generator of sets of values from g."
+  ([g] (tc/set g))
+  ([g n] (tc/set g n))
+  ([g min max] (tc/set g min max)))
+
+(defn map
+  "Returns a generator of maps from kg/vg generators."
+  ([kg vg] (tc/map kg vg))
+  ([kg vg n] (tc/map kg vg n))
+  ([kg vg min max] (tc/map kg vg min max)))
+
+(defn hash-map
+  "Returns a generator of maps from alternating key/value generators."
+  [& kvs]
+  (apply tc/hash-map kvs))
+
+(defn vector-distinct
+  "Returns a generator of vectors with distinct elements. Opts:
+  :num-elements, :min-elements, :max-elements, :max-tries."
+  ([g] (tc/vector-distinct g))
+  ([g opts] (tc/vector-distinct g opts)))
+
+(defn not-empty
+  "Returns a generator producing a non-empty collection from g."
+  [g]
+  (tc/not-empty g))
+
+(defn ^{:deprecated "0.1"
+        :doc "Returns a generator of shuffled coll. DEPRECATED: the
+  signature diverges from clojure.test.check.generators/shuffle, which
+  takes a generator-of-coll. Prefer `(fmap clojure.core/shuffle gen)`
+  where `gen` produces the collection to shuffle. This will be removed
+  or rebased on the test.check signature in a future release."}
+  shuffle
+  [coll]
+  (tc/generator (fn [_ _] (tc/pure (clojure.core/shuffle coll)))))
+
+;; ---------------------------------------------------------------------------
+;; Numeric / character / string
+
+(defn large-integer* [opts] (tc/large-integer* opts))
+(defn large-integer [] (tc/large-integer))
+(defn int [] (tc/int))
+(defn double* [opts] (tc/double* opts))
+(defn double [] (tc/double))
+(defn boolean [] (tc/boolean))
+
+(defn char [] (tc/char))
+(defn char-ascii [] (tc/char-ascii))
+(defn char-alpha [] (tc/char-alpha))
+(defn char-alphanumeric [] (tc/char-alphanumeric))
+
+(defn string [] (tc/string))
+(defn string-ascii [] (tc/string-ascii))
+(defn string-alphanumeric [] (tc/string-alphanumeric))
+
+;; ---------------------------------------------------------------------------
+;; Idents, UUIDs, instants
+
+(defn- ident-name []
+  (let [s (generate (string-alphanumeric))]
+    (if (empty? s) "x" s)))
+
+(defn keyword
+  "Returns a generator of simple keywords."
+  []
+  (tc/generator (fn [_ _] (tc/pure (clojure.core/keyword (ident-name))))))
+
+(defn keyword-ns
+  "Returns a generator of namespace-qualified keywords."
+  []
+  (tc/generator
+    (fn [_ _]
+      (tc/pure (clojure.core/keyword (str "gen" (rand-int 16)) (ident-name))))))
+
+(defn symbol
+  "Returns a generator of simple symbols."
+  []
+  (tc/generator (fn [_ _] (tc/pure (clojure.core/symbol (ident-name))))))
+
+(defn symbol-ns
+  "Returns a generator of namespace-qualified symbols."
+  []
+  (tc/generator
+    (fn [_ _]
+      (tc/pure (clojure.core/symbol (str "gen" (rand-int 16)) (ident-name))))))
+
+(defn uuid
+  "Returns a generator of UUIDs."
+  []
+  (letfn [(quad-hex [rng]
+            (subs (.toRadixString (+ 65536 (tc/rng-int rng 65536)) 16) 1))]
+    (tc/generator
+      (fn [rng _]
+        (let [ver-triple-hex (.toRadixString
+                               (bit-or 0x4000
+                                       (bit-and 0x0fff (tc/rng-int rng 65536)))
+                               16)
+              res-triple-hex (.toRadixString
+                               (bit-or 0x8000
+                                       (bit-and 0x3fff (tc/rng-int rng 65536)))
+                               16)]
+          (tc/pure
+            (clojure.core/uuid
+              (str (quad-hex rng) (quad-hex rng) "-" (quad-hex rng) "-"
+                   ver-triple-hex "-" res-triple-hex "-"
+                   (quad-hex rng) (quad-hex rng) (quad-hex rng)))))))))
+
+(defn ratio
+  "Returns a generator of ratios, represented as ClojureDart numbers."
+  []
+  (fmap #(/ % (inc (rand-int 99))) (large-integer)))
+
+;; ---------------------------------------------------------------------------
+;; simple / any composites
+
+(defn simple-type-printable
+  "Returns a generator of simple printable values."
+  []
+  (one-of [(return nil)
+           (boolean)
+           (large-integer)
+           (double)
+           (string-alphanumeric)
+           (keyword)
+           (symbol)
+           (char)]))
+
+(defn simple-type
+  "Returns a generator of simple values."
+  []
+  (simple-type-printable))
+
+(defn- any-value [depth printable?]
+  (if (zero? depth)
+    (generate (if printable? (simple-type-printable) (simple-type)))
+    (generate
+      (one-of
+        [(if printable? (simple-type-printable) (simple-type))
+         (fmap vec (vector (generator #(any-value (dec depth) printable?)) 0 4))
+         (fmap #(apply clojure.core/list %)
+               (vector (generator #(any-value (dec depth) printable?)) 0 4))
+         (fmap #(into #{} %)
+               (vector (generator #(any-value (dec depth) printable?)) 0 4))
+         (map (generator #(any-value (dec depth) printable?))
+              (generator #(any-value (dec depth) printable?))
+              0 4)]))))
+
+(defn any
+  "Returns a generator of arbitrary values."
+  []
+  (generator (fn [] (any-value 2 false))))
+
+(defn any-printable
+  "Returns a generator of arbitrary printable values."
+  []
+  (generator (fn [] (any-value 2 true))))
+
+;; ---------------------------------------------------------------------------
+;; Property runner — delegates entirely to tc
+
+(defn for-all*
+  "Bundles gens + pred into a property map for `quick-check`. The
+  predicate is called with generated args spread (apply pred args).
+  Returns a map {:gen ... :pred ...}."
+  [gens pred]
+  (tc/for-all* gens pred))
+
+(defn quick-check
+  "Runs `prop` (built by `for-all*`) up to `num-tests` times. See
+  cljd.spec.gen.alpha.test-check/quick-check for the result-map shape."
+  ([num-tests prop] (tc/quick-check num-tests prop))
+  ([num-tests prop opts] (tc/quick-check num-tests prop opts))
+  ;; Variadic call form historically used by callers that pass
+  ;; alternating k/v opts. Convert to a map and delegate.
+  ([num-tests prop k v & more]
+   (tc/quick-check num-tests prop (apply clojure.core/hash-map k v more))))
+
+;; ---------------------------------------------------------------------------
+;; Predicate-keyed generator registry
+
+(defn- qualified? [ident]
+  (not (nil? (namespace ident))))
+
+(def ^:private gen-builtins
+  (clojure.core/delay
+    (let [simple (simple-type-printable)]
+      {any? (one-of [(return nil) (any-printable)])
+       some? (such-that some? (any-printable))
+       number? (one-of [(large-integer) (double)])
+       integer? (large-integer)
+       rational? (large-integer)
+       int? (large-integer)
+       pos-int? (large-integer* {:min 1})
+       neg-int? (large-integer* {:max -1})
+       nat-int? (large-integer* {:min 0})
+       float? (double)
+       double? (double)
+       string? (string-alphanumeric)
+       ident? (one-of [(keyword-ns) (symbol-ns)])
+       simple-ident? (one-of [(keyword) (symbol)])
+       qualified-ident? (such-that qualified? (one-of [(keyword-ns) (symbol-ns)]))
+       keyword? (keyword-ns)
+       simple-keyword? (keyword)
+       qualified-keyword? (such-that qualified? (keyword-ns))
+       symbol? (symbol-ns)
+       simple-symbol? (symbol)
+       qualified-symbol? (such-that qualified? (symbol-ns))
+       uuid? (uuid)
+       uri? (fmap #(Uri/parse (str "http://" % ".example")) (string-alphanumeric))
+       inst? (fmap #(DateTime/fromMillisecondsSinceEpoch %) (large-integer))
+       seqable? (one-of [(return nil)
+                         (list simple)
+                         (vector simple)
+                         (map simple simple)
+                         (set simple)
+                         (string-alphanumeric)])
+       indexed? (vector simple)
+       map? (map simple simple)
+       vector? (vector simple)
+       list? (list simple)
+       seq? (list simple)
+       char? (char)
+       set? (set simple)
+       nil? (return nil)
+       false? (return false)
+       true? (return true)
+       boolean? (boolean)
+       zero? (return 0)
+       coll? (one-of [(map simple simple)
+                      (list simple)
+                      (vector simple)
+                      (set simple)])
+       empty? (elements [nil '() [] {} #{}])
+       associative? (one-of [(map simple simple) (vector simple)])
+       sequential? (one-of [(list simple) (vector simple)])
+       fn? (elements [identity (fn [_] nil) (fn [_ _] nil)])
+       ifn? (one-of [(elements [identity (fn [_] nil)])
+                     (keyword)
+                     (set simple)])
+       reduced? (fmap reduced simple)
+       volatile? (fmap volatile! simple)})))
+
+(defn gen-for-pred
+  "Given a predicate, returns a built-in generator if one exists."
+  [pred]
+  (if (clojure.core/set? pred)
+    (elements pred)
+    (get @gen-builtins pred)))

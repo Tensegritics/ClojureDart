@@ -31,6 +31,10 @@ clojure -M -m cljd.build compile \
   cljd.test-clojure.other-functions \
   cljd.test-clojure.parse \
   cljd.test-clojure.predicates \
+  cljd.test-clojure.spec-alpha \
+  cljd.test-clojure.spec-alpha-redef-target \
+  cljd.test-clojure.spec-alpha-cross-ns \
+  cljd.test-clojure.spec-gen-tc \
   cljd.test-clojure.primitives-test \
   cljd.test-clojure.string \
   cljd.test-clojure.test-test \

@@ -1,0 +1,1558 @@
+;   Copyright (c) Rich Hickey. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+;;; Runtime implementation for cljd.spec.alpha.
+;;;
+;;; Lives in its own namespace (without :refer-clojure :exclude) so that
+;;; cljd's defprotocol/defn expansions — which emit unqualified `or` and
+;;; `and` — keep resolving against clojure.core. The cljd.spec.alpha
+;;; namespace re-exports the public functions and adds ClojureScript-shaped
+;;; entry points.
+
+(ns cljd.spec.alpha.impl
+  (:require [cljd.spec.gen.alpha :as gen]
+            [cljd.spec.gen.alpha.test-check :as gen-tc]
+            [cljd.walk :as walk]))
+
+(def ^:dynamic *recursion-limit* 4)
+(def ^:dynamic *fspec-iterations* 21)
+(def ^:dynamic *coll-check-limit* 101)
+(def ^:dynamic *coll-error-limit* 20)
+
+(defn- public-dynamic-binding [sym root]
+  (get-dynamic-binding sym root))
+
+(defn- recursion-limit []
+  (public-dynamic-binding 'cljd.spec.alpha/*recursion-limit* *recursion-limit*))
+
+(defn- fspec-iterations []
+  (public-dynamic-binding 'cljd.spec.alpha/*fspec-iterations* *fspec-iterations*))
+
+(defn- coll-check-limit []
+  (public-dynamic-binding 'cljd.spec.alpha/*coll-check-limit* *coll-check-limit*))
+
+(defn- coll-error-limit []
+  (public-dynamic-binding 'cljd.spec.alpha/*coll-error-limit* *coll-error-limit*))
+
+(defprotocol Spec
+  (conform* [spec x])
+  (unform* [spec y])
+  (explain* [spec path via in x])
+  (gen* [spec overrides path rmap])
+  (with-gen* [spec gfn])
+  (describe* [spec]))
+
+(defonce ^:private registry-ref (atom {}))
+(defonce ^:private runtime-asserts-ref (atom false))
+(defonce ^:private redef-setters-ref (atom {}))
+
+(defn ^:skip-wiki register-redef-setter!
+  "Records a getter/setter pair for a ^:cljd.spec.alpha/redef def
+  under its fully-qualified symbol. Called by s/fdef expansions in the
+  same lexical scope as the def so the setter has direct write access
+  to the dartname. Once registered, cljd.spec.test.alpha/instrument
+  can swap the value at runtime — including for runtime-bound
+  collections of syms — without the macro needing to introspect the
+  call site."
+  [sym getter setter]
+  (swap! redef-setters-ref assoc sym {:get getter :set setter})
+  nil)
+
+(defn ^:skip-wiki redef-setter [sym]
+  (:set (get @redef-setters-ref sym)))
+
+(defn ^:skip-wiki redef-getter [sym]
+  (:get (get @redef-setters-ref sym)))
+
+(defn ^:skip-wiki redef-registered? [sym]
+  (contains? @redef-setters-ref sym))
+
+(defn ^:skip-wiki redef-registered-syms []
+  (set (keys @redef-setters-ref)))
+
+(defn- deep-resolve [reg k]
+  (loop [spec k]
+    (if (ident? spec)
+      (recur (get reg spec))
+      spec)))
+
+(defn- reg-resolve
+  "returns the spec/regex at end of alias chain starting with k, nil if not found, k if k not ident"
+  [k]
+  (if (ident? k)
+    (let [reg @registry-ref
+          spec (get reg k)]
+      (if-not (ident? spec)
+        spec
+        (deep-resolve reg spec)))
+    k))
+
+(defn- reg-resolve!
+  "returns the spec/regex at end of alias chain starting with k, throws if not found, k if k not ident"
+  [k]
+  (if (ident? k)
+    (or (reg-resolve k)
+        (throw (Exception. (str "Unable to resolve spec: " k))))
+    k))
+
+(defn spec?
+  "returns x if x is a spec object, else logical false"
+  [x]
+  (when (satisfies? Spec x) x))
+
+(defn regex?
+  "returns x if x is a (cljd.spec.alpha) regex op, else logical false"
+  [x]
+  (and (:cljd.spec.alpha.impl/op x) x))
+
+(defn- with-name [spec nm]
+  (cond
+    (ident? spec) spec
+    (regex? spec) (assoc spec :cljd.spec.alpha.impl/name nm)
+    (satisfies? IMeta spec) (with-meta spec (assoc (meta spec) :cljd.spec.alpha.impl/name nm))
+    :else spec))
+
+(defn- spec-name [spec]
+  (cond
+    (ident? spec) spec
+    (regex? spec) (:cljd.spec.alpha.impl/name spec)
+    (satisfies? IMeta spec) (-> (meta spec) :cljd.spec.alpha.impl/name)))
+
+(defn- recursion-depth [rmap nm]
+  (get-in rmap [:cljd.spec.alpha/recursion-depth nm] 0))
+
+(defn- enter-recursion [rmap nm]
+  (if nm
+    (update-in rmap [:cljd.spec.alpha/recursion-depth nm] (fnil inc 0))
+    rmap))
+
+(declare spec-impl regex-spec-impl)
+
+(defn- maybe-spec
+  "spec-or-k must be a spec, regex or resolvable kw/sym, else returns nil."
+  [spec-or-k]
+  (let [s (or (and (ident? spec-or-k) (reg-resolve spec-or-k))
+              (spec? spec-or-k)
+              (regex? spec-or-k)
+              nil)]
+    (if (regex? s)
+      (with-name (regex-spec-impl s nil) (spec-name s))
+      s)))
+
+(defn- the-spec
+  "spec-or-k must be a spec, regex or kw/sym, else returns nil. Throws if unresolvable kw/sym"
+  [spec-or-k]
+  (or (maybe-spec spec-or-k)
+      (when (ident? spec-or-k)
+        (throw (Exception. (str "Unable to resolve spec: " spec-or-k))))))
+
+(defprotocol Specize
+  (specize* [_] [_ form]))
+
+(extend-protocol Specize
+  cljd.core/Keyword
+  (specize* ([k] (specize* (reg-resolve! k)))
+            ([k _] (specize* (reg-resolve! k))))
+
+  cljd.core/Symbol
+  (specize* ([s] (specize* (reg-resolve! s)))
+            ([s _] (specize* (reg-resolve! s))))
+
+  cljd.core/PersistentHashSet
+  (specize* ([s] (spec-impl s s nil nil))
+            ([s form] (spec-impl form s nil nil)))
+
+  cljd.core/HashRankedWideTreapSet
+  (specize* ([s] (spec-impl s s nil nil))
+            ([s form] (spec-impl form s nil nil)))
+
+  fallback
+  (specize*
+    ([o] (spec-impl :cljd.spec.alpha/unknown o nil nil))
+    ([o form] (spec-impl form o nil nil))))
+
+(defn- specize
+  ([s] (or (spec? s) (when (regex? s) (regex-spec-impl s nil)) (specize* s)))
+  ([s form] (or (spec? s) (when (regex? s) (regex-spec-impl s nil)) (specize* s form))))
+
+(defn invalid?
+  "tests the validity of a conform return value"
+  [ret]
+  (identical? :cljd.spec.alpha/invalid ret))
+
+(defn conform
+  "Given a spec and a value, returns ::invalid if value does not match
+  spec, else the (possibly destructured) value."
+  [spec x]
+  (conform* (specize spec) x))
+
+(defn unform
+  "Given a spec and a conformed value, returns a value with all conform
+   destructuring undone."
+  [spec x]
+  (unform* (specize spec) x))
+
+(defn form
+  "returns the spec as data"
+  [spec]
+  (describe* (specize spec)))
+
+(defn abbrev [form]
+  (cond
+    (seq? form)
+    (walk/postwalk (fn [form]
+                     (cond
+                       (and (symbol? form) (namespace form))
+                       (-> form name symbol)
+
+                       (and (seq? form) (= 'fn (first form)) (= '[%] (second form)))
+                       (last form)
+
+                       :else form))
+                   form)
+
+    (and (symbol? form) (namespace form))
+    (-> form name symbol)
+
+    :else form))
+
+(defn describe [spec] (abbrev (form spec)))
+
+(defn with-gen [spec gen-fn]
+  (let [spec (reg-resolve spec)]
+    (if (regex? spec)
+      (assoc spec :cljd.spec.alpha.impl/gfn gen-fn)
+      (with-gen* (specize spec) gen-fn))))
+
+(defn explain-data* [spec path via in x]
+  (when-let [probs (explain* (specize spec) path via in x)]
+    (when-not (empty? probs)
+      {:cljd.spec.alpha/problems probs
+       :cljd.spec.alpha/spec spec
+       :cljd.spec.alpha/value x})))
+
+(defn explain-data [spec x]
+  (explain-data* spec [] (if-let [nm (spec-name spec)] [nm] []) [] x))
+
+(defn explain-out [ed]
+  (if ed
+    (doseq [{:keys [path pred val reason via in] :as prob}
+            (->> (:cljd.spec.alpha/problems ed)
+                 (sort-by #(- (count (:in %))))
+                 (sort-by #(- (count (:path %)))))]
+      (pr val)
+      (print " - failed: ")
+      (if reason
+        (print reason)
+        (pr (abbrev pred)))
+      (when-not (empty? in)   (print " in: " (pr-str in)))
+      (when-not (empty? path) (print " at: " (pr-str path)))
+      (when-not (empty? via)  (print " spec: " (pr-str (last via))))
+      (doseq [[k v] prob]
+        (when-not (#{:path :pred :val :reason :via :in} k)
+          (print "\n\t" (pr-str k) " ")
+          (pr v)))
+      (println))
+    (println "Success!")))
+
+(defn explain [spec x] (explain-out (explain-data spec x)))
+
+(defn explain-str [spec x] (with-out-str (explain spec x)))
+
+(declare valid?)
+
+(defn- gensub
+  [spec overrides path rmap form]
+  (let [nm (when (ident? spec) spec)
+        spec (specize spec)
+        nm (or nm (spec-name spec))
+        limit (:cljd.spec.alpha/recursion-limit rmap)
+        depth (recursion-depth rmap nm)
+        _ (when (and nm limit (> depth limit))
+            (throw (Exception. (str "Recursion limit reached for: " nm))))
+        rmap (enter-recursion rmap nm)
+        g (gen/ensure-generator
+            ;; Override lookup precedence: kw/sym name preserved across
+            ;; specize, then the post-specize spec-name (set on regex
+            ;; ops via with-name), then the spec object itself, then
+            ;; the current path. Without `nm` here, kw-keyed overrides
+            ;; never match for registered deftype-backed specs because
+            ;; they don't carry IMeta.
+            (or (when-let [gfn (or (get overrides nm)
+                                   (get overrides (or (spec-name spec) spec))
+                                   (get overrides path))]
+                  (gfn))
+                (gen* spec overrides path rmap)))]
+    (if g
+      (gen/such-that #(valid? spec %) g 100)
+      (throw (Exception. (str "Unable to construct gen at: "
+                              path " for: " (abbrev form)))))))
+
+(defn- try-gensub
+  [spec overrides path rmap form]
+  (try
+    (gensub spec overrides path rmap form)
+    (catch Exception _ nil)
+    (catch Error _ nil)))
+
+(defn gen
+  "Given a spec, returns the generator for it, or throws if none can
+  be constructed. Optionally an overrides map can be provided which
+  maps spec names or paths to no-arg generator-returning fns."
+  ([spec] (gen spec nil))
+  ([spec overrides]
+   (gensub spec overrides [] {:cljd.spec.alpha/recursion-limit (recursion-limit)} spec)))
+
+(defn check-asserts? []
+  @runtime-asserts-ref)
+
+(defn check-asserts [flag]
+  (reset! runtime-asserts-ref flag))
+
+(defn ^:skip-wiki def-impl [k form spec]
+  (assert (and (ident? k) (namespace k)) "k must be namespaced keyword or resolvable symbol")
+  (if (nil? spec)
+    (do (swap! registry-ref dissoc k) k)
+    (let [spec (if (or (spec? spec) (regex? spec) (get @registry-ref spec))
+                 spec
+                 (spec-impl form spec nil nil))]
+      (swap! registry-ref assoc k (with-name spec k))
+      k)))
+
+(defn registry [] @registry-ref)
+
+(defn get-spec [k] (get (registry) k))
+
+(defn int-in-range?
+  [start end val]
+  (and (integer? val) (<= start val) (< val end)))
+
+(defn inst-in-range?
+  [start end inst]
+  (and (inst? inst)
+       (let [t  (.-millisecondsSinceEpoch ^DateTime inst)
+             st (.-millisecondsSinceEpoch ^DateTime start)
+             et (.-millisecondsSinceEpoch ^DateTime end)]
+         (and (<= st t) (< t et)))))
+
+(defn double-in-range?
+  [opts val]
+  (let [allow-infinite? (if (contains? opts :infinite?) (:infinite? opts) true)
+        allow-NaN?      (if (contains? opts :NaN?) (:NaN? opts) true)]
+    (and (double? val)
+         (or allow-infinite? (not (infinite? val)))
+         (or allow-NaN? (not (NaN? val)))
+         (or (not (contains? opts :min)) (<= (:min opts) val))
+         (or (not (contains? opts :max)) (<= val (:max opts))))))
+
+(defn- dt
+  ([pred x form] (dt pred x form nil))
+  ([pred x form cpred?]
+   (if pred
+     (if-let [spec (the-spec pred)]
+       (conform spec x)
+       (if (ifn? pred)
+         (if cpred?
+           (pred x)
+           (if (pred x) x :cljd.spec.alpha/invalid))
+         (throw (Exception. (str (pr-str form) " is not a fn, expected predicate fn")))))
+     x)))
+
+(defn valid?
+  ([spec x]
+   (let [spec (specize spec)]
+     (not (invalid? (conform* spec x)))))
+  ([spec x form]
+   (let [spec (specize spec form)]
+     (not (invalid? (conform* spec x))))))
+
+(defn- explain-1 [form pred path via in v]
+  (let [pred (maybe-spec pred)]
+    (if (spec? pred)
+      (explain* pred path (if-let [nm (spec-name pred)] (conj via nm) via) in v)
+      [{:path path :pred form :val v :via via :in in}])))
+
+(defn- and-preds [x preds forms]
+  (loop [ret x
+         [pred & preds] preds
+         [form & forms] forms]
+    (if pred
+      (let [nret (dt pred ret form)]
+        (if (invalid? nret) :cljd.spec.alpha/invalid (recur nret preds forms)))
+      ret)))
+
+(defn- explain-pred-list [forms preds path via in x]
+  (loop [ret x
+         [form & forms] forms
+         [pred & preds] preds]
+    (when pred
+      (let [nret (dt pred ret form)]
+        (if (invalid? nret)
+          (explain-1 form pred path via in ret)
+          (recur nret forms preds))))))
+
+(defn- tagged-ret [tag ret] [tag ret])
+
+(declare ->PredSpec ->AndSpec ->OrSpec)
+
+(deftype PredSpec [form pred gfn cpred? unc]
+  Spec
+  (conform* [_ x]
+    (let [ret (pred x)]
+      (if cpred? ret (if ret x :cljd.spec.alpha/invalid))))
+  (unform* [_ x]
+    (if cpred?
+      (if unc (unc x) (throw (Exception. "no unform fn for conformer")))
+      x))
+  (explain* [this path via in x]
+    (when (invalid? (dt pred x form cpred?))
+      [{:path path :pred form :val x :via via :in in}]))
+  (gen* [_ _ _ _]
+    (if gfn
+      (gfn)
+      (gen/gen-for-pred pred)))
+  (with-gen* [_ gfn] (->PredSpec form pred gfn cpred? unc))
+  (describe* [_] form))
+
+(defn ^:skip-wiki spec-impl
+  ([form pred gfn cpred?] (spec-impl form pred gfn cpred? nil))
+  ([form pred gfn cpred? unc]
+   (cond
+     (spec? pred) (cond-> pred gfn (with-gen gfn))
+     (regex? pred) (regex-spec-impl pred gfn)
+     (ident? pred) (cond-> (the-spec pred) gfn (with-gen gfn))
+     :else (->PredSpec form pred gfn cpred? unc))))
+
+(defn- multi-spec-dispatch-value [retag x]
+  (cond
+    (and (keyword? retag) (map? x)) (get x retag)
+    (keyword? retag) nil
+    :else :cljd.spec.alpha/dispatch))
+
+(defn- multi-spec-retag [retag dispatch-val x]
+  (if (and (keyword? retag) (map? x))
+    (assoc x retag dispatch-val)
+    x))
+
+(defn- selected-multi-spec [mm x]
+  (try
+    (mm x)
+    (catch ArgumentError _ nil)))
+
+(deftype MultiSpec [form mm retag retag-form gfn]
+  Spec
+  (conform* [_ x]
+    (if-let [pred (selected-multi-spec mm x)]
+      (dt pred x form)
+      :cljd.spec.alpha/invalid))
+  (unform* [_ x]
+    (if-let [pred (selected-multi-spec mm x)]
+      (unform pred x)
+      (throw (Exception. (str "No method of: " form " for dispatch value: "
+                              (multi-spec-dispatch-value retag x))))))
+  (explain* [_ path via in x]
+    (let [dv (multi-spec-dispatch-value retag x)
+          path (conj path dv)]
+      (if-let [pred (selected-multi-spec mm x)]
+        (explain-1 form pred path via in x)
+        [{:path path :pred form :val x :reason "no method" :via via :in in}])))
+  (gen* [_ overrides path rmap]
+    (if gfn
+      (gfn)
+      (let [gs (keep (fn [[dispatch-val method-fn]]
+                       (try
+                         (gen/fmap #(multi-spec-retag retag dispatch-val %)
+                                   (gensub (method-fn dispatch-val)
+                                           overrides
+                                           (conj path dispatch-val)
+                                           rmap
+                                           form))
+                         (catch Exception _ nil)
+                         (catch Error _ nil)))
+                     (methods mm))]
+        (when-not (empty? gs)
+          (gen/one-of (vec gs))))))
+  (with-gen* [_ gfn] (->MultiSpec form mm retag retag-form gfn))
+  (describe* [_] (list 'cljd.spec.alpha/multi-spec form retag-form)))
+
+(defn ^:skip-wiki multi-spec-impl
+  ([form mm retag] (multi-spec-impl form mm retag retag nil))
+  ([form mm retag gfn] (multi-spec-impl form mm retag retag gfn))
+  ([form mm retag retag-form gfn]
+   (->MultiSpec form mm retag retag-form gfn)))
+
+(deftype AndSpec [forms preds gfn specs-delay]
+  Spec
+  (conform* [_ x] (and-preds x @specs-delay forms))
+  (unform* [_ x] (reduce #(unform %2 %1) x (reverse @specs-delay)))
+  (explain* [_ path via in x] (explain-pred-list forms @specs-delay path via in x))
+  (gen* [_ overrides path rmap]
+    (if gfn
+      (gfn)
+      (gensub (first preds) overrides path rmap (first forms))))
+  (with-gen* [_ gfn]
+    (->AndSpec forms preds gfn (delay (mapv specize preds forms))))
+  (describe* [_] (cons 'cljd.spec.alpha/and forms)))
+
+(defn ^:skip-wiki and-spec-impl [forms preds gfn]
+  (->AndSpec forms preds gfn (delay (mapv specize preds forms))))
+
+(deftype OrSpec [ks forms preds gfn specs-delay]
+  Spec
+  (conform* [_ x]
+    (loop [i 0]
+      (if (< i (count @specs-delay))
+        (let [spec (nth @specs-delay i)
+              ret  (conform* spec x)]
+          (if (invalid? ret)
+            (recur (inc i))
+            (tagged-ret (nth ks i) ret)))
+        :cljd.spec.alpha/invalid)))
+  (unform* [_ [k x]]
+    (let [idx (.indexOf ^List ks k)]
+      (unform (nth preds idx) x)))
+  (explain* [this path via in x]
+    (when-not (valid? this x)
+      (apply concat
+             (map (fn [k form pred]
+                    (when-not (valid? pred x form)
+                      (explain-1 form pred (conj path k) via in x)))
+                  ks forms preds))))
+  (gen* [_ overrides path rmap]
+    (if gfn
+      (gfn)
+      (let [gs (remove nil?
+                       (map (fn [k pred form]
+                              (try-gensub pred overrides (conj path k) rmap form))
+                            ks preds forms))]
+        (when-not (empty? gs)
+          (gen/one-of gs)))))
+  (with-gen* [_ gfn]
+    (->OrSpec ks forms preds gfn (delay (mapv specize preds forms))))
+  (describe* [_] (cons 'cljd.spec.alpha/or (mapcat vector ks forms))))
+
+(defn ^:skip-wiki or-spec-impl [ks forms preds gfn]
+  (->OrSpec ks forms preds gfn (delay (mapv specize preds forms))))
+
+(defn- unqual-key [k]
+  (keyword (name k)))
+
+(defn- key-op? [op n]
+  (and (symbol? op) (= (name op) n)))
+
+(defn- key-expr-valid? [m expr key-fn]
+  (cond
+    (keyword? expr) (contains? m (key-fn expr))
+
+    (seq? expr)
+    (let [op (first expr)
+          exprs (rest expr)]
+      (cond
+        (key-op? op "or")  (boolean (some #(key-expr-valid? m % key-fn) exprs))
+        (key-op? op "and") (every? #(key-expr-valid? m % key-fn) exprs)
+        :else false))
+
+    :else false))
+
+(defn- key-expr-form [expr key-fn]
+  (cond
+    (keyword? expr) (list 'cljd.core/contains? '% (key-fn expr))
+
+    (seq? expr)
+    (let [op (first expr)]
+      (cons (symbol "cljd.core" (name op))
+            (map #(key-expr-form % key-fn) (rest expr))))
+
+    :else expr))
+
+(defn- key-expr-keywords [expr]
+  (cond
+    (keyword? expr) [expr]
+    (seq? expr) (mapcat key-expr-keywords (rest expr))
+    :else []))
+
+(declare key-expr-gen)
+
+(defn- subsets [xs]
+  (if (empty? xs)
+    [[]]
+    (let [x (first xs)
+          more (subsets (rest xs))]
+      (concat more (map #(cons x %) more)))))
+
+(defn- concat-entry-gens [gs]
+  (if (empty? gs)
+    (gen/return [])
+    (gen/fmap #(apply concat %) (apply gen/tuple gs))))
+
+(defn- try-key-expr-gen [expr key-fn overrides path rmap]
+  (try
+    (key-expr-gen expr key-fn overrides path rmap)
+    (catch Exception _ nil)
+    (catch Error _ nil)))
+
+(defn- key-expr-gen [expr key-fn overrides path rmap]
+  (cond
+    (keyword? expr)
+    (let [k (key-fn expr)]
+      (gen/fmap (fn [v] [[k v]])
+                (gensub expr overrides (conj path k) rmap expr)))
+
+    (seq? expr)
+    (let [op (first expr)
+          exprs (vec (rest expr))]
+      (cond
+        (key-op? op "or")
+        (let [gs (keep #(try-key-expr-gen % key-fn overrides path rmap) exprs)]
+          (when-not (empty? gs)
+            (gen/one-of (vec (map concat-entry-gens
+                                  (remove empty? (subsets gs)))))))
+
+        (key-op? op "and")
+        (let [gs (mapv #(key-expr-gen % key-fn overrides path rmap) exprs)]
+          (concat-entry-gens gs))
+
+        :else nil))
+
+    :else nil))
+
+(defn- opt-key-expr-gen [expr key-fn overrides path rmap]
+  (if-let [g (try-key-expr-gen expr key-fn overrides path rmap)]
+    (gen/one-of [(gen/return []) g])
+    (gen/return [])))
+
+(defn ^:skip-wiki keys-args [opts gfn]
+  (let [m (apply hash-map opts)
+        req (:req m)
+        req-un (:req-un m)
+        opt (:opt m)
+        opt-un (:opt-un m)
+        req-keys (vec (mapcat key-expr-keywords req))
+        req-un-specs (vec (mapcat key-expr-keywords req-un))
+        opt-keys (vec (mapcat key-expr-keywords opt))
+        opt-un-specs (vec (mapcat key-expr-keywords opt-un))]
+    (assert (every? #(and (keyword? %) (namespace %))
+                    (concat req-keys req-un-specs opt-keys opt-un-specs))
+            "all keys must be namespace-qualified keywords")
+    {:req req
+     :opt opt
+     :req-un req-un
+     :opt-un opt-un
+     :req-keys (into req-keys (map unqual-key req-un-specs))
+     :req-specs (into req-keys req-un-specs)
+     :opt-keys (into opt-keys (map unqual-key opt-un-specs))
+     :opt-specs (into opt-keys opt-un-specs)
+     :gfn (or gfn (:gen m))}))
+
+(deftype MapSpec [argm]
+  Spec
+  (conform* [_ m]
+    (let [{:keys [req req-un req-keys req-specs opt-keys opt-specs]} argm]
+      (if (and (map? m)
+               (every? #(key-expr-valid? m % identity) req)
+               (every? #(key-expr-valid? m % unqual-key) req-un))
+        (let [reg (registry)
+              k->s (zipmap (concat req-keys opt-keys) (concat req-specs opt-specs))]
+          (loop [ret m
+                 [[k v] & ks :as entries] (seq m)]
+            (if entries
+              (let [sname (or (get k->s k) k)]
+                (if-let [s (get reg sname)]
+                  (let [cv (conform s v)]
+                    (if (invalid? cv)
+                      :cljd.spec.alpha/invalid
+                      (recur (if (identical? cv v) ret (assoc ret k cv)) ks)))
+                  (recur ret ks)))
+              ret)))
+        :cljd.spec.alpha/invalid)))
+  (unform* [_ m]
+    (let [{:keys [req-keys req-specs opt-keys opt-specs]} argm
+          reg (registry)
+          k->s (zipmap (concat req-keys opt-keys) (concat req-specs opt-specs))]
+      (loop [ret m
+             [k & ks :as keys] (seq (keys m))]
+        (if keys
+          (let [sname (or (get k->s k) k)]
+            (if (contains? reg sname)
+              (let [cv (get m k)
+                    v  (unform sname cv)]
+                (recur (if (identical? cv v) ret (assoc ret k v)) ks))
+              (recur ret ks)))
+          ret))))
+  (explain* [this path via in x]
+    (let [{:keys [req req-un req-keys req-specs opt-keys opt-specs]} argm]
+      (if-not (map? x)
+        [{:path path :pred 'cljd.core/map? :val x :via via :in in}]
+        (let [reg (registry)
+              k->s (zipmap (concat req-keys opt-keys) (concat req-specs opt-specs))]
+          (apply concat
+                 (concat
+                  (keep (fn [expr]
+                          (when-not (key-expr-valid? x expr identity)
+                            [{:path path :pred (key-expr-form expr identity) :val x :via via :in in}]))
+                        req)
+                  (keep (fn [expr]
+                          (when-not (key-expr-valid? x expr unqual-key)
+                            [{:path path :pred (key-expr-form expr unqual-key) :val x :via via :in in}]))
+                        req-un)
+                  (keep (fn [[k v]]
+                          (let [sname (or (get k->s k) k)]
+                            (when-not (or (not (contains? reg sname))
+                                          (valid? sname v sname))
+                              (explain-1 sname sname (conj path k) via (conj in k) v))))
+                        (seq x))))))))
+  (gen* [_ overrides path rmap]
+    (if-let [gfn (:gfn argm)]
+      (gfn)
+      (let [{:keys [req req-un opt opt-un]} argm
+            req-gen (apply gen/tuple
+                           (concat
+                            (mapv #(key-expr-gen % identity overrides path rmap) req)
+                            (mapv #(key-expr-gen % unqual-key overrides path rmap) req-un)))
+            opt-gen (apply gen/tuple
+                           (concat
+                            (mapv #(opt-key-expr-gen % identity overrides path rmap) opt)
+                            (mapv #(opt-key-expr-gen % unqual-key overrides path rmap) opt-un)))]
+        (gen/fmap (fn [[req-entries opt-entries]]
+                    (into {} (apply concat (concat req-entries opt-entries))))
+                  (gen/tuple req-gen opt-gen)))))
+  (with-gen* [_ gfn] (->MapSpec (assoc argm :gfn gfn)))
+  (describe* [_]
+    (let [{:keys [req opt req-un opt-un]} argm]
+      (cons 'cljd.spec.alpha/keys
+            (cond-> []
+              req (conj :req req)
+              opt (conj :opt opt)
+              req-un (conj :req-un req-un)
+              opt-un (conj :opt-un opt-un))))))
+
+(defn ^:skip-wiki map-spec-impl [argm]
+  (->MapSpec argm))
+
+(deftype MergeSpec [forms preds gfn]
+  Spec
+  (conform* [_ x]
+    (let [ms (map #(dt %1 x %2) preds forms)]
+      (if (some invalid? ms)
+        :cljd.spec.alpha/invalid
+        (apply merge ms))))
+  (unform* [_ x]
+    (apply merge (map #(unform % x) (reverse preds))))
+  (explain* [_ path via in x]
+    (apply concat
+           (map #(explain-1 %1 %2 path via in x)
+                forms preds)))
+  (gen* [_ overrides path rmap]
+    (if gfn
+      (gfn)
+      (let [gs (mapv (fn [pred form]
+                       (gensub pred overrides path rmap form))
+                     preds forms)]
+        (gen/fmap #(apply merge %) (apply gen/tuple gs)))))
+  (with-gen* [_ gfn] (->MergeSpec forms preds gfn))
+  (describe* [_] (cons 'cljd.spec.alpha/merge forms)))
+
+(defn ^:skip-wiki merge-spec-impl [forms preds gfn]
+  (->MergeSpec forms preds gfn))
+
+(deftype TupleSpec [forms preds gfn specs-delay]
+  Spec
+  (conform* [_ x]
+    (let [cnt (count preds)]
+      (if-not (and (vector? x) (= (count x) cnt))
+        :cljd.spec.alpha/invalid
+        (loop [ret x
+               i 0]
+          (if (= i cnt)
+            ret
+            (let [v  (nth x i)
+                  cv (conform* (nth @specs-delay i) v)]
+              (if (invalid? cv)
+                :cljd.spec.alpha/invalid
+                (recur (if (identical? cv v) ret (assoc ret i cv))
+                       (inc i)))))))))
+  (unform* [_ x]
+    (loop [ret x
+           i 0]
+      (if (= i (count preds))
+        ret
+        (let [cv (nth x i)
+              v  (unform (nth preds i) cv)]
+          (recur (if (identical? cv v) ret (assoc ret i v))
+                 (inc i))))))
+  (explain* [_ path via in x]
+    (cond
+      (not (vector? x))
+      [{:path path :pred 'cljd.core/vector? :val x :via via :in in}]
+
+      (not= (count x) (count preds))
+      [{:path path :pred (list 'cljd.core/= (list 'cljd.core/count '%) (count preds)) :val x :via via :in in}]
+
+      :else
+      (apply concat
+             (map (fn [i form pred]
+                    (let [v (nth x i)]
+                      (when-not (valid? pred v form)
+                        (explain-1 form pred (conj path i) via (conj in i) v))))
+                  (range (count preds)) forms preds))))
+  (gen* [_ overrides path rmap]
+    (if gfn
+      (gfn)
+      (apply gen/tuple
+             (map (fn [i pred form]
+                    (gensub pred overrides (conj path i) rmap form))
+                  (range (count preds)) preds forms))))
+  (with-gen* [_ gfn] (->TupleSpec forms preds gfn (delay (mapv specize preds forms))))
+  (describe* [_] (cons 'cljd.spec.alpha/tuple forms)))
+
+(defn ^:skip-wiki tuple-impl
+  ([forms preds] (tuple-impl forms preds nil))
+  ([forms preds gfn]
+   (->TupleSpec forms preds gfn (delay (mapv specize preds forms)))))
+
+(defn- conform-map [spec x conform-keys]
+  (loop [ret {}
+         [e & es :as entries] (seq x)]
+    (if entries
+      (let [cv (conform* spec e)]
+        (if (invalid? cv)
+          :cljd.spec.alpha/invalid
+          (let [k (nth e 0)
+                ck (if conform-keys (nth cv 0) k)
+                cv (nth cv 1)]
+            (recur (assoc ret ck cv) es))))
+      ret)))
+
+(defn- conform-coll [spec x]
+  (cond
+    (map? x) (conform-map spec x false)
+
+    (vector? x)
+    (loop [ret x
+           i 0]
+      (if (= i (count x))
+        ret
+        (let [v (nth x i)
+              cv (conform* spec v)]
+          (if (invalid? cv)
+            :cljd.spec.alpha/invalid
+            (recur (if (identical? cv v) ret (assoc ret i cv))
+                   (inc i))))))
+
+    (set? x)
+    (loop [ret #{}
+           [v & vs :as xs] (seq x)]
+      (if xs
+        (let [cv (conform* spec v)]
+          (if (invalid? cv)
+            :cljd.spec.alpha/invalid
+            (recur (conj ret cv) vs)))
+        ret))
+
+    (list? x)
+    (loop [ret []
+           [v & vs :as xs] (seq x)]
+      (if xs
+        (let [cv (conform* spec v)]
+          (if (invalid? cv)
+            :cljd.spec.alpha/invalid
+            (recur (conj ret cv) vs)))
+        (into () (reverse ret))))
+
+    :else
+    (loop [ret []
+           [v & vs :as xs] (seq x)]
+      (if xs
+        (let [cv (conform* spec v)]
+          (if (invalid? cv)
+            :cljd.spec.alpha/invalid
+            (recur (conj ret cv) vs)))
+        ret))))
+
+(defn- unform-coll [spec x]
+  (cond
+    (vector? x)
+    (loop [ret x
+           i 0]
+      (if (= i (count x))
+        ret
+        (let [cv (nth x i)
+              v  (unform* spec cv)]
+          (recur (if (identical? cv v) ret (assoc ret i v))
+                 (inc i)))))
+
+    (set? x)
+    (loop [ret #{}
+           [v & vs :as xs] (seq x)]
+      (if xs
+        (recur (conj ret (unform* spec v)) vs)
+        ret))
+
+    (list? x)
+    (loop [ret []
+           [v & vs :as xs] (seq x)]
+      (if xs
+        (recur (conj ret (unform* spec v)) vs)
+        (into () (reverse ret))))
+
+    :else
+    (loop [ret []
+           [v & vs :as xs] (seq x)]
+      (if xs
+        (recur (conj ret (unform* spec v)) vs)
+        ret))))
+
+(defn- coll-problems [x kind kind-form count* min-count max-count distinct* path via in]
+  (cond
+    (not ((or kind coll?) x))
+    (explain-1 (or kind-form 'cljd.core/coll?) (or kind coll?) path via in x)
+
+    (and count* (not= count* (bounded-count count* x)))
+    [{:path path :pred (list 'cljd.core/= count* (list 'cljd.core/count '%)) :val x :via via :in in}]
+
+    (and (or min-count max-count)
+         (not (<= (or min-count 0)
+                  (bounded-count (if max-count (inc max-count) min-count) x)
+                  (or max-count 9007199254740991))))
+    [{:path path :pred (list 'cljd.core/<= (or min-count 0) (list 'cljd.core/count '%) (or max-count 9007199254740991)) :val x :via via :in in}]
+
+    (and distinct* (not (empty? x)) (not (apply distinct? x)))
+    [{:path path :pred 'cljd.core/distinct? :val x :via via :in in}]))
+
+(defn- gen-coll-count [{:keys [count min-count max-count gen-max]}]
+  (cond
+    count count
+    (or min-count max-count)
+    (+ (or min-count 0)
+       (rand-int (inc (- (or max-count (max (or gen-max 20)
+                                            (* 2 (or min-count 0))))
+                         (or min-count 0)))))
+    :else (rand-int (inc (or gen-max 20)))))
+
+(defn- pair-seq? [xs]
+  (every? #(and (sequential? %) (= 2 (count %))) xs))
+
+(defn- generated-coll [opts xs]
+  (cond
+    (contains? opts :into)
+    (into (:into opts) xs)
+
+    (contains? opts :gen-into)
+    (into (:gen-into opts) xs)
+
+    :else
+    (let [{:keys [kind count min-count max-count distinct]} opts
+          map-candidate (when (pair-seq? xs) (into {} xs))
+          candidates (cond-> [(vec xs) (into #{} xs) (apply list xs)]
+                       map-candidate (conj map-candidate))]
+      (or (first (filter #(not (coll-problems % kind (:kind-form opts)
+                                              count min-count max-count distinct
+                                              [] [] []))
+                         candidates))
+          (vec xs)))))
+
+(deftype EverySpec [form pred opts gfn spec-delay]
+  Spec
+  (conform* [_ x]
+    (let [{:keys [kind count min-count max-count distinct conform-all conform-keys]} opts
+          spec @spec-delay]
+      (if (coll-problems x kind (:kind-form opts) count min-count max-count distinct [] [] [])
+        :cljd.spec.alpha/invalid
+        (if conform-all
+          (if (and (map? x) conform-keys)
+            (conform-map spec x true)
+            (conform-coll spec x))
+          (loop [i 0
+                 [v & vs :as xs] (seq x)]
+            (cond
+              (or (nil? xs) (= i (coll-check-limit))) x
+              (valid? spec v) (recur (inc i) vs)
+              :else :cljd.spec.alpha/invalid))))))
+  (unform* [_ x]
+    (let [{:keys [conform-all conform-keys]} opts
+          spec @spec-delay]
+      (if-not conform-all
+        x
+        (cond
+          (map? x)
+          (loop [ret {}
+                 [e & es :as entries] (seq x)]
+            (if entries
+              (let [ue (unform* spec e)
+                    k  (if conform-keys (nth ue 0) (nth e 0))
+                    v  (nth ue 1)]
+                (recur (assoc ret k v) es))
+              ret))
+
+          :else
+          (unform-coll spec x)))))
+  (explain* [_ path via in x]
+    (let [{:keys [kind count min-count max-count distinct conform-all]} opts
+          kfn (or (:kfn opts) (fn [i _] i))
+          spec @spec-delay]
+      (or (coll-problems x kind (:kind-form opts) count min-count max-count distinct path via in)
+          (apply concat
+                 ((if conform-all identity (partial take (coll-error-limit)))
+                  (keep identity
+                        (map (fn [i v]
+                               (when-not (valid? spec v)
+                                 (explain-1 form pred path via (conj in (kfn i v)) v)))
+                             (range) x)))))))
+  (gen* [_ overrides path rmap]
+    (if gfn
+      (gfn)
+      (let [{:keys [count min-count max-count distinct gen-max]} opts
+            pgen (gensub pred overrides path rmap form)
+            ;; Element count: prefer explicit :count, then a bounded
+            ;; range, else 0..gen-max (default 20).
+            n-gen (cond
+                    count (gen/return count)
+                    (or min-count max-count)
+                    (gen/choose (or min-count 0)
+                                (or max-count
+                                    (max (or gen-max 20)
+                                         (* 2 (or min-count 0)))))
+                    :else (gen/choose 0 (or gen-max 20)))
+            ;; Collection-of-elements gen with rose-tree shrinks.
+            vec-gen (if distinct
+                      (gen/vector-distinct
+                       pgen
+                       (cond
+                         count {:num-elements count :max-tries 100}
+                         :else {:min-elements (or min-count 0)
+                                :max-elements (or max-count
+                                                  (max (or gen-max 20)
+                                                       (* 2 (or min-count 0))))
+                                :max-tries 100}))
+                      (gen/bind n-gen (fn [n] (gen/vector pgen n))))]
+        (gen/fmap #(generated-coll opts %) vec-gen))))
+  (with-gen* [_ gfn] (->EverySpec form pred opts gfn spec-delay))
+  (describe* [_] (or (:describe opts)
+                     (cons 'cljd.spec.alpha/every (cons form (:opts opts))))))
+
+(defn ^:skip-wiki every-impl
+  ([form pred opts] (every-impl form pred opts nil))
+  ([form pred opts gfn]
+   (->EverySpec form pred opts gfn (delay (specize pred form)))))
+
+(deftype NilableSpec [form pred gfn spec-delay]
+  Spec
+  (conform* [_ x] (if (nil? x) nil (conform* @spec-delay x)))
+  (unform* [_ x] (if (nil? x) nil (unform* @spec-delay x)))
+  (explain* [_ path via in x]
+    (when-not (or (nil? x) (valid? @spec-delay x))
+      (conj
+       (explain-1 form pred (conj path :cljd.spec.alpha/pred) via in x)
+       {:path (conj path :cljd.spec.alpha/nil) :pred 'cljd.core/nil? :val x :via via :in in})))
+  (gen* [_ overrides path rmap]
+    (if gfn
+      (gfn)
+      (if-let [g (try-gensub pred overrides (conj path :cljd.spec.alpha/pred) rmap form)]
+        (gen/frequency
+         [[1 (gen/return nil)]
+          [9 g]])
+        (gen/return nil))))
+  (with-gen* [_ gfn] (->NilableSpec form pred gfn spec-delay))
+  (describe* [_] (list 'cljd.spec.alpha/nilable form)))
+
+(defn ^:skip-wiki nilable-impl [form pred gfn]
+  (->NilableSpec form pred gfn (delay (specize pred form))))
+
+(deftype NonconformingSpec [form pred spec-delay]
+  Spec
+  (conform* [_ x]
+    (let [ret (conform* @spec-delay x)]
+      (if (invalid? ret) ret x)))
+  (unform* [_ x] (unform* @spec-delay x))
+  (explain* [_ path via in x] (explain* @spec-delay path via in x))
+  (gen* [_ overrides path rmap] (gen* @spec-delay overrides path rmap))
+  (with-gen* [_ gfn] (->NonconformingSpec form (with-gen* @spec-delay gfn) (delay (with-gen* @spec-delay gfn))))
+  (describe* [_] (list 'cljd.spec.alpha/nonconforming form)))
+
+(defn nonconforming-impl [form pred]
+  (->NonconformingSpec form pred (delay (specize pred form))))
+
+(defn- regex-op [op m]
+  (assoc m :cljd.spec.alpha.impl/op op))
+
+(defn ^:skip-wiki cat-impl [ks preds forms]
+  (regex-op :cljd.spec.alpha.impl/cat
+            {:ks ks :preds preds :forms forms}))
+
+(defn ^:skip-wiki alt-impl [ks preds forms]
+  (regex-op :cljd.spec.alpha.impl/alt
+            {:ks ks :preds preds :forms forms}))
+
+(defn ^:skip-wiki rep-impl [form pred]
+  (regex-op :cljd.spec.alpha.impl/rep
+            {:form form :pred pred}))
+
+(defn ^:skip-wiki rep+impl [form pred]
+  (regex-op :cljd.spec.alpha.impl/rep+
+            {:form form :pred pred}))
+
+(defn ^:skip-wiki maybe-impl [pred form]
+  (regex-op :cljd.spec.alpha.impl/maybe
+            {:form form :pred pred}))
+
+(defn ^:skip-wiki amp-impl [re re-form preds pred-forms]
+  (regex-op :cljd.spec.alpha.impl/amp
+            {:re re :re-form re-form :preds preds :forms pred-forms}))
+
+(declare match-regex-results op-unform op-describe)
+
+(def ^:private no-ret :cljd.spec.alpha.impl/no-ret)
+
+(defn- match-result [ret input]
+  {:ret ret :input input})
+
+(defn- no-ret? [x]
+  (identical? no-ret x))
+
+(defn- include-cat-ret? [pred ret]
+  (let [pred (reg-resolve pred)]
+    (not (or (no-ret? ret)
+             (and (= (:cljd.spec.alpha.impl/op pred) :cljd.spec.alpha.impl/rep)
+                  (empty? ret))))))
+
+(defn- match-pred-results [form pred input]
+  (let [pred (reg-resolve pred)]
+    (if (regex? pred)
+      (match-regex-results pred input)
+      (when-let [xs (seq input)]
+        (let [x   (first xs)
+              ret (dt pred x form)]
+          (when-not (invalid? ret)
+            [(match-result ret (rest xs))]))))))
+
+(defn- match-repeat-results [form pred input min-count]
+  (letfn [(step [ret input n]
+            (concat
+             (when (<= min-count n)
+               [(match-result ret input)])
+             (apply concat
+                    (map (fn [{cv :ret more :input}]
+                           (when-not (= (count input) (count more))
+                             (step (conj ret cv) more (inc n))))
+                         (match-pred-results form pred input)))))]
+    (step [] input 0)))
+
+(defn- match-cat-results [ks preds forms input]
+  (letfn [(step [ret ks preds forms input]
+            (if-let [pred (first preds)]
+              (apply concat
+                     (map (fn [{cv :ret more :input}]
+                            (step (if (include-cat-ret? pred cv)
+                                    (assoc ret (first ks) cv)
+                                    ret)
+                                  (rest ks)
+                                  (rest preds)
+                                  (rest forms)
+                                  more))
+                          (match-pred-results (first forms) pred input)))
+              [(match-result ret input)]))]
+    (step {} ks preds forms input)))
+
+(defn- match-alt-results [ks preds forms input]
+  (apply concat
+         (map (fn [k pred form]
+                (map (fn [{cv :ret more :input}]
+                       (match-result (tagged-ret k cv) more))
+                     (match-pred-results form pred input)))
+              ks preds forms)))
+
+(defn- match-regex-results [re input]
+  (let [r (reg-resolve re)
+        ks (:ks r)
+        preds (:preds r)
+        forms (:forms r)
+        form (:form r)
+        pred (:pred r)
+        inner-re (:re r)
+        re-form (:re-form r)
+        op (:cljd.spec.alpha.impl/op r)]
+    (case op
+      :cljd.spec.alpha.impl/cat
+      (match-cat-results ks preds forms input)
+
+      :cljd.spec.alpha.impl/alt
+      (match-alt-results ks preds forms input)
+
+      :cljd.spec.alpha.impl/rep
+      (match-repeat-results form pred input 0)
+
+      :cljd.spec.alpha.impl/rep+
+      (match-repeat-results form pred input 1)
+
+      :cljd.spec.alpha.impl/maybe
+      (cons (match-result no-ret input)
+            (match-pred-results form pred input))
+
+      :cljd.spec.alpha.impl/amp
+      (keep (fn [{cv :ret more :input}]
+              (let [ret (and-preds cv preds forms)]
+                (when-not (invalid? ret)
+                  (match-result ret more))))
+            (match-pred-results re-form inner-re input)))))
+
+(defn- op-unform [re x]
+  (let [r (reg-resolve re)
+        ks (:ks r)
+        preds (:preds r)
+        pred (:pred r)
+        inner-re (:re r)
+        op (:cljd.spec.alpha.impl/op r)
+        k->p (zipmap ks preds)]
+    (case op
+      :cljd.spec.alpha.impl/cat
+      (apply concat
+             (keep (fn [k]
+                     (when (contains? x k)
+                       (op-unform (get k->p k) (get x k))))
+                   ks))
+
+      :cljd.spec.alpha.impl/alt
+      (let [[k v] x]
+        (op-unform (get k->p k) v))
+
+      :cljd.spec.alpha.impl/rep
+      (apply concat (map #(op-unform pred %) x))
+
+      :cljd.spec.alpha.impl/rep+
+      (apply concat (map #(op-unform pred %) x))
+
+      :cljd.spec.alpha.impl/maybe
+      ;; nil/no-ret denote "matched nothing" (paired with the same
+      ;; rewrite at the top of RegexSpec.conform*). If a (s/? nil?)
+      ;; conformed to nil, we collapse it to [] too — same asymmetry as
+      ;; upstream clojure.spec.alpha.
+      (if (or (no-ret? x) (nil? x))
+        []
+        (op-unform pred x))
+
+      :cljd.spec.alpha.impl/amp
+      (let [px (reduce #(unform %2 %1) x (reverse preds))]
+        (op-unform inner-re px))
+
+      nil
+      [(unform re x)])))
+
+(defn- op-describe [re]
+  (let [r (reg-resolve re)
+        ks (:ks r)
+        forms (:forms r)
+        form (:form r)
+        re-form (:re-form r)
+        op (:cljd.spec.alpha.impl/op r)]
+    (case op
+      :cljd.spec.alpha.impl/cat
+      (cons 'cljd.spec.alpha/cat (mapcat vector ks forms))
+
+      :cljd.spec.alpha.impl/alt
+      (cons 'cljd.spec.alpha/alt (mapcat vector ks forms))
+
+      :cljd.spec.alpha.impl/rep
+      (list 'cljd.spec.alpha/* form)
+
+      :cljd.spec.alpha.impl/rep+
+      (list 'cljd.spec.alpha/+ form)
+
+      :cljd.spec.alpha.impl/maybe
+      (list 'cljd.spec.alpha/? form)
+
+      :cljd.spec.alpha.impl/amp
+      (cons 'cljd.spec.alpha/& (cons re-form forms))
+
+      nil
+      re)))
+
+(declare op-gen)
+
+(defn- atomic-op-gen [pred overrides path rmap form]
+  (when-let [g (gensub pred overrides path rmap form)]
+    (gen/fmap vector g)))
+
+(defn- op-gen [re overrides path rmap form]
+  (let [r (reg-resolve re)
+        ks (:ks r)
+        preds (:preds r)
+        forms (:forms r)
+        pred (:pred r)
+        inner-re (:re r)
+        re-form (:re-form r)
+        op (:cljd.spec.alpha.impl/op r)]
+    (or (when-let [gfn (:cljd.spec.alpha.impl/gfn r)]
+          (gfn))
+        (case op
+          :cljd.spec.alpha.impl/cat
+          (let [gs (map (fn [k pred form]
+                          (op-gen pred overrides (conj path k) rmap form))
+                        ks preds forms)]
+            (when (every? identity gs)
+              (apply gen/cat gs)))
+
+          :cljd.spec.alpha.impl/alt
+          (let [gs (remove nil?
+                           (map (fn [k pred form]
+                                  (try
+                                    (op-gen pred overrides (conj path k) rmap form)
+                                    (catch Exception _ nil)
+                                    (catch Error _ nil)))
+                                ks preds forms))]
+            (when-not (empty? gs)
+              (gen/one-of gs)))
+
+          :cljd.spec.alpha.impl/rep
+          (if-let [g (try
+                       (op-gen pred overrides path rmap (:form r))
+                       (catch Exception _ nil)
+                       (catch Error _ nil))]
+            (gen/fmap #(apply concat %) (gen/vector g 0 4))
+            (gen/return []))
+
+          :cljd.spec.alpha.impl/rep+
+          (when-let [g (try
+                         (op-gen pred overrides path rmap (:form r))
+                         (catch Exception _ nil)
+                         (catch Error _ nil))]
+            (gen/fmap #(apply concat %) (gen/vector g 1 4)))
+
+          :cljd.spec.alpha.impl/maybe
+          (if-let [g (try
+                       (op-gen pred overrides path rmap (:form r))
+                       (catch Exception _ nil)
+                       (catch Error _ nil))]
+            (gen/one-of [(gen/return []) g])
+            (gen/return []))
+
+          :cljd.spec.alpha.impl/amp
+          ;; Inner regex must satisfy the amp's predicates after the
+          ;; conform; filter generated values via such-that against
+          ;; the same and-pred path conform* uses.
+          (when-let [g (op-gen inner-re overrides path rmap re-form)]
+            (gen/such-that #(not (invalid? (and-preds % preds forms)))
+                           g
+                           100))
+
+          nil
+          (atomic-op-gen re overrides path rmap form)))))
+
+(deftype RegexSpec [re gfn]
+  Spec
+  (conform* [_ x]
+    (if (or (nil? x) (sequential? x))
+      (if-let [{ret :ret input :input}
+               (first (filter #(empty? (:input %))
+                              (match-regex-results re (seq x))))]
+        (if (empty? input)
+          ;; An empty maybe yields the internal no-ret sentinel; expose
+          ;; it as nil at the user-facing boundary so callers can pattern
+          ;; on a stable value. op-unform handles nil symmetrically.
+          (if (no-ret? ret) nil ret)
+          :cljd.spec.alpha/invalid)
+        :cljd.spec.alpha/invalid)
+      :cljd.spec.alpha/invalid))
+  (unform* [_ x] (vec (op-unform re x)))
+  (explain* [this path via in x]
+    (cond
+      (not (or (nil? x) (sequential? x)))
+      [{:path path
+        :pred '(fn [%] (cljd.core/or (cljd.core/nil? %) (cljd.core/sequential? %)))
+        :val x
+        :via via
+        :in in}]
+
+      (valid? this x)
+      nil
+
+      :else
+      [{:path path :pred (op-describe re) :val x :via via :in in}]))
+  (gen* [_ overrides path rmap]
+    (if gfn
+      (gfn)
+      (op-gen re overrides path rmap (op-describe re))))
+  (with-gen* [_ gfn] (->RegexSpec re gfn))
+  (describe* [_] (op-describe re)))
+
+(defn ^:skip-wiki regex-spec-impl [re gfn]
+  (->RegexSpec re gfn))
+
+(defn- call-valid?
+  [f specs args]
+  (try
+    (let [cargs (when (:args specs) (conform (:args specs) args))]
+      (if (invalid? cargs)
+        false
+        (let [ret (apply f args)
+              cret (when (:ret specs) (conform (:ret specs) ret))]
+          (and (not (invalid? cret))
+               (if (:fn specs)
+                 (valid? (:fn specs) {:args cargs :ret cret})
+                 true)))))
+    (catch Exception _ false)
+    (catch Error _ false)))
+
+(defn- assoc-fn-failure-context [probs args role]
+  (map #(assoc %
+          :cljd.spec.alpha/args args
+          :cljd.spec.alpha/role role)
+       probs))
+
+(defn- call-problems
+  [f specs args path via in]
+  (let [argspec (:args specs)
+        retspec (:ret specs)
+        fnspec (:fn specs)
+        cargs (when argspec (conform argspec args))]
+    (if (invalid? cargs)
+      (assoc-fn-failure-context
+       (explain* argspec (conj path :args) via in args)
+       args
+       :args)
+      (try
+        (let [retv (apply f args)
+              cret (when retspec (conform retspec retv))]
+          (cond
+            (invalid? cret)
+            (assoc-fn-failure-context
+             (explain* retspec (conj path :ret) via in retv)
+             args
+             :ret)
+
+            (and argspec retspec fnspec
+                 (not (valid? fnspec {:args cargs :ret cret})))
+            (assoc-fn-failure-context
+             (explain* fnspec (conj path :fn) via in {:args cargs :ret cret})
+             args
+             :fn)))
+        (catch Exception e
+          [{:path path
+            :pred 'cljd.core/ifn?
+            :val f
+            :reason "exception thrown during generative check"
+            :via via
+            :in in
+            :cljd.spec.alpha/args args
+            :cljd.spec.alpha/failure e}])
+        (catch Error e
+          [{:path path
+            :pred 'cljd.core/ifn?
+            :val f
+            :reason "error thrown during generative check"
+            :via via
+            :in in
+            :cljd.spec.alpha/args args
+            :cljd.spec.alpha/failure e}])))))
+
+(defn- fn-problems
+  "Walks up to `iters` argument samples looking for the first set of
+  call-problems. When found, descends into that sample's rose tree to
+  find a strictly smaller still-failing input via depth-first walk —
+  the resulting problems describe a minimized counterexample, not the
+  raw first failure."
+  [f specs iters path via in]
+  (if-let [argspec (:args specs)]
+    (let [g (gen argspec)
+          rng (gen-tc/make-rng nil)
+          fails? (fn [args] (seq (call-problems f specs args path via in)))
+          first-rose (loop [i 0]
+                       (when (< i iters)
+                         (let [size (clojure.core/min 200 i)
+                               rose (gen-tc/run-gen g rng size)]
+                           (if (fails? (gen-tc/rose-val rose))
+                             rose
+                             (recur (inc i))))))]
+      (when first-rose
+        (let [shrunk (loop [r first-rose]
+                       (let [child (some (fn [c]
+                                           (when (fails? (gen-tc/rose-val c)) c))
+                                         (gen-tc/rose-children r))]
+                         (if child (recur child) r)))]
+          (call-problems f specs (gen-tc/rose-val shrunk) path via in))))
+    (throw (Exception. "No :args spec found, can't generate"))))
+
+(defn- validate-fn?
+  [f specs iters]
+  (if-let [argspec (:args specs)]
+    (let [g (gen argspec)]
+      (loop [i 0]
+        (cond
+          (= i iters) true
+          (call-valid? f specs (gen/generate g)) (recur (inc i))
+          :else false)))
+    (throw (Exception. "No :args spec found, can't generate"))))
+
+(deftype FSpec [argspec aform retspec rform fnspec fform gfn specs]
+  cljd.core/ILookup
+  (-lookup [_ k] (get specs k))
+  (-lookup [_ k not-found] (get specs k not-found))
+  (-contains-key? [_ k] (contains? specs k))
+
+  Spec
+  (conform* [_ f]
+    (if (and (ifn? f) (validate-fn? f specs (fspec-iterations)))
+      f
+      :cljd.spec.alpha/invalid))
+  (unform* [_ f] f)
+  (explain* [this path via in f]
+    (cond
+      (not (ifn? f))
+      [{:path path :pred 'cljd.core/ifn? :val f :via via :in in}]
+
+      :else
+      (when-let [probs (seq (fn-problems f specs 100 path via in))]
+        (map #(cond-> %
+                (nil? (:reason %))
+                (assoc :reason "function failed generative check"))
+             probs))))
+  (gen* [_ overrides _ _]
+    (if gfn
+      (gfn)
+      (gen/return
+       (fn [& args]
+         (when argspec
+           (assert (valid? argspec args) (with-out-str (explain argspec args))))
+         (gen/generate (gen retspec overrides))))))
+  (with-gen* [_ gfn] (->FSpec argspec aform retspec rform fnspec fform gfn specs))
+  (describe* [_]
+    (let [ret (cond-> ['cljd.spec.alpha/fspec]
+                argspec (conj :args aform)
+                retspec (conj :ret rform)
+                fnspec (conj :fn fform))]
+      ret)))
+
+(defn ^:skip-wiki fspec-impl [argspec aform retspec rform fnspec fform gfn]
+  (let [specs (cond-> {}
+                argspec (assoc :args argspec)
+                retspec (assoc :ret retspec)
+                fnspec (assoc :fn fnspec))]
+    (->FSpec argspec aform retspec rform fnspec fform gfn specs)))
+
+(defn exercise
+  "Generates n values compatible with spec and returns [val conformed-val]
+  tuples. Defaults to 10 samples."
+  ([spec] (exercise spec 10))
+  ([spec n] (exercise spec n nil))
+  ([spec n overrides]
+   (map #(vector % (conform spec %))
+        (gen/sample (gen spec overrides) n))))
+
+(defn exercise-fn
+  "Exercises f by applying it to generated samples from fspec's :args spec."
+  ([f fspec] (exercise-fn f 10 fspec))
+  ([f n fspec]
+   (let [fspec (or fspec (when (symbol? f) (get-spec f)))
+         f (if (symbol? f)
+             (if-let [getter (redef-getter f)]
+               (getter)
+               (throw (Exception. (str "No fn registered for symbol: " f))))
+             f)]
+     (if-let [arg-spec (:args fspec)]
+       (map (fn [args] [args (apply f args)])
+            (gen/sample (gen arg-spec) n))
+       (throw (Exception. "No :args spec found, can't generate"))))))
