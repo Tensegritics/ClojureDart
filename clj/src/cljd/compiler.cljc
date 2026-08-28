@@ -2230,12 +2230,14 @@
 
 (defn cljd-u32 [n] (bit-and 0xFFFFFFFF n))
 
+(defn cljd-i32 [n] (if (>= n 0x80000000) (- n 0x100000000) n))
+
 (defn cljd-hash-combine [seed hash]
   (cljd-u32
     (bit-xor seed
       (+ hash 0x9e3779b9
         (bit-shift-left seed 6)
-        (bit-shift-right seed 2)))))
+        (bit-shift-right (cljd-i32 seed) 2)))))
 
 (defn cljd-hash
   "Returns the hash for x in cljd."
@@ -2249,11 +2251,13 @@
       (char? x) (hash (str x))
       (symbol? x) (cljd-hash-combine
                     (cljd-u32 (clojure.lang.Murmur3/hashUnencodedChars (name x)))
-                    (hash (namespace x)))
+                    (if-let [ns (namespace x)] (.hashCode ^String ns) 0))
       (keyword? x)
-      (cljd-hash-combine
-        (or (some-> x namespace cljd-hash) 0)
-        (cljd-hash (name x)))
+      (cljd-u32
+        (+ (cljd-hash-combine
+             (cljd-u32 (clojure.lang.Murmur3/hashUnencodedChars (name x)))
+             (if-let [ns (namespace x)] (.hashCode ^String ns) 0))
+           0x9e3779b9))
       :else (throw (ex-info (str "cljd-hash not implemented for " (class x)) {:x x})))))
 
 (defn emit-case* [[op expr clauses default] env]
