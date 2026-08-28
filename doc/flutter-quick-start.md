@@ -8,7 +8,7 @@ ClojureDart needs at least Java 8.
 
 ## 1. [Install the latest stable Flutter](https://flutter.dev/docs/get-started/install)
 
-It's a tad laborious as you have to install dependencies.
+It's a tad laborious as you have to install dependencies. When adding Flutter to your path, replace any ~ with $HOME.
 
 ## 2. [Install Clojure CLI Tools](https://clojure.org/guides/getting_started#_clojure_installer_and_cli_tools)
 
