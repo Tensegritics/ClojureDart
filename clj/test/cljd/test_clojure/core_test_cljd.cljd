@@ -1099,6 +1099,15 @@
   (is (= {} (join-with vector {:a 1 :b "c"} nil)))
   (is (= {:a 1 :b "c"} (join-with vector identity identity nil {:a 1 :b "c"}))) )
 
+(deftest join-with-singleton-node-inlining
+  (let [keep-key (reify cljd.core/IHash (-hash [_] 0))
+        drop-key (reify cljd.core/IHash (-hash [_] 32))
+        m (assoc (assoc {} keep-key :keep) drop-key nil)]
+    (is (= {keep-key :keep}
+           (join-with nil nil identity some? {} m)))
+    (is (= {keep-key :keep}
+           (join-with nil identity nil some? m {})))))
+
 (deftest join-with-hash
   (let [n 1e6 m1 (zipmap (range 0 n 2) (range)) m2 (zipmap (range 1 n 2) (range))] (time (count (join-with (fn [_ x] x) m1 m2))))
   (let [m1 {:a 1 :b "c"}
