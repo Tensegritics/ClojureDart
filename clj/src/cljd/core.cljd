@@ -5152,11 +5152,8 @@
            a-set (bit-or a-kvs a-nodes)
            b-set (bit-or b-kvs b-nodes)
            all-set (bit-or a-set b-set)
-           new-arr-size (cond
-                          (zero? a-set) (.-length barr)
-                          (zero? b-set) (.-length arr)
-                          ; overestimate
-                          :else (* 2 (u32-bit-count (bit-or a-set b-set))))
+           ; overestimate to be safe
+           new-arr-size (* 2 (u32-bit-count (bit-or a-set b-set)))
            new-arr (#/(List/filled dynamic) new-arr-size nil)])
 
      (loop [^int ni 0 ^int ai 0 ^int bi 0 ^int n-set all-set ^int hi 0 ^int lo 0 ^int cnt 0])
