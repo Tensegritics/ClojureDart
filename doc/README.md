@@ -40,6 +40,7 @@
     - [`:managed` + `:dispose` option](#managed--dispose-option)
     - [`:managed` + `:refresh-on` option](#managed--refresh-on-option)
   - [`:bind` directive](#bind-directive)
+  - [`:summon` directive](#summon-directive)
   - [`:get` directive](#get-directive)
   - [`:context` directive — when Flutter lacks context](#context-directive--when-flutter-lacks-context)
   - [`:vsync` directive — chasing the electron beam across a phosphor screen](#vsync-directive--chasing-the-electron-beam-across-a-phosphor-screen)
@@ -427,6 +428,26 @@ Dynamic binding but along the widgets tree, not the call tree. Inherited binding
 `:get [:k1 :k2]` retrieves values bound to `:k1` and `:k2` via `:bind` and binds these values to `k1` and `k2` in the lexical scope (the following forms).
 
 `:get [m/Navigator]` retrieves instance returned by `(m/Navigator.of context)` and lexically binds it to `navigator` -- implicit kebab-casing of the Dart name.
+
+Prefer `:summon` for new code. `:get` is retained for compatibility.
+
+### `:summon` directive
+`:summon` resolves its RHS on every build and reuses its child when the resulting
+bound value is unchanged:
+
+```clj
+(f/widget
+  :summon [{:flds [brightness]} m/Theme]
+  (m/Text (str brightness)))
+```
+
+The RHS can be a class (resolved through its `.of` method), a keyword provided
+by `:bind`, or a form with arguments. It is resolved on every build. The body
+is evaluated only when the bound or destructured value changes; otherwise the
+previously created child is returned. `:as` binds the raw RHS value. `:>` and
+`:value>` are equivalent: both transform the RHS value before binding or
+destructuring. These are the only supported options; `:default`, `:refresh-on`,
+`:dedup` and resource disposal options are not supported by `:summon`.
 
 ### `:context` directive — when Flutter lacks context
 `:context ctx` binds ctx to a `BuildContext` instance.
