@@ -1,0 +1,182 @@
+(ns cljd.test-clojure.spec-gen-tc
+  "Smoke tests for cljd.spec.gen.alpha.test-check — exercises the
+  rose-tree generator algebra and basic shrink mechanics."
+  (:require [cljd.spec.gen.alpha :as gen]
+            [cljd.spec.gen.alpha.test-check :as tc])
+  (:use [clojure.test :only [deftest is testing]]))
+
+(deftest generator-types
+  (is (tc/generator? (tc/return 42)))
+  (is (tc/generator? (tc/choose 0 10)))
+  (is (tc/generator? (tc/fmap inc (tc/choose 0 10))))
+  (is (tc/generator? (tc/tuple (tc/return 1) (tc/return 2))))
+  (is (nil? (tc/generator? 42)))
+  (is (nil? (tc/generator? nil))))
+
+(deftest seeded-generation-is-deterministic
+  (testing "same seed produces same sample"
+    (let [g (tc/choose 0 1000000)]
+      (is (= (tc/sample g 5 42)
+             (tc/sample g 5 42)))))
+  (testing "different seeds produce different samples"
+    (let [g (tc/choose 0 1000000)]
+      (is (not= (tc/sample g 10 1)
+                (tc/sample g 10 2))))))
+
+(deftest choose-produces-values-in-range
+  (let [vals (tc/sample (tc/choose 5 9) 50 7)]
+    (is (every? #(<= 5 % 9) vals))))
+
+(deftest return-has-no-shrinks
+  (let [r (tc/run-gen (tc/return 42) (tc/make-rng 1) 10)]
+    (is (= 42 (tc/rose-val r)))
+    (is (empty? (tc/rose-children r)))))
+
+(deftest choose-shrinks-toward-low-bound
+  (let [r (tc/run-gen (tc/choose 0 100) (tc/make-rng 1) 10)
+        v (tc/rose-val r)
+        shrink-vals (mapv tc/rose-val (tc/rose-children r))]
+    (testing "shrink seq begins with the low bound"
+      (is (= 0 (first shrink-vals))))
+    (testing "no shrink equals the original value"
+      (is (every? #(not= v %) shrink-vals)))
+    (testing "all shrinks are smaller in magnitude than v"
+      (when (pos? v)
+        (is (every? #(< % v) shrink-vals))))))
+
+(deftest fmap-maps-values-and-shrinks
+  (let [g (tc/fmap #(* 2 %) (tc/choose 1 10))
+        r (tc/run-gen g (tc/make-rng 1) 10)]
+    (is (even? (tc/rose-val r)))
+    (testing "shrink values are also mapped"
+      (is (every? even? (mapv tc/rose-val (tc/rose-children r)))))))
+
+(deftest tuple-shrinks-each-component
+  (let [g (tc/tuple (tc/choose 0 10) (tc/choose 0 10))
+        r (tc/run-gen g (tc/make-rng 1) 10)
+        v (tc/rose-val r)]
+    (is (= 2 (count v)))
+    (is (every? #(<= 0 % 10) v))
+    (testing "at least one shrink reduces the first component"
+      (let [first-comp (first v)]
+        (when (pos? first-comp)
+          (is (some #(< (first %) first-comp)
+                    (mapv tc/rose-val (tc/rose-children r)))))))))
+
+(deftest vector-grows-and-shrinks
+  (testing "fixed-size vector"
+    (let [g (tc/vector (tc/choose 0 5) 3)
+          r (tc/run-gen g (tc/make-rng 1) 10)]
+      (is (= 3 (count (tc/rose-val r))))))
+  (testing "shrinks include drop-element variants"
+    (let [g (tc/vector (tc/choose 1 5) 3)
+          r (tc/run-gen g (tc/make-rng 1) 10)
+          v (tc/rose-val r)
+          shrink-counts (mapv #(count (tc/rose-val %)) (tc/rose-children r))]
+      (is (some #(= 2 %) shrink-counts) "at least one drop-shrink reduces count to 2"))))
+
+(deftest bind-threads-generated-values
+  (let [g (tc/bind (tc/return 5) #(tc/choose % (+ % 3)))
+        v (tc/generate g 10 7)]
+    (is (<= 5 v 8))))
+
+(deftest bind-shrinks-bound-value-before-inner-value
+  (let [g (tc/bind (tc/choose 0 100)
+            (fn [outer]
+              (tc/fmap (fn [inner] [outer inner])
+                       (tc/choose 0 100))))
+        prop (tc/for-all* [g] (fn [[outer _]] (< outer 5)))
+        ret (tc/quick-check 200 prop {:seed 1})]
+    (is (false? (:pass? ret)))
+    (testing "the outer bound value reaches the minimal failing boundary"
+      (is (= 5 (ffirst (:smallest (:shrunk ret))))))))
+
+(deftest sized-and-resize-thread-size
+  (let [g (tc/sized (fn [size] (tc/return size)))]
+    (is (= 7 (tc/generate g 7 1)))
+    (is (= 2 (tc/generate (tc/resize 2 g) 7 1)))))
+
+(deftest public-gen-alpha-exposes-bytes-and-seeded-uuid
+  (let [bs (gen/generate (gen/bytes) 10 1)]
+    (is (every? #(<= 0 % 255) bs)))
+  (testing "uuid generation is reproducible through the generator seed"
+    (is (= (gen/generate (gen/uuid) 30 123)
+           (gen/generate (gen/uuid) 30 123)))))
+
+(deftest one-of-picks-from-alternatives
+  (let [g (tc/one-of [(tc/return :a) (tc/return :b) (tc/return :c)])
+        vals (set (tc/sample g 30 1))]
+    (is (every? #{:a :b :c} vals))))
+
+(deftest large-integer-honors-bounds
+  (let [g (tc/large-integer* {:min 10 :max 20})
+        vals (tc/sample g 50 1)]
+    (is (every? #(<= 10 % 20) vals))))
+
+(deftest such-that-filters-shrinks
+  (let [g (tc/such-that pos? (tc/choose -10 10))
+        vals (tc/sample g 20 1)]
+    (is (every? pos? vals))))
+
+;; ---------------------------------------------------------------------------
+;; quick-check + shrink
+
+(deftest quick-check-passes-trivially-true-property
+  (let [prop (tc/for-all* [(tc/choose 0 100)] (fn [_] true))
+        ret (tc/quick-check 50 prop {:seed 42})]
+    (is (= true (:result ret)))
+    (is (true? (:pass? ret)))
+    (is (= 50 (:num-tests ret)))
+    (is (= 42 (:seed ret)))
+    (is (nil? (:shrunk ret)))))
+
+(deftest quick-check-detects-failing-property
+  ;; Property: every int is < 5. Must fail and shrink toward 5.
+  (let [prop (tc/for-all* [(tc/choose 0 100)] (fn [n] (< n 5)))
+        ret (tc/quick-check 100 prop {:seed 1})]
+    (is (false? (:pass? ret)))
+    (is (false? (:result ret)))
+    (is (some? (:failing-args ret)))
+    (is (some? (:shrunk ret)))
+    (testing "shrunk smallest is the boundary value 5"
+      (is (= [5] (:smallest (:shrunk ret)))))))
+
+(deftest quick-check-shrinks-vector-failures
+  ;; Property: vector of ints contains no 7.
+  (let [prop (tc/for-all*
+               [(tc/vector (tc/choose 0 9) 0 8)]
+               (fn [v] (not (some #{7} v))))
+        ret (tc/quick-check 200 prop {:seed 3})]
+    (when-not (:pass? ret)
+      (testing "shrunk vector contains exactly one 7"
+        (let [v (first (:smallest (:shrunk ret)))]
+          (is (= [7] v)))))))
+
+(deftest quick-check-is-reproducible-with-seed
+  (let [prop (tc/for-all* [(tc/choose 0 1000)] (fn [n] (< n 800)))
+        a (tc/quick-check 200 prop {:seed 99})
+        b (tc/quick-check 200 prop {:seed 99})]
+    (is (= (:result a) (:result b)))
+    (is (= (:num-tests a) (:num-tests b)))
+    (is (= (:failing-args a) (:failing-args b)))
+    (is (= (:smallest (:shrunk a)) (:smallest (:shrunk b))))))
+
+(deftest quick-check-records-seed-when-not-given
+  (let [prop (tc/for-all* [(tc/return 0)] (fn [_] true))
+        ret (tc/quick-check 5 prop)]
+    (is (integer? (:seed ret)))))
+
+(deftest quick-check-treats-thrown-exceptions-as-failure
+  (let [prop (tc/for-all* [(tc/choose 0 5)]
+               (fn [n] (when (= n 3) (throw (Exception. "boom"))) true))
+        ret (tc/quick-check 100 prop {:seed 5})]
+    ;; The property eventually picks 3 — that throws.
+    (when-not (:pass? ret)
+      (is (instance? Exception (:result ret))))))
+
+(deftest shrink-narrows-to-boundary
+  ;; Property: int <= 10. Generate up to 1000, shrunk smallest should be 11.
+  (let [prop (tc/for-all* [(tc/choose 0 1000)] (fn [n] (<= n 10)))
+        ret (tc/quick-check 100 prop {:seed 11})]
+    (when-not (:pass? ret)
+      (is (= [11] (:smallest (:shrunk ret)))))))

@@ -8,6 +8,10 @@
 pubspec.lock
 lib/cljd-out/*
 test/cljd-out/*
+**/lib/cljd-out/
+**/test/cljd-out/
+**/pubspec.lock
+**/.dart_tool/
 *-e
 .*
 !.github

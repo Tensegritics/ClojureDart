@@ -1,0 +1,5 @@
+{:paths ["src"]
+ :deps {tensegritics/clojuredart {:local/root "../../"}}
+ :aliases {:cljd {:main-opts ["-m" "cljd.build"]}}
+ :cljd/opts {:main sample.spec-alpha-demo
+             :kind :dart}}

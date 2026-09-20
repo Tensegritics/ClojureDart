@@ -1,0 +1,751 @@
+;   Copyright (c) Rich Hickey. All rights reserved.
+;   The use and distribution terms for this software are covered by the
+;   Eclipse Public License 1.0 (http://opensource.org/licenses/eclipse-1.0.php)
+;   which can be found in the file epl-v10.html at the root of this distribution.
+;   By using this software in any fashion, you are agreeing to be bound by
+;   the terms of this license.
+;   You must not remove this notice, or any other, from this software.
+
+;;; Public API for cljd.spec.alpha. Runtime lives in cljd.spec.alpha.impl.
+;;;
+;;; ClojureScript-compatible macro names preserve source forms. Runtime
+;;; helper fns with `*` suffixes remain below for implementation use and
+;;; for true value-style construction where no source form exists.
+
+(ns cljd.spec.alpha
+  (:require [cljd.spec.alpha.impl :as impl]
+            [cljd.spec.gen.alpha :as gen]))
+
+;; Re-exports as defn wrappers (avoid cljd's top-level IFn lifting).
+
+(def ^:dynamic *recursion-limit* 4)
+(def ^:dynamic *fspec-iterations* 21)
+(def ^:dynamic *coll-check-limit* 101)
+(def ^:dynamic *coll-error-limit* 20)
+
+(def ^:macro-support ^:dynamic *compile-asserts*
+  "If true (the default), s/assert macro expands to a runtime check;
+  otherwise it expands to its value argument and the spec is dropped
+  entirely. Bind to false at macro-expansion time to compile asserts
+  out of production builds."
+  true)
+
+(def ^:skip-wiki Spec impl/Spec)
+(def ^:skip-wiki Specize impl/Specize)
+
+(defn ^:skip-wiki conform*  [spec x]                 (impl/conform* spec x))
+(defn ^:skip-wiki unform*   [spec y]                 (impl/unform* spec y))
+(defn ^:skip-wiki explain*  [spec path via in x]     (impl/explain* spec path via in x))
+(defn ^:skip-wiki gen*      [spec overrides path rm] (impl/gen* spec overrides path rm))
+(defn ^:skip-wiki with-gen* [spec gfn]               (impl/with-gen* spec gfn))
+(defn ^:skip-wiki describe* [spec]                   (impl/describe* spec))
+(defn ^:skip-wiki specize*
+  ([x]      (impl/specize* x))
+  ([x form] (impl/specize* x form)))
+
+(defn spec?       [x]        (impl/spec? x))
+(defn regex?      [x]        (impl/regex? x))
+(defn abbrev      [form]     (impl/abbrev form))
+(defn invalid?    [ret]      (impl/invalid? ret))
+(defn conform     [spec x]   (impl/conform spec x))
+(defn unform      [spec x]   (impl/unform spec x))
+(defn form        [spec]     (impl/form spec))
+(defn describe    [spec]     (impl/describe spec))
+(defn ^:skip-wiki explain-data*
+  [spec path via in x]
+  (impl/explain-data* spec path via in x))
+(defn explain-data [spec x]  (impl/explain-data spec x))
+(defn valid?
+  ([spec x]      (impl/valid? spec x))
+  ([spec x form] (impl/valid? spec x form)))
+(defn explain-printer [ed]   (impl/explain-out ed))
+(def ^:dynamic *explain-out* explain-printer)
+(defn explain-out [ed]       (*explain-out* ed))
+(defn explain     [spec x]   (explain-out (explain-data spec x)))
+(defn explain-str [spec x]   (with-out-str (explain spec x)))
+(defn with-gen    [spec f]   (impl/with-gen spec f))
+(defn gen
+  ([spec] (impl/gen spec))
+  ([spec overrides] (impl/gen spec overrides)))
+(defn exercise
+  ([spec] (impl/exercise spec))
+  ([spec n] (impl/exercise spec n))
+  ([spec n overrides] (impl/exercise spec n overrides)))
+(defn ^:skip-wiki exercise-fn*
+  "Runtime form of `exercise-fn`. Takes a function value (not a
+  symbol), an optional sample count, and an explicit fspec. Use when
+  the call site has a fn value rather than a symbol resolvable at
+  macro-expansion time."
+  ([f fspec] (impl/exercise-fn f 10 fspec))
+  ([f n fspec] (impl/exercise-fn f n fspec)))
+
+(defn exercise-fn-runtime
+  "Runtime variant of `exercise-fn` that takes a fully-qualified
+  symbol naming a ^:cljd.spec.alpha/redef def. Looks up the current
+  fn value via the redef registry and the fspec via `get-spec`, so
+  this works from a non-macro context — including for symbols held in
+  runtime-bound locals."
+  ([sym] (exercise-fn-runtime sym 10))
+  ([sym n] (exercise-fn-runtime sym n nil))
+  ([sym n fspec]
+   (let [getter (impl/redef-getter sym)
+         f (when getter (getter))
+         spec (clojure.core/or fspec (get-spec sym))]
+     (when (nil? f)
+       (throw (Exception.
+                (str "exercise-fn-runtime: no ^:cljd.spec.alpha/redef "
+                     "registration for " sym
+                     " — only fdef'd defs are reachable at runtime"))))
+     (when (nil? spec)
+       (throw (Exception.
+                (str "exercise-fn-runtime: no fspec for " sym))))
+     (impl/exercise-fn f n spec))))
+(defn check-asserts? []      (impl/check-asserts?))
+(defn check-asserts [flag]   (impl/check-asserts flag))
+(defn assert*     [spec x]
+  (if (valid? spec x)
+    x
+    (let [ed (assoc (explain-data spec x)
+               :cljd.spec.alpha/failure :assertion-failed)]
+      (throw (ex-info (str "Spec assertion failed\n"
+                           (with-out-str (explain-out ed)))
+                      ed)))))
+
+(declare ensure-internal-specs!)
+
+(defn registry    []
+  (ensure-internal-specs!)
+  (impl/registry))
+
+(defn get-spec    [k]
+  (ensure-internal-specs!)
+  (impl/get-spec k))
+
+(defn ^:skip-wiki kvs->map
+  "Helper that converts a sequence of {:cljd.spec.alpha/k k :cljd.spec.alpha/v v}
+  maps (as produced by `s/keys*`'s inner regex) into a single map of
+  k->v. Exposed so that the form `(cljd.spec.alpha/conformer cljd.spec.alpha/kvs->map)`
+  emitted by `keys*` resolves to a real fn."
+  [xs]
+  (into {}
+        (map (fn [m]
+               [(:cljd.spec.alpha/k m)
+                (:cljd.spec.alpha/v m)]))
+        xs))
+
+(defn- map->kvs [m]
+  (map (fn [[k v]]
+         {:cljd.spec.alpha/k k
+          :cljd.spec.alpha/v v})
+       m))
+
+(defonce ^:private kvs->map-spec-registration
+  (impl/def-impl :cljd.spec.alpha/kvs->map
+                 '(cljd.spec.alpha/conformer cljd.spec.alpha/kvs->map)
+                 (impl/spec-impl
+                  '(cljd.spec.alpha/conformer cljd.spec.alpha/kvs->map)
+                  kvs->map
+                  nil
+                  true
+                  map->kvs)))
+
+(defn- ensure-internal-specs! []
+  (when (nil? kvs->map-spec-registration)
+    nil)
+  nil)
+
+(defonce ^:private ^:macro-support speced-vars-ref (atom #{}))
+
+(defn- ^:macro-support collectionize [x]
+  (if (symbol? x) (list x) x))
+
+(defn ^:skip-wiki ^:macro-support speced-vars
+  "Returns symbols that have been registered with s/def or s/fdef in
+  compiled code. In ClojureDart this is populated by macros so
+  cljd.spec.test.alpha can discover instrumentable vars."
+  ([] @speced-vars-ref)
+  ([ns-sym-or-syms]
+   (let [nses (set (collectionize ns-sym-or-syms))]
+     (into #{}
+           (filter #(when-let [ns-name (namespace %)]
+                      (contains? nses (symbol ns-name))))
+           @speced-vars-ref))))
+
+(defn- ^:macro-support remember-speced-var! [sym fdef-ns]
+  (swap! speced-vars-ref conj (vary-meta sym assoc :fdef-ns fdef-ns))
+  sym)
+
+(defn- ^:macro-support qualify-symbol [env sym]
+  (if (namespace sym)
+    sym
+    (if-let [current-ns (get-in env [:nses :current-ns])]
+      (symbol (str current-ns) (name sym))
+      sym)))
+
+(defn- ^:macro-support resolve-form-symbol [env sym]
+  (let [sym-ns (namespace sym)
+        nses (:nses env)
+        current-ns-sym (:current-ns nses)
+        current-ns (nses current-ns-sym)]
+    (cond
+      (clojure.core/and sym-ns (not= sym-ns (str current-ns-sym)))
+      (let [lib (get-in current-ns [:clj-aliases sym-ns])
+            target-ns (get-in nses [:libs lib :ns])]
+        (if target-ns
+          (symbol (str target-ns) (name sym))
+          sym))
+
+      sym-ns
+      sym
+
+      (env sym)
+      sym
+
+      :else
+      (clojure.core/or (get-in current-ns [:mappings sym])
+          (when (contains? current-ns sym)
+            (symbol (str current-ns-sym) (name sym)))
+          sym))))
+
+(defn- ^:macro-support qualified-form [env form]
+  (cond
+    (symbol? form)
+    (resolve-form-symbol env form)
+
+    (seq? form)
+    (let [op (first form)]
+      (if (#{'quote 'fn 'fn* 'cljd.core/fn 'cljd.core/fn*} op)
+        form
+        (apply list (map #(qualified-form env %) form))))
+
+    (vector? form)
+    (vec (map #(qualified-form env %) form))
+
+    (map? form)
+    (into {} (map (fn [[k v]]
+                    [(qualified-form env k) (qualified-form env v)])
+                  form))
+
+    (set? form)
+    (set (map #(qualified-form env %) form))
+
+    :else
+    form))
+
+(defn- ^:macro-support qualified-forms [env forms]
+  (mapv #(qualified-form env %) forms))
+
+(defn- ^:macro-support qualified-opts [env opts]
+  (mapv #(qualified-form env %) opts))
+
+(defn- ^:macro-support def-form [env k spec-form]
+  (let [current-ns (get-in env [:nses :current-ns])
+        k (if (symbol? k)
+            (remember-speced-var! (qualify-symbol env k) current-ns)
+            k)]
+    `(impl/def-impl '~k '~(qualified-form env spec-form) ~spec-form)))
+
+(defn- ^:macro-support def-call-form [env k spec-form]
+  (let [current-ns (get-in env [:nses :current-ns])
+        sym? (symbol? k)
+        k (if sym?
+            (remember-speced-var! (qualify-symbol env k) current-ns)
+            k)]
+    (if sym?
+      `(do
+         (swap! speced-vars-ref conj '~k)
+         (impl/def-impl '~k '~(qualified-form env spec-form) ~spec-form))
+      `(impl/def-impl '~k '~(qualified-form env spec-form) ~spec-form))))
+
+;; Form-preserving macros.
+
+(defmacro ^:skip-wiki def-spec
+  "ClojureDart-only synonym for `s/def`. Note: top-level (s/def-spec ...)
+  calls do not auto-initialize at module load on Dart — call from a
+  function body (e.g. main) until cljd grows eager top-level init."
+  [k spec-form]
+  (def-form &env k spec-form))
+
+(defmacro ^:skip-wiki and-spec
+  "ClojureDart-only synonym for `s/and`."
+  [& pred-forms]
+  `(impl/and-spec-impl '~(qualified-forms &env pred-forms) ~(vec pred-forms) nil))
+
+(defmacro ^:skip-wiki or-spec
+  "ClojureDart-only synonym for `s/or`."
+  [& key-pred-forms]
+  (let [pairs (partition 2 key-pred-forms)
+        ks (mapv first pairs)
+        preds (mapv second pairs)
+        forms (qualified-forms &env preds)]
+    (clojure.core/assert (clojure.core/and (even? (count key-pred-forms))
+                                           (every? keyword? ks))
+                         "or-spec expects k1 p1 k2 p2..., where ks are keywords")
+    `(impl/or-spec-impl ~ks '~forms ~preds nil)))
+
+(defmacro ^:skip-wiki keys-spec
+  "ClojureDart-only synonym for `s/keys`."
+  [& opts]
+  (let [gfn (:gen (apply hash-map opts))]
+    `(impl/map-spec-impl (impl/keys-args '~opts ~gfn))))
+
+(defmacro keys
+  "Creates and returns a map-validating spec for :req/:opt/:req-un/:opt-un."
+  [& opts]
+  (let [gfn (:gen (apply hash-map opts))]
+    `(impl/map-spec-impl (impl/keys-args '~opts ~gfn))))
+
+(defmacro spec
+  "Takes a single predicate form and returns a spec. Supports
+  `:gen generator-fn`."
+  ([form]
+   `(impl/spec-impl '~(qualified-form &env form) ~form nil nil))
+  ([form gen-key gen-fn]
+   (assert (= :gen gen-key) "spec only supports :gen")
+   `(impl/spec-impl '~(qualified-form &env form) ~form ~gen-fn nil)))
+
+(defmacro conformer
+  "Takes a conforming function, and optionally an unformer, and returns
+  a spec that treats :cljd.spec.alpha/invalid as failure."
+  ([f]
+   `(impl/spec-impl '~(list 'cljd.spec.alpha/conformer (qualified-form &env f)) ~f nil true))
+  ([f unf]
+   `(impl/spec-impl '~(list 'cljd.spec.alpha/conformer
+                            (qualified-form &env f)
+                            (qualified-form &env unf))
+                    ~f nil true ~unf)))
+
+(declare ^:macro-support resolve-def-info)
+
+(defn- ^:macro-support resolve-def-info
+  "Looks up a (possibly qualified) symbol's def info in the analyzer
+  state attached to env. Returns the info map or nil."
+  [env sym]
+  (let [nses (:nses env)
+        current-ns-sym (:current-ns nses)
+        current-ns (nses current-ns-sym)
+        mappings (:mappings current-ns)]
+    (when-not (env sym)
+      (clojure.core/or (current-ns sym)
+          (if-some [v (mappings sym)]
+            (resolve-def-info env v)
+            (let [sym-ns (namespace sym)]
+              (some-> sym-ns symbol nses (get (symbol (name sym))))))))))
+
+(defmacro multi-spec
+  "Takes the name of a spec/predicate-returning multimethod and a
+  tag-restoring keyword or fn."
+  [mm retag]
+  (let [form (if (symbol? mm) (qualify-symbol &env mm) mm)]
+    `(impl/multi-spec-impl '~form ~mm ~retag '~retag nil)))
+
+(defmacro merge
+  "Takes map-validating specs and returns a spec that merges their
+  conformed maps."
+  [& pred-forms]
+  `(impl/merge-spec-impl '~(qualified-forms &env pred-forms) ~(vec pred-forms) nil))
+
+(defn int-in-range?
+  "Return true if start <= val, val < end and val is an integer."
+  [start end val]
+  (impl/int-in-range? start end val))
+
+(defmacro int-in
+  "Returns a spec for integers in the range start <= x < end."
+  [start end]
+  `(impl/spec-impl (list 'cljd.spec.alpha/int-in ~start ~end)
+                   (fn [x#] (impl/int-in-range? ~start ~end x#))
+                   (fn [] (gen/large-integer* {:min ~start :max (dec ~end)}))
+                   nil))
+
+(defn inst-in-range?
+  "Return true if inst at or after start and before end."
+  [start end inst]
+  (impl/inst-in-range? start end inst))
+
+(defmacro inst-in
+  "Returns a spec for instants in the range start <= x < end."
+  [start end]
+  `(impl/spec-impl (list 'cljd.spec.alpha/inst-in ~start ~end)
+                   (fn [x#] (impl/inst-in-range? ~start ~end x#))
+                   (fn []
+                     (gen/fmap #(DateTime/fromMillisecondsSinceEpoch %)
+                               (gen/large-integer*
+                                {:min (.-millisecondsSinceEpoch ^DateTime ~start)
+                                 :max (dec (.-millisecondsSinceEpoch ^DateTime ~end))})))
+                   nil))
+
+(defmacro double-in
+  "Returns a spec for doubles constrained by :min/:max and
+  :infinite?/:NaN? options."
+  [& opts]
+  `(let [opts# (hash-map ~@opts)]
+     (impl/spec-impl (cons 'cljd.spec.alpha/double-in '~opts)
+                     (fn [x#] (impl/double-in-range? opts# x#))
+                     (fn [] (gen/double* opts#))
+                     nil)))
+
+(defmacro *
+  "Returns a regex op that matches zero or more values matching pred."
+  [pred-form]
+  `(impl/rep-impl '~(qualified-form &env pred-form) ~pred-form))
+
+(defmacro +
+  "Returns a regex op that matches one or more values matching pred."
+  [pred-form]
+  `(impl/rep+impl '~(qualified-form &env pred-form) ~pred-form))
+
+(defmacro ?
+  "Returns a regex op that matches zero or one value matching pred."
+  [pred-form]
+  `(impl/maybe-impl ~pred-form '~(qualified-form &env pred-form)))
+
+(defmacro alt
+  "Regex alternation over key/predicate pairs."
+  [& key-pred-forms]
+  (let [pairs (partition 2 key-pred-forms)
+        ks (mapv first pairs)
+        preds (mapv second pairs)
+        forms (qualified-forms &env preds)]
+    (clojure.core/assert (clojure.core/and (even? (count key-pred-forms))
+                                           (every? keyword? ks))
+                         "alt expects k1 p1 k2 p2..., where ks are keywords")
+    `(impl/alt-impl ~ks ~preds '~forms)))
+
+(defmacro cat
+  "Regex concatenation over key/predicate pairs."
+  [& key-pred-forms]
+  (let [pairs (partition 2 key-pred-forms)
+        ks (mapv first pairs)
+        preds (mapv second pairs)
+        forms (qualified-forms &env preds)]
+    (clojure.core/assert (clojure.core/and (even? (count key-pred-forms))
+                                           (every? keyword? ks))
+                         "cat expects k1 p1 k2 p2..., where ks are keywords")
+    `(impl/cat-impl ~ks ~preds '~forms)))
+
+(defmacro &
+  "Applies additional predicates to a regex op's conformed value."
+  [re & preds]
+  `(impl/amp-impl ~re '~(qualified-form &env re)
+                  ~(vec preds) '~(qualified-forms &env preds)))
+
+(defmacro fspec
+  "Creates a function spec."
+  [& specs]
+  (let [m (apply hash-map specs)
+        args (:args m)
+        ret (if (contains? m :ret) (:ret m) 'any?)
+        fnspec (:fn m)
+        gen (:gen m)]
+    `(impl/fspec-impl ~(when args `(spec ~args)) '~args
+                       (spec ~ret) '~ret
+                       ~(when fnspec `(spec ~fnspec)) '~fnspec
+                       ~gen)))
+
+(defmacro fdef
+  "Registers an fspec under a function symbol. If a defn for fn-sym
+  has already been compiled in the current namespace, fdef also
+  re-emits it as ^:cljd.spec.alpha/redef so
+  cljd.spec.test.alpha/instrument can install a checking wrapper
+  without the user having to mark the defn explicitly. When the def
+  is (or becomes) ^:cljd.spec.alpha/redef and is lexically reachable
+  from the fdef call site, fdef also registers a getter/setter pair in
+  the runtime registry so instrument can dispatch by symbol —
+  including for runtime-bound collections."
+  [fn-sym & specs]
+  (let [fn-sym (if (symbol? fn-sym) (qualify-symbol &env fn-sym) fn-sym)
+        form (cons 'cljd.spec.alpha/fspec specs)
+        info (when (symbol? fn-sym) (resolve-def-info &env fn-sym))
+        current-ns-sym (get-in &env [:nses :current-ns])
+        _ (when (symbol? fn-sym)
+            (remember-speced-var! fn-sym current-ns-sym))
+        same-ns? (clojure.core/and current-ns-sym
+                                    (= (namespace fn-sym) (str current-ns-sym)))
+        ;; Only re-emit when the def is in the same compilation unit
+        ;; and is not already a ^:cljd.spec.alpha/redef def.
+        source-expr (when (clojure.core/and same-ns? info
+                                            (not (:cljd.spec.alpha/redef? info)))
+                      (:source-expr info))
+        ;; A def is redef-able after this expansion if we're about to
+        ;; promote it (source-expr is set) or if it was already redef.
+        will-be-redef? (clojure.core/or source-expr
+                                        (:cljd.spec.alpha/redef? info))
+        register-setter (when will-be-redef?
+                          `(impl/register-redef-setter!
+                             '~fn-sym
+                             (fn [] ~fn-sym)
+                             (fn [v#] (set! ~fn-sym v#))))
+        register-spec `(do
+                         (swap! speced-vars-ref conj '~fn-sym)
+                         (impl/def-impl '~fn-sym '~form (fspec ~@specs)))]
+    (if source-expr
+      `(do
+         (def ~(with-meta (symbol (name fn-sym))
+                 {:cljd.spec.alpha/redef true})
+           ~source-expr)
+         ~register-setter
+         ~register-spec)
+      (if register-setter
+        `(do ~register-setter ~register-spec)
+        register-spec))))
+
+(defmacro keys*
+  "Regex op that consumes key/value pairs, builds a map, and conforms
+  it with a corresponding keys spec."
+  [& kspecs]
+  `(let [mspec# (impl/map-spec-impl (impl/keys-args '~kspecs nil))]
+     (impl/amp-impl
+      (impl/rep-impl
+       '(cljd.spec.alpha/cat :cljd.spec.alpha/k cljd.core/keyword?
+                             :cljd.spec.alpha/v cljd.core/any?)
+       (impl/cat-impl [:cljd.spec.alpha/k :cljd.spec.alpha/v]
+                      [keyword? any?]
+                      '[cljd.core/keyword? cljd.core/any?]))
+      '(cljd.spec.alpha/* (cljd.spec.alpha/cat
+                           :cljd.spec.alpha/k cljd.core/keyword?
+                           :cljd.spec.alpha/v cljd.core/any?))
+      [(impl/spec-impl
+        '(cljd.spec.alpha/conformer cljd.spec.alpha/kvs->map)
+        cljd.spec.alpha/kvs->map
+        nil
+        true
+        (fn [m#]
+          (map (fn [[k# v#]]
+                 {:cljd.spec.alpha/k k#
+                  :cljd.spec.alpha/v v#})
+               m#)))
+       mspec#]
+      ['(cljd.spec.alpha/conformer cljd.spec.alpha/kvs->map)
+       (impl/form mspec#)])))
+
+(defmacro assert
+  "Returns x when spec assertions are disabled or x conforms to spec;
+  otherwise throws an explain-backed exception. Expansion is elided
+  entirely when cljd.spec.alpha/*compile-asserts* is false at
+  macro-expansion time."
+  [spec x]
+  (if *compile-asserts*
+    `(if (impl/check-asserts?)
+       (assert* ~spec ~x)
+       ~x)
+    x))
+
+(defmacro exercise-fn
+  "Exercises the fn named by sym by applying it to generated samples
+  from its :args spec. Returns [args ret] tuples."
+  ([sym]
+   `(exercise-fn ~sym 10))
+  ([sym n]
+   `(exercise-fn ~sym ~n nil))
+  ([sym n fspec]
+   (let [raw-sym (if (clojure.core/and (seq? sym) (= 'quote (first sym)))
+                   (second sym)
+                   sym)
+         qualified-sym (if (symbol? raw-sym)
+                         (qualify-symbol &env raw-sym)
+                         raw-sym)]
+     (if (symbol? raw-sym)
+       `(let [fspec# ~(if fspec fspec `(impl/get-spec '~qualified-sym))]
+          (impl/exercise-fn '~qualified-sym ~n fspec#))
+       (let [f-sym (gensym "f")]
+         `(let [~f-sym ~sym
+                fspec# ~(if fspec
+                          fspec
+                          `(when (symbol? ~f-sym) (impl/get-spec ~f-sym)))]
+            (impl/exercise-fn ~f-sym ~n fspec#)))))))
+
+(defn- runtime-form [pred]
+  (cond
+    (ident? pred) pred
+    (impl/spec? pred) (impl/form pred)
+    :else :cljd.spec.alpha/unknown))
+
+(defn nonconforming [spec]
+  (impl/nonconforming-impl (runtime-form spec) spec))
+
+(defn- and* [& preds]
+  (impl/and-spec-impl (mapv runtime-form preds) (vec preds) nil))
+
+(defn- or* [& key-pred-forms]
+  (let [pairs (partition 2 key-pred-forms)
+        ks (mapv first pairs)
+        preds (mapv second pairs)]
+    (clojure.core/assert (clojure.core/and (even? (count key-pred-forms))
+                                           (every? keyword? ks))
+                         "or expects k1 p1 k2 p2..., where ks are keywords")
+    (impl/or-spec-impl ks (mapv runtime-form preds) preds nil)))
+
+(defn- nilable* [pred]
+  (impl/nilable-impl (runtime-form pred) pred nil))
+
+(defn- tuple* [& preds]
+  (clojure.core/assert (not (empty? preds)) "tuple expects at least one predicate")
+  (impl/tuple-impl (mapv runtime-form preds) (vec preds)))
+
+(defn- opts-map [opts]
+  (apply hash-map opts))
+
+(defn- coll-opts [op pred opts]
+  (let [m (opts-map opts)
+        form (runtime-form pred)]
+    (assoc m
+      :opts opts
+      :kind-form (when (:kind m) (runtime-form (:kind m)))
+      :describe (cons op (cons form opts)))))
+
+(defn- every* [pred & opts]
+  (let [m (coll-opts 'cljd.spec.alpha/every pred opts)]
+    (impl/every-impl (runtime-form pred) pred m (:gen m))))
+
+(defn- coll-of* [pred & opts]
+  (let [m (assoc (coll-opts 'cljd.spec.alpha/coll-of pred opts)
+            :conform-all true)]
+    (impl/every-impl (runtime-form pred) pred m (:gen m))))
+
+(defn- every-kv* [kpred vpred & opts]
+  (let [entry-spec (tuple* kpred vpred)
+        entry-form (list 'cljd.spec.alpha/tuple (runtime-form kpred) (runtime-form vpred))
+        m (assoc (opts-map opts)
+            :opts opts
+            :kind (clojure.core/or (:kind (opts-map opts)) map?)
+            :kind-form (clojure.core/or (when (:kind (opts-map opts)) (runtime-form (:kind (opts-map opts))))
+                                        'cljd.core/map?)
+            :kfn (fn [_ e] (nth e 0))
+            :describe (cons 'cljd.spec.alpha/every-kv
+                            (cons (runtime-form kpred)
+                            (cons (runtime-form vpred) opts))))]
+    (impl/every-impl entry-form entry-spec m (:gen m))))
+
+(defn- map-of* [kpred vpred & opts]
+  (let [entry-spec (tuple* kpred vpred)
+        entry-form (list 'cljd.spec.alpha/tuple (runtime-form kpred) (runtime-form vpred))
+        m (assoc (opts-map opts)
+            :opts opts
+            :kind (clojure.core/or (:kind (opts-map opts)) map?)
+            :kind-form (clojure.core/or (when (:kind (opts-map opts)) (runtime-form (:kind (opts-map opts))))
+                                        'cljd.core/map?)
+            :kfn (fn [_ e] (nth e 0))
+            :conform-all true
+            :describe (cons 'cljd.spec.alpha/map-of
+                            (cons (runtime-form kpred)
+                            (cons (runtime-form vpred) opts))))]
+    (impl/every-impl entry-form entry-spec m (:gen m))))
+
+(defn- ^:macro-support coll-opts-form [env op pred-form opts]
+  (let [m (apply hash-map opts)
+        form (qualified-form env pred-form)
+        qopts (qualified-opts env opts)
+        kind-form (when (:kind m) (qualified-form env (:kind m)))]
+    `(assoc (hash-map ~@opts)
+       :opts '~qopts
+       :kind-form '~kind-form
+       :describe '~(cons op (cons form qopts)))))
+
+(defn- ^:macro-support map-coll-opts-form [env op kpred-form vpred-form opts conform-all]
+  (let [m (apply hash-map opts)
+        kform (qualified-form env kpred-form)
+        vform (qualified-form env vpred-form)
+        qopts (qualified-opts env opts)
+        kind-form (clojure.core/or (when (:kind m) (qualified-form env (:kind m)))
+                                   'cljd.core/map?)]
+    `(let [m# (hash-map ~@opts)]
+       (assoc m#
+         :opts '~qopts
+         :kind (clojure.core/or (:kind m#) map?)
+         :kind-form '~kind-form
+         :kfn (fn [_# e#] (nth e# 0))
+         ~@(when conform-all [:conform-all true])
+         :describe '~(cons op (cons kform (cons vform qopts)))))))
+
+(defmacro and
+  "And-combinator."
+  [& pred-forms]
+  `(impl/and-spec-impl '~(qualified-forms &env pred-forms) ~(vec pred-forms) nil))
+
+(defmacro or
+  "Or-combinator with key/pred pairs."
+  [& key-pred-forms]
+  (let [pairs (partition 2 key-pred-forms)
+        ks (mapv first pairs)
+        preds (mapv second pairs)
+        forms (qualified-forms &env preds)]
+    (clojure.core/assert (clojure.core/and (even? (count key-pred-forms))
+                                           (every? keyword? ks))
+                         "or expects k1 p1 k2 p2..., where ks are keywords")
+    `(impl/or-spec-impl ~ks '~forms ~preds nil)))
+
+(defmacro nilable
+  "Returns a spec that allows nil in addition to pred."
+  [pred-form]
+  `(impl/nilable-impl '~(qualified-form &env pred-form) ~pred-form nil))
+
+(defmacro tuple
+  "Returns a spec for a vector whose elements conform to the
+  corresponding predicates."
+  [& pred-forms]
+  (clojure.core/assert (not (empty? pred-forms)) "tuple expects at least one predicate")
+  `(impl/tuple-impl '~(qualified-forms &env pred-forms) ~(vec pred-forms)))
+
+(defmacro every
+  "Returns a collection spec that samples elements while conforming."
+  [pred-form & opts]
+  `(let [opts# ~(coll-opts-form &env 'cljd.spec.alpha/every pred-form opts)]
+     (impl/every-impl '~(qualified-form &env pred-form) ~pred-form opts# (:gen opts#))))
+
+(defmacro coll-of
+  "Returns a collection spec that conforms all elements."
+  [pred-form & opts]
+  `(let [opts# ~(coll-opts-form &env 'cljd.spec.alpha/coll-of pred-form opts)]
+     (impl/every-impl '~(qualified-form &env pred-form)
+                      ~pred-form
+                      (assoc opts# :conform-all true)
+                      (:gen opts#))))
+
+(defmacro every-kv
+  "Returns a map entry spec that samples key/value entries while conforming."
+  [kpred-form vpred-form & opts]
+  (let [entry-form (list 'cljd.spec.alpha/tuple
+                         (qualified-form &env kpred-form)
+                         (qualified-form &env vpred-form))]
+    `(let [entry-spec# (impl/tuple-impl '~(vec (rest entry-form))
+                                        [~kpred-form ~vpred-form])
+           opts# ~(map-coll-opts-form &env 'cljd.spec.alpha/every-kv
+                                       kpred-form vpred-form opts false)]
+       (impl/every-impl '~entry-form entry-spec# opts# (:gen opts#)))))
+
+(defmacro map-of
+  "Returns a map spec that conforms keys and values."
+  [kpred-form vpred-form & opts]
+  (let [entry-form (list 'cljd.spec.alpha/tuple
+                         (qualified-form &env kpred-form)
+                         (qualified-form &env vpred-form))]
+    `(let [entry-spec# (impl/tuple-impl '~(vec (rest entry-form))
+                                        [~kpred-form ~vpred-form])
+           opts# ~(map-coll-opts-form &env 'cljd.spec.alpha/map-of
+                                       kpred-form vpred-form opts true)]
+       (impl/every-impl '~entry-form entry-spec# opts# (:gen opts#)))))
+
+(defn ^:skip-wiki def* [k spec-form]
+  (impl/def-impl k (runtime-form spec-form) spec-form))
+
+#?(:cljd/clj-host
+   (defn ^:macro-support def-macro
+     [&form &env k spec-form]
+     (def-call-form &env k spec-form)))
+
+#?(:cljd/clj-host
+   (def
+    ^{:macro true
+      :doc "Given a namespace-qualified keyword or resolvable symbol k, and a
+  spec, spec-name, predicate or regex-op, registers k in the spec
+  registry. Symbol keys are namespace-qualified and tracked for
+  speced-vars discovery."
+      :arglists '([k spec-form])}
+     def
+     def-macro)
+   :cljd
+   (def def
+     "Runtime value for `cljd.spec.alpha/def`; call sites are expanded
+     by the host macro above so symbol keys can be qualified and tracked."
+     def*))
