@@ -249,11 +249,12 @@
                               :whole-form destructuring-form}))))]
     (-> #{} transient (locals destructuring-form) persistent!)))
 
-(defn ^:macro-support value-sym [ensured-binding]
+(defn ^:macro-support value-sym [binding]
   (cond
-    (map? ensured-binding) (:as ensured-binding)
-    (vector? ensured-binding) (peek ensured-binding)
-    (simple-symbol? ensured-binding) ensured-binding))
+    (map? binding) (:as binding)
+    (vector? binding) (when (= :as (nth binding (- (count binding) 2) nil))
+                                (peek binding))
+    (simple-symbol? binding) binding))
 
 (defn ^:macro-support ensure-value-sym [binding]
   (cond
@@ -639,9 +640,9 @@
        :name-hint "get"
        :no-meta true
        (~'build [_# ~closest-context]
-         (let [~@(mapcat (fn [[sym [type-or-kw & args]]]
-                            [sym (get-inherited-type-expr closest-context type-or-kw args)])
-                   inherited-widgets)]
+        (let [~@(mapcat (fn [[sym [type-or-kw & args]]]
+                          [sym (get-inherited-type-expr closest-context type-or-kw args)])
+                  inherited-widgets)]
           (->>
             (-widget-cont ~(assoc env :key nil :closest-ctx true) ~@forms)
             ~@(when (seq inherited-bindings)
@@ -650,75 +651,97 @@
                                         ^InheritedBindings (.-widget)
                                         .-bindings)
                         ~@(mapcat
-                             (fn [[sym [type-or-kw & args]]]
-                               [sym (get-inherited-keyword-expr bindings-sym type-or-kw args)])
-                             inherited-bindings)]
+                            (fn [[sym [type-or-kw & args]]]
+                              [sym (get-inherited-keyword-expr bindings-sym type-or-kw args)])
+                            inherited-bindings)]
                     (.dependOnInheritedElement ~closest-context
                       inherited-elt#
                       .aspect ~(into [] (map (fn [[sym [type-or-kw]]] type-or-kw)) inherited-bindings)))])))))))
 
+(defn ^:macro-support kebab-pascal [s]
+  (str/replace s #"^(.)|(?:-(.))" (fn [[_ a b]] (str/upper-case (or a b)))))
+
+(defn ^:macro-support kebab-camel [s]
+  (str/replace s #"-(.)" (fn [[_ a]] (str/upper-case a))))
+
+(defn ^:macro-support expand-summon-shorthand
+  [env binding expr {:as opts} forms]
+  (let [opts-flat (mapcat identity opts)
+        values (do
+                 (assert (vector? expr)
+                   (str "The :summon shorthand " binding " expects a vector"))
+                 expr)
+        default-ns (namespace binding)
+        expanded-bindings
+        (into []
+          (mapcat
+            (if (re-matches #"of|.+Of|.+-of" (name binding))
+              (let [method (kebab-camel (name binding))]
+                (fn [value]
+                  (assert (or (symbol? value) (and (seq? value) (symbol? (first value))))
+                    (str "The :summon :of shorthand expects symbols or expressions with a symbol in function position, got " value))
+                  (let [[value & args] (cond-> value (symbol? value) list)]
+                    (list* (symbol (name value))
+                      (cons (symbol (or (namespace value) default-ns)
+                              (str (kebab-pascal (name value)) "." method))
+                        args)
+                      opts-flat))))
+              (case (name binding)
+                "keys"
+                (fn [value]
+                  (assert (or (symbol? value) (keyword? value))
+                    (str "The :summon :keys shorthand expects symbols or keywords, got " value))
+                  (list*
+                    (symbol (name value))
+                    (if (keyword? value)
+                      value
+                      (keyword (or (namespace value) default-ns)
+                        (name value)))
+                    opts-flat))
+                (throw (Exception.
+                         (str "Unsupported :summon shorthand: " binding)))))
+            values))]
+    `(-widget-cont ~env :summon ~expanded-bindings ~@forms)))
+
 (defn ^:macro-support expand-summon
   [&env env binding expr {:as opts} forms]
-  (let [accessor (or (:value> opts) (:> opts))
-        as-sym (:as opts)
-        vsym (value-sym binding)
-        bound-locals (destructuring-bound-locals binding)
-        bound-locals (-> []
-                       (cond-> vsym (conj vsym))
-                       (into (disj bound-locals vsym)))
-        [first-bound-local & more-bound-locals] bound-locals
-        [pack-sym :as packing-bindings] (when more-bound-locals
-                                          [`pack# bound-locals])
-        new-val-sym (or pack-sym first-bound-local)
-        state `state#
-        source `source#
-        value `value#
-        next-value `next#
-        bindings-sym `bindings#
-        inherited-elt `inherited-elt#
-        [type-or-kw & args] (if (seq? expr) expr [expr])
-         get-expr (if (keyword? type-or-kw)
-                    (get-inherited-keyword-expr bindings-sym type-or-kw args)
-                    (get-inherited-type-expr nil type-or-kw args))
-        get-expr (if (keyword? type-or-kw)
-                   `(let [~inherited-elt
-                          (#/(.getElementForInheritedWidgetOfExactType InheritedBindings)
-                           ~closest-context)
-                          ~bindings-sym (some-> ~inherited-elt
-                                          ^InheritedBindings (.-widget)
-                                          .-bindings)
-                          ~source ~get-expr]
-                      (.dependOnInheritedElement ~closest-context
-                        ~inherited-elt
-                        .aspect [~type-or-kw])
-                      ~source)
-                    (get-inherited-type-expr closest-context type-or-kw args))]
-    `(reify :extends (widgets/StatefulWidget .key ~(:key env))
-       :no-meta true
-       :name-hint "summon"
-        (~'createState [_#] (SummonState nil nil))
-       cljd.flutter/StateLifecycle
-       (~'-init-state [_# state#])
-       (~'-dispose-state [_# state#])
-       (~'-build [_# state# ctx#]
-         (let [~state ^SummonState state#
-               ~closest-context ctx#
-               ~source ~get-expr
-               ~@(when as-sym [as-sym source])
-               ~value ~(if accessor `(-> ~source ~accessor) source)
-               ~binding ~value
-               ~@packing-bindings
-               ~next-value ~new-val-sym
-               ~changed ]
-           (if (or (identical? (.-latest ~state) ~state)
-                 (not= ~next-value (.-latest ~state)))
-             (let [child# (-widget-cont ~(assoc env :key nil :closest-ctx true)
-                              ~@forms)]
-               (set! (.-latest ~state) ~next-value)
-               (set! (.-child ~state) child#)
-               child#)
-             (.-child ~state))))
-       (~'-update-state [_# state#]))))
+  (if (keyword? binding)
+    (expand-summon-shorthand env binding expr opts forms)
+    (let [accessor (some-> (or (:value> opts) (:> opts)) list)
+          get-expr (if (keyword? expr)
+                     `(get-of ~closest-context ~expr nil)
+                     (let [[type & args] (cond-> expr (symbol? expr) list)]
+                       (assert (symbol? type) (str "static symbol expected but got " type))
+                       (get-inherited-type-expr closest-context type args)))
+          bound-locals (vec (destructuring-bound-locals binding))
+          packing-bindings
+          (case (count bound-locals)
+            1 nil
+            [`pack# bound-locals])]
+      (if-some [val-sym (first (or packing-bindings bound-locals))]
+        `(reify :extends (widgets/StatefulWidget .key ~(:key env))
+           :no-meta true
+           :name-hint "summon"
+           (~'createState [_#] (SummonState nil nil))
+           cljd.flutter/StateLifecycle
+           (~'-init-state [_# state#])
+           (~'-dispose-state [_# state#])
+           (~'-build [_# state# ctx#]
+            (let [^SummonState state# state#
+                  ~closest-context ctx#
+                  ~binding (-> ~get-expr ~@accessor)
+                  ~@packing-bindings
+                  last-val# (.-latest state#)]
+              (if (or (identical? last-val#  state#) ; init sentinel
+                    (not= ~val-sym last-val#))
+                (let [child# (-widget-cont ~(assoc env :key nil :closest-ctx true)
+                               ~@forms)]
+                  (.-latest! state# ~val-sym)
+                  (.-child! state# child#))
+                (.-child state#))))
+           (~'-update-state [_# state#]))
+        ; no local bound in destructuring, just skip
+        `(-widget-cont ~env ~@forms)))))
 
 (deftype Bind [k bindings child]
   :extends (widgets/StatelessWidget .key k)
@@ -1034,14 +1057,28 @@
        is not used you only get trues from the subscription.
        When this option is set then values are produced by evaluating
        (-> subscribable form).
-     :summon [binding rhs & options] -- resolves a class through its `.of` method,
-       a keyword through the nearest :bind, or a form with explicit arguments,
-       on every build. It then binds or destructures the resulting value. The
-       body is evaluated only when the bound value changes; otherwise the
-       previously created child is returned. :as binds the raw RHS value. The
-       only other supported options are :> and :value>, which are equivalent and
-       both transform the RHS value before binding or destructuring. :default,
-       :refresh-on, :dedup and disposal options are not supported.
+   :summon [binding rhs & options] -- resolves a class through its `.of` method,
+     a keyword through the nearest :bind, or a form with explicit arguments,
+     on every build. It then binds or destructures the resulting value. The
+     body is evaluated only when the bound value changes; otherwise the
+     previously created child is returned. :as binds the raw RHS value. The
+     only other supported options are :> and :value>, which are equivalent and
+     both transform the RHS value before binding or destructuring. :default,
+     :refresh-on, :dedup and disposal options are not supported.
+     When the binding position is a keyword, :of and :keys (and namespaced
+     variants of these keys) provide shorthand bindings.
+     :of [m/checkbox-theme] and ::m/of [checkbox-theme] both expand to
+     [checkbox-theme m/CheckboxTheme] -- mind the double colon for safer
+     alias resolution.
+     :keys [data/user] and :data/keys [user] expand to [user :data/user], while
+     :keys [::data/user] and ::data/keys [user] expand to [user :data/user].
+     When some options (eg :value>) are provided they apply to all expanded
+     bindings.
+     Variant of :of are supported (any keyword ending in \"Of\" or \"-of\")
+     ::m/maybe-of [theme] expands to [theme m/Theme.maybeOf].
+     Arguments can be passed:
+     [::m/maybe-of [(navigator .rootNavigator true)]] expands to
+     [navigator (m/Navigator.maybeOf .rootNavigator true)].
    :bg-watcher ([binding expr & options] body) -- creates a background watcher on
      expr (which must be subscribable, see :watch). Same options as :watch are
      supported.
@@ -1170,11 +1207,11 @@
         `(-widget-cont ~env ~@forms))
        :summon
        (if-some [[binding expr & more] (seq v)]
-        (let [[opts & more] (collect-options more
+         (let [[opts & more] (collect-options more
                                #(or (qualified-keyword? %)
                                   (#{:> :value>} %)))]
-          (expand-summon &env env binding expr opts (list* :summon more forms)))
-        `(-widget-cont ~env ~@forms))
+           (expand-summon &env env binding expr opts (list* :summon more forms)))
+         `(-widget-cont ~env ~@forms))
       :managed
       (if-some [[binding expr & more] (seq v)]
         (let [[opts & more] (collect-options more  #{:dispose :refresh-on :update})]
