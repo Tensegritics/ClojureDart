@@ -1158,25 +1158,63 @@
   (let [digest (.digest (java.security.MessageDigest/getInstance "SHA-256") (.getBytes string "UTF-8"))]
     (apply str (map (partial format "%02x") digest))))
 
-(defn find-pubspec [{:keys [:deps/root paths]}]
+(defn find-pubspec
+  "Returns [pubspec-contents base-dir] for a resolved dep, or nil when it has no
+  pubspec.yaml. `base-dir` is the directory the pubspec's asset/shader paths
+  resolve against (nil for jar deps, whose files live inside the archive)."
+  [{:keys [:deps/root paths]}]
   (if root
     (let [f (java.io.File. root "pubspec.yaml")]
       (when (.exists f)
-        (slurp f)))
+        [(slurp f) root]))
     (some
       (fn [path]
         (let [f (java.io.File. path)]
           (if (.isDirectory f)
-            (let [f (java.io.File. f "pubspec.yaml")]
-              (when (.exists f)
-                (slurp f)))
+            (let [pf (java.io.File. f "pubspec.yaml")]
+              (when (.exists pf)
+                [(slurp pf) path]))
             (with-open [in (-> f io/input-stream java.util.jar.JarInputStream.)]
               (loop []
                 (when-some [e (.getNextJarEntry in)]
                   (if (= "pubspec.yaml" (.getName e))
-                    (slurp in) ; slurp closes `in` but it's ok it's the last action
+                    [(slurp in) nil] ; slurp closes `in` but it's ok it's the last action
                     (recur))))))))
       paths)))
+
+(defn- copy-asset!
+  "Recursively copies a declared Flutter asset (file or directory) into the stub."
+  [^java.io.File src ^java.io.File dst]
+  (cond
+    (.isDirectory src) (run! #(copy-asset! % (java.io.File. dst (.getName ^java.io.File %)))
+                         (.listFiles src))
+    (.isFile src) (do (some-> (.getParentFile dst) .mkdirs)
+                      (io/copy src dst))))
+
+(defn- copy-declared-assets!
+  "Mirrors the `flutter: assets:`/`shaders:`/`fonts:` files a dep's pubspec
+  declares from its source checkout into the `.clojuredart/deps/<sha>` stub, so
+  Flutter — which resolves package assets relative to the pubspec's own directory
+  — can find them. Without this the stub holds only the pubspec and asset/shader
+  lookups fail at runtime (e.g. FragmentProgram.fromAsset)."
+  [parser pubspec ^String base-dir ^java.io.File stub-dir]
+  (when base-dir
+    (let [flutter (get (.load parser pubspec) "flutter")
+          ;; shaders are plain strings; assets are strings or `{path: ...}` maps;
+          ;; fonts nest as `fonts: [{fonts: [{asset: ...}]}]`
+          asset->path #(if (instance? java.util.Map %) (get % "path") %)
+          font-paths (for [family (get flutter "fonts")
+                           font (get family "fonts")]
+                       (get font "asset"))
+          paths (concat (get flutter "shaders")
+                  (map asset->path (get flutter "assets"))
+                  font-paths)]
+      (doseq [path paths
+              :when (string? path)
+              :let [src (java.io.File. base-dir ^String path)
+                    dst (java.io.File. stub-dir ^String path)]
+              :when (and (.exists src) (not (.exists dst)))]
+        (copy-asset! src dst)))))
 
 (defn sync-pubspec! []
   (let [parser (org.yaml.snakeyaml.Yaml.)
@@ -1186,10 +1224,10 @@
                               :when sha]
                           [[name sha] (-> path java.io.File. .exists)]))
         declared-deps (into {}
-                        (for [pubspec (keep find-pubspec (vals (deps/resolve-deps *deps* {})))
+                        (for [[pubspec base-dir] (keep find-pubspec (vals (deps/resolve-deps *deps* {})))
                               :let [{:strs [name]} (.load parser pubspec)
                                     sha (sha256 pubspec)]]
-                          [[name sha] pubspec]))
+                          [[name sha] {:pubspec pubspec :base-dir base-dir}]))
         ; the (filter existing-deps) is to remove "bridge" deps which don't exist on disk
         ; typically when getting an updated pubspec.yaml from scm (git)
         deps-to-remove (keys (transduce (filter existing-deps) dissoc existing-deps (keys declared-deps)))
@@ -1202,10 +1240,11 @@
 
     (when-some [coords (seq (for [[name sha] (keys deps-to-add)]
                               (str name ":{\"path\":\".clojuredart/deps/" sha "\"}")))]
-      (doseq [[[name sha] pubspec] deps-to-add
+      (doseq [[[name sha] {:keys [pubspec base-dir]}] deps-to-add
               :let [f (java.io.File. ".clojuredart/deps" sha)]]
         (.mkdirs f)
-        (spit (java.io.File. f "pubspec.yaml") pubspec))
+        (spit (java.io.File. f "pubspec.yaml") pubspec)
+        (copy-declared-assets! parser pubspec base-dir f))
       (apply exec {:in nil #_#_:out nil} (some-> *deps* :cljd/opts :kind name) "pub" "add" "--directory=."
         coords))))
 
