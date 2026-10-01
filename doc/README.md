@@ -449,6 +449,25 @@ previously created child is returned. `:as` binds the raw RHS value. `:>` and
 destructuring. These are the only supported options; `:default`, `:refresh-on`,
 `:dedup` and resource disposal options are not supported by `:summon`.
 
+When the binding position is a keyword, `:of` and `:keys` provide shorthand
+bindings:
+
+```clj
+:summon [:of [m/checkbox-theme]
+         :keys [data/user]]
+```
+
+is equivalent to:
+
+```clj
+:summon [checkbox-theme m/CheckboxTheme
+         user :data/user]
+```
+
+The namespaced forms `::m/of [checkbox-theme]` and `:data/keys [user]` express
+the same bindings from the other side. Double-colon forms preserve alias
+resolution, for example `:keys [::data/user]` or `::data/keys [user]`.
+
 ### `:context` directive — when Flutter lacks context
 `:context ctx` binds ctx to a `BuildContext` instance.
 
