@@ -1349,20 +1349,36 @@
       (reannotate-as (:annotations (meta form))))))
 
 (defn inline-expand-1 [env form]
-  (->
-    (if-let [[f & args] (and (seq? form) (symbol? (first form)) form)]
-      (let [f-name (name f)
-            [f-type f-v] (resolve-symbol f env)
-            {:keys [inline-arities inline tag]} (case f-type
-                                                  :def (:meta f-v)
-                                                  nil)]
-        (cond
-          (env f) form
-          (and inline-arities (inline-arities (count args)))
-          (hint-as (apply inline args) tag)
-          :else form))
-      form)
-    (propagate-hints form)))
+  (let [expansion
+        (warp->>
+          (if-not (seq? form) form)
+          (let [[f & args] form])
+          (if-not (symbol? f) form)
+          (if (env f) form)
+          (let [f-name (name f)
+                [f-type f-v] (resolve-symbol f env)
+                {:keys [inline-arities inline inline-pred tag]} (case f-type
+                                                                  :def (:meta f-v)
+                                                                  nil)
+                inline-pred (cond
+                              (nil? inline-arities) inline-pred
+                              inline-pred
+                              (throw (ex-info
+                                       ":inline-arities and :inline-pred are mutually exclusive"
+                                       {:form form}))
+                              ; inline-arities as special case of inline-pred
+                              :else (fn [& args] (inline-arities (count args))))])
+           (if-not inline-pred form)
+           (let [pred-result (apply inline-pred args)])
+           (if-not pred-result form)
+           (if inline (hint-as (apply inline args) tag))
+           (do
+             (when-not (fn? pred-result)
+               (throw (ex-info
+                        ":inline-pred must return nil or a function when :inline is absent"
+                        {:form form :result pred-result}))))
+          (hint-as (apply pred-result args) tag))]
+    (propagate-hints expansion form)))
 
 (defn resolve-static-member [sym]
   (or
@@ -2770,12 +2786,13 @@
     (cond
       *host-eval* ; first def during host pass
       (let [{:keys [host-ns]} (nses the-ns)
-            {:keys [inline-arities inline macro-host-fn bootstrap-def]} msym
-            msym (cond-> msym (or inline-arities macro-host-fn)
-                         (into (binding [*ns* host-ns]
-                                 (eval {:inline inline
-                                        :inline-arities inline-arities
-                                        :macro-host-fn macro-host-fn}))))]
+            {:keys [inline-arities inline inline-pred macro-host-fn bootstrap-def]} msym
+            msym (cond-> msym (or inline-arities inline-pred macro-host-fn)
+                          (into (binding [*ns* host-ns]
+                                  (eval {:inline inline
+                                         :inline-arities inline-arities
+                                         :inline-pred inline-pred
+                                         :macro-host-fn macro-host-fn}))))]
         (when bootstrap-def
           (binding [*ns* host-ns]
             (when-not (identical? (-> sym resolve meta :ns) *ns*)
@@ -2784,7 +2801,7 @@
         (assoc-in nses [the-ns sym] (assoc m :meta (merge msym (:meta m)))))
       *hosted* ; second pass
       (let [old-meta (select-keys (get-in nses [the-ns sym :meta])
-                       [:inline :inline-arities :macro-host-fn :bootstrap-def])]
+                        [:inline :inline-arities :inline-pred :macro-host-fn :bootstrap-def])]
         (assoc-in nses [the-ns sym]
           (assoc m :meta (merge msym (:meta m) old-meta))))
       :else

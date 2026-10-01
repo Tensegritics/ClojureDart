@@ -1532,8 +1532,26 @@
 
 (defn get-in
   "Returns the value in a nested associative structure,
-  where ks is a sequence of keys. Returns nil if the key
-  is not present, or the not-found value if supplied."
+   where ks is a sequence of keys. Returns nil if the key
+   is not present, or the not-found value if supplied."
+  {:inline-pred
+   (fn
+     ;; BEWARE all the bindings are there to preserve evaluation order
+     ;; maybe we should consider supporting some metadata on the vector to relax evaluation order
+     ([m ks]
+      (when (vector? ks)
+        (let [bindings (into [] (mapcat (fn [expr] [(gensym 'get-in-k) expr])) ks)]
+          (fn [_ _]
+            `(let ~bindings (some-> ~m ~@(for [k (take-nth 2 bindings)] `(get ~k))))))))
+     ([m ks not-found]
+      (when (vector? ks)
+        (let [bindings (into [] (mapcat (fn [expr] [(gensym 'k) expr])) ks)
+              ks (into [] (take-nth 2) bindings)]
+          (fn [_ _ _]
+            `(let [~@bindings
+                   not-found# ~not-found
+                   m# (some-> ~m ~@(for [k (pop ks)] `(get ~k)))]
+               (get m# ~(peek ks) not-found#)))))))}
   ([m ks]
    (reduce get m ks))
   ([m ks not-found]

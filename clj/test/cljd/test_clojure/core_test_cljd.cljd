@@ -129,6 +129,27 @@
           #dart ^Symbol [(dart:core/Symbol. "one") (dart:core/Symbol. (let [a "a" b "b"] (str a b)))]
           #/(List Symbol)))))
 
+(defn inline-pred-only-test
+  {:inline-pred
+   (fn [x]
+     (when (number? x)
+       (fn [x] `(+ ~x 1))))}
+  [x]
+  (throw (Exception. "inline-pred fallback")))
+
+(defn inline-pred-gated-test
+  {:inline (fn [x] `(+ ~x 1))
+   :inline-pred (fn [x] (number? x))}
+  [x]
+  (throw (Exception. "inline-pred fallback")))
+
+(deftest testing-inline-pred
+  (is (= 42 (inline-pred-only-test 41)))
+  (is (= 42 (inline-pred-gated-test 41)))
+  (let [x 41]
+    (is (thrown? Exception (inline-pred-only-test x)))
+    (is (thrown? Exception (inline-pred-gated-test x)))))
+
 (def baptiste {:first-name "Baptiste" :last-name "Dupuch"})
 
 (deftest testing-keys-and-vals
