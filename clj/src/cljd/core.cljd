@@ -257,6 +257,9 @@
   [name & decls]
   (list* `clojure.core/defn (with-meta name (assoc (meta name) :private true)) decls))
 
+(defn- ^:macro-support -has-stable-hash? [x]
+  (or (nil? x) (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (string? x) (boolean? x) (char? x) (keyword? x)))
+
 (defn ^:macro-support destructure [bindings]
   (let [bents (partition 2 bindings)
         pb (fn pb [bvec b v]
@@ -1320,8 +1323,22 @@
   [x] (satisfies? IAssociative x))
 
 (defn assoc
-  {:inline (call-to `-assoc)
-   :inline-arities #{3}}
+  {:inline-pred
+   (fn [m & kvs]
+     (let [n (count kvs)]
+       (cond
+         (= 2 n) (call-to `-assoc)
+
+         (and (even? n) (every? -has-stable-hash? (take-nth 2 kvs)))
+         (fn [m & kvs]
+           ;; once again a lot of leg work to preserve evaluation order
+           (let [ks (take-nth 2 kvs)
+                 bindings (into []
+                            (comp (take-nth 2) (mapcat (fn [vexpr] [(gensym 'assoc-v) vexpr])))
+                            (next kvs))
+                 lit-m (zipmap ks (take-nth 2 bindings))]
+             `(let [m# ~m ~@bindings]
+                (-conj m# ~lit-m)))))))}
   ([map key val] (-assoc map key val))
   ([map key val & kvs]
    (let [ret (-assoc map key val)]
@@ -5920,9 +5937,6 @@
 
 (def ^PersistentHashSet -EMPTY-SET
   (PersistentHashSet. nil {} -1))
-
-(defn- ^:macro-support -has-stable-hash? [x]
-  (or (nil? x) (and (integer? x) (<= -0x100000000 x 0xFFFFFFFF)) (string? x) (boolean? x) (char? x) (keyword? x)))
 
 (defmacro -set-lit [quoted s]
   (let [meta-expr (cond->> (meta s) quoted (list 'quote))]
