@@ -264,44 +264,193 @@
   [pb bvec b v]
   (let [gmap (vary-meta (or (:as b) (gensym "map__"))
                merge (meta b))
+        gtemp (gensym "temp__")
         defaults (:or b)
-        obj-mode
-        (some (fn [[k v]]
-                (or (and (keyword? k) (= "flds" (name k)))
-                  (and (simple-symbol? v)
-                    (.startsWith (name v) ".-")))) b)]
-    (loop [ret (cond-> (-> bvec (conj gmap) (conj v))
-                 (not obj-mode)
-                 (->
-                   (conj gmap)
-                   (conj `(if (seq? ~gmap)
-                            (if (next ~gmap)
-                              (seq-to-map-for-destructuring ~gmap)
-                              (if (seq ~gmap)
-                                (first ~gmap)
-                                {}))
-                            ~gmap))))
-           bes (let [transforms
-                     (reduce
-                       (fn [transforms mk]
-                         (if (keyword? mk)
-                           (let [mkns (namespace mk)
-                                 mkn (name mk)]
-                             (cond (= mkn "keys") (assoc transforms mk #(keyword (or mkns (namespace %)) (name %)))
-                                   (= mkn "syms") (assoc transforms mk #(list `quote (symbol (or mkns (namespace %)) (name %))))
-                                   (= mkn "strs") (assoc transforms mk str)
-                                   (= mkn "flds") (assoc transforms mk #(symbol (str ".-" (name %))))
-                                   :else transforms))
-                           transforms))
-                       {}
-                       (keys b))]
-                 (reduce
-                   (fn [bes entry]
-                     (reduce #(assoc %1 %2 ((val entry) %2))
-                       (dissoc bes (key entry))
-                       ((key entry) bes)))
-                   (dissoc b :as :or)
-                   transforms))]
+        defaults-as (:defaults b)
+        _ (when (and defaults-as (not defaults))
+            (throw (argument-error "Can't specify :defaults without :or")))
+        b (dissoc b :defaults)
+        gdefaults (when defaults (zipmap (keys defaults) (repeatedly #(gensym "default__"))))
+        select (:select b)
+        all (:all b)
+        excess (:excess b)
+        missing (:missing b)
+        gnotfound (when missing (gensym "notfound__"))
+        gnotfound? (when missing (gensym "notfound?__"))
+        xf (fn [mk]
+             (let [mkns (namespace mk)
+                   mkn (name mk)]
+               (cond (.startsWith mkn "keys") #(keyword (or mkns (namespace %)) (name %))
+                     (.startsWith mkn "syms") #(list `quote (symbol (or mkns (namespace %)) (name %)))
+                     (.startsWith mkn "strs") str
+                     :else (throw (argument-error (str "Unsupported map directive: " mk))))))
+        ret (reduce (fn [ret e]
+                       (conj ret (val e) (defaults (key e))))
+              bvec gdefaults)
+        ret (-> ret (conj gmap) (conj v)
+              (conj gmap)
+              (conj `(if (seq? ~gmap)
+                       (if (next ~gmap)
+                         (seq-to-map-for-destructuring ~gmap)
+                         (if (seq ~gmap)
+                           (first ~gmap)
+                           {}))
+                       ~gmap)))
+        ret (if (:as b)
+              (conj ret (:as b) gmap)
+              ret)
+        ret (if missing
+              (conj ret missing nil gnotfound `^:unique (Object))
+              ret)
+        bes (dissoc b :as :or :select :all :excess :missing)
+        localize (fn [bb]
+                   (if (ident? bb)
+                     (with-meta (symbol nil (name bb)) (meta bb))
+                     bb))
+        push1
+        (fn [ret bb bk req?]
+          (let [getter (if req? `req! `get)
+                local (localize bb)
+                local-default? (contains? defaults local)
+                key-default? (contains? defaults bk)
+                bv (if (or local-default? key-default?)
+                     (if (and local-default? key-default?)
+                       (throw (argument-error
+                                (str "Multiple :or defaults for same key: " bk " '" local "'")))
+                       (if req?
+                         (throw (argument-error
+                                  (str "Can't supply default value for required key: " bk)))
+                         (list `get gmap bk (if local-default? (gdefaults local) (gdefaults bk)))))
+                     (if req?
+                       (if missing
+                         (list `get gmap bk gnotfound)
+                         (list `req! gmap bk))
+                       (list `get gmap bk)))]
+            (if (ident? bb)
+              (if (and req? missing)
+                (conj ret
+                  gtemp bv
+                  gnotfound? `(identical? ~gtemp ~gnotfound)
+                  missing `(if ~gnotfound? (assoc ~missing ~bk nil) ~missing)
+                  local `(when-not ~gnotfound? ~gtemp))
+                (-> ret (conj local bv)))
+              (pb ret bb bv))))
+        retsel
+        (loop [ret ret, sel #{}, bes bes, b->k {}, subs nil, suba nil, subexcess nil, submissing nil]
+          (if (seq bes)
+            (let [be (first bes), bb (key be), bk (val be)]
+              (if (keyword? bb)
+                (let [dir bb
+                      tr (xf bb)
+                      req? (.endsWith (name bb) "!")
+                      retsel
+                      (loop [ret ret, sel sel, bbs (seq bk), preamp? true, b->k b->k]
+                        (if (seq bbs)
+                          (let [bb (first bbs)]
+                            (if (= bb '&)
+                              (if preamp?
+                                (recur ret sel (next bbs) false b->k)
+                                (throw (argument-error (str "& can only appear once in " dir))))
+                              (let [_
+                                    (when (and (not preamp?) (symbol? bb))
+                                      (throw
+                                       (argument-error
+                                            (str "'" bb
+                                                 "' - binding symbols can only appear before '&', use keys after"))))
+                                    bk (if preamp? (tr bb) bb)]
+                                (recur (if (or preamp? req?)
+                                         (push1 ret (if preamp? bb gtemp) bk req?)
+                                         ret)
+                                       (conj sel bk)
+                                       (next bbs) preamp?
+                                       (if preamp? (assoc b->k (localize bb) bk) b->k)))))
+                          {:ret ret, :sel sel, :b->k b->k}))]
+                  (recur (:ret retsel) (:sel retsel) (next bes) (:b->k retsel) subs suba subexcess submissing))
+                (let [subsel? (and select (map? bb))
+                      bb (if (or (not subsel?) (:select bb))
+                           bb
+                           (assoc bb :select (gensym "select__")))
+                      subs (if subsel? (assoc subs bk (:select bb)) subs)
+
+                      suball? (and all (map? bb))
+                      bb (if (or (not suball?) (:all bb))
+                           bb
+                           (assoc bb :all (gensym "all__")))
+                      suba (if suball? (assoc suba bk (:all bb)) suba)
+
+                      subexcess? (and excess (map? bb))
+                      bb (if (or (not subexcess?) (:excess bb))
+                           bb
+                           (assoc bb :excess (gensym "excess__")))
+                      subexcess (if subexcess? (assoc subexcess bk (:excess bb)) subexcess)
+
+                      submissing? (and missing (map? bb))
+                      bb (if (or (not submissing?) (:missing bb))
+                           bb
+                           (assoc bb :missing (gensym "missing__")))
+                      submissing (if submissing? (assoc submissing bk (:missing bb)) submissing)
+
+                      b->k (if (symbol? bb) (assoc b->k bb bk) b->k)]
+                  (recur (push1 ret bb bk false) (conj sel bk) (next bes) b->k subs suba subexcess submissing))))
+            {:ret ret, :sel sel, :b->k b->k :subs subs :suba suba :subexcess subexcess :submissing submissing}))
+        ; clojure converts sel from set to vector, cljd don't to leverage accelerated maps ops
+        ret (:ret retsel), sel (:sel retsel), b->k (:b->k retsel)
+        new-or-code (and defaults (or defaults-as select all))
+        bk #(if (symbol? %)
+              (let [bk (b->k %)]
+                (when (and new-or-code (not bk))
+                  (throw (argument-error (str "symbol " % " in :or does not refer to a binding"))))
+                bk)
+              %)
+        dm (when defaults (zipmap (map bk (keys gdefaults)) (vals gdefaults)))
+        _ (and new-or-code (not= (count (select-keys dm sel)) (count defaults))
+               (throw (argument-error (str "keys "
+                                        (apply disj (set (keys dm)) sel)
+                                        " appear only in :or"))))
+        dm (if (empty? dm) nil dm)
+        ret (if select
+              (conj ret select `(when-some [mm# (merge ~dm ~gmap (some-vals ~(:subs retsel)))]
+                                  ; sel is a set so it's accelerated
+                                  (select-keys mm# ~sel)))
+              ret)
+        ret (if all
+              (conj ret all `(merge ~dm ~gmap (some-vals ~(:suba retsel))))
+              ret)
+        ret (if excess
+              (conj ret excess `(merge (not-empty (join-with nil identity ~gmap ~sel)) (some-vals ~(:subexcess retsel))))
+              ret)
+
+        ret (if missing
+              (conj ret missing `(merge ~missing (some-vals ~(:submissing retsel))))
+              ret)
+        ret (if defaults-as (conj ret defaults-as dm) ret)]
+    ret))
+
+(defn ^:macro-support ^:private destobj*
+  [pb bvec b v]
+  (let [gmap (vary-meta (or (:as b) (gensym "map__"))
+               merge (meta b))
+        defaults (:or b)
+        b (dissoc b :as :or)
+        transforms
+        (reduce
+          (fn [transforms mk]
+            (if (keyword? mk)
+              (let [mkns (namespace mk)
+                    mkn (name mk)]
+                (cond
+                  (= mkn "flds") (assoc transforms mk #(symbol (str ".-" (name %))))
+                  :else (throw (argument-error (str "Unsupported directive on object destructuring: " mk)))))
+              transforms))
+          {} (keys b))
+        bes (reduce
+              (fn [bes entry]
+                (reduce #(assoc %1 %2 ((val entry) %2))
+                  (dissoc bes (key entry))
+                  ((key entry) bes)))
+              b transforms)]
+    (loop [ret (-> bvec (conj gmap) (conj v))
+           bes bes]
       (if (seq bes)
         (let [bb (key (first bes))
               bk (val (first bes))
@@ -310,9 +459,8 @@
                    (and (simple-symbol? bk)
                      (.startsWith (name bk) ".-")) ; field
                    (list 'if (list `nil? gmap) (get defaults local) (list bk gmap))
-                   (contains? defaults local)
-                   (list `get gmap bk (defaults local))
-                   :else (list `get gmap bk))]
+                   :else (throw (argument-error
+                                  "Lookup destructuring not supported on objects. Prefix field names by `.-` or use :flds for field destructuring.")))]
           (recur (if (ident? bb)
                    (-> ret (conj local bv))
                    (pb ret bb bv))
@@ -362,12 +510,23 @@
              (cond
                (symbol? b) (-> bvec (conj b) (conj v))
                (vector? b) (destvec* pb bvec b v)
-               (map? b) (destmap* pb bvec b v)
+               (map? b)
+               (let [obj-mode
+                     (some (fn [[k v]]
+                             (or (and (keyword? k) (= "flds" (name k)))
+                               (and (simple-symbol? v)
+                                 (.startsWith (name v) ".-")))) b)]
+                 (if obj-mode
+                   (destobj* pb bvec b v)
+                   (destmap* pb bvec b v)))
                :else (throw (new Exception (str "Unsupported binding form: " (pr-str b))))))
         process-entry (fn [bvec b] (pb bvec (first b) (second b)))]
     (if (every? symbol? (map first bents))
       bindings
       (reduce process-entry [] bents))))
+
+(defn cana [{:keys [ry]}]
+  ry)
 
 (defmacro let
   "binding => binding-form init-expr
@@ -1333,7 +1492,7 @@
 
          (and (even? n) (every? -has-stable-hash? (take-nth 2 kvs)))
          (fn [m & kvs]
-           ;; once again a lot of leg work to preserve evaluation order
+           ;; once again a lot of legwork to preserve evaluation order
            (let [ks (take-nth 2 kvs)
                  bindings (into []
                             (comp (take-nth 2) (mapcat (fn [vexpr] [(gensym 'assoc-v) vexpr])))
@@ -1492,6 +1651,16 @@
      a valid value that can be used for look up, not-found is returned.")
   (-contains-key? [o k] "Returns true if k is a key in o."))
 
+(defprotocol IReq
+  "Protocol for unconditional look up of a value in a data structure.
+   Throws when not found."
+  (-req! [o k]
+    "Use k to look up a value in o. If k is not a valid value that can be used for look up,
+     throws an exception."))
+
+(defn reqex [k]
+  (argument-error (str "Missing required key: " (pr-str k))))
+
 (extend-type fallback
   ILookup
   (-lookup [o k]
@@ -1504,7 +1673,14 @@
       not-found))
   (-contains-key? [o k]
     (and (dart/is? k int) (satisfies? IIndexed o)
-      (not (identical? sentinel (-nth o k sentinel))))))
+      (not (identical? sentinel (-nth o k sentinel)))))
+
+  IReq
+  (-req! [o k]
+    (let [v (-lookup o k sentinel)]
+      (if (identical? sentinel v)
+        (throw (reqex k))
+        v))))
 
 (extend-type List
   ILookup
@@ -1548,6 +1724,13 @@
    (-lookup map key))
   ([map key not-found]
    (-lookup map key not-found)))
+
+(defn req!
+  "Like arity-2 'get', but throws if key not present."
+  {:inline (call-to `-req!)
+   :inline-arities #{2}}
+  [map key]
+  (-req! map key))
 
 (defn get-in
   "Returns the value in a nested associative structure,
@@ -5545,6 +5728,14 @@
     (when-not editable
       (throw (ArgumentError. "lookup after persistent!")))
     (not (identical? root (.inode_lookup root 0 (hash k) k root))))
+  IReq
+  (-req! [coll k]
+    (when-not editable
+      (throw (ArgumentError. "lookup after persistent!")))
+    (let [v (.inode_lookup root 0 (hash k) k root)]
+      (if (identical? root v)
+        (throw (reqex k))
+        v)))
   IFn
   (-invoke [tcoll k]
     (-lookup tcoll k))
@@ -5706,6 +5897,12 @@
     (.inode_lookup root 0 (hash k) k not-found))
   (-contains-key? [coll k]
     (not (identical? (-lookup coll k coll) coll)))
+  IReq
+  (-req! [coll k]
+    (let [v (.inode_lookup root 0 (hash k) k root)]
+      (if (identical? root v)
+        (throw (reqex k))
+        v)))
   IFind
   (-find [coll k]
     (#/(.inode_entry_at K V) root 0 (hash k) k))
@@ -5771,6 +5968,18 @@
   "Returns a map that consists of the rest of the maps conj-ed onto
   the first.  If a key occurs in more than one map, the mapping from
   the latter (left-to-right) will be the mapping in the result."
+  {:inline-pred
+   (fn ; may sound stupid but with macros you can end up with weird calls
+     ([] (constantly {}))
+     ([m] identity)
+     ([m1 m2]
+      (if m1
+        nil ; no inline
+        (fn [_ m2] m2)))
+     ([m1 m2 & maps]
+      (let [[m & more-ms] (remove nil? (list* m1 m2 maps))]
+        (constantly
+          (reduce (fn [m m'] `(merge ~m ~m')) m more-ms)))))}
   ([] {})
   ([m] m)
   ([m1 m2] (if m1 (conj m1 m2) m2))
@@ -8877,11 +9086,17 @@ specified.
   (-count [coll] (.-cnt root))
   ILookup
   (-lookup [coll k]
-    (-lookup coll k nil))
+    (.tnode_lookup root k nil top-rank cmp))
   (-lookup [coll k not-found]
     (.tnode_lookup root k not-found top-rank cmp))
   (-contains-key? [coll k]
-    (not (identical? (-lookup coll k coll) coll)))
+    (not (identical? (.tnode_lookup root k root top-rank cmp) root)))
+  IReq
+  (-req! [coll k]
+    (let [v (.tnode_lookup root k root top-rank cmp)]
+      (if (identical? root v)
+        (throw (reqex k))
+        v)))
   IFind
   (-find [coll k]
     (#/(.tnode_entry_at K V) root k top-rank cmp))
@@ -9544,6 +9759,18 @@ specified.
   [^num num]
   (.-isInfinite num))
 
+(defn some-vals
+  "Returns a map with only the non-nil values of map m. Returns nil if
+  m has no non-nil vals."
+  {:added "1.13"}
+  [m]
+  (when m
+    ; not using identity on purpose see -join-with docstring
+    (if-some [m (-join-with m nil nil (fn [x] x) nil nil)]
+      (not-empty m)
+      (reduce-kv
+        (fn [m k v] (if (some? v) (assoc m k v) m))
+        nil m))))
 
 (defn seq-to-map-for-destructuring
   "Builds a map from a seq as described in
@@ -9616,3 +9843,69 @@ specified.
       ([a b c d & rest]
        (apply (resolve (apply dispatch a b c d rest))
          a b c d rest)))))
+
+
+(defn- ^:macro-support selector-impl [m]
+  (let [dirs [:select :excess :missing :all]
+        names (zipmap (filter m dirs) (repeatedly gensym))]
+    (if (empty? names)
+      (throw (argument-error
+              "form must contain at least one of :select :excess :missing :all"))
+      `(fn ~(gensym "selector")
+         [map#]
+         (let [~(merge m names) map#]
+           ~(if (= 1 (count names))
+              (-> names first val)
+              (list `some-vals names)))))))
+
+(defmacro selector
+  "Builds a selecting-fn from m, a map destructuring form that must
+  include one or more of the :select, :all, :missing, and :excess
+  directives. The return function takes a collection, destructures it
+  per m, and returns a map of the result(s).
+
+  If m has exactly one directive, the result is the value that
+  directive would yield. If m has more than one directive, then it
+  returns a map of directives to values.
+
+  As in destructuring, :missing controls whether missing required keys
+  throw or are collected.
+
+  While a map destructuring form may and sometimes must include
+  bindings, selector doesn't produce bindings, thus ignoring the
+  associated directive names.
+
+  Throws an exception if the argument is not a map."
+  {:added "1.13"}
+  [m]
+  (when (not (map? m))
+    (throw (argument-error "expected a map")))
+  (selector-impl m))
+
+(defn merge-deep
+  "Returns a map that consists of the rest of the maps conj-ed onto
+  the first. For each pairwise merge, when a key occurs in both maps,
+  if both values are maps, then recursively merge-deep, else use the
+  latter (left-to-right) value."
+  {:added "1.13"}
+  [& maps]
+  (apply merge-with
+    (fn [x y]
+      (if (and (map? x) (map? y))
+        (merge-deep x y)
+        y))
+    maps))
+
+(defn merge-deep-with
+  "Returns a map that consists of the rest of the maps conj-ed onto
+  the first. For each pairwise merge, when a key occurs in both maps,
+  if both values are maps, then recursively merge-deep-with, else use
+  the result of (f val-in-prior val-in-latter)."
+  {:added "1.13"}
+  [f & maps]
+  (apply merge-with
+    (fn [x y]
+      (if (and (map? x) (map? y))
+        (merge-deep-with f x y)
+        (f x y)))
+    maps))
