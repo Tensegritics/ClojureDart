@@ -1239,3 +1239,19 @@
       (is (true? @a))
       (reset! $ a))
     (is (false? @@$))))
+
+(defmacro compiled-arg-sample [^:compiled x]
+  (let [{:keys [has-await has-recur free-env]} x]
+    {:has-await has-await :has-recur has-recur :free-env (list 'quote (set (keys free-env)))}))
+
+(defmacro compiled-arg-sample-shuffling-free-vars [^:compiled x]
+  (let [{:keys [has-await has-recur free-env]} x]
+    `(let [f# (fn [~@(keys free-env)] ~x)]
+       (f# ~@(reverse (keys free-env))))))
+
+(deftest compiled-arg-test
+  (is (= {:has-await nil, :free-env #{}, :has-recur nil} (compiled-arg-sample 42)))
+  (is (= {:has-await true, :free-env #{}, :has-recur nil} (compiled-arg-sample (await (Future.value 42)))))
+  (is (= {:has-await nil, :free-env #{}, :has-recur true} (compiled-arg-sample (recur 42))))
+  (is (= '{:has-await nil, :free-env #{x}, :has-recur nil} (let [x (rand-int 42)] (compiled-arg-sample x))))
+  (is (= "ba" (let [[a b] "ab"] (compiled-arg-sample-shuffling-free-vars (str a b))))))

@@ -1392,7 +1392,7 @@
           (into [(with-meta (symbol (str "$lib:" alias) t) (meta sym))]
             (map symbol) (str/split members #"[.]")))))))
 
-(declare cljd-closed-overs)
+(declare emit infer-type magicast cljd-closed-overs closed-overs precompile-expr)
 
 (defn- blame-macro [f sym]
   (fn [& args]
@@ -1417,7 +1417,31 @@
                        :dart (case (:kind f-v)
                                :class (fn [form _ & _] (with-meta (cons 'new form) (meta form)))
                                nil)
-                       nil)]
+                       nil)
+            arglists (case f-type
+                       :def (case (:type f-v) ; TODO rename :type into :kind
+                              :class nil
+                              (some-> f-v :meta :arglists))
+                       nil)
+            arglists (cond-> arglists (= 'quote (first arglists)) second) ; TODO investigate
+            argcount (count args)
+            arglist (reduce
+                      (fn [worst-match arglist]
+                        (let [fixed (count (take-while #(not= '& %) arglist))
+                              varargs (< fixed (count arglist))
+                              ∆argcount (- argcount fixed)]
+                          (cond
+                            (zero? ∆argcount)
+                            ; stop on exact match
+                            (cond-> arglist (not varargs) reduced)
+
+                            (and varargs (<= 0 ∆argcount)) arglist
+
+                            :else worst-match)))
+                      nil arglists)
+            ; we care about the arglist only if compiled
+            arglist (when (some #(:compiled (meta %)) arglist)
+                      arglist)]
         (cond
           (env f) form
           (or (= 'cljd.core/defprotocol f) (= 'defprotocol f)) (apply expand-defprotocol args)
@@ -1426,9 +1450,20 @@
           (or (= 'cljd.core/defmulti f) (= 'defmulti f)) (apply expand-defmulti args)
           (or (= 'cljd.core/defmethod f) (= 'defmethod f)) (apply expand-defmethod args)
           (= '. f) form
+
           macro-fn
-          (apply macro-fn form (make-&env env)
-            (next form))
+          (let [args
+                (if arglist
+                  (let [[fixed-params [_ var-param]] (split-with #(not= '& %) arglist)
+                        fixed-args (map (fn [param arg]
+                                          (cond-> arg (-> param meta :compiled) (precompile-expr env)))
+                                     fixed-params args)
+                        var-args (cond->> (drop (count fixed-params) args)
+                                   (-> var-param meta :compiled)
+                                   (map #(precompile-expr % env)))]
+                    (concat fixed-args var-args))
+                  args)]
+            (apply macro-fn form (make-&env env) args))
           (.endsWith f-name ".")
           (with-meta
             (list* 'new
@@ -1468,8 +1503,6 @@
   (let [ex (->> form (macroexpand-1 env) (inline-expand-1 env))]
     (cond->> ex (not (identical? ex form)) (recur env))))
 
-(declare emit infer-type magicast)
-
 (defn tree-some? [pred branch? children root]
   (letfn [(rf [_ x]
             (when (if (branch? x)
@@ -1490,6 +1523,28 @@
   "Takes a dartsexp and returns true when it contains an open await."
   [x]
   (tree-some? #(= 'dart/await %) sequential? #(when-not (= (first %) 'dart/fn) %) x))
+
+
+(deftype PrecompiledExpr [dartexpr props]
+  clojure.lang.ILookup
+  (valAt [this k] (get props k))
+  (valAt [this k not-found] (get props k not-found))
+  Object
+  (hashCode [this] (bit-xor -1473665983 (hash dartexpr)))
+  (equals [this that]
+    (or (identical? this that)
+      (and (instance? PrecompiledExpr that)
+        (= dartexpr (.-dartexpr ^PrecompiledExpr that))))))
+
+(defn precompile-expr [expr env]
+  (let [dart-expr (emit expr env)
+        dart-locals (closed-overs dart-expr env)
+        free-env (into {} (filter (fn [[k v]] (and (symbol? v) (dart-locals v)))) env)]
+    (PrecompiledExpr. dart-expr
+      {:free-env free-env
+       :type (infer-type dart-expr)
+       :has-recur (has-recur? dart-expr)
+       :has-await (has-await? dart-expr)})))
 
 (defn- dart-binding [hint dart-expr env]
   (let [tmp (dart-local hint env)
@@ -3740,6 +3795,15 @@
      (let [x (macroexpand-and-inline env x) ;; meta dc-num
            dart-x
            (cond
+             (instance? PrecompiledExpr x)
+             (let [{:keys [free-env]} x
+                   rebinding (into [] (keep (fn [[local dart-local]]
+                                              (let [dart-local' (get env local)]
+                                                (when-not (= dart-local dart-local')
+                                                  [dart-local dart-local'])))) free-env)]
+               (cond->> (.-dartexpr ^PrecompiledExpr x)
+                 (not-empty rebinding)
+                 (list 'dart/let rebinding)))
              (symbol? x) (emit-symbol x env)
              #?@(:clj [(char? x) (str x)])
              (or (number? x) (boolean? x) (string? x)) x
@@ -4347,9 +4411,7 @@
   )
 
 (defn infer-type [x]
-  {:post [(or (:dart/type %) (do (binding [*print-meta* true]
-                                   (prn (meta (second x)))
-                                   (prn x))))]}
+  {:post [(:dart/type %)]}
   (let [m (meta x)]
     (if (:dart/inferred m)
       m
