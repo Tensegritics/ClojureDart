@@ -89,6 +89,40 @@ Code like this is fine:
   `(my-fn (fn [] ~@body))) ; it's ok, nothing special to do
 ```
 
+### Compiled macro arguments
+
+A macro parameter can be tagged with `^:compiled` to receive the argument
+as a compiled-expression object, not as the raw form.
+
+```clj
+(defmacro inspect [^:compiled expr]
+  (let [{:keys [type nullable is-const has-await has-recur free-env]} expr]
+    ;; Macro code can inspect these properties and still emit `expr`.
+    `(do
+       ;; use the information while generating code
+       ~expr)))
+```
+
+It can be used as an expression in generated code, and supports these lookup keys:
+
+- `:type`: the inferred Dart type, represented in a form suitable for use by
+  the compiler, including type parameters and function or record information
+  when applicable;
+- `:nullable`: truthy when the inferred Dart type is nullable;
+- `:const`: truthy when the expression is known to be a Dart constant;
+- `:has-await`: truthy when the expression contains an open `await`;
+- `:has-recur`: truthy when the expression contains an open `recur`;
+- `:free-env`: a map from Clojure locals referenced by the expression to undefined values, a subset of `&env`.
+
+The `:free-env` map can be used for example to automatically determine an invalidation key for an expression cache.
+
+`^:compiled` can be used on fixed macro parameters and on the variadic
+parameter following `&`; each matching argument is compiled before the macro
+is invoked. The macro must therefore treat the variadic parameter as a list of compiled expression objects.
+
+This mechanism replaces the older `:closed-overs` helper exposed through
+`&env`. New macros should use `^:compiled` instead.
+
 ## Lazy defs
 `def`s are not initialized in order but lazily on a by-need basis. This is a consequence of Dart tree-shaking and fast startup goals.
 

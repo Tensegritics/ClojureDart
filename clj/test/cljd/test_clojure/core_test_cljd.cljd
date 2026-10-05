@@ -1259,3 +1259,9 @@
   (is (= '{:has-await nil, :free-env #{}, :has-recur true :const nil :nullable false, :type $lib:dc/Never,} (compiled-arg-sample (recur 42))))
   (is (= '{:has-await nil, :free-env #{x}, :has-recur nil :const nil :nullable false :type $lib:dc/int} (let [x (rand-int 42)] (compiled-arg-sample x))))
   (is (= "ba" (let [[a b] "ab"] (compiled-arg-sample-shuffling-free-vars (str a b))))))
+
+(deftest inlined-assoc
+  (testing "inlined assoc on nil"
+    (is (= {:a 1 :b 2} (assoc nil :a 1 :b 2))))
+  (testing "inlined assoc on vector"
+    (is (= [:a :b] (assoc [] 0 :a 1 :b)))))

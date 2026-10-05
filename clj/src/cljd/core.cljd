@@ -1488,9 +1488,13 @@
    (fn [m & kvs]
      (let [n (count kvs)]
        (cond
-         (= 2 n) (call-to `-assoc)
+         (odd? n) nil ; let it crash
 
-         (and (even? n) (every? -has-stable-hash? (take-nth 2 kvs)))
+         (= 2 n) (call-to `-assoc) ; base case
+
+         (every? nat-int? (take-nth 2 kvs)) nil ; m may be a vector, don't inline
+
+         (every? -has-stable-hash? (take-nth 2 kvs))
          (fn [m & kvs]
            ;; once again a lot of legwork to preserve evaluation order
            (let [ks (take-nth 2 kvs)
@@ -1498,8 +1502,13 @@
                             (comp (take-nth 2) (mapcat (fn [vexpr] [(gensym 'assoc-v) vexpr])))
                             (next kvs))
                  lit-m (zipmap ks (take-nth 2 bindings))]
-             `(let [m# ~m ~@bindings]
-                (-conj m# ~lit-m)))))))}
+             `(let [m# ~m
+                    ~@bindings
+                    m2# ~lit-m]
+                (cond ; TODO create a protocol matching assoc semantics but with a map as second argument
+                  (nil? m#) m2#
+                  (map? m#) (-conj m# m2#)
+                  :else (reduce-kv -assoc m# m2#))))))))}
   ([map key val] (-assoc map key val))
   ([map key val & kvs]
    (let [ret (-assoc map key val)]
@@ -5974,7 +5983,9 @@
      ([m] identity)
      ([m1 m2]
       (if m1
-        nil ; no inline
+        (if m2
+          nil ; no inline
+          m1)
         (fn [_ m2] m2)))
      ([m1 m2 & maps]
       (let [[m & more-ms] (remove nil? (list* m1 m2 maps))]
