@@ -1536,13 +1536,35 @@
       (and (instance? PrecompiledExpr that)
         (= dartexpr (.-dartexpr ^PrecompiledExpr that))))))
 
+(defn- nullable-type? [type]
+  (or (:nullable type)
+    (case (:canon-qname type)
+      dc.Null true
+      dc.dynamic true
+      da.FutureOr (recur (first (:type-parameters type)))
+      false)))
+
+(defn- positive-type
+  [{:keys [canon-qname nullable] :as type}]
+  (case canon-qname
+    dc.Null nil
+    dc.dynamic dc-Object
+    da.FutureOr (let [[t] (:type-parameters type)]
+                  (if-some [t+ (positive-type t)]
+                    (assoc da-FutureOr :type-parameters [t+])
+                    (assoc dc-Future :type-parameters [t])))
+    (dissoc type :nullable)))
+
 (defn precompile-expr [expr env]
   (let [dart-expr (emit expr env)
         dart-locals (closed-overs dart-expr env)
-        free-env (into {} (filter (fn [[k v]] (and (symbol? v) (dart-locals v)))) env)]
+        free-env (into {} (filter (fn [[k v]] (and (symbol? v) (dart-locals v)))) env)
+        {:dart/keys [type const]} (infer-type dart-expr)]
     (PrecompiledExpr. dart-expr
       {:free-env free-env
-       :type (infer-type dart-expr)
+       :type (unresolve-type type)
+       :nullable (nullable-type? type)
+       :const const
        :has-recur (has-recur? dart-expr)
        :has-await (has-await? dart-expr)})))
 
@@ -1689,25 +1711,6 @@
     (if nullable
       [dc-Null (dissoc type :nullable)]
       [type])))
-
-(defn- nullable-type? [type]
-  (or (:nullable type)
-    (case (:canon-qname type)
-      dc.Null true
-      dc.dynamic true
-      da.FutureOr (recur (first (:type-parameters type)))
-      false)))
-
-(defn- positive-type
-  [{:keys [canon-qname nullable] :as type}]
-  (case canon-qname
-    dc.Null nil
-    dc.dynamic dc-Object
-    da.FutureOr (let [[t] (:type-parameters type)]
-                  (if-some [t+ (positive-type t)]
-                    (assoc da-FutureOr :type-parameters [t+])
-                    (assoc dc-Future :type-parameters [t])))
-    (dissoc type :nullable)))
 
 (defn is-assignable?
   "Returns true when a value of type value-type can be used as a value of type slot-type."
