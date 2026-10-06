@@ -1392,7 +1392,7 @@
           (into [(with-meta (symbol (str "$lib:" alias) t) (meta sym))]
             (map symbol) (str/split members #"[.]")))))))
 
-(declare emit infer-type magicast cljd-closed-overs closed-overs precompile-expr)
+(declare emit infer-type magicast cljd-closed-overs closed-overs precompile-expr is-assignable?)
 
 (defn- blame-macro [f sym]
   (fn [& args]
@@ -1524,7 +1524,6 @@
   [x]
   (tree-some? #(= 'dart/await %) sequential? #(when-not (= (first %) 'dart/fn) %) x))
 
-
 (deftype PrecompiledExpr [dartexpr props]
   clojure.lang.ILookup
   (valAt [this k] (get props k))
@@ -1563,6 +1562,8 @@
     (PrecompiledExpr. dart-expr
       {:free-env free-env
        :type (unresolve-type type)
+       :isa? (fn [child parent]
+               (is-assignable? (emit-type parent env) (emit-type child env)))
        :nullable (nullable-type? type)
        :const const
        :has-recur (has-recur? dart-expr)

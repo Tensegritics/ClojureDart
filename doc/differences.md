@@ -96,7 +96,7 @@ as a compiled-expression object, not as the raw form.
 
 ```clj
 (defmacro inspect [^:compiled expr]
-  (let [{:keys [type nullable is-const has-await has-recur free-env]} expr]
+  (let [{:keys [type nullable const isa? has-await has-recur free-env]} expr]
     ;; Macro code can inspect these properties and still emit `expr`.
     `(do
        ;; use the information while generating code
@@ -105,14 +105,21 @@ as a compiled-expression object, not as the raw form.
 
 It can be used as an expression in generated code, and supports these lookup keys:
 
-- `:type`: the inferred Dart type, represented in a form suitable for use by
-  the compiler, including type parameters and function or record information
-  when applicable;
+- `:type`: the inferred Dart type, represented as a symbol with metadata, suitable for
+   use in ClojureDart forms;
 - `:nullable`: truthy when the inferred Dart type is nullable;
 - `:const`: truthy when the expression is known to be a Dart constant;
+- `:isa?`: a compiler-time predicate taking a `child` type and a `parent`
+  type, returning truthy when a value of `child` type is assignable to
+  `parent` according to Dart's type rules;
 - `:has-await`: truthy when the expression contains an open `await`;
 - `:has-recur`: truthy when the expression contains an open `recur`;
 - `:free-env`: a map from Clojure locals referenced by the expression to undefined values, a subset of `&env`.
+
+For example, if `type` is the inferred type of an integer expression,
+`(isa? type Object)` is truthy while `(isa? type double)` is false. The
+predicate compares compiler type descriptions; it does not emit a runtime type
+check.
 
 The `:free-env` map can be used for example to automatically determine an invalidation key for an expression cache.
 
