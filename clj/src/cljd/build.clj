@@ -162,6 +162,38 @@
 (defn timestamp []
   (.format (java.text.SimpleDateFormat. "@HH:mm:ss" (java.util.Locale/getDefault)) (java.util.Date.)))
 
+(defn- resolve-directory [root dir]
+  (let [dir (io/file dir)]
+    (if (.isAbsolute dir) dir (io/file root (str dir)))))
+
+(defn- find-executable [bin windows? dirs cwd]
+  (let [file (io/file bin)
+        explicit? (or (.isAbsolute file) (re-find #"[/\\]" bin))
+        bins (if (and windows? (not (re-find #"(?i)\.(exe|bat|cmd)$" bin)))
+               [(str bin ".exe") (str bin ".bat") (str bin ".cmd")]
+               [bin])]
+    (cond
+      explicit?
+      (let [file (resolve-directory cwd bin)]
+        (when (and (.isFile file) (.canExecute file)) (.getAbsolutePath file)))
+
+      :else
+      (first
+        (for [bin bins
+              dir dirs
+              :let [file (io/file (resolve-directory cwd dir) bin)]
+              :when (and (.isFile file) (.canExecute file))]
+          (.getAbsolutePath file))))))
+
+(defn- exec-command [root cwd windows? path bin args]
+  (let [path-dirs (str/split (or path "") (re-pattern (java.util.regex.Pattern/quote java.io.File/pathSeparator)) -1)
+        fvm (when (and (= "flutter" bin) (.isFile (io/file root ".fvmrc")))
+              (find-executable "fvm" windows? path-dirs cwd))
+        sdk-dir (.getAbsolutePath (io/file root ".fvm/flutter_sdk/bin"))
+        executable (or fvm (find-executable bin windows? (cons sdk-dir path-dirs) cwd)
+                       (throw (ex-info (str "Can't find " bin " on PATH.") {:bin bin :path path})))]
+    (into (if fvm [executable "flutter"] [executable]) args)))
+
 (defn exec
   "If first arg is a map, it's an option map.
    Supported options:
@@ -190,18 +222,10 @@
         path (if os-is-windows
                (or (-> pb .environment (get "Path")) (-> pb .environment (get "PATH")))
                (-> pb .environment (get "PATH")))
-        bins (if os-is-windows [(str bin ".exe") (str bin ".bat")] [bin])
-        full-bin
-        (or
-          (first
-            (for [bin bins
-                  dir (cons ".fvm/flutter_sdk/bin" (.split path java.io.File/pathSeparator))
-                  :let [file (java.io.File. dir bin)]
-                  :when (and (.isFile file) (.canExecute file))]
-              (.getAbsolutePath file)))
-          (throw (ex-info (str "Can't find " (str/join " nor " bins) " on PATH.")
-                   {:bin bin :path path})))
-        process (.start (doto pb (.command (into [full-bin] args))))]
+        root (io/file (System/getProperty "user.dir"))
+        cwd (if dir (resolve-directory root dir) root)
+        command (exec-command root cwd os-is-windows path bin args)
+        process (.start (doto pb (.directory cwd) (.command command)))]
     (if-not async
       (let [exit-code (.waitFor process)]
         (when-not (zero? exit-code) exit-code))
