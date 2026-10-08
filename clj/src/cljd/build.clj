@@ -489,7 +489,10 @@
         analyzer-dir (ensure-cljd-analyzer!)]
     (if offline
       (println "Offline mode: No pub dependencies will be updated")
-      (exec {:in nil :out nil} (some-> *deps* :cljd/opts :kind name) "pub" "get"))
+      ;; A synchronous child cannot finish if its unread stdout pipe fills.
+      ;; Use platform null devices rather than Redirect/DISCARD (Java 9+).
+      (exec {:in nil :out (io/file (if (.startsWith (System/getProperty "os.name") "Windows") "NUL" "/dev/null"))}
+        (some-> *deps* :cljd/opts :kind name) "pub" "get"))
     (with-taps
       [(fn [x]
          (case (::compiler/msg-kind x)
