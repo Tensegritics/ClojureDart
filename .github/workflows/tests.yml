@@ -26,6 +26,9 @@ jobs:
       - name: Test release and upgrade tooling
         run: ./release --test
 
+      - name: Test compiler subprocess handling
+        run: clojure -M -m cljd.process-test
+
   testing-on-dart-stable:
 
     strategy:
