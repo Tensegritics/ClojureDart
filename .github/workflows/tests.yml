@@ -26,6 +26,9 @@ jobs:
       - name: Test release and upgrade tooling
         run: ./release --test
 
+      - name: Test FVM command selection
+        run: clojure -M -m cljd.fvm-test
+
   testing-on-dart-stable:
 
     strategy:

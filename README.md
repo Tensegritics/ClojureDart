@@ -63,6 +63,8 @@ Don't forget to subscribe to [Curiosities -- our newsletter on ClojureDart and m
 
 Prerequisites: Clojure and Flutter installed and on your path.
 
+If your project has a `.fvmrc` file and `fvm` is on `PATH`, ClojureDart runs bare Flutter commands through `fvm flutter`, including commands in its analyzer helper directory. Otherwise it looks in the project's `.fvm/flutter_sdk/bin` and then `PATH`. Explicit executable paths and Dart commands are unchanged. Relative `PATH` entries are resolved against the subprocess working directory.
+
 Create a project directory and download the `deps.edn` template from the latest stable release:
 ``` shell
 mkdir hello
