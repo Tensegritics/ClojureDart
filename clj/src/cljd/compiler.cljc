@@ -915,7 +915,7 @@
             :clj true
             #_#_:cljd/contrib (case kind :defmethod true :defmulti false))
       (let [table# (-> {} transient ; idea (-> {} (^:const (SomeIFnClass)) ...)
-                     ~@(for [cname (keys contributions)]
+                     ~@(for [cname (mapcat vals (vals contributions))]
                          `(~(with-meta (list cname) {:const :required})))
                      persistent!)]
         (cljd.core/-mk-multimethod '~name
