@@ -162,6 +162,82 @@
 (defn timestamp []
   (.format (java.text.SimpleDateFormat. "@HH:mm:ss" (java.util.Locale/getDefault)) (java.util.Date.)))
 
+(defn- resolve-directory [root dir]
+  (let [dir (io/file dir)]
+    (if (.isAbsolute dir) dir (io/file root (str dir)))))
+
+(defn- find-executable [bin windows? dirs cwd]
+  (let [file (io/file bin)
+        explicit? (or (.isAbsolute file) (re-find #"[/\\]" bin))
+        bins (if (and windows? (not (re-find #"(?i)\.(exe|bat|cmd)$" bin)))
+               [(str bin ".exe") (str bin ".bat") (str bin ".cmd")]
+               [bin])]
+    (cond
+      explicit?
+      (let [file (resolve-directory cwd bin)]
+        (when (and (.isFile file) (.canExecute file)) (.getAbsolutePath file)))
+
+      :else
+      (first
+        (for [bin bins
+              dir dirs
+              :let [file (io/file (resolve-directory cwd dir) bin)]
+              :when (and (.isFile file) (.canExecute file))]
+          (.getAbsolutePath file))))))
+
+(declare exec)
+
+(defn- fvm-version [root]
+  (let [config (io/file root ".fvmrc")]
+    (when (.isFile config)
+      (let [version (try
+                      (with-open [reader (io/reader config)]
+                        (get (.load (org.yaml.snakeyaml.Yaml.
+                                     (org.yaml.snakeyaml.constructor.SafeConstructor.
+                                       (org.yaml.snakeyaml.LoaderOptions.))) reader)
+                          "flutter"))
+                      (catch Exception cause
+                        (throw (ex-info "Can't read project .fvmrc." {:config (str config)} cause))))]
+        (when-not (and (string? version) (not (str/blank? version)))
+          (throw (ex-info "Project .fvmrc must contain a nonblank Flutter version."
+                   {:config (str config)})))
+        version))))
+
+(defn- sdk-version [root]
+  ;; toRealPath follows both Unix symlinks and Windows directory junctions.
+  (try
+    (-> (io/file root ".fvm/flutter_sdk") .toPath
+      (.toRealPath (make-array java.nio.file.LinkOption 0)) .getFileName str)
+    (catch java.nio.file.NoSuchFileException _ nil)))
+
+(defn- ensure-fvm-sdk! [root cwd windows? path-dirs env]
+  (when-let [version (fvm-version root)]
+    (when-not (and (= version (sdk-version root))
+                  (find-executable "flutter" windows?
+                    [(str (io/file root ".fvm/flutter_sdk/bin"))] root))
+      (let [fvm (or (find-executable "fvm" windows? path-dirs cwd)
+                    (throw (ex-info "Project Flutter SDK does not match .fvmrc; install FVM and run fvm use."
+                             {:version version :project (str root)})))
+            exit (exec {:dir root :env env} fvm "use" version "--skip-pub-get")]
+        (when exit
+          (throw (ex-info "fvm use failed to synchronize the project Flutter SDK."
+                   {:version version :exit exit :project (str root)})))
+        (when-not (and (= version (sdk-version root))
+                       (find-executable "flutter" windows?
+                         [(str (io/file root ".fvm/flutter_sdk/bin"))] root))
+          (throw (ex-info "fvm use completed without a usable SDK matching .fvmrc."
+                   {:version version :project (str root)})))))))
+
+(defn- exec-command [root cwd windows? path bin args env]
+  (let [path-dirs (str/split (or path "") (re-pattern (java.util.regex.Pattern/quote java.io.File/pathSeparator)) -1)
+        _ (when (= "flutter" bin)
+            (ensure-fvm-sdk! root cwd windows? path-dirs env))
+        sdk-dir (.getAbsolutePath (io/file root ".fvm/flutter_sdk/bin"))
+        executable (or (find-executable bin windows? [sdk-dir] cwd)
+                       (find-executable bin windows? path-dirs cwd)
+                       (throw (ex-info (str "Can't find " bin " on PATH.") {:bin bin :path path})))]
+    (into [executable] args)))
+
 (defn exec
   "If first arg is a map, it's an option map.
    Supported options:
@@ -190,18 +266,10 @@
         path (if os-is-windows
                (or (-> pb .environment (get "Path")) (-> pb .environment (get "PATH")))
                (-> pb .environment (get "PATH")))
-        bins (if os-is-windows [(str bin ".exe") (str bin ".bat")] [bin])
-        full-bin
-        (or
-          (first
-            (for [bin bins
-                  dir (cons ".fvm/flutter_sdk/bin" (.split path java.io.File/pathSeparator))
-                  :let [file (java.io.File. dir bin)]
-                  :when (and (.isFile file) (.canExecute file))]
-              (.getAbsolutePath file)))
-          (throw (ex-info (str "Can't find " (str/join " nor " bins) " on PATH.")
-                   {:bin bin :path path})))
-        process (.start (doto pb (.command (into [full-bin] args))))]
+        root (io/file (System/getProperty "user.dir"))
+        cwd (if dir (resolve-directory root dir) root)
+        command (exec-command root cwd os-is-windows path bin args env)
+        process (.start (doto pb (.directory cwd) (.command command)))]
     (if-not async
       (let [exit-code (.waitFor process)]
         (when-not (zero? exit-code) exit-code))
