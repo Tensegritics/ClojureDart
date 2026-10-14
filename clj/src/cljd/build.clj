@@ -15,6 +15,9 @@
             [clojure.java.io :as io]
             [clojure.core.server :as server]))
 
+(defmacro ^:private warp->> [& args]
+  `(->> ~@(reverse args)))
+
 (def ^:dynamic *ansi* false)
 (def ^:dynamic *deps*)
 
@@ -203,7 +206,7 @@
                    {:config (str config)})))
         version))))
 
-(defn- sdk-version [root]
+(defn- read-linked-fvm-sdk-version [root]
   ;; toRealPath follows both Unix symlinks and Windows directory junctions.
   (try
     (-> (io/file root ".fvm/flutter_sdk") .toPath
@@ -211,24 +214,23 @@
     (catch java.nio.file.NoSuchFileException _ nil)))
 
 (defn- ensure-fvm-sdk! [root cwd windows? path-dirs env]
-  (when-let [version (fvm-version root)]
-    (when-not (and (= version (sdk-version root))
-                  (find-executable "flutter" windows?
-                    [(str (io/file root ".fvm/flutter_sdk/bin"))] root))
-      (let [fvm (or (find-executable "fvm" windows? path-dirs cwd)
-                    (throw (ex-info "Project Flutter SDK does not match .fvmrc; install FVM and run fvm use."
-                             {:version version :project (str root)})))
-            exit (exec {:dir root :env env} fvm "use" version "--skip-pub-get")]
-        (when exit
-          (throw (ex-info "fvm use failed to synchronize the project Flutter SDK."
-                   {:version version :exit exit :project (str root)})))
-        (when-not (and (= version (sdk-version root))
-                       (find-executable "flutter" windows?
-                         [(str (io/file root ".fvm/flutter_sdk/bin"))] root))
-          (throw (ex-info "fvm use completed without a usable SDK matching .fvmrc."
-                   {:version version :project (str root)})))))))
+  (warp->>
+    (when-some [fvm-version (fvm-version root)])
+    (when-not (and (= fvm-version (read-linked-fvm-sdk-version root))
+                (find-executable "flutter" windows? [(str (io/file root ".fvm/flutter_sdk/bin"))] root)))
+    (let [fvm (or (find-executable "fvm" windows? path-dirs cwd)
+                (throw (ex-info "Project Flutter SDK does not match .fvmrc; install FVM and run fvm use."
+                         {:version fvm-version :project (str root)})))]
+      (when-some [exit (exec {:dir root :env env} fvm "use" fvm-version "--skip-pub-get")]
+        (throw (ex-info "fvm use failed to synchronize the project Flutter SDK."
+                 {:version fvm-version :exit exit :project (str root)}))))
+    (when-not (and (= fvm-version (read-linked-fvm-sdk-version root))
+                (find-executable "flutter" windows?
+                  [(str (io/file root ".fvm/flutter_sdk/bin"))] root)))
+    (throw (ex-info "fvm use completed without a usable SDK matching .fvmrc."
+             {:version fvm-version :project (str root)}))))
 
-(defn- exec-command [root cwd windows? path bin args env]
+(defn- prepare-command [root cwd windows? path bin args env]
   (let [path-dirs (str/split (or path "") (re-pattern (java.util.regex.Pattern/quote java.io.File/pathSeparator)) -1)
         _ (when (= "flutter" bin)
             (ensure-fvm-sdk! root cwd windows? path-dirs env))
@@ -268,7 +270,7 @@
                (-> pb .environment (get "PATH")))
         root (io/file (System/getProperty "user.dir"))
         cwd (if dir (resolve-directory root dir) root)
-        command (exec-command root cwd os-is-windows path bin args env)
+        command (prepare-command root cwd os-is-windows path bin args env)
         process (.start (doto pb (.directory cwd) (.command command)))]
     (if-not async
       (let [exit-code (.waitFor process)]
